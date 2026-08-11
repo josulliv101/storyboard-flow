@@ -199,21 +199,25 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
         style={{ width: trimOut * scale }}
       />
 
-      {/* The amber "showing" window, with draggable trim grips on each edge. */}
+      {/* The "showing" window, with draggable trim grips on each edge.
+          BLUE, matching the trim handles on the clip itself and the ring on a
+          selected card — this control only appears for a selected clip, and
+          the window plus its grips are the same gesture as those handles seen
+          at source scale, so one accent covers the whole trim widget. */}
       <div
         data-trim-overview-window
-        className="absolute inset-y-0 rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+        className="absolute inset-y-0 rounded-sm border-2 border-blue-500 bg-blue-500/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
         style={{ width: windowWidth, transform: `translateX(${trimInWidth}px)` }}
       >
         <span
           data-trim-overview-handle="left"
           onPointerDown={startTrim("left")}
-          className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-sm bg-amber-200/90"
+          className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-sm bg-blue-400/90"
         />
         <span
           data-trim-overview-handle="right"
           onPointerDown={startTrim("right")}
-          className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-sm bg-amber-200/90"
+          className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-sm bg-blue-400/90"
         />
       </div>
     </div>

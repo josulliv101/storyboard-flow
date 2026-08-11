@@ -1072,7 +1072,7 @@ export function NativeDropStrip({
           // left-0 for the same reason the grid's indicator needs it: the
           // translate is measured from the wrapper's origin, so the element
           // must be anchored there rather than left at its static position.
-          className="pointer-events-none absolute inset-y-1 left-0 z-30 w-0.5 rounded bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]"
+          className="pointer-events-none absolute inset-y-1 left-0 z-30 w-0.5 rounded bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.9)]"
           style={{ transform: `translateX(${indicatorX}px)` }}
         />
       )}
@@ -1305,7 +1305,7 @@ export function NativeDropGrid({
           // (`wrapperLeft`/`wrapperTop`), so without the anchor the line drew
           // a whole grid's height too low. z-30 clears the grid's own
           // overlay tier as well as its cards.
-          className="pointer-events-none absolute left-0 top-0 z-30 w-0.5 rounded bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]"
+          className="pointer-events-none absolute left-0 top-0 z-30 w-0.5 rounded bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.9)]"
           style={{
             transform: `translate(${indicator.x}px, ${indicator.y}px)`,
             height: `${indicator.height}px`,

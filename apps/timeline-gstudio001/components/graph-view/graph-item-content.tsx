@@ -13,11 +13,11 @@ import {
   type ReactNode,
 } from "react";
 import {
-  AudioWaveform,
   Check,
   CornerRightDown,
   Image as ImageIcon,
   Layers,
+  Music,
   Video,
 } from "lucide-react";
 
@@ -432,7 +432,7 @@ function DisabledChip({ inherited }: { inherited: boolean }) {
         "pointer-events-none absolute right-2 bottom-2 z-20 rounded px-1 py-0.5 font-mono text-[8px] leading-none font-semibold tracking-[0.08em]",
         inherited
           ? "bg-zinc-950/95 text-zinc-100 ring-1 ring-zinc-400/70"
-          : "bg-zinc-950/95 text-amber-200",
+          : "bg-zinc-950/95 text-blue-300",
       ].join(" ")}
     >
       {inherited ? "PARENT OFF" : "DISABLED"}
@@ -465,52 +465,36 @@ function DisabledChip({ inherited }: { inherited: boolean }) {
  * the leader is centred, which is where a projectionist would expect it.
  */
 /**
- * An audio card's stand-in: a drawn waveform.
+ * An audio card's stand-in: a music glyph on paper.
  *
- * DRAWN, not decoded. Real peaks require fetching and decoding the whole file,
- * and a board can hold dozens of cards — decoding per card would pull every
- * take on screen at mount. Actual peaks belong to the waveform LANE, which is
- * already cached, capped at three concurrent decodes and limited to visible
- * cards. This is the same call `CollectionLeaderPlaceholder` makes: draw the
- * idea of the thing rather than load it.
+ * A SYMBOL, not a drawn waveform. The drawn waveform this replaces was a fixed
+ * pseudo-random bar set — it looked like data while being decoration, and the
+ * peaks it implied belonged to no particular file, so two different takes drew
+ * the identical "waveform". A glyph makes no such claim: it says "this is
+ * sound" and stops.
  *
- * Bars are a fixed pseudo-random-looking set rather than `Math.random()` so a
- * card does not reshuffle on every re-render.
+ * Real peaks are still not an option here, for the reason the drawn version
+ * gave: decoding requires fetching whole files and a board holds dozens of
+ * cards. Actual peaks belong to the waveform LANE, which is cached, capped at
+ * three concurrent decodes and limited to visible cards.
+ *
+ * Paper, not black — the same call `CollectionLeaderPlaceholder` makes: an
+ * audio card is a FRAME with no picture, not a hole where one failed to load.
  */
-const AUDIO_PLACEHOLDER_BARS = [
-  0.25, 0.55, 0.38, 0.82, 0.62, 0.95, 0.7, 0.45, 0.78, 0.52, 0.88, 0.34,
-  0.66, 0.9, 0.48, 0.72, 0.3, 0.6, 0.85, 0.42, 0.75, 0.58, 0.28, 0.68,
-];
-
-function AudioWaveformPlaceholder() {
+function AudioPlaceholder() {
   return (
-    <svg
-      viewBox="0 0 160 90"
-      aria-hidden="true"
-      className="h-full w-full text-zinc-500/70"
-      preserveAspectRatio="xMidYMid slice"
-    >
-      {/* Paper, not black — same reasoning as the leader: an audio card is a
-          FRAME with no picture, not a hole where one failed to load. */}
-      <rect width="160" height="90" className="fill-zinc-800/40" />
-      {/* Centre line, so the bars read as a waveform rather than a bar chart. */}
-      <path d="M6 45 H154" stroke="currentColor" strokeWidth="0.75" opacity="0.5" />
-      <g className="fill-zinc-400/70">
-        {AUDIO_PLACEHOLDER_BARS.map((amplitude, index) => {
-          const height = amplitude * 62;
-          return (
-            <rect
-              key={index}
-              x={7 + index * 6.2}
-              y={45 - height / 2}
-              width="3.2"
-              height={height}
-              rx="1.6"
-            />
-          );
-        })}
-      </g>
-    </svg>
+    <span className="flex h-full w-full items-center justify-center bg-zinc-800/40">
+      <Music
+        aria-hidden="true"
+        strokeWidth={1.5}
+        // Sized off the CARD's height rather than fixed, so one glyph serves a
+        // tall grid cell and a short strip clip alike; clamped at both ends so
+        // it can neither fill a large cell nor shrink to a speck. Height-based
+        // because a strip clip's WIDTH is its duration — keying off that would
+        // swell the note on a long clip and crush it on a short one.
+        className="h-1/2 max-h-10 min-h-3 w-auto text-zinc-400/70"
+      />
+    </span>
   );
 }
 
@@ -548,7 +532,7 @@ function CollectionLeaderPlaceholder() {
  * BECAUSE the card is selected and does nothing when pressed —
  * `pointer-events-none`, so it cannot repeat that mistake.
  *
- * It earns its place by making a MULTI-selection legible. The `ring-amber-300`
+ * It earns its place by making a MULTI-selection legible. The `ring-blue-400`
  * on a selected card is a fine binary signal on one card and a weak one across
  * a board of forty, where the eye has to compare border colours; a row of ticks
  * reads at a glance. Same amber as the ring on purpose — one selection colour,
@@ -699,82 +683,12 @@ function ProvenanceLabel({
   );
 }
 
-/**
- * Below this card width the tag row is dropped entirely.
- *
- * ONE threshold, not a fold ladder — the same call ClipCornerSlot made
- * (MIN_ANCHOR_CONTROL_WIDTH). Two chips plus a counter need roughly this much
- * before they start colliding with the card's own padding, and the content root
- * is `overflow-hidden` with no ellipsis, so an over-wide row is clipped
- * INVISIBLY rather than degrading. Better to show nothing than a silently
- * truncated set someone might read as complete.
- */
-const TAG_ROW_MIN_WIDTH = 132;
-/**
- * Chips shown before the rest fold into a +N counter, by card width.
- *
- * Two, not three, until the card is wide enough. MEASURED: on a 144px card the
- * row has ~128px to work with, and three chips plus a counter want ~150px —
- * so they were being flex-shrunk to ZERO width. Every chip still had its text
- * content, so a `textContent` assertion passed while nothing was on screen.
- * `shrink-0` below is what stops the collapse; this is what stops the overflow
- * that made shrinking necessary.
- */
-const TAGS_SHOWN_WIDE = 3;
-const TAGS_SHOWN_NARROW = 2;
-const TAG_ROW_WIDE_WIDTH = 220;
-
-/**
- * A clip's tags, bottom-left and STACKED above the kind chip.
- *
- * Every other edge is taken: the title spans the top, ProvenanceLabel and the
- * selected badge hold the top-left, the corner menu the top-right, and the
- * duration pill and disabled chip the bottom-right.
- *
- * Decorative for AT — the card's own label already names the clip, and the tags
- * are reachable through the item details panel where they can also be edited.
- * Nothing here is interactive: this renders inside NodeCard's <button>, so an
- * interactive child would be invalid HTML and an ambiguous a11y tree.
- */
-function TagRow({
-  tags,
-  showAtMost,
-  className = "",
-}: Readonly<{ tags: readonly string[]; showAtMost: number; className?: string }>) {
-  const shown = sortTagsStatusFirst(tags).slice(0, showAtMost);
-  const extra = tags.length - shown.length;
-  return (
-    <span
-      aria-hidden="true"
-      data-clip-tags={tags.length}
-      className={[
-        "pointer-events-none absolute bottom-8 left-2 z-10 flex max-w-[calc(100%-1rem)] items-center gap-1",
-        // Callers add surface-scoped variants — the media card hides this in
-        // the grid, where its tags live in the caption instead.
-        className,
-      ].join(" ")}
-    >
-      {shown.map((tag) => (
-        <span
-          key={tag}
-          className="max-w-[6.5rem] shrink-0 truncate rounded bg-black/75 px-1 py-0.5 text-[8px] leading-none font-semibold text-zinc-200 ring-1 ring-white/15"
-        >
-          {tag}
-        </span>
-      ))}
-      {extra > 0 && (
-        <span
-          data-clip-tags-overflow={extra}
-          // Circle at one digit, stadium beyond — `rounded-full` + a min width,
-          // the same shape AnchorCountBadge gets without special-casing digits.
-          className="min-w-[1.05rem] shrink-0 rounded-full bg-black/75 px-1 py-0.5 text-center text-[8px] leading-none font-semibold text-zinc-400 ring-1 ring-white/15"
-        >
-          +{extra}
-        </span>
-      )}
-    </span>
-  );
-}
+// The strip's overlay `TagRow` lived here, with a pair of card-width
+// thresholds (132px to show anything, 220px for a third chip) deciding how
+// many chips a clip got. It is GONE with the strip tag row itself: a strip
+// clip's width is its DURATION, so those thresholds meant a clip's length
+// decided which of its tags you saw. Tags are a grid idea now, and the grid
+// caption's `CaptionTagRow` below is the one renderer.
 
 /**
  * The caption's tag chips — in flow, under the artwork, grid only.
@@ -785,32 +699,124 @@ function TagRow({
  * background in a row that has to share width with the meta line. They have
  * different jobs and almost no shared pixels.
  *
- * COUNTED, not measured. The design measures every chip against the real row
- * width so whole chips drop before any label clips — worth it there, because
- * its cards are one size and its tags are long English phrases. Here the grid
- * cell is a known width per item size and the row is already the widest place
- * a tag appears, so a count gets the same answer without an off-screen mirror
- * and a ResizeObserver on every card. The strip is where width genuinely varies
- * with content, and the strip does not use this row at all.
+ * MEASURED, not counted. It used to show a fixed two and fold the rest, on the
+ * reasoning that a grid cell is a known width per item size. That is true of
+ * the CELL and false of this row: tags are free text, so two long ones overflow
+ * where four short ones would have fitted, and a fixed count both clipped the
+ * long case and hid tags there was room for in the short one. The row now fits
+ * as many whole chips as the width actually takes and folds the remainder.
+ *
+ * Same ruler technique as the select row's verbs (`useFittedVerbCount`): an
+ * invisible, out-of-flow copy of every chip is what gets measured, because
+ * measuring the real row would be circular — hiding a chip changes the width
+ * you are measuring from, so the answer would depend on the previous answer.
  */
-function CaptionTagRow({
-  tags,
-  showAtMost,
-}: Readonly<{ tags: readonly string[]; showAtMost: number }>) {
-  const ordered = sortTagsStatusFirst(tags);
-  const shown = ordered.slice(0, showAtMost);
+const CAPTION_TAG_GAP_PX = 4;
+
+function CaptionTagRow({ tags }: Readonly<{ tags: readonly string[] }>) {
+  const ordered = useMemo(() => sortTagsStatusFirst(tags), [tags]);
+  const containerRef = useRef<HTMLSpanElement | null>(null);
+  const rulerRef = useRef<HTMLSpanElement | null>(null);
+  const counterRef = useRef<HTMLSpanElement | null>(null);
+  const [fitted, setFitted] = useState(ordered.length);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const ruler = rulerRef.current;
+    if (!container || !ruler) return;
+
+    const measure = () => {
+      const budget = container.clientWidth;
+      // 0 while the caption is display:none (the strip is showing) — keep the
+      // last answer rather than folding everything for a frame.
+      if (budget === 0) return;
+      const widths = Array.from(ruler.children).map((child) =>
+        Math.ceil((child as HTMLElement).getBoundingClientRect().width),
+      );
+      const counterWidth = counterRef.current?.getBoundingClientRect().width ?? 0;
+
+      // Pass 1 — do they ALL fit with no counter? Asked against the full
+      // budget, because with nothing folded there is no "+N" to leave room for.
+      const whole = widths.reduce(
+        (total, width, index) => total + width + (index > 0 ? CAPTION_TAG_GAP_PX : 0),
+        0,
+      );
+      if (whole <= budget) {
+        setFitted(ordered.length);
+        return;
+      }
+
+      // Pass 2 — something folds, so the counter is going to be drawn and costs
+      // width like a chip. Two passes keeps it one-way: the reserve depends on
+      // pass 1 and never on its own outcome, so it cannot oscillate.
+      const reduced = budget - Math.ceil(counterWidth) - CAPTION_TAG_GAP_PX;
+      let used = 0;
+      let count = 0;
+      for (const width of widths) {
+        const next = used + width + (count > 0 ? CAPTION_TAG_GAP_PX : 0);
+        if (next > reduced) break;
+        used = next;
+        count += 1;
+      }
+      // At least one chip. A row that is only "+4" says there are tags without
+      // showing a single one, which is strictly worse than one chip and "+3".
+      setFitted(Math.max(1, count));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [ordered]);
+
+  const shown = ordered.slice(0, fitted);
   const extra = ordered.length - shown.length;
+  const chipClass =
+    "inline-flex max-w-[7rem] shrink-0 items-center gap-1 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none font-medium text-zinc-300 ring-1 ring-white/10";
+
   return (
     <span
+      ref={containerRef}
       data-clip-caption-tags={tags.length}
-      className="ml-auto flex min-w-0 shrink items-center gap-1 overflow-hidden"
+      // `flex-1 min-w-0`, NOT `ml-auto shrink`. The budget has to come from the
+      // ROW, never from these chips: a content-sized box reports the width its
+      // contents already take, so measuring it asks "do the chips fit in the
+      // space the chips are using", which is always yes — the fold then never
+      // fires, or fires against a box that shrank because of the last answer.
+      // Same one-way rule the select row's verb container follows.
+      className="relative flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
     >
+      {/* The ruler: every chip, laid out but invisible. `visibility:hidden`
+          rather than `display:none` so the boxes still measure, absolute so it
+          cannot widen the container it is measured against, and `inert` so a
+          hidden copy of the row is not in the tab order or the a11y tree. */}
+      <span
+        ref={rulerRef}
+        aria-hidden="true"
+        inert
+        data-clip-caption-tags-ruler=""
+        className="pointer-events-none invisible absolute top-0 left-0 flex items-center gap-1"
+      >
+        {ordered.map((tag) => (
+          <span key={tag} className={chipClass}>
+            <TagAccentDot tag={tag} />
+            <span className="min-w-0 truncate">{tag}</span>
+          </span>
+        ))}
+      </span>
+      {/* The counter's own width, measured the same way rather than guessed —
+          it grows with the digit count ("+9" against "+12"). */}
+      <span
+        ref={counterRef}
+        aria-hidden="true"
+        inert
+        className="pointer-events-none invisible absolute top-0 left-0 shrink-0 font-mono text-[10px] leading-none"
+      >
+        +{ordered.length}
+      </span>
+
       {shown.map((tag) => (
-        <span
-          key={tag}
-          title={tag}
-          className="inline-flex max-w-[7rem] shrink-0 items-center gap-1 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none font-medium text-zinc-300 ring-1 ring-white/10"
-        >
+        <span key={tag} title={tag} className={chipClass}>
           <TagAccentDot tag={tag} />
           <span className="min-w-0 truncate">{tag}</span>
         </span>
@@ -818,7 +824,14 @@ function CaptionTagRow({
       {extra > 0 && (
         <span
           data-clip-caption-tags-overflow={extra}
-          className="shrink-0 font-mono text-[10px] leading-none text-zinc-500"
+          // HOVER LISTS THE REST. A `title` rather than a real tooltip, and not
+          // for lack of one: this renders inside the card's selection surface,
+          // which is a `<button>`, and a Radix tooltip trigger is interactive
+          // content — nesting it would auto-close the card's own button and
+          // eject the rest of the card out of its box (the same wall the
+          // select-mode checkbox hit). A title costs nothing and works.
+          title={ordered.slice(fitted).join("\n")}
+          className="shrink-0 cursor-help font-mono text-[10px] leading-none text-zinc-500"
         >
           +{extra}
         </span>
@@ -843,9 +856,12 @@ function CaptionTagRow({
  * so its checkbox is only ever a second way to hit the same target.
  *
  * OUTSIDE the mode it appears on HOVER, which is the design's own behaviour,
- * and CLICKING IT TOGGLES. That matters most on a collection: the rest of that
- * card drills in, so this circle is the only pointer route to picking one
- * without entering select mode first.
+ * and CLICKING IT TOGGLES *and ARMS the mode*. That matters most on a
+ * collection: the rest of that card drills in, so this circle is the only
+ * pointer route to picking one at all. Arming is the point rather than a side
+ * effect — it is what swaps the breadcrumb trail for the selection row, so the
+ * pick has somewhere to be counted and acted on. See the handler for why it
+ * arms on the way in only.
  *
  * It is a span that handles its own click rather than a `<button>` — see the
  * note on the element itself for why, and for the keyboard path that covers
@@ -933,6 +949,20 @@ function SelectionIndicator({
       onClick={(event) => {
         event.stopPropagation();
         store.toggleSelected(id);
+        // PICKING IS ENTERING THE MODE. The header row is driven by
+        // `multiSelectMode` alone (see GraphBoard's `selectModeRow`), so
+        // toggling the selection without arming left the checkbox filling in
+        // while the breadcrumb trail sat there unchanged — a selection with no
+        // way to act on it and no visible way out. Since a plain click OPENS
+        // and never selects, this checkbox IS the pointer gesture that means
+        // "I am selecting now", and that is the same statement the Select
+        // button makes.
+        //
+        // Only on the way IN. Un-checking the last item leaves the mode armed
+        // at "0 selected · Done", which is exactly where pressing Select and
+        // picking nothing lands you — whereas disarming on empty would yank
+        // the row away mid-correction, the moment a mis-pick is undone.
+        if (!selected) store.setMultiSelectMode(true);
       }}
       className={[
         "absolute right-2 bottom-2 z-20 grid size-[26px] cursor-pointer place-items-center",
@@ -963,6 +993,27 @@ const GraphClipContent = memo(function GraphClipContent({
   // integer-ratio crossing — computed above the early return because the
   // settle hook must run unconditionally.
   const [cardSizeRef, cardSize] = useElementSize();
+  // Which SURFACE this card is being drawn in, read from the container's own
+  // `[data-virtual-grid]` marker rather than passed down.
+  //
+  // Deliberately the same mechanism the CSS uses (`[[data-virtual-grid]_&]:…`
+  // all over this file). The card renderer is shared by both surfaces and has
+  // no idea which one it is in; threading a prop just to change a frame count
+  // would put a layout concern into the item contract, and the two surfaces
+  // would then have two different ways of answering the same question.
+  const [inGrid, setInGrid] = useState(false);
+  const surfaceRef = useCallback((element: HTMLElement | null) => {
+    setInGrid(element !== null && element.closest("[data-virtual-grid]") !== null);
+  }, []);
+  // One element, two callback refs — React takes a single ref per element, so
+  // they are composed here rather than by giving the node two attributes.
+  const cardRef = useCallback(
+    (element: HTMLElement | null) => {
+      cardSizeRef(element);
+      surfaceRef(element);
+    },
+    [cardSizeRef, surfaceRef],
+  );
   const measuredFrames =
     cardSize.height > 0 ? Math.round(cardSize.width / cardSize.height) : 0;
   const settledFrames = useSettledFrameCount(measuredFrames);
@@ -995,14 +1046,27 @@ const GraphClipContent = memo(function GraphClipContent({
   const isVideo = node.mediaKind === "video";
   const isAudio = node.mediaKind === "audio";
   const muted = node.disabled === true || inheritedDisabled;
-  // A wider clip shows MORE distinct frames rather than the same still tiled
-  // — falling back to a duration-based count until first measured.
-  const frames = isVideo
-    ? Math.max(
-        1,
-        Math.min(settledFrames || videoFrameCount(mediaDurationSeconds(node), 6), VIDEO_FRAME_CAP),
-      )
-    : 1;
+  // In the GRID a video is ONE frame, full width — a thumbnail, the same shape
+  // an image card has. The filmstrip below is a STRIP idea and stays there:
+  // that surface makes a card as wide as its clip is long, so extra width is
+  // extra time and a sequence of frames is the honest thing to put in it. A
+  // grid cell's width is just the cell's, so splitting it between a first and
+  // last frame was showing two half-width pictures to say nothing about
+  // duration, and neither of them read as a thumbnail.
+  //
+  // A wider STRIP clip shows MORE distinct frames rather than the same still
+  // tiled — falling back to a duration-based count until first measured.
+  const frames = !isVideo
+    ? 1
+    : inGrid
+      ? 1
+      : Math.max(
+          1,
+          Math.min(
+            settledFrames || videoFrameCount(mediaDurationSeconds(node), 6),
+            VIDEO_FRAME_CAP,
+          ),
+        );
   // Each video frame is sampled at its own time across the visible clip (R6
   // #6); an image is just its one src.
   const frameSrcs =
@@ -1018,18 +1082,26 @@ const GraphClipContent = memo(function GraphClipContent({
         ? []
         : [node.src];
   // CAPTION values (grid only — see the caption span at the end of the card).
-  const KindIcon = isVideo ? Video : isAudio ? AudioWaveform : ImageIcon;
-  // Falls back to the KIND, never to the machine name. PL11-004 keeps
-  // `detail.title` absent until someone actually names a clip, exactly so a
-  // library of filenames does not read as a rename backlog — and inventing one
-  // here would undo that. But a caption whose first line can be empty reads as
-  // broken, so the kind fills it, which is also what the artwork's chip said in
-  // the strip. "Video" rather than "VIDEO": this is a caption, not a stamp.
-  const captionName = detail?.title ?? (isVideo ? "Video" : isAudio ? "Audio" : "Image");
+  const KindIcon = isVideo ? Video : isAudio ? Music : ImageIcon;
+  // ONLY a real, authored name — no fallback.
+  //
+  // This used to fall back to the KIND ("Image", "Video", "Audio") on the
+  // reasoning that a caption whose first line can be empty reads as broken.
+  // That was the wrong trade: it put a word on every unnamed card, in the
+  // name's own typography, that said nothing the leading kind icon was not
+  // already saying — so an unnamed card read as though it had been named
+  // "Image". PL11-004 keeps `detail.title` absent until someone actually names
+  // a clip, precisely so a library of filenames does not look like a rename
+  // backlog, and inventing a name here undid that.
+  //
+  // The row does NOT collapse when this is null: the kind icon still holds the
+  // line, so an unnamed card's caption stays on the same grid as a named one's
+  // and as a collection's.
+  const captionName = detail?.title ?? null;
   const captionSeconds = Number(mediaDurationSeconds(node)) || 0;
   return (
     <span
-      ref={cardSizeRef}
+      ref={cardRef}
       className={[
         // p-1.5 on BOTH surfaces: the artwork is inset like the collection
         // card's (its frame + label row keep its pixels off the card edges),
@@ -1084,7 +1156,7 @@ const GraphClipContent = memo(function GraphClipContent({
       >
       {frameSrcs.length === 0 ? (
         isAudio ? (
-          <AudioWaveformPlaceholder />
+          <AudioPlaceholder />
         ) : (
           <span className="flex h-full w-full items-center justify-center text-[11px] text-zinc-500">
             No preview
@@ -1144,26 +1216,15 @@ const GraphClipContent = memo(function GraphClipContent({
       >
         {isVideo ? "VIDEO" : isAudio ? "AUDIO" : "IMAGE"}
       </span>
-      {/* Tags, stacked above the kind chip. Shown on DISABLED cards too,
-          unlike the title: a disabled clip is exactly the one someone is
-          hunting for by tag, so hiding its labels would work against the
-          reason tags exist. Width 0 means "not measured yet" — render, or the
-          row flashes in on every mount. */}
-      {detail?.tags?.length ? (
-        cardSize.width === 0 || cardSize.width >= TAG_ROW_MIN_WIDTH ? (
-          <TagRow
-            tags={detail.tags}
-            showAtMost={
-              cardSize.width === 0 || cardSize.width >= TAG_ROW_WIDE_WIDTH
-                ? TAGS_SHOWN_WIDE
-                : TAGS_SHOWN_NARROW
-            }
-            // GRID puts these in the caption instead (see below), where they
-            // sit beside the meta line rather than over the picture.
-            className="[[data-virtual-grid]_&]:hidden"
-          />
-        ) : null
-      ) : null}
+      {/* NO tag row in the strip. Tags are a GRID idea now: they live in the
+          caption, under the artwork, on both card kinds.
+
+          They used to be stamped over the picture here, folded by a pair of
+          card-width thresholds. A strip clip's width IS its duration, so which
+          tags a clip showed depended on how long it was — two cards with the
+          same tags disagreed about them, and a short clip covered most of its
+          own frame to say so. The grid cell has a stable width and a row of
+          its own for exactly this, which is where they went. */}
       {/* The clip's NAME, shown only when someone gave it one (PL11-004).
           Every clip has an `alt` — a filename, usually — so a card that
           rendered "the name" would render something on all of them, and a
@@ -1209,17 +1270,44 @@ const GraphClipContent = memo(function GraphClipContent({
       <span
         aria-hidden="true"
         data-clip-caption
-        className="hidden min-w-0 flex-col gap-1 pt-2 pr-0.5 pb-0.5 pl-1 [[data-virtual-grid]_&]:flex"
+        // Metrics MATCH the collection caption's grid values — 6px right, 6px
+        // bottom, 10px above (`pt-2.5` against its `mt-2.5`). They were
+        // 4px/2px/2px/8px here, so a grid mixing the two card kinds showed two
+        // different left edges and two name positions.
+        //
+        // The left is `7px`, NOT 6, and the odd pixel is the point. A
+        // collection card's surface carries a real 1px dashed border, and a
+        // border consumes layout under `border-box` where this card's `ring`
+        // does not — so an identical 6px padding still lands a pixel to the
+        // left of a collection's. This makes up the difference at the caption,
+        // which is where the alignment is visible.
+        //
+        // Deliberately NOT solved by giving this card a matching transparent
+        // border: that aligns the caption by moving the card's whole content
+        // box, which shifts the artwork and everything positioned off it — it
+        // moved the floating trim frame a pixel and the e2e caught it.
+        //
+        // If either side is retuned, retune both. The alignment is the
+        // contract, not the individual numbers, and the stories measure it.
+        className="hidden min-w-0 flex-col gap-1 pt-2.5 pr-1.5 pb-1.5 pl-[7px] [[data-virtual-grid]_&]:flex"
       >
         <span className="flex min-w-0 items-center gap-1.5">
+          {/* `size-4`, matching the collection caption's Layers glyph. At
+              `size-3.5` the two icon boxes differed by 2px, so every name in a
+              mixed grid started at one of two x positions. */}
           <KindIcon
             aria-hidden="true"
             strokeWidth={1.7}
-            className="size-3.5 shrink-0 text-zinc-400"
+            className="size-4 shrink-0 text-zinc-400"
           />
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100">
-            {captionName}
-          </span>
+          {/* Omitted, not blanked, when the clip has no authored name — see
+              `captionName`. The icon keeps the row's height and left edge, so
+              the meta line below stays put whether or not there is a name. */}
+          {captionName === null ? null : (
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100">
+              {captionName}
+            </span>
+          )}
         </span>
         {/* Row two is omitted ENTIRELY when it would be empty, rather than
             rendered blank: an untagged image has neither duration nor chips,
@@ -1233,7 +1321,7 @@ const GraphClipContent = memo(function GraphClipContent({
               </span>
             ) : null}
             {detail?.tags?.length ? (
-              <CaptionTagRow tags={detail.tags} showAtMost={TAGS_SHOWN_NARROW} />
+              <CaptionTagRow tags={detail.tags} />
             ) : null}
           </span>
         ) : null}
@@ -1317,7 +1405,13 @@ const GraphTrimHandle = memo(function GraphTrimHandle({
   return (
     <span
       className={[
-        "flex h-full w-full items-center justify-center bg-amber-400 opacity-95",
+        // blue-500 — the SELECTION colour (the ring on a selected card, the
+        // count in the select row). These handles only exist on a selected
+        // clip, so wearing the selection's colour is what ties them to the
+        // thing they act on. Amber is left over from when amber WAS the
+        // selection colour; once selection moved to blue it read as a second,
+        // unrelated accent on the one card already wearing the first.
+        "flex h-full w-full items-center justify-center bg-blue-500 opacity-95",
         side === "left" ? "rounded-l-md" : "rounded-r-md",
       ].join(" ")}
     >
@@ -1386,7 +1480,7 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
   return (
     // Slightly transparent so the breadcrumb drop zones read THROUGH the ghost
     // while dragging over them — the user can see where they're aiming.
-    <span className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-zinc-900 opacity-80 shadow-2xl ring-2 ring-amber-400">
+    <span className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-zinc-900 opacity-80 shadow-2xl ring-2 ring-blue-500">
       {frames.length > 0 ? (
         <span className="flex h-full w-full gap-px">
           {frames.map((src, index) => (
@@ -1416,7 +1510,7 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
         </span>
       )}
       {extraCount > 0 && (
-        <span className="absolute -top-2 -right-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-amber-400 px-1 text-[11px] font-bold text-black shadow">
+        <span className="absolute -top-2 -right-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-blue-500 px-1 text-[11px] font-bold text-black shadow">
           +{extraCount}
         </span>
       )}
@@ -1518,18 +1612,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             than GraphClipContent (which returns null for them at the guard
             above). Skipping it here would ship a half-feature where a tagged
             collection silently shows nothing. */}
-        {detail?.tags?.length ? (
-          <TagRow
-            tags={detail.tags}
-            showAtMost={TAGS_SHOWN_NARROW}
-            // Same split the media card makes: overlaid on the artwork in the
-            // strip, in the caption in the grid. Without this the two card
-            // kinds would file their tags in two different places within one
-            // grid, which is the sort of inconsistency nobody reports and
-            // everybody notices.
-            className="[[data-virtual-grid]_&]:hidden"
-          />
-        ) : null}
+        {/* NO tag row in the strip — see the note on the media card's, which
+            this used to mirror. Collections keep theirs in the GRID caption
+            (further down), so the two card kinds still file tags in the same
+            place as each other. */}
         <span
           data-disabled-visuals={muted ? "true" : undefined}
           data-filter-miss={filterMiss ? "true" : undefined}
@@ -1678,7 +1764,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             data-collection-caption-tags={detail.tags.length}
             className="hidden min-w-0 items-center pr-1.5 pb-1 pl-1.5 [[data-virtual-grid]_&]:flex"
           >
-            <CaptionTagRow tags={detail.tags} showAtMost={TAGS_SHOWN_NARROW} />
+            <CaptionTagRow tags={detail.tags} />
           </span>
         ) : null}
       </CollectionItem.SelectionSurface>
@@ -1733,7 +1819,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           onInput={rename.setDraft}
           onCommit={rename.commit}
           onCancel={rename.cancel}
-          className="absolute inset-x-2.5 bottom-2 z-20 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-xs font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+          className="absolute inset-x-2.5 bottom-2 z-20 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-xs font-semibold text-zinc-100 outline-none ring-1 ring-blue-500/70"
         />
       )}
 
@@ -1859,7 +1945,7 @@ const GraphMediaItem = memo(function GraphMediaItem({
           onCommit={rename.commit}
           onCancel={rename.cancel}
           ariaLabel="Clip name"
-          className="absolute inset-x-1 top-1 z-30 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-[11px] font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+          className="absolute inset-x-1 top-1 z-30 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-[11px] font-semibold text-zinc-100 outline-none ring-1 ring-blue-500/70"
         />
       )}
     </div>
@@ -1918,7 +2004,7 @@ const GraphItemShell = memo(function GraphItemShell(props: CollectionItemShellPr
     // rather than blink out when the flash store clears — Tailwind's ring is a
     // box-shadow, so the same transition covers both ends.
     "transition-shadow duration-500 motion-reduce:transition-none",
-    flashing ? "ring-2 ring-amber-400 ring-offset-2 ring-offset-zinc-950" : "",
+    flashing ? "ring-2 ring-blue-500 ring-offset-2 ring-offset-zinc-950" : "",
   ]
     .filter(Boolean)
     .join(" ");

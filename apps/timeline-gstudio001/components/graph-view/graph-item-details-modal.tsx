@@ -260,7 +260,7 @@ function SecondsField({
           }
         }}
         onBlur={(event) => onCommit(event.target.value)}
-        className="w-16 rounded-sm bg-zinc-900 px-1.5 py-0.5 text-right tabular-nums text-amber-200/90 outline-none ring-1 ring-zinc-700 focus:ring-amber-400/70 disabled:opacity-40"
+        className="w-16 rounded-sm bg-zinc-900 px-1.5 py-0.5 text-right tabular-nums text-blue-300/90 outline-none ring-1 ring-zinc-700 focus:ring-blue-500/70 disabled:opacity-40"
       />
       <span className="text-zinc-600">s</span>
     </label>
@@ -383,7 +383,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
               onCommit={rename.commit}
               onCancel={rename.cancel}
               ariaLabel="Clip name"
-              className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+              className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-blue-500/70"
             />
           ) : (
             <button
@@ -471,13 +471,13 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
             <span
               data-item-details-edge={live.side === "right" ? "right" : "left"}
               className={[
-                "absolute inset-y-0 w-1.5 bg-amber-400",
+                "absolute inset-y-0 w-1.5 bg-blue-500",
                 live.side === "right" ? "right-0" : "left-0",
               ].join(" ")}
             />
           )}
           {video && (
-            <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-amber-200">
+            <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-blue-300">
               {formatSeconds(rawTime)}
             </span>
           )}
@@ -515,7 +515,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
           </>
         ) : (
           <div className="flex items-center justify-between font-mono text-[11px] text-zinc-500">
-            <span className="text-amber-200/90">still · {formatSeconds(showing)} on screen</span>
+            <span className="text-blue-300/90">still · {formatSeconds(showing)} on screen</span>
             <span>drag the card&apos;s edge on the strip to change how long it holds</span>
           </div>
         )}

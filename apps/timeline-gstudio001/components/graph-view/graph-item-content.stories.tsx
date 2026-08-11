@@ -845,58 +845,115 @@ function renderWithTags(tags: string[], surface: "grid" | "strip" = "strip") {
   return decorator;
 }
 
+/** The chips actually on screen, excluding the measuring ruler and the +N. */
+function visibleTagChips(canvasElement: HTMLElement): HTMLElement[] {
+  const row = canvasElement.querySelector<HTMLElement>("[data-clip-caption-tags]")!;
+  return Array.from(
+    row.querySelectorAll<HTMLElement>(
+      ":scope > [title]:not([data-clip-caption-tags-overflow])",
+    ),
+  );
+}
+
 /** A few tags render in full, in the order they were stored. */
 export const TaggedCollectionCard: Story = {
   args: baseArgs,
-  decorators: [renderWithTags(["scail-2", "S02"])],
+  decorators: [renderWithTags(["scail-2", "S02"], "grid")],
   play: async ({ canvasElement }) => {
-    const row = canvasElement.querySelector<HTMLElement>("[data-clip-tags]")!;
+    // GRID, because tags are a grid idea now — the strip's overlay row is gone
+    // (see StripCardHasNoTagRow below).
+    const row = canvasElement.querySelector<HTMLElement>("[data-clip-caption-tags]")!;
     await expect(row).not.toBeNull();
-    await expect(row.dataset.clipTags).toBe("2");
-    await expect(row.textContent).toBe("scail-2S02");
-    for (const chip of Array.from(row.children) as HTMLElement[]) {
+    await expect(row.dataset.clipCaptionTags).toBe("2");
+
+    // Both fit at this width, so nothing folds.
+    const chips = visibleTagChips(canvasElement);
+    await expect(chips.map((chip) => chip.title)).toEqual(["scail-2", "S02"]);
+    await expect(canvasElement.querySelector("[data-clip-caption-tags-overflow]")).toBeNull();
+    for (const chip of chips) {
       await expect(chip.getBoundingClientRect().width).toBeGreaterThan(0);
     }
-    // Decorative: the card's own label already names it, and nothing in here
-    // may be interactive — this subtree renders inside a selection surface.
-    await expect(row.getAttribute("aria-hidden")).toBe("true");
+
+    // Nothing in here may be interactive — this subtree renders inside the
+    // card's selection surface, which is itself a <button>.
     await expect(row.querySelector("button")).toBeNull();
   },
 };
 
 /**
- * Past three tags the rest fold into a counter.
+ * Too many to fit: whole chips drop and the rest fold into a counter that
+ * LISTS them on hover.
  *
- * The failure this guards is INVISIBLE: the content root is `overflow-hidden`
- * with no ellipsis, so an unbounded row is clipped with nothing to show it was
- * clipped — a set that reads as complete but is not.
+ * The failure this guards is INVISIBLE: the row is `overflow-hidden` with no
+ * ellipsis, so an unbounded set is clipped with nothing to show it was clipped
+ * — a set that reads as complete but is not.
  */
 export const ManyTagsFoldIntoACounter: Story = {
   args: baseArgs,
-  decorators: [renderWithTags(["scail-2", "wan2.1", "S02", "keeper", "multirole"])],
+  decorators: [
+    renderWithTags(["scail-2", "wan2.1", "S02", "keeper", "multirole"], "grid"),
+  ],
   play: async ({ canvasElement }) => {
-    const row = canvasElement.querySelector<HTMLElement>("[data-clip-tags]")!;
-    await expect(row.dataset.clipTags).toBe("5");
-    const overflow = canvasElement.querySelector<HTMLElement>("[data-clip-tags-overflow]")!;
-    await expect(overflow).not.toBeNull();
-    await expect(overflow.dataset.clipTagsOverflow).toBe("3");
-    await expect(overflow.textContent).toBe("+3");
+    const row = canvasElement.querySelector<HTMLElement>("[data-clip-caption-tags]")!;
+    await expect(row.dataset.clipCaptionTags).toBe("5");
 
-    // MEASURED, not read. The first version of this asserted `textContent` and
-    // passed while all three chips were flex-shrunk to ZERO width — text
-    // present, nothing on screen. Assert every chip actually occupies space,
-    // and that the row stays inside the card, because the card is
-    // `overflow-hidden` with no ellipsis and clips silently.
-    const chips = Array.from(row.children) as HTMLElement[];
+    const overflow = await waitFor(() => {
+      const found = canvasElement.querySelector<HTMLElement>(
+        "[data-clip-caption-tags-overflow]",
+      );
+      if (found === null) throw new Error("no overflow counter yet");
+      return found;
+    });
+
+    // FITTED, not a fixed count. The old row always showed exactly two; this
+    // shows however many the width takes, so the assertion is a relationship
+    // (some shown, some folded, and the two add up) rather than a magic number
+    // that would only be about this machine's text metrics.
+    const chips = visibleTagChips(canvasElement);
+    await expect(chips.length).toBeGreaterThanOrEqual(1);
+    await expect(chips.length).toBeLessThan(5);
+    await expect(Number(overflow.dataset.clipCaptionTagsOverflow)).toBe(5 - chips.length);
+    await expect(overflow.textContent).toBe(`+${5 - chips.length}`);
+
+    // HOVER LISTS THE REST — and lists exactly the ones NOT on screen, which is
+    // the whole point of the counter.
+    const shownTitles = chips.map((chip) => chip.title);
+    const listed = overflow.title.split("\n");
+    await expect(listed.length).toBe(5 - chips.length);
+    for (const title of shownTitles) await expect(listed).not.toContain(title);
+
+    // MEASURED, not read. An earlier version asserted `textContent` and passed
+    // while every chip was flex-shrunk to ZERO width — text present, nothing on
+    // screen. And the row must stay inside the card, which clips silently.
     for (const chip of chips) {
       await expect(chip.getBoundingClientRect().width).toBeGreaterThan(0);
       await expect(chip.getBoundingClientRect().height).toBeGreaterThan(0);
     }
-    const card = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
-    const cardBox = card.getBoundingClientRect();
+    const cardBox = canvasElement
+      .querySelector<HTMLElement>("[data-node-id]")!
+      .getBoundingClientRect();
     const rowBox = row.getBoundingClientRect();
     await expect(rowBox.left).toBeGreaterThanOrEqual(cardBox.left);
     await expect(rowBox.right).toBeLessThanOrEqual(cardBox.right + 0.5);
+  },
+};
+
+/**
+ * The STRIP shows no tags at all.
+ *
+ * A strip clip's width IS its duration, so the overlay row this replaces let a
+ * clip's LENGTH decide which of its tags you saw — two clips with identical
+ * tags disagreed about them, and a short one covered its own frame to do it.
+ */
+export const StripCardHasNoTagRow: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags(["scail-2", "wan2.1", "S02"], "strip")],
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-clip-tags]")).toBeNull();
+    const caption = canvasElement.querySelector<HTMLElement>("[data-clip-caption-tags]");
+    // The caption row is CSS-gated rather than unmounted, so absence is not the
+    // assertion — zero height is.
+    await expect(caption?.getBoundingClientRect().height ?? 0).toBe(0);
   },
 };
 
@@ -904,8 +961,9 @@ export const ManyTagsFoldIntoACounter: Story = {
  *  else in this model, and an empty chip strip would read as a data glitch. */
 export const UntaggedCardHasNoTagRow: Story = {
   args: baseArgs,
-  decorators: [renderWithTags([])],
+  decorators: [renderWithTags([], "grid")],
   play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-clip-caption-tags]")).toBeNull();
     await expect(canvasElement.querySelector("[data-clip-tags]")).toBeNull();
   },
 };
@@ -1008,6 +1066,37 @@ function renderCollectionInSelectMode(): Decorator {
 }
 
 /**
+ * The caption geometry EVERY grid card shares, media and collection alike:
+ * the distance from the card's outer edge to its caption icon, and that icon's
+ * box. 13px = 1px border + 6px card padding + 6px caption padding.
+ *
+ * Asserted in both card kinds' stories against these numbers rather than
+ * against each other, because the two cannot be rendered in one canvas — which
+ * is exactly how they drifted apart. Media was 4px in with a 14px icon,
+ * collection 6px with a 16px one; and even after matching those, media still
+ * landed a pixel left, because the collection's dashed border consumes layout
+ * where media's `ring` does not. All three had to agree.
+ *
+ * If a redesign moves these, move BOTH stories together. The shared number is
+ * the contract; either story alone can be made to pass by breaking alignment.
+ */
+const CAPTION_INSET_PX = 13;
+const CAPTION_ICON_PX = 16;
+
+/** The caption's leading icon must start at the same inset on any card kind. */
+async function expectCaptionIconAligned(
+  canvasElement: HTMLElement,
+  icon: Element,
+): Promise<void> {
+  const card = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+  const iconBox = icon.getBoundingClientRect();
+  await expect(Math.round(iconBox.left - card.getBoundingClientRect().left)).toBe(
+    CAPTION_INSET_PX,
+  );
+  await expect(Math.round(iconBox.width)).toBe(CAPTION_ICON_PX);
+}
+
+/**
  * In the GRID the chrome sits UNDER the artwork, not stamped across it.
  *
  * The two overlays it replaces have to go, or the card says everything twice
@@ -1020,9 +1109,19 @@ export const GridCardCaptionSitsUnderTheArtwork: Story = {
     const caption = canvasElement.querySelector<HTMLElement>("[data-clip-caption]")!;
     await expect(caption).not.toBeNull();
     await expect(caption.getBoundingClientRect().height).toBeGreaterThan(0);
-    // Unnamed clips caption as their KIND rather than a filename (PL11-004
-    // keeps `title` absent until authored) — never an empty first line.
-    await expect(caption.textContent).toContain("Video");
+    // An unnamed clip captions as NOTHING — no filler word.
+    //
+    // This used to assert the opposite: the caption fell back to the KIND, so
+    // an un-authored clip read "Video" in the name's own weight and size and
+    // looked like it had been named that. PL11-004 keeps `title` absent until
+    // someone authors one; the fallback quietly undid it. The kind ICON holds
+    // the row instead, which is what keeps the line from collapsing.
+    await expect(caption.textContent).not.toContain("Video");
+    await expect(caption.querySelector("svg")).not.toBeNull();
+    await expect(caption.getBoundingClientRect().height).toBeGreaterThan(0);
+
+    // ALIGNED with a collection card's caption — see CAPTION_INSET_PX.
+    await expectCaptionIconAligned(canvasElement, caption.querySelector("svg")!);
 
     // BELOW the frame, not over it. Measured, because the whole change is a
     // geometric one and a caption that rendered on top of the artwork would
@@ -1078,25 +1177,128 @@ export const CaptionTagsFoldStatusFirst: Story = {
     const row = canvasElement.querySelector<HTMLElement>("[data-clip-caption-tags]")!;
     await expect(row.dataset.clipCaptionTags).toBe("4");
 
-    const chips = Array.from(row.querySelectorAll<HTMLElement>("span[title]"));
-    // The two STATUS tags are the ones kept, though neither was stored first.
-    await expect(chips.map((chip) => chip.title)).toEqual(["approved", "wip"]);
+    const chips = visibleTagChips(canvasElement);
+    // The two STATUS tags LEAD, though neither was stored first.
+    //
+    // Asserted as an ordering rather than as an exact kept-set: the row fits as
+    // many chips as the width takes now, so pinning "exactly these two survive"
+    // would be a test about this machine's text metrics. What must hold at any
+    // width is that status sorts to the front — so if anything folds, the
+    // status tags are never what goes.
+    await expect(chips.length).toBeGreaterThanOrEqual(2);
+    await expect(chips.slice(0, 2).map((chip) => chip.title)).toEqual(["approved", "wip"]);
     for (const chip of chips) {
       await expect(chip.getBoundingClientRect().width).toBeGreaterThan(0);
     }
 
+    // And whatever folded, if anything did, holds NO status tag.
     const overflow = canvasElement.querySelector<HTMLElement>(
       "[data-clip-caption-tags-overflow]",
-    )!;
-    await expect(overflow.dataset.clipCaptionTagsOverflow).toBe("2");
-    await expect(overflow.textContent).toBe("+2");
+    );
+    if (overflow !== null) {
+      const folded = overflow.title.split("\n");
+      await expect(folded).not.toContain("approved");
+      await expect(folded).not.toContain("wip");
+    }
 
     // Colour is DERIVED, so the two status words must land in their own
-    // families rather than sharing one — that is what the dot is for.
-    const accents = chips.map((chip) =>
-      chip.querySelector("[data-tag-accent]")?.getAttribute("data-tag-accent"),
-    );
+    // families rather than sharing one — that is what the dot is for. Scoped to
+    // the two leading chips for the same reason as above: how many chips follow
+    // them depends on the width, and those carry their own (non-status) accent.
+    const accents = chips
+      .slice(0, 2)
+      .map((chip) => chip.querySelector("[data-tag-accent]")?.getAttribute("data-tag-accent"));
     await expect(accents).toEqual(["ok", "progress"]);
+  },
+};
+
+/**
+ * A GRID video is ONE frame, full width — a thumbnail, like an image card.
+ *
+ * It used to split the cell between a first and last frame at 50% each, which
+ * showed two half-width crops and said nothing about duration that the cell's
+ * own width could carry (a grid cell's width is the cell's, not the clip's).
+ * Pinned as a PAIR with the strip story below, because the two are one decision
+ * and a regression would most likely make both surfaces the same again.
+ */
+export const GridVideoIsASingleFrame: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "grid" })],
+  play: async ({ canvasElement }) => {
+    const frames = await waitFor(() => {
+      const found = Array.from(canvasElement.querySelectorAll<HTMLImageElement>("img"));
+      if (found.length === 0) throw new Error("no frames yet");
+      return found;
+    });
+    await expect(frames).toHaveLength(1);
+
+    // FULL WIDTH, which is the half that "one frame" alone does not promise —
+    // a single frame flex-shrunk into half the card would satisfy a count.
+    const artwork = frames[0]!.getBoundingClientRect();
+    const card = canvasElement
+      .querySelector<HTMLElement>("[data-node-id]")!
+      .getBoundingClientRect();
+    await expect(artwork.width).toBeGreaterThan(card.width * 0.8);
+  },
+};
+
+/** The STRIP keeps its filmstrip: there, a card's width IS its duration, so
+ *  extra width is extra time and a sequence of frames is what belongs in it. */
+export const StripVideoKeepsItsFilmstrip: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "strip" })],
+  play: async ({ canvasElement }) => {
+    const frames = await waitFor(() => {
+      const found = Array.from(canvasElement.querySelectorAll<HTMLImageElement>("img"));
+      if (found.length < 2) throw new Error("filmstrip has not sampled yet");
+      return found;
+    });
+    await expect(frames.length).toBeGreaterThan(1);
+  },
+};
+
+/**
+ * A GRID card carries NO corner `⋮`, even as the anchor.
+ *
+ * Everything it opened lives in the select row now, so a per-card menu was a
+ * second route to the same list parked in every cell. Hidden rather than
+ * deleted — see CardCornerSlot, which still renders and still anchors; the grid
+ * just does not show it.
+ */
+export const GridCardHasNoCornerMenu: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "grid", selectMode: true })],
+  play: async ({ canvasElement }) => {
+    const card = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    await userEvent.click(card);
+    await waitFor(() => expect(card.getAttribute("data-selected")).toBe("true"));
+
+    // ANCHORED — so the slot's own condition is met and the only thing keeping
+    // the control off screen is the grid rule. Asserting mere absence would
+    // pass just as well on a card that was never the anchor, which is the
+    // wrong reason and would not catch the rule being dropped.
+    const menu = canvasElement.ownerDocument.querySelector<HTMLElement>("[data-anchor-menu]");
+    await expect(menu?.getBoundingClientRect().height ?? 0).toBe(0);
+  },
+};
+
+/** The STRIP keeps its corner `⋮`: narrow cards with no caption band, and no
+ *  select-row equivalent to fall back on. Pinned as a pair with the story
+ *  above — a regression would most likely make both surfaces agree again. */
+export const StripCardKeepsItsCornerMenu: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "strip", selectMode: true })],
+  play: async ({ canvasElement }) => {
+    const card = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    await userEvent.click(card);
+    await waitFor(() => expect(card.getAttribute("data-selected")).toBe("true"));
+
+    const menu = await waitFor(() => {
+      const found = canvasElement.ownerDocument.querySelector<HTMLElement>("[data-anchor-menu]");
+      if (found === null) throw new Error("no corner menu yet");
+      return found;
+    });
+    await expect(menu.getBoundingClientRect().height).toBeGreaterThan(0);
   },
 };
 
@@ -1231,6 +1433,11 @@ export const CollectionGridCaptionLeadsWithItsKind: Story = {
     const kind = canvasElement.querySelector<SVGElement>("[data-collection-kind]")!;
     await expect(kind).not.toBeNull();
     await expect(kind.getBoundingClientRect().width).toBeGreaterThan(0);
+
+    // The OTHER half of the shared caption geometry — the media card's story
+    // asserts the identical two numbers, which is what makes a mixed grid line
+    // up. See CAPTION_INSET_PX.
+    await expectCaptionIconAligned(canvasElement, kind);
 
     // A LABEL: hidden from the a11y tree, and no control of its own.
     //

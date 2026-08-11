@@ -59,7 +59,7 @@ const Slider = React.forwardRef<
       {...props}
     >
       <SliderPrimitive.Track className="relative h-1 w-full grow overflow-hidden rounded-full bg-zinc-800">
-        <SliderPrimitive.Range className="absolute h-full bg-amber-400/70" />
+        <SliderPrimitive.Range className="absolute h-full bg-blue-500/70" />
       </SliderPrimitive.Track>
       <SliderPrimitive.Thumb
         aria-label={ariaLabel}
@@ -67,7 +67,7 @@ const Slider = React.forwardRef<
         aria-describedby={ariaDescribedBy}
         aria-valuetext={ariaValueText}
         tabIndex={thumbTabIndex}
-        className="block h-3 w-3 rounded-full border border-amber-400 bg-zinc-950 shadow transition-colors hover:bg-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 disabled:pointer-events-none disabled:opacity-50"
+        className="block h-3 w-3 rounded-full border border-blue-500 bg-zinc-950 shadow transition-colors hover:bg-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:pointer-events-none disabled:opacity-50"
       />
     </SliderPrimitive.Root>
   ),

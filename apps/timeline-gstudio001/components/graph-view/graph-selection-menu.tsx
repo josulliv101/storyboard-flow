@@ -17,7 +17,7 @@ import {
 } from "@/components/core/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { itemActionSections, type ItemActionState } from "@/lib/graph-item-action-specs";
-import { requestGraphItemAction } from "@/lib/graph-view-events";
+import { requestGraphItemAction, type GraphItemAction } from "@/lib/graph-view-events";
 
 // THE selection menu. One definition, three triggers: the anchor card's `⋮`,
 // any card's right-click, and the header's `⋮`.
@@ -25,8 +25,15 @@ import { requestGraphItemAction } from "@/lib/graph-view-events";
 // v2 had two renderings of this list — a row of icon tiles inside the card and
 // an overflow menu for whatever the row could not fit — and keeping them
 // lossless was a standing bug source, because an action in neither place is
-// simply gone. There is one rendering now, so there is nothing to fold and
-// nothing to lose.
+// simply gone. THE MENU is still one rendering, and the card `⋮` and
+// right-click still open the whole list.
+//
+// The select row folds, via `SelectionMenuOverflowItems`, and that is not a
+// return to v2's problem: v2 folded from a hand-assembled tile row into a
+// hand-assembled menu, so an action could fall between them. Here the row and
+// the fold are computed from the SAME `SELECT_MODE_VERBS` list — what the row
+// could not draw is precisely what the fold shows — and every one of those
+// verbs is in the full menu regardless. Nothing can land in neither.
 //
 // The two menu primitives (dropdown / context) are styled identically but come
 // from different Radix packages, so the parts are injected rather than the
@@ -216,6 +223,54 @@ function MultiSelectToggleRow({
         {enabled ? "Stop adding to selection" : "Add to selection by tapping"}
       </span>
     </Item>
+  );
+}
+
+/**
+ * ONLY the actions named, as menu rows — the select row's overflow.
+ *
+ * Distinct from `SelectionMenuItems` on purpose. That one is THE menu: the
+ * whole action list, wherever it is opened from. This is the tail of a toolbar
+ * that ran out of width, so it holds exactly what the toolbar could not draw
+ * and nothing else. Repeating a verb that is already on screen an inch to the
+ * left is what made the old `⋮` read as "everything is in here anyway", which
+ * in turn made the row's own verbs look decorative.
+ *
+ * Grouping still comes from `itemActionSections`, and empty runs are dropped
+ * BEFORE the separators are emitted — so the same "separators between runs"
+ * derivation keeps a leading, trailing, or doubled separator unexpressible when
+ * an arbitrary subset survives.
+ *
+ * No scope header and no multi-select toggle: both belong to the full menu,
+ * which is still one click away on the anchor card's own `⋮`.
+ */
+export function SelectionMenuOverflowItems({
+  parts,
+  state,
+  actions,
+}: Readonly<{
+  parts: MenuParts;
+  state: ItemActionState;
+  actions: ReadonlySet<GraphItemAction>;
+}>) {
+  const { Separator } = parts;
+  const runs = itemActionSections(state)
+    .map((run) => run.filter((spec) => actions.has(spec.action)))
+    .filter((run) => run.length > 0);
+
+  return (
+    <>
+      {runs.map((run, index) => (
+        <Fragment key={run[0]?.action ?? index}>
+          {index > 0 ? <Separator /> : null}
+          <div role="group">
+            {run.map((spec) => (
+              <SelectionMenuRow key={spec.action} parts={parts} state={state} spec={spec} />
+            ))}
+          </div>
+        </Fragment>
+      ))}
+    </>
   );
 }
 

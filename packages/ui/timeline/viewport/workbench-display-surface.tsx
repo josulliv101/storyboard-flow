@@ -1425,7 +1425,7 @@ export function WorkbenchDisplaySurface({
             Top-LEFT: the close button owns the right corner. */}
         {activeClip?.disabled === true && (
           <span
-            className="pointer-events-none absolute left-2 top-2 z-10 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] leading-none font-semibold tracking-[0.08em] text-amber-300 ring-1 ring-amber-400/40"
+            className="pointer-events-none absolute left-2 top-2 z-10 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] leading-none font-semibold tracking-[0.08em] text-blue-400 ring-1 ring-blue-500/40"
             data-testid="workbench-display-disabled"
           >
             DISABLED

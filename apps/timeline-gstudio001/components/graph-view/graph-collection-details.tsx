@@ -123,7 +123,7 @@ export function CollectionDetailsBody({
               onCommit={rename.commit}
               onCancel={rename.cancel}
               ariaLabel="Timeline name"
-              className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+              className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-blue-500/70"
             />
           ) : (
             /* Single click to rename (PL14-010) — see the note on the clip

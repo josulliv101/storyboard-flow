@@ -89,7 +89,7 @@ const DropdownMenuRadioItem = React.forwardRef<
   >
     <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
-        <Check className="h-3.5 w-3.5 text-amber-400" />
+        <Check className="h-3.5 w-3.5 text-blue-500" />
       </DropdownMenuPrimitive.ItemIndicator>
     </span>
     {children}
@@ -126,7 +126,7 @@ const DropdownMenuRadioBadge = React.forwardRef<
       "flex-1 cursor-default select-none rounded-sm border px-2 py-1 text-center",
       "text-[11px] font-semibold tracking-wide tabular-nums outline-none transition-colors",
       "border-zinc-800 bg-zinc-900/60 text-zinc-400",
-      "data-[state=checked]:border-amber-400/60 data-[state=checked]:bg-amber-400/15 data-[state=checked]:text-amber-200",
+      "data-[state=checked]:border-blue-500/60 data-[state=checked]:bg-blue-500/15 data-[state=checked]:text-blue-300",
       "focus:ring-2 focus:ring-inset focus:ring-zinc-400 focus:text-zinc-100",
       "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
