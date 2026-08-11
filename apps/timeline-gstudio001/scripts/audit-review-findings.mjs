@@ -190,8 +190,10 @@ async function main() {
   console.log("── #342  demo-fixture id squatting ──────────────────────────");
   console.log(`fixture ids already claimed: ${seededFixtures.length} of ${FIXTURE_IDS.size}`);
   if (seededFixtures.length === 0) {
-    console.log("LATENT. No demo id has been seeded, so nobody is being 404'd");
-    console.log("yet. The GET fallback can still claim one on the next request.");
+    console.log("CLEAR. No demo id is held, so nobody is being 404'd. A READ");
+    console.log("can no longer claim one (#342) — but the ids are still");
+    console.log("global, so a user who EDITS a demo timeline can still take");
+    console.log("one. Re-run after any such edit.");
   } else {
     console.log(`distinct owners holding them: ${fixtureOwners.size}`);
     for (const entry of seededFixtures) {
