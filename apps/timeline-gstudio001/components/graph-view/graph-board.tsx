@@ -7,7 +7,9 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
@@ -815,7 +817,115 @@ function SelectModeButton() {
  * matters, and the other two stay in the `⋮`. Two adjacent controls that both
  * end the gesture is how a mis-click becomes a surprise.
  */
-const SELECT_MODE_VERBS: readonly GraphItemAction[] = ["details", "duplicate", "delete"];
+/**
+ * The verbs this row will show, IN THE ORDER THEY ARE DRAWN.
+ *
+ * Everything here is also in the `⋮`, which renders the full action list from
+ * one definition — so promoting a verb is only ever a shortcut, never the only
+ * way to reach it, and a verb pushed out by a narrow window is still one click
+ * away rather than gone.
+ */
+const SELECT_MODE_VERBS: readonly GraphItemAction[] = [
+  "details",
+  "copy",
+  "cut",
+  "duplicate",
+  "toggle-disabled",
+  "delete",
+];
+
+/**
+ * The order they SURVIVE in as the row narrows — first is kept longest.
+ *
+ * DELIBERATELY NOT the draw order. Dropping from the right would take Delete
+ * first, and Delete plus Edit are the two verbs that were promoted when this
+ * row held a fixed three; losing them to a narrow window while Cut stayed would
+ * be a regression dressed up as responsiveness. Draw order is what reads well
+ * left to right; this is what matters when there is not room for all of it.
+ */
+const SELECT_MODE_VERB_PRIORITY: readonly GraphItemAction[] = [
+  "details",
+  "delete",
+  "duplicate",
+  "copy",
+  "cut",
+  "toggle-disabled",
+];
+
+/** `gap-x-5`, as a number — the fit maths has to add the gaps back. */
+const SELECT_MODE_VERB_GAP_PX = 20;
+
+/**
+ * How many verbs fit, measured rather than guessed.
+ *
+ * A RULER copy of the full run is rendered alongside the real one, invisible
+ * and out of flow, and its children are what get measured. Measuring the real
+ * run instead would be circular — hiding a verb changes the width you are
+ * measuring, so the answer would depend on the previous answer and could
+ * oscillate. The ruler always holds all of them, so its widths are stable.
+ *
+ * The budget is the container's own width, and the container is `flex-1
+ * min-w-0`: its width comes from the row, never from its contents. That is what
+ * keeps this a one-way calculation — nothing the hook decides can feed back
+ * into the number it measured against.
+ *
+ * Re-measured on resize AND whenever the action state changes, because labels
+ * are state-dependent: "Disable" becomes "Enable", and the counted labels grow
+ * a number past one selected item.
+ */
+function useFittedVerbCount(
+  state: ItemActionState,
+): Readonly<{
+  containerRef: RefObject<HTMLDivElement | null>;
+  rulerRef: RefObject<HTMLDivElement | null>;
+  visible: ReadonlySet<GraphItemAction>;
+}> {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const rulerRef = useRef<HTMLDivElement | null>(null);
+  const [count, setCount] = useState(SELECT_MODE_VERBS.length);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const ruler = rulerRef.current;
+    if (!container || !ruler) return;
+
+    const measure = () => {
+      const budget = container.clientWidth;
+      // 0 while the row is display:none (the browse header is showing) — keep
+      // the last answer rather than collapsing to zero verbs and flashing them
+      // all back in on the next frame.
+      if (budget === 0) return;
+      const widths = Array.from(ruler.children).map((child) =>
+        Math.ceil((child as HTMLElement).getBoundingClientRect().width),
+      );
+      let used = 0;
+      let fitted = 0;
+      for (const action of SELECT_MODE_VERB_PRIORITY) {
+        const index = SELECT_MODE_VERBS.indexOf(action);
+        const width = widths[index] ?? 0;
+        const next = used + width + (fitted > 0 ? SELECT_MODE_VERB_GAP_PX : 0);
+        if (next > budget) break;
+        used = next;
+        fitted += 1;
+      }
+      // At least one, even in a window too narrow for it: a row with a count
+      // and no verbs at all reads as broken, and the `⋮` beside it still holds
+      // everything.
+      setCount(Math.max(1, fitted));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [state]);
+
+  const visible = useMemo(
+    () => new Set(SELECT_MODE_VERB_PRIORITY.slice(0, count)),
+    [count],
+  );
+  return { containerRef, rulerRef, visible };
+}
 
 /** One labelled verb. Same spec data as the icon buttons, more room to say it. */
 function SelectModeVerb({
@@ -867,10 +977,16 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
   const state = useSelectionActionState();
   const { selectionCount } = state;
 
+  const { containerRef, rulerRef, visible } = useFittedVerbCount(state);
+
   return (
     <div
       data-select-mode-header=""
-      className="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2"
+      // NOT `flex-wrap` any more. Wrapping was how this row coped with running
+      // out of width, and it coped by growing taller — which is exactly what
+      // the header must never do, now that both faces of it are pinned to the
+      // same height. Verbs move into the `⋮` instead.
+      className="flex min-w-0 flex-1 items-center gap-x-5"
     >
       <span
         data-select-mode-count={selectionCount}
@@ -887,9 +1003,34 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
       >
         {selectionCount} selected
       </span>
-      {SELECT_MODE_VERBS.map((action) => (
-        <SelectModeVerb key={action} action={action} state={state} />
-      ))}
+      {/* The verb run, and the ruler it is measured against. `flex-1 min-w-0`
+          so the budget comes from the ROW rather than from the verbs — see
+          useFittedVerbCount for why that direction matters. */}
+      <div
+        ref={containerRef}
+        data-select-mode-verbs={visible.size}
+        className="relative flex min-w-0 flex-1 items-center gap-x-5 overflow-hidden"
+      >
+        <div
+          ref={rulerRef}
+          aria-hidden="true"
+          inert
+          data-select-mode-verb-ruler=""
+          // Out of flow and invisible, but LAID OUT — `visibility: hidden`
+          // keeps the boxes measurable where `display: none` would report
+          // zero. Absolute so it cannot widen the container it is measured
+          // against, and `inert` so a hidden run of buttons is not a set of
+          // tab stops.
+          className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-x-5"
+        >
+          {SELECT_MODE_VERBS.map((action) => (
+            <SelectModeVerb key={action} action={action} state={state} />
+          ))}
+        </div>
+        {SELECT_MODE_VERBS.filter((action) => visible.has(action)).map((action) => (
+          <SelectModeVerb key={action} action={action} state={state} />
+        ))}
+      </div>
       <HeaderPasteButton anchorName={anchorName} />
       {/* Everything not promoted above — the SAME menu the anchor's `⋮` opens,
           rendered from the identical definition rather than a hand-assembled

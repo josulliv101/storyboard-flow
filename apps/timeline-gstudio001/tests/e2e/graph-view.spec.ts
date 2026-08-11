@@ -6592,6 +6592,60 @@ test.describe("graph view E2E", () => {
     await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
   });
 
+  test("the select row shows every verb that fits, and overflows the rest into the menu", async ({
+    page,
+  }) => {
+    // The row promotes as many verbs as the width allows and pushes the rest
+    // into the `⋮`. Asserted as a RELATIONSHIP between two widths rather than
+    // against fixed counts: the exact number that fits depends on font
+    // metrics, and pinning "5 verbs at 1280px" would be a test about this
+    // machine's text rendering.
+    await installGraphApi(page);
+    await openGraph(page);
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+
+    const run = page.locator("[data-select-mode-verbs]");
+    // `:scope >` matters: the RULER lives inside this container and holds a
+    // full copy of the run, so an unscoped lookup counts every verb twice.
+    const shown = () => run.locator(":scope > [data-header-action]").count();
+    const declared = () =>
+      run.locator("[data-select-mode-verb-ruler] [data-header-action]").count();
+
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await expect.poll(shown).toBeGreaterThan(1);
+    const wide = await shown();
+    // The ruler always holds the FULL run — that is what makes it a stable
+    // yardstick — so the visible count can never exceed it.
+    expect(wide).toBeLessThanOrEqual(await declared());
+
+    // Narrow: strictly fewer verbs, and never zero — a count with no verbs at
+    // all reads as broken, and the `⋮` still holds everything either way.
+    await page.setViewportSize({ width: 620, height: 800 });
+    await expect.poll(shown).toBeLessThan(wide);
+    expect(await shown()).toBeGreaterThanOrEqual(1);
+
+    // THE ROW NEVER GROWS TALLER. Wrapping was the old answer to running out
+    // of width, and it moved the whole board down — the thing the height
+    // pinning above exists to prevent.
+    const header = page.locator("[data-graph-board-header]");
+    const narrowHeight = await header.evaluate((e) =>
+      Math.round(e.getBoundingClientRect().height),
+    );
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await expect.poll(shown).toBe(wide);
+    expect(
+      await header.evaluate((e) => Math.round(e.getBoundingClientRect().height)),
+    ).toBe(narrowHeight);
+
+    // Everything dropped is still reachable: the `⋮` renders the full action
+    // list from one definition, so overflow is a shortcut being withdrawn, not
+    // a capability.
+    await page.locator("[data-header-selection-overflow]").click();
+    await expect(page.getByRole("menu")).toHaveCount(1);
+    await expect(page.getByRole("menuitem", { name: /^Delete/ })).toBeVisible();
+  });
+
   test("select mode takes the breadcrumb's place at the SAME height, from the first click", async ({
     page,
   }) => {
