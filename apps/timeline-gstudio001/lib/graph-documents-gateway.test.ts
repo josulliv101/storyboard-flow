@@ -5,6 +5,7 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/
 import { createGraphDocumentsGateway } from "./graph-documents-gateway";
 
 const SAVE_DEBOUNCE_MS = 900;
+const SAVE_RETRY_MS = 5000;
 
 function clip(id: string, startTime = 0): TimelineClip {
   return {
@@ -514,6 +515,75 @@ describe("graph-documents-gateway", () => {
     expect(batchesOf(calls)).toHaveLength(2); // no third batch
     expect(clipIds(gateway.peek("a"))).toEqual(["a-server"]); // cache untouched
     expect(gateway.lastError()).toContain("not being saved");
+  });
+
+  it("stops retrying a payload the server rejects on its merits, and releases the pending flag", async () => {
+    // A 400 is not a bad moment, it is a bad payload: the same bytes get the
+    // same answer forever. Re-queueing it span a 5s save loop indefinitely,
+    // and because the id stayed dirty `hasPendingWrite` stayed true — which
+    // made the preview's install guard refuse every manifest and re-poll on
+    // its own timer. Two unbounded loops on an idle tab from one permanent
+    // error.
+    const calls = installFetch((call) => {
+      if (call.method === "GET") {
+        return jsonResponse({ document: doc(call.id, [clip(`${call.id}-seed`)]), revision: 1 });
+      }
+      return jsonResponse({ error: "Every batch write needs a valid timeline document." }, 400);
+    });
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The rejection is surfaced, and says waiting will not help.
+    expect(gateway.lastError()).toContain("not being saved");
+
+    // NO retry — the whole point. Well past the retry cadence.
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS * 3);
+    expect(batchesOf(calls)).toHaveLength(1);
+
+    // The pending flag is released, so the preview's install guard stops
+    // refusing manifests and its poll loop ends with it.
+    expect(gateway.hasPendingWrite("a")).toBe(false);
+
+    // And a further edit is blocked rather than re-sending the same reject,
+    // exactly as a conflict is.
+    gateway.writeClips("a", [clip("a3")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
+    expect(gateway.isConflicted("a")).toBe(true);
+  });
+
+  it("still retries a 5xx, which really is transient", async () => {
+    // The other half of the split: a server having a bad minute must not be
+    // treated as a bad payload, or a blip would strand the user's edit.
+    let failOnce = true;
+    const calls = installFetch((call) => {
+      if (call.method === "GET") {
+        return jsonResponse({ document: doc(call.id, [clip(`${call.id}-seed`)]), revision: 1 });
+      }
+      if (failOnce) {
+        failOnce = false;
+        return jsonResponse({ error: "upstream exploded" }, 503);
+      }
+      return okResults(call.writes);
+    });
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Re-queued and retried on the slower cadence, and it lands.
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS);
+    expect(batchesOf(calls)).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gateway.isConflicted("a")).toBe(false);
   });
 
   it("lifts the conflict block when the graph is rebuilt via refresh", async () => {
