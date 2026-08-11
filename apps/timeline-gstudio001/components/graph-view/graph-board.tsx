@@ -1123,7 +1123,10 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
       <HeaderPasteButton anchorName={anchorName} />
       {/* `ml-auto`: Done sits at the far end, away from Delete. Both end the
           gesture, only one of them destroys anything, and putting them
-          shoulder to shoulder is how a mis-click becomes a deletion. */}
+          shoulder to shoulder is how a mis-click becomes a deletion. The
+          empty space is what separates it on this side — a rule here as well
+          fenced Done in from both directions and made the way OUT read as
+          just another item in the verb run. */}
       <Button
         type="button"
         variant="ghost"
@@ -1155,6 +1158,20 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
       >
         Done
       </Button>
+      {/* History lives on the RIGHT of Done, fenced off by its own rule.
+          Undo/redo are not selection verbs — they act on the board whatever is
+          picked — so they sit outside the run of verbs and outside the way
+          out, as their own group.
+
+          Select mode used to drop them entirely: `GraphUndoRedo` was rendered
+          only in the browse branch, so arming the mode took undo away at
+          exactly the moment a multi-select delete makes it most wanted.
+
+          Already `h-8` icon buttons, so the row's height is unchanged — which
+          matters, because both faces of the header are pinned to one height
+          and the last thing to break that was a single `h-9` on Done. */}
+      <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
+      <GraphUndoRedo />
     </div>
   );
 }
@@ -1404,36 +1421,43 @@ export function GraphBoard({
           time overlay inside it measure the run actually on screen. */}
       <TagFilterProvider>
       <FlatItemsProvider items={flatItems}>
-      <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
-        {/* Outside the surface branch on purpose: the sidebar's tool buttons
-            must insert in grid mode too, where no NativeDropStrip exists. */}
-        <SidebarToolInsertBridge collectionId={focusedId} />
-        {/* Also outside it (PL10-012): details are not a strip idea. A grid
-            card has no trim handles, but it has a name, a duration, and
-            whatever an item grows next — so it opens the same view. The modal
-            portals to the body, so where it mounts only decides which
-            providers it can see. */}
-        <GraphItemDetailsModal />
-        {/* The "?" sheet. Every gesture in this view is invisible otherwise —
-            hold-to-drag, O, F2, the whole Alt layer (PL11-007). */}
-        <GraphShortcuts />
-        <div className="flex flex-col gap-2">
-          {/* Pinned so the controls stay reachable while scrolling the
-              surfaces. It sticks just BELOW the sticky preview via the offset
-              the split pane publishes (0 when the preview is closed). The
-              opaque background is load-bearing twice over: it reads as a
-              toolbar, and it OCCLUDES the strip/grid scrolling underneath —
-              which is what stops a playhead marker from bleeding up into the
-              breadcrumb row. z-40 to sit ABOVE the strip's z-30 playhead
-              overlay (z-20 was below it, so the marker bled through the
-              header); it matches the sticky preview's z-40. The negative
-              margins let that background span the card's full width past its
-              p-4 padding. */}
+      <PreviewShell
+        enabled={previewOn}
+        focusedId={focusedId}
+        channel={timeChannel}
+        /*
+         * TOP of the sticky stack, above the preview rather than below it.
+         *
+         * It used to render with the surfaces and pin itself beneath the
+         * preview via `--workbench-preview-offset`. It cannot reach above the
+         * preview from there — a sticky element will not rise past the top of
+         * its containing block — so it moved into the pane's own `header`
+         * slot, which renders before the surface. The pane measures it and
+         * pins the surface underneath; nothing here sets `top` any more.
+         *
+         * The opaque background stays load-bearing twice over: it reads as a
+         * toolbar, and it OCCLUDES the strip/grid scrolling underneath, which
+         * is what stops a playhead marker from bleeding up into the breadcrumb
+         * row. The z-index moved to the pane wrapper (z-50, above the
+         * surface's z-40, above the strip's z-30 overlay).
+         */
+        header={
           <div
             data-graph-board-header=""
             data-header-mode={selectModeRow ? "select" : "browse"}
             className={cn(
-              "sticky z-40 min-w-0 items-center gap-x-3 border-b border-zinc-800/70 bg-zinc-950/95 py-3 backdrop-blur-sm",
+              // No `sticky`/`z`/`top` here any more — the pane's header
+              // wrapper owns all three. Leaving a second sticky context
+              // nested inside that one pinned this row against ITSELF and it
+              // stopped tracking the wrapper.
+              //
+              // No margin below it either: the row meets the preview directly,
+              // and the divider owns the clearance on both of ITS sides. An
+              // 8px gap here (restoring what the board column's `gap-2` used
+              // to give this row) was tried and removed — it bought nothing
+              // visually and only existed to keep one trim-frame assertion off
+              // its clamp.
+              "min-w-0 items-center gap-x-3 border-b border-zinc-800/70 bg-zinc-950/95 py-3 backdrop-blur-sm",
               // The browse row is a three-column grid so the aggregate sits at
               // the row's TRUE centre whatever the wings contain. The select row
               // has no centre to hold — it is one group that reads left to right
@@ -1443,7 +1467,6 @@ export function GraphBoard({
                 ? "flex"
                 : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
             )}
-            style={{ top: "var(--workbench-preview-offset, 0px)" }}
           >
             {/* Seek thumbs are centered on the timeline edge and intentionally
                 extend six pixels beyond it. Mask that overhang only while it
@@ -1577,13 +1600,34 @@ export function GraphBoard({
                 provider so its droppable joins the DndContext. */}
             <BreadcrumbDropZones trashId={trashRootId} />
           </div>
-
+        }
+      >
+        {/* Outside the surface branch on purpose: the sidebar's tool buttons
+            must insert in grid mode too, where no NativeDropStrip exists. */}
+        <SidebarToolInsertBridge collectionId={focusedId} />
+        {/* Also outside it (PL10-012): details are not a strip idea. A grid
+            card has no trim handles, but it has a name, a duration, and
+            whatever an item grows next — so it opens the same view. The modal
+            portals to the body, so where it mounts only decides which
+            providers it can see. */}
+        <GraphItemDetailsModal />
+        {/* The "?" sheet. Every gesture in this view is invisible otherwise —
+            hold-to-drag, O, F2, the whole Alt layer (PL11-007). */}
+        <GraphShortcuts />
+        {/* NO top padding here, deliberately. This column sits directly under
+            the divider, so anything added at its top is read as space below
+            the divider band — which broke the band's symmetry: 10px above it
+            (inside the divider box) against 10 + 8 below.
+            The divider owns the clearance on BOTH of its sides now, which is
+            the only way the two can be equal by construction. */}
+        <div className="flex flex-col gap-2">
           {/* OUTSIDE the sticky header, deliberately. It belongs to the board
               rather than the toolbar — it describes what you are looking at,
               and it is the one piece of chrome whose height varies (chips wrap
-              on a narrow viewport). Inside the sticky row that variation would
-              move the surfaces underneath it every time a tag was added, and
-              the header's `top` offset is shared with the preview shell. */}
+              on a narrow viewport). Inside the header that variation would
+              move everything below it — surfaces AND the preview, which now
+              pins to the header's measured height — every time a tag was
+              added. */}
           <ActiveTagFilters />
 
           {surface === "strip" ? (
