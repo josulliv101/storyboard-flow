@@ -15,9 +15,19 @@ const state = vi.hoisted(() => {
   const docs = new Map<string, Stored>();
   const current = { user: { uid: "user-a", email: null as string | null, name: null, picture: null } };
 
+  // Lets one test drop a COMPETING write in immediately after ours lands —
+  // the only way an in-memory double can pose the "someone else wrote between
+  // your write and your read-back" question at all. Fires once, then clears.
+  const hooks: { afterSet?: () => void } = {};
+
   const applySet = (id: string, data: Stored, opts?: { merge?: boolean }) => {
     const existing = docs.get(id);
     docs.set(id, opts?.merge && existing ? { ...existing, ...data } : { ...data });
+    const hook = hooks.afterSet;
+    if (hook) {
+      hooks.afterSet = undefined;
+      hook();
+    }
   };
   const snapshot = (id: string) => {
     const data = docs.get(id);
@@ -70,8 +80,26 @@ const state = vi.hoisted(() => {
         },
       };
     },
+    // Writes STAGE and apply on commit, like the real thing — a double that
+    // applied them eagerly would hide a throw-after-write.
+    runTransaction: async <T>(
+      fn: (tx: {
+        get: (ref: { id: string }) => Promise<ReturnType<typeof snapshot>>;
+        set: (ref: { id: string }, data: Stored, opts?: { merge?: boolean }) => void;
+      }) => Promise<T>,
+    ): Promise<T> => {
+      const staged: Array<[string, Stored, { merge?: boolean } | undefined]> = [];
+      const result = await fn({
+        get: async (ref) => snapshot(ref.id),
+        set: (ref, data, opts) => {
+          staged.push([ref.id, data, opts]);
+        },
+      });
+      for (const [id, data, opts] of staged) applySet(id, data, opts);
+      return result;
+    },
   };
-  return { docs, current, db };
+  return { docs, current, db, hooks };
 });
 
 vi.mock("server-only", () => ({}));
@@ -141,6 +169,7 @@ function patchRequest(document: TimelineDocument) {
 
 beforeEach(() => {
   state.docs.clear();
+  state.hooks.afterSet = undefined;
   asUser("user-a");
 });
 
@@ -208,6 +237,35 @@ describe("timeline authorization", () => {
   // Both of these used to assert the opposite: a GET or a list CLAIMED an
   // unowned record for whoever arrived first. The legacy records that justified
   // that are migrated, so knowing an id is no longer a claim to it.
+  it("reports the revision THIS save produced, not a racing writer's", async () => {
+    // `revision` is the compare-and-set token every other writer trusts. The
+    // save used to write, then RE-READ, and hand back whatever it found — so a
+    // writer landing in that gap had its number reported as the caller's own.
+    // The caller then held an expectation matching content it never produced,
+    // and its next CAS passed instead of refusing: the stale overwrite the
+    // token exists to stop.
+    //
+    // Reporting our own number instead fails CLOSED — the caller's next CAS is
+    // refused and it refetches.
+    seedProject("project-a1", "user-a");
+    state.hooks.afterSet = () => {
+      const stored = state.docs.get("project-a1");
+      state.docs.set("project-a1", { ...stored, revision: 99 });
+    };
+
+    const response = await patchTimeline(
+      patchRequest({ id: "project-a1", title: "Mine", clips: [clip("c1")] }),
+      params("project-a1"),
+    );
+
+    expect(response.status).toBe(200);
+    const { revision } = (await response.json()) as { revision: number };
+    expect(revision).toBe(1);
+    // The racing writer's value is genuinely in the store — this is not the
+    // hook failing to fire.
+    expect(state.docs.get("project-a1")?.revision).toBe(99);
+  });
+
   it("serves a demo fixture without claiming its global id", async () => {
     // The fixture ids are short and SHARED (`root`, `promo`, `workbench`…) and
     // `checkUserScopedId` does not recognise them, so persisting one on a READ
