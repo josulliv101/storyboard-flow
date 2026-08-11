@@ -16,7 +16,11 @@ import {
   DropdownMenuSeparator,
 } from "@/components/core/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { itemActionSections, type ItemActionState } from "@/lib/graph-item-action-specs";
+import {
+  itemActionSections,
+  itemActionShortLabel,
+  type ItemActionState,
+} from "@/lib/graph-item-action-specs";
 import { requestGraphItemAction, type GraphItemAction } from "@/lib/graph-view-events";
 
 // THE selection menu. One definition, three triggers: the anchor card's `⋮`,
@@ -127,10 +131,13 @@ function SelectionMenuRow({
   parts,
   state,
   spec,
+  shortLabels = false,
 }: Readonly<{
   parts: MenuParts;
   state: ItemActionState;
   spec: ReturnType<typeof itemActionSections>[number][number];
+  /** Drop the count from the visible text — see SelectionMenuOverflowItems. */
+  shortLabels?: boolean;
 }>) {
   const { Item } = parts;
   // `createElement` rather than `const Icon = spec.icon(state)`. The lookup
@@ -146,7 +153,10 @@ function SelectionMenuRow({
     // the glyph should register before the word does.
     className: cn(ICON_CLASS, destructive ? undefined : "text-zinc-400"),
   });
-  const label = spec.label(state);
+  // The ANNOUNCED name always carries the count, even where the visible text
+  // drops it — see SelectModeVerb for the same split and the reason.
+  const spokenLabel = spec.label(state);
+  const label = shortLabels ? itemActionShortLabel(spec, state) : spokenLabel;
   const reason = spec.unavailableReason(state);
   const disabled = spec.disabled(state);
   const shortcut = spec.shortcut;
@@ -158,7 +168,18 @@ function SelectionMenuRow({
       // The reason is part of the NAME, not a separate description (R12.5):
       // a description is announced late or not at all depending on the screen
       // reader's verbosity, and this is the half of the row that explains it.
-      aria-label={reason === null ? undefined : `${label}, ${reason}`}
+      //
+      // Also set whenever the visible text is SHORTENED, even with no reason to
+      // give: without it the accessible name falls back to the rendered text,
+      // which is exactly the string the count was just taken out of — so the
+      // row would announce "Cut" and never say how much it is about to cut.
+      aria-label={
+        reason === null
+          ? shortLabels
+            ? spokenLabel
+            : undefined
+          : `${spokenLabel}, ${reason}`
+      }
       onSelect={(event: Event) => {
         if (disabled) {
           event.preventDefault();
@@ -265,7 +286,17 @@ export function SelectionMenuOverflowItems({
           {index > 0 ? <Separator /> : null}
           <div role="group">
             {run.map((spec) => (
-              <SelectionMenuRow key={spec.action} parts={parts} state={state} spec={spec} />
+              <SelectionMenuRow
+                key={spec.action}
+                parts={parts}
+                state={state}
+                spec={spec}
+                // Uncounted, like the verbs beside it. This menu IS the select
+                // row's remainder and opens directly under its "3 selected", so
+                // a row reading "Cut 3 items" an inch from a "Cut" that does not
+                // would look like two different actions.
+                shortLabels
+              />
             ))}
           </div>
         </Fragment>

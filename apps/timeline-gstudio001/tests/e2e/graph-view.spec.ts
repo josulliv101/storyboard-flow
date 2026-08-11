@@ -835,14 +835,30 @@ test.describe("graph view E2E", () => {
     const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
     await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
 
-    // Double-click the card's name label → inline editor; commit with Enter.
-    await card.getByText("Scene A", { exact: true }).dblclick();
+    // ONE click on the card's name label → inline editor; commit with Enter.
+    await card.getByText("Scene A", { exact: true }).click();
     const editor = page.getByRole("textbox", { name: "Timeline name" });
     await editor.fill("Heist Plan");
     await editor.press("Enter");
 
     // node.name (the accessible name, ghost, and announcements) updates at once.
     await expect(card).toHaveAttribute("aria-label", /^Heist Plan \(collection/);
+
+    // THE HOVER AFFORDANCE. A one-click target that looks exactly like static
+    // text is a trap in both directions — nobody finds the rename, and anyone
+    // aiming at the card is surprised by an editor. E2E rather than a story
+    // because the tint is CSS `:hover`, which is browser state driven by real
+    // pointer position: no synthetic event sets it.
+    const label = card.getByText("Heist Plan", { exact: true });
+    const background = () =>
+      label.evaluate((element) => getComputedStyle(element).backgroundColor);
+    await page.mouse.move(0, 0);
+    const atRest = await background();
+    await label.hover();
+    await expect.poll(background).not.toBe(atRest);
+    // ...and it lets go again, rather than leaving one card looking armed.
+    await page.mouse.move(0, 0);
+    await expect.poll(background).toBe(atRest);
     // And the child document — the source of truth — is persisted.
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
@@ -6711,6 +6727,40 @@ test.describe("graph view E2E", () => {
     expect(
       await header.evaluate((e) => Math.round(e.getBoundingClientRect().height)),
     ).toBe(narrowHeight);
+  });
+
+  test("the select row drops Edit, and its verbs do not repeat the count", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await selectCard(surface.locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    await surface.locator('[data-node-id="bravo"]').click();
+    await expect(page.locator("[data-select-mode-count]")).toHaveText("2 selected");
+
+    const run = page.locator("[data-select-mode-verbs]");
+
+    // EDIT IS NOT A ROW VERB. It acts on exactly one item, so in the one mode
+    // built for picking several it was dimmed more often than not — a permanent
+    // slot spent on a verb that mostly cannot run. Checked in the RULER too:
+    // the ruler holds the full run, so a verb removed from the drawn list but
+    // left in the measured one would still be reserving width for itself.
+    await expect(run.locator(":scope > [data-header-action='details']")).toHaveCount(0);
+    await expect(
+      run.locator("[data-select-mode-verb-ruler] [data-header-action='details']"),
+    ).toHaveCount(0);
+
+    // The count lives in "2 selected" and nowhere else on the row. It used to
+    // be repeated by every verb beside it — "Cut 2 items · Copy 2 items · …".
+    const del = run.locator(":scope > [data-header-action='delete']");
+    await expect(del).toHaveText("Delete");
+
+    // ...but the ANNOUNCED name still carries it. A screen-reader user arriving
+    // here by tab has not necessarily just heard the count, and "Delete" alone
+    // does not say what it is about to delete.
+    await expect(del).toHaveAttribute("aria-label", "Delete 2 items");
   });
 
   test("select mode takes the breadcrumb's place at the SAME height, from the first click", async ({

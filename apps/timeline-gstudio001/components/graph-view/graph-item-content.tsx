@@ -784,7 +784,12 @@ function CaptionTagRow({ tags }: Readonly<{ tags: readonly string[] }>) {
       // space the chips are using", which is always yes — the fold then never
       // fires, or fires against a box that shrank because of the last answer.
       // Same one-way rule the select row's verb container follows.
-      className="relative flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+      //
+      // RIGHT-JUSTIFIED via `justify-end` rather than by letting the box shrink
+      // to its contents — the two look identical until the row is measured, and
+      // shrinking is the thing that breaks the fold. The container still spans
+      // the leftover width; only the chips inside it sit at its right edge.
+      className="relative flex min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden"
     >
       {/* The ruler: every chip, laid out but invisible. `visibility:hidden`
           rather than `display:none` so the boxes still measure, absolute so it
@@ -1292,14 +1297,17 @@ const GraphClipContent = memo(function GraphClipContent({
         className="hidden min-w-0 flex-col gap-1 pt-2.5 pr-1.5 pb-1.5 pl-[7px] [[data-virtual-grid]_&]:flex"
       >
         <span className="flex min-w-0 items-center gap-1.5">
-          {/* `size-4`, matching the collection caption's Layers glyph. At
-              `size-3.5` the two icon boxes differed by 2px, so every name in a
-              mixed grid started at one of two x positions. */}
-          <KindIcon
-            aria-hidden="true"
-            strokeWidth={1.7}
-            className="size-4 shrink-0 text-zinc-400"
-          />
+          {/* `size-4` AND lucide's default stroke, both matching the collection
+              caption's Layers glyph.
+
+              The size was the visible half: at `size-3.5` the two icon boxes
+              differed by 2px, so every name in a mixed grid started at one of
+              two x positions. The WEIGHT was the quieter half — this carried
+              `strokeWidth={1.7}` against Layers' default 2, so at identical
+              size the media glyph still drew a lighter line than the collection
+              beside it. Same size, same weight, same colour: the two card kinds
+              lead their captions with one glyph style. */}
+          <KindIcon aria-hidden="true" className="size-4 shrink-0 text-zinc-400" />
           {/* Omitted, not blanked, when the clip has no authored name — see
               `captionName`. The icon keeps the row's height and left edge, so
               the meta line below stays put whether or not there is a name. */}
@@ -1712,28 +1720,38 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             className="hidden size-4 shrink-0 text-zinc-400 [[data-virtual-grid]_&]:block"
           />
           <span
-            // The NAME swallows a plain click, so the card body's drill-in does
-            // not fire underneath it.
+            // ONE CLICK RENAMES. The name already swallowed the click — it had
+            // to, because a plain click on the card DRILLS IN, which unmounts
+            // this card before a second click can land, and that is what broke
+            // double-click-to-rename in the first place. So the click was being
+            // caught and thrown away: the label's advertised gesture cost two
+            // presses while one press did nothing at all. It now does the thing
+            // the label is for.
             //
-            // Required by the single-click drill-in, not decoration: click 1 of
-            // a double-click used to be harmless here (it selected), and now it
-            // NAVIGATES — which unmounts this card before the second click can
-            // arrive, so double-click-to-rename simply stopped working. Letting
-            // the label eat the single click is what gives the gesture somewhere
-            // to happen.
-            //
-            // The cost is a small dead zone: clicking a collection's name does
-            // nothing rather than opening it. That is the right trade for a
-            // label whose advertised gesture IS rename — and the rest of the
-            // card, which is most of it, still opens on one click.
-            onClick={(event) => event.stopPropagation()}
-            onDoubleClick={(event) => {
+            // `stopPropagation` is still what makes it work — without it the
+            // drill-in fires underneath and navigates away from the field that
+            // just opened. React's synthetic bubbling never reaches the
+            // surface's handler.
+            onClick={(event) => {
               event.stopPropagation();
               rename.begin();
               // (keyboard: F2 on the focused card — see OpenKeyBoundary)
             }}
-            title="Double-click or press F2 to rename"
-            className="min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-zinc-100 [[data-virtual-grid]_&]:text-sm"
+            title="Click or press F2 to rename"
+            className={[
+              "min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-zinc-100",
+              "[[data-virtual-grid]_&]:text-sm",
+              // HOVER SAYS IT IS A FIELD. A one-click target that looks exactly
+              // like static text is a trap in both directions: nobody discovers
+              // the rename, and anyone aiming at the card is surprised by an
+              // editor. The tint is the same shape the field itself takes, so
+              // the hover reads as a preview of what the click opens.
+              //
+              // Negative margin against the padding, so the hit area grows
+              // without the name shifting sideways on hover — and without it
+              // taking width from the count beside it at rest.
+              "-mx-1 rounded-sm px-1 transition-colors hover:bg-white/10",
+            ].join(" ")}
           >
             {displayName}
           </span>

@@ -193,12 +193,23 @@ export const PlaceholderAriaCountMatchesBadge: Story = {
     await expect(canvasElement).toHaveTextContent(/8\.0s\s*\/\s*2 items/);
 
     const name = canvasElement.querySelector<HTMLElement>(
-      '[title="Double-click or press F2 to rename"]',
+      '[title="Click or press F2 to rename"]',
     )!;
     const surfaceRect = surface.getBoundingClientRect();
     const nameRect = name.getBoundingClientRect();
-    await expect(nameRect.left - surfaceRect.left).toBeGreaterThanOrEqual(9);
-    await expect(surfaceRect.right - nameRect.right).toBeGreaterThanOrEqual(9);
+    // The name's TEXT must clear the card's edges — so its own padding counts.
+    //
+    // The label carries `-mx-1 px-1`: the box reaches 4px further out on each
+    // side to give the rename hover a target bigger than the glyphs, while the
+    // padding puts the text back exactly where it was. Measuring the raw box
+    // therefore reports a text inset 4px smaller than the one on screen, which
+    // is what this assertion used to do — it failed on a card whose text had
+    // not moved a pixel.
+    const style = getComputedStyle(name);
+    const padLeft = Number.parseFloat(style.paddingLeft) || 0;
+    const padRight = Number.parseFloat(style.paddingRight) || 0;
+    await expect(nameRect.left + padLeft - surfaceRect.left).toBeGreaterThanOrEqual(9);
+    await expect(surfaceRect.right - (nameRect.right - padRight)).toBeGreaterThanOrEqual(9);
     await expect(surfaceRect.bottom - nameRect.bottom).toBeGreaterThanOrEqual(7);
   },
 };
@@ -252,7 +263,9 @@ export const ComposedCardStructure: Story = {
     const label = Array.from(surface!.querySelectorAll("span")).find(
       (el) => el.textContent === "A timeline",
     )!;
-    await userEvent.dblClick(label);
+    // ONE click opens it now — the label used to swallow the first click
+    // and rename on the second.
+    await userEvent.click(label);
     const editor = canvasElement.querySelector<HTMLInputElement>(
       'input[aria-label="Timeline name"]',
     );
@@ -1455,7 +1468,7 @@ export const CollectionGridCaptionLeadsWithItsKind: Story = {
     // LEADS the name — left of it, on the same line. Both halves matter: an
     // icon that wrapped above the name would satisfy a left-of test on its own.
     const name = canvasElement.querySelector<HTMLElement>(
-      '[title="Double-click or press F2 to rename"]',
+      '[title="Click or press F2 to rename"]',
     )!;
     const kindRect = kind.getBoundingClientRect();
     const nameRect = name.getBoundingClientRect();
