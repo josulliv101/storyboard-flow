@@ -677,6 +677,13 @@ function ProvenanceLabel({
       aria-hidden="true"
       data-provenance={parentId as string}
       title={`In "${name}" — double-click to open it (or press O)`}
+      // The single click is SWALLOWED, and that is what keeps the double-click
+      // reachable. A plain click on a clip card opens its edit overlay now, so
+      // without this click 1 of the double-click puts a modal over the board
+      // and click 2 lands on the modal — the gesture this label advertises
+      // could never complete. Exactly the trap the collection's NAME span
+      // already avoids, for exactly the same reason.
+      onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => {
         event.stopPropagation();
         nav?.openTimeline(parentId);

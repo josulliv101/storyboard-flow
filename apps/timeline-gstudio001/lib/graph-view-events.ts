@@ -173,6 +173,28 @@ export function requestGraphItemAction(action: GraphItemAction): void {
   );
 }
 
+/**
+ * Open the details view for ONE named item, whatever is selected.
+ *
+ * A separate event from the `details` action above, and the difference is the
+ * whole point. That one is the sidebar's Edit verb: it acts on THE SELECTION
+ * and refuses anything that is not exactly one item. This is a click on a media
+ * card, which now opens that card's editor without selecting it — so there is
+ * no selection for the verb to read, and the id has to travel with the request.
+ *
+ * An event rather than a prop or a context read because of where the two ends
+ * sit: the click is routed by the navigation provider (it needs the engine
+ * store), which is mounted OUTSIDE ItemDetailsProvider and cannot reach
+ * `setOpenId`. Same seam, same reason, as the rename hand-off below.
+ */
+export const GRAPH_OPEN_ITEM_DETAILS_EVENT = "graph-view:open-item-details";
+
+export function requestGraphItemDetails(nodeId: string): void {
+  window.dispatchEvent(
+    new CustomEvent<string>(GRAPH_OPEN_ITEM_DETAILS_EVENT, { detail: nodeId }),
+  );
+}
+
 // Keyboard rename hand-off. F2 on a focused collection card is caught at the
 // board's keyboard boundary (OpenKeyBoundary), but inline-rename state is LOCAL
 // to each rename site (card, breadcrumb, sub-row — all via useInlineRename).

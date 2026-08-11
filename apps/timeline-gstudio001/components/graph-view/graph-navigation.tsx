@@ -15,7 +15,11 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { toast } from "@/components/core/sonner";
-import { GRAPH_OPEN_ITEM_EVENT, requestGraphRenameItem } from "@/lib/graph-view-events";
+import {
+  GRAPH_OPEN_ITEM_EVENT,
+  requestGraphItemDetails,
+  requestGraphRenameItem,
+} from "@/lib/graph-view-events";
 
 import type { ClipDetail } from "@storyboard/timeline-domain";
 
@@ -120,9 +124,34 @@ export function GraphViewNavProvider({
     [detailsStore, focusedId, onNavigateStart, projectId, router, store],
   );
 
+  // A plain click on ANY card lands here now, so this is where the two
+  // meanings of "open" part company:
+  //
+  //   a COLLECTION opens as a place — drill in, the focus moves.
+  //   a CLIP opens as a thing — its editor, over the board you are on.
+  //
+  // Neither selects. Routing by kind HERE rather than in the click policy is
+  // what keeps the package framework- and app-agnostic: `openOnClick` answers
+  // "does a click on this open something", and what opening MEANS is the app's
+  // business. The details overlay is reached by event because this provider is
+  // mounted outside ItemDetailsProvider and cannot see `setOpenId`.
   useEffect(() => {
-    if (openNodeRef) openNodeRef.current = value.openTimeline;
-  }, [openNodeRef, value]);
+    if (!openNodeRef) return;
+    openNodeRef.current = (nodeId) => {
+      const node = store.getSnapshot().graph.nodesById.get(nodeId);
+      // A duplicate-reference card is a clip standing in for a twice-referenced
+      // timeline; `openTimeline` already resolves it to that timeline, so it
+      // routes as a place despite being media in the graph.
+      const opensAsPlace =
+        node?.kind === "collection" ||
+        detailsStore.get(nodeId as string)?.duplicateOfTimelineId !== undefined;
+      if (opensAsPlace) {
+        value.openTimeline(nodeId);
+        return;
+      }
+      requestGraphItemDetails(nodeId as string);
+    };
+  }, [detailsStore, openNodeRef, store, value]);
 
   // The pill's "Open" arrives here: it is dispatched by the item-actions
   // bridge, which is a sibling of the board rather than a descendant of this

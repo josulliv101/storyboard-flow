@@ -4,7 +4,11 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
 
-import { GRAPH_ITEM_ACTION_EVENT, type GraphItemAction } from "@/lib/graph-view-events";
+import {
+  GRAPH_ITEM_ACTION_EVENT,
+  GRAPH_OPEN_ITEM_DETAILS_EVENT,
+  type GraphItemAction,
+} from "@/lib/graph-view-events";
 
 /**
  * WHICH item has its details open (PL10-004 → PL11-002).
@@ -39,18 +43,25 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
 }
 
 /**
- * Opens the details view when the sidebar's Edit action fires (PL13-009).
+ * Opens the details view, from either of its two triggers (PL13-009).
  *
  * The listener lives HERE rather than in the item-actions bridge, which is
  * mounted outside this provider and would only ever see the closed fallback.
  * The details feature owning its own trigger also means the rail knows nothing
  * about `openId` — it sends a verb and this decides what that means.
  *
- * Reads the selection at the moment of the press rather than tracking it: the
- * event IS the intent, and anything else would be a second copy of state the
- * store already holds. Refuses anything that is not exactly one item — the
- * sidebar disables the control past one, but a window event carries no proof
- * of who sent it.
+ * TWO EVENTS, because there are two intents and only one of them has a
+ * selection to read:
+ *
+ *   the Edit VERB acts on THE SELECTION. It reads it at the moment of the press
+ *     rather than tracking it — the event IS the intent, and anything else
+ *     would be a second copy of state the store already holds — and refuses
+ *     anything that is not exactly one item. The sidebar disables the control
+ *     past one, but a window event carries no proof of who sent it.
+ *
+ *   a CLICK ON A MEDIA CARD names its own item. A plain click opens a clip's
+ *     editor without selecting it, so there is no selection here to read and
+ *     the id travels with the request.
  */
 function ItemDetailsActionListener({
   onOpen,
@@ -64,8 +75,16 @@ function ItemDetailsActionListener({
       if (selected.length !== 1) return;
       onOpen(selected[0] as string);
     };
+    const onOpenOne = (event: Event) => {
+      const nodeId = (event as CustomEvent<string>).detail;
+      if (typeof nodeId === "string" && nodeId.length > 0) onOpen(nodeId);
+    };
     window.addEventListener(GRAPH_ITEM_ACTION_EVENT, onAction);
-    return () => window.removeEventListener(GRAPH_ITEM_ACTION_EVENT, onAction);
+    window.addEventListener(GRAPH_OPEN_ITEM_DETAILS_EVENT, onOpenOne);
+    return () => {
+      window.removeEventListener(GRAPH_ITEM_ACTION_EVENT, onAction);
+      window.removeEventListener(GRAPH_OPEN_ITEM_DETAILS_EVENT, onOpenOne);
+    };
   }, [store, onOpen]);
 
   return null;

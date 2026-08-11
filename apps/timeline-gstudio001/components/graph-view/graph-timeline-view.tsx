@@ -601,27 +601,26 @@ export function GraphTimelineView({
   // registers itself into this ref.
   const openNodeRef = useRef<(nodeId: NodeId) => void>(() => {});
   const handleOpenNode = useCallback((nodeId: NodeId) => openNodeRef.current(nodeId), []);
-  // A plain click on a COLLECTION drills in — one click, no second click to
-  // wait for. Duplicate-reference cards (media standing in for a twice-
-  // referenced timeline) open the same way, which is what they always did.
+  // EVERY card is an open target now, and a plain click never selects.
   //
-  // This is `openOnClick`'s own default, spelled out rather than omitted: the
-  // predicate is the documented seam for "which nodes open", and leaving it off
-  // to inherit `node.kind === "collection"` hides that decision in the package.
+  //   a COLLECTION opens as a place — drill in.
+  //   a CLIP opens as a thing — its edit overlay, over the board you are on.
   //
-  // SELECTING a collection is select mode's job now (see the header's Select
-  // control). That is a straight trade and worth naming: click used to select a
-  // collection so Delete could trash it, and the only pointer route in was the
-  // card's own folder button. Now click goes in, and picking collections to act
-  // on is a mode you enter deliberately — which is also the only way to pick
-  // several. Ctrl/Cmd+click still toggles one without entering the mode, and
-  // the O key still opens from the keyboard (OpenKeyBoundary).
-  const openOnClick = useCallback(
-    (nodeId: NodeId, node: CollectionItemNode) =>
-      node.kind === "collection" ||
-      detailsStore.get(nodeId as string)?.duplicateOfTimelineId !== undefined,
-    [detailsStore],
-  );
+  // Which of those a node gets is decided in GraphViewNavProvider, where the
+  // graph is; this predicate only answers "does a plain click on this open
+  // something", and the answer is now yes for everything. Returning `true`
+  // flatly rather than omitting the prop, because the package's default is
+  // `node.kind === "collection"` and inheriting it would hide the decision.
+  //
+  // SELECTION IS A MODE. This is the trade, and it is worth naming: click used
+  // to select, so Delete and the rest could act on what you had just clicked.
+  // Picking things is now something you enter deliberately — press Select, then
+  // tap — which is also the only way to pick several. Three escape hatches
+  // survive for one-off work without the mode: the hover CHECKBOX toggles a
+  // single card, Ctrl/Cmd+click toggles one from the keyboard-and-pointer
+  // grammar, and Space on a focused card selects it (keyboard activation
+  // reports `detail === 0`, which the policy never routes to open).
+  const openOnClick = useCallback(() => true, []);
   // No `deferSelection`: it existed ONLY because a double-click drilled in, and
   // click 1's selection had to be held back so the user never watched a card
   // select and then unselect on its way into the collection. With a single
