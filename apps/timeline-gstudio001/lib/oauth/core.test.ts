@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   base64url,
   getSigningSecret,
+  grantAllowsResource,
   isRegisteredRedirectUri,
   loadClient,
   safeEqual,
@@ -130,6 +131,38 @@ describe("access tokens", () => {
 
   it("rejects malformed input", () => {
     expect(verifyAccessToken("not-a-token", SECRET, AUDIENCE)).toEqual({ ok: false, reason: "malformed" });
+  });
+});
+
+describe("grantAllowsResource", () => {
+  it("allows a grant redeemed at the resource it was issued for", () => {
+    expect(grantAllowsResource(AUDIENCE, AUDIENCE)).toBe(true);
+  });
+
+  it("refuses a grant presented at a different resource", () => {
+    // The whole point of the binding: a code or refresh token minted for one
+    // deployment must not mint a token audienced at another. Both sides of the
+    // comparison used to be recomputed from the live request, so this pair
+    // silently passed.
+    expect(grantAllowsResource(AUDIENCE, "https://evil.test/api/mcp")).toBe(false);
+  });
+
+  it("refuses a grant that records no resource at all", () => {
+    // An absent binding is not a wildcard. A stored grant predating the field
+    // needs one re-authorization rather than 30 days of unbound refreshes.
+    expect(grantAllowsResource(undefined, AUDIENCE)).toBe(false);
+  });
+
+  it("does not treat an empty string as a match for anything", () => {
+    expect(grantAllowsResource("", AUDIENCE)).toBe(false);
+    expect(grantAllowsResource(undefined, "")).toBe(false);
+  });
+
+  it("is exact — no prefix or host-suffix matching", () => {
+    // Same trap as redirect-uri matching: a prefix rule turns
+    // `https://app.test/api/mcp` into a licence for `https://app.test.evil/`.
+    expect(grantAllowsResource(AUDIENCE, `${AUDIENCE}/extra`)).toBe(false);
+    expect(grantAllowsResource("https://example.test", AUDIENCE)).toBe(false);
   });
 });
 
