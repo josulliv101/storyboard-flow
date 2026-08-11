@@ -41,7 +41,11 @@ import { flattenMediaOrder } from "@storyboard/timeline-domain";
 
 import { formatDuration } from "@/lib/format-duration";
 import { graphClipboard } from "@/lib/graph-clipboard";
-import { itemActionSpec, type ItemActionState } from "@/lib/graph-item-action-specs";
+import {
+  itemActionShortLabel,
+  itemActionSpec,
+  type ItemActionState,
+} from "@/lib/graph-item-action-specs";
 import {
   GRAPH_BOARD_MENU_SLOT_ID,
   requestGraphItemAction,
@@ -827,7 +831,11 @@ function SelectModeButton() {
  * away rather than gone.
  */
 const SELECT_MODE_VERBS: readonly GraphItemAction[] = [
-  "details",
+  // EDIT IS NOT HERE. It acts on exactly one item, so in the one mode built for
+  // picking several it is dimmed more often than not — a permanent slot in the
+  // row spent on a verb that mostly cannot run, saying "one only" beside a
+  // count that says otherwise. It stays in the full menu, where a single
+  // selection reaches it in one click.
   "copy",
   "cut",
   "duplicate",
@@ -839,13 +847,15 @@ const SELECT_MODE_VERBS: readonly GraphItemAction[] = [
  * The order they SURVIVE in as the row narrows — first is kept longest.
  *
  * DELIBERATELY NOT the draw order. Dropping from the right would take Delete
- * first, and Delete plus Edit are the two verbs that were promoted when this
- * row held a fixed three; losing them to a narrow window while Cut stayed would
- * be a regression dressed up as responsiveness. Draw order is what reads well
- * left to right; this is what matters when there is not room for all of it.
+ * first — the verb most worth keeping — while Cut stayed, which would be a
+ * regression dressed up as responsiveness. Draw order is what reads well left
+ * to right; this is what matters when there is not room for all of it.
+ *
+ * Must hold exactly the same members as SELECT_MODE_VERBS: the fit maths looks
+ * each of these up by `indexOf` in that list, so a verb here and not there
+ * measures as zero width and one there and not here is never drawn at all.
  */
 const SELECT_MODE_VERB_PRIORITY: readonly GraphItemAction[] = [
-  "details",
   "delete",
   "duplicate",
   "copy",
@@ -958,11 +968,20 @@ function SelectModeVerb({
   state,
 }: Readonly<{ action: GraphItemAction; state: ItemActionState }>) {
   const spec = itemActionSpec(action);
-  const label = spec.label(state);
+  // VISIBLE text is uncounted; the ACCESSIBLE name keeps the count.
+  //
+  // The row already opens with "3 selected", so drawing "Cut 3 items · Copy 3
+  // items · Delete 3 items" beside it said the same number four times. But a
+  // screen-reader user arriving on the button by tab has not necessarily just
+  // heard the count, and "Delete" alone does not say what it is about to
+  // delete — so the name that is ANNOUNCED still carries it. Short label for
+  // the eye, full label for the ear.
+  const label = itemActionShortLabel(spec, state);
+  const spokenLabel = spec.label(state);
   const reason = spec.unavailableReason(state);
   const disabled = spec.disabled(state);
   const icon = createElement(spec.icon(state), { "aria-hidden": true, className: "h-4 w-4" });
-  const name = reason === null ? label : `${label}, ${reason}`;
+  const name = reason === null ? spokenLabel : `${spokenLabel}, ${reason}`;
 
   return (
     <button

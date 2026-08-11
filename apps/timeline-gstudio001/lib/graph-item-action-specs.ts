@@ -79,6 +79,21 @@ export type ItemActionSpec = Readonly<{
   /** Resolved against state, because several change wording: Disable becomes
    *  Enable, and counts appear once a selection is plural. */
   label: (state: ItemActionState) => string;
+  /**
+   * The same label with the COUNT left off — for surfaces that already show it.
+   *
+   * The select row is one: it opens with "3 selected" and then drew "Cut 3
+   * items · Copy 3 items · Delete 3 items" beside it, saying the same number
+   * four times in one row. The menu keeps the counted `label`, because there it
+   * is doing real work — a row reached from a card can be acted on without the
+   * count being anywhere else on screen.
+   *
+   * OPTIONAL: absent on the verbs that never carry a count anyway (Edit,
+   * Rename, Paste into), where it would only be `label` written twice. Read it
+   * through `itemActionShortLabel` rather than directly, so a caller cannot
+   * forget the fallback and silently drop a label.
+   */
+  shortLabel?: (state: ItemActionState) => string;
   description: (state: ItemActionState) => string;
   icon: (state: ItemActionState) => LucideIcon;
   /** Shown right-aligned in the row (R7.8). These carry the majority of real
@@ -167,6 +182,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
     action: "copy",
     section: "clipboard",
     label: counted("Copy"),
+    shortLabel: () => "Copy",
     description: () => "Copy the selection",
     icon: () => Copy,
     shortcut: "Ctrl/⌘ C",
@@ -178,6 +194,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
     action: "cut",
     section: "clipboard",
     label: counted("Cut"),
+    shortLabel: () => "Cut",
     description: () => "Cut the selection — paste to move it",
     icon: () => Scissors,
     shortcut: "Ctrl/⌘ X",
@@ -189,6 +206,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
     action: "duplicate",
     section: "clipboard",
     label: counted("Duplicate"),
+    shortLabel: () => "Duplicate",
     description: () => "Duplicate the selection",
     icon: () => CopyPlus,
     shortcut: "Ctrl/⌘ D",
@@ -216,6 +234,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
     action: "toggle-disabled",
     section: "state",
     label: (s) => counted(s.allDisabled ? "Enable" : "Disable")(s),
+    shortLabel: (s) => (s.allDisabled ? "Enable" : "Disable"),
     description: (s) =>
       s.allDisabled ? "Play the selection again" : "Keep the slot, skip it on playback",
     icon: (s) => (s.allDisabled ? CircleCheck : Ban),
@@ -230,6 +249,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
     action: "delete",
     section: "destructive",
     label: counted("Delete"),
+    shortLabel: () => "Delete",
     description: () => "Move the selection to trash",
     icon: () => Trash2,
     shortcut: "Delete",
@@ -257,6 +277,20 @@ export function itemActionSpec(action: GraphItemAction): ItemActionSpec {
   const spec = ITEM_ACTION_SPECS.find((candidate) => candidate.action === action);
   if (spec === undefined) throw new Error(`No item action spec for "${action}"`);
   return spec;
+}
+
+/**
+ * The label for a surface that already shows the selection count.
+ *
+ * `shortLabel` where a spec has one, `label` otherwise — read it through here
+ * rather than reaching for the optional field, so a caller cannot forget the
+ * fallback and render `undefined` on the three verbs that never count.
+ */
+export function itemActionShortLabel(
+  spec: ItemActionSpec,
+  state: ItemActionState,
+): string {
+  return (spec.shortLabel ?? spec.label)(state);
 }
 
 /**

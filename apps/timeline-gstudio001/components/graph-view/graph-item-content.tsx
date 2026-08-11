@@ -713,6 +713,70 @@ function ProvenanceLabel({
  */
 const CAPTION_TAG_GAP_PX = 4;
 
+/**
+ * The caption's two rows, shared by BOTH card kinds.
+ *
+ * A grid caption is always TWO rows: identity on top (kind glyph, name, and the
+ * metadata trailing right), tags underneath, right-justified. The two kinds
+ * used to disagree about the shape — a collection put its metadata on row one
+ * and its tags in a span of their own, media stacked name over
+ * metadata-plus-tags — so a mixed grid showed two different objects.
+ *
+ * Shared as CONSTANTS rather than as matching literals in two places, because
+ * matching literals is exactly what drifted: the alignment work before this had
+ * to reconcile four separate numbers that were only ever meant to be equal.
+ */
+const CAPTION_ROW_CLASS = "flex min-h-5 min-w-0 items-center gap-1.5";
+
+/**
+ * Row two, and it is ALWAYS RENDERED — an untagged card keeps an empty one.
+ *
+ * That is the whole point of the `min-h`: with the row omitted, a tagged card
+ * was taller than an untagged one, so a grid of mixed cards had captions of two
+ * heights and the artwork above them started at two different places. Reserving
+ * the height costs one empty row and buys every card the same box.
+ *
+ * The height is held by a SPACER (`CaptionTagRowSpacer`), not by a `min-h` on
+ * the row. `min-h` was the first attempt and it was measurably wrong: under
+ * `border-box` a min-height includes the element's own padding, so the
+ * collection's row — which carries `pt-1 pb-1.5` where the media card's does
+ * not — reserved 14px total and got 4px of content, then grew to 24px once real
+ * chips arrived. Media was 14px either way; the collection was 14 vs 24, so its
+ * artwork moved 10px depending on whether the card happened to be tagged. A
+ * spacer reserves CONTENT height, which every padding then adds to equally.
+ *
+ * NO display utility here, deliberately. The collection's copy is grid-gated
+ * (`hidden [[data-virtual-grid]_&]:flex`) and a `flex` baked in would collide
+ * with that `hidden` — two display utilities on one element, resolved by CSS
+ * source order rather than by the order they are written, which is a coin toss
+ * dressed up as a class list. Each caller states its own.
+ */
+const CAPTION_TAG_ROW_CLASS = "min-w-0 items-center justify-end";
+
+/**
+ * Holds row two open at exactly one chip's height when there are no tags.
+ *
+ * 14px is a chip's own box (`text-[10px] leading-none` + `py-0.5`); the ring is
+ * a box-shadow and costs no layout. Zero WIDTH so it cannot push the chips it
+ * stands in for, and `shrink-0` so a crowded row cannot squeeze it back to
+ * nothing — which would silently restore the height difference it exists to
+ * remove.
+ */
+function CaptionTagRowSpacer() {
+  return <span aria-hidden="true" className="block h-[14px] w-0 shrink-0" />;
+}
+
+/**
+ * The trailing metadata on row one — duration, and a collection's item count.
+ *
+ * Modelled on the collection card's, which is the one the owner picked: mono,
+ * medium, zinc-300, stepping up a size in the grid. `ml-auto` is what puts it
+ * at the row's right edge without a `justify-between` that would also fight the
+ * name's `flex-1`.
+ */
+const CAPTION_META_CLASS =
+  "ml-auto flex shrink-0 items-center gap-1 font-mono text-[11px] font-medium text-zinc-300 [[data-virtual-grid]_&]:text-xs";
+
 function CaptionTagRow({ tags }: Readonly<{ tags: readonly string[] }>) {
   const ordered = useMemo(() => sortTagsStatusFirst(tags), [tags]);
   const containerRef = useRef<HTMLSpanElement | null>(null);
@@ -784,7 +848,12 @@ function CaptionTagRow({ tags }: Readonly<{ tags: readonly string[] }>) {
       // space the chips are using", which is always yes — the fold then never
       // fires, or fires against a box that shrank because of the last answer.
       // Same one-way rule the select row's verb container follows.
-      className="relative flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+      //
+      // RIGHT-JUSTIFIED via `justify-end` rather than by letting the box shrink
+      // to its contents — the two look identical until the row is measured, and
+      // shrinking is the thing that breaks the fold. The container still spans
+      // the leftover width; only the chips inside it sit at its right edge.
+      className="relative flex min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden"
     >
       {/* The ruler: every chip, laid out but invisible. `visibility:hidden`
           rather than `display:none` so the boxes still measure, absolute so it
@@ -1291,40 +1360,49 @@ const GraphClipContent = memo(function GraphClipContent({
         // contract, not the individual numbers, and the stories measure it.
         className="hidden min-w-0 flex-col gap-1 pt-2.5 pr-1.5 pb-1.5 pl-[7px] [[data-virtual-grid]_&]:flex"
       >
-        <span className="flex min-w-0 items-center gap-1.5">
-          {/* `size-4`, matching the collection caption's Layers glyph. At
-              `size-3.5` the two icon boxes differed by 2px, so every name in a
-              mixed grid started at one of two x positions. */}
-          <KindIcon
-            aria-hidden="true"
-            strokeWidth={1.7}
-            className="size-4 shrink-0 text-zinc-400"
-          />
+        {/* ROW ONE: kind, name, metadata — the collection card's shape. */}
+        <span className={CAPTION_ROW_CLASS}>
+          {/* `size-4` AND lucide's default stroke, both matching the collection
+              caption's Layers glyph.
+
+              The size was the visible half: at `size-3.5` the two icon boxes
+              differed by 2px, so every name in a mixed grid started at one of
+              two x positions. The WEIGHT was the quieter half — this carried
+              `strokeWidth={1.7}` against Layers' default 2, so at identical
+              size the media glyph still drew a lighter line than the collection
+              beside it. Same size, same weight, same colour: the two card kinds
+              lead their captions with one glyph style. */}
+          <KindIcon aria-hidden="true" className="size-4 shrink-0 text-zinc-400" />
           {/* Omitted, not blanked, when the clip has no authored name — see
-              `captionName`. The icon keeps the row's height and left edge, so
-              the meta line below stays put whether or not there is a name. */}
+              `captionName`. The icon holds the row's height and left edge, and
+              the metadata's `ml-auto` holds its right edge, so the row keeps
+              its shape whether or not there is a name between them. */}
           {captionName === null ? null : (
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100">
               {captionName}
             </span>
           )}
-        </span>
-        {/* Row two is omitted ENTIRELY when it would be empty, rather than
-            rendered blank: an untagged image has neither duration nor chips,
-            and an empty row would still claim its gap and leave the caption
-            looking like it failed to load something. */}
-        {captionSeconds > 0 || detail?.tags?.length ? (
-          <span className="flex min-w-0 items-center gap-2">
+          {/* The duration, trailing right — where a collection's count sits. It
+              used to head row two, which put a number under the name on media
+              and beside it on collections. */}
+          <span className={CAPTION_META_CLASS}>
             {captionSeconds > 0 ? (
-              <span className="shrink-0 font-mono text-[11px] leading-none text-sky-300/90">
+              <span className="text-sky-300/90" title="Duration">
                 {formatDuration(captionSeconds)}
               </span>
             ) : null}
-            {detail?.tags?.length ? (
-              <CaptionTagRow tags={detail.tags} />
-            ) : null}
           </span>
-        ) : null}
+        </span>
+        {/* ROW TWO: tags, right-justified — and PRESENT even when empty, so a
+            tagged card and an untagged one are the same height. See
+            CAPTION_TAG_ROW_CLASS. */}
+        <span data-clip-caption-tag-row className={`flex ${CAPTION_TAG_ROW_CLASS}`}>
+          {detail?.tags?.length ? (
+            <CaptionTagRow tags={detail.tags} />
+          ) : (
+            <CaptionTagRowSpacer />
+          )}
+        </span>
       </span>
     </span>
   );
@@ -1691,7 +1769,14 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           // contract.
           className={[
             "mt-1.5 flex items-center justify-between gap-1.5 pl-1 pb-0.5",
-            "[[data-virtual-grid]_&]:mt-2.5 [[data-virtual-grid]_&]:pl-1.5 [[data-virtual-grid]_&]:pb-1.5",
+            // GRID: no bottom padding, because this is no longer the caption's
+            // last row — the tag row below carries the caption's bottom edge and
+            // the 4px between the two. Left as-is in the STRIP, where this row
+            // IS the footer and there is nothing under it.
+            // `min-h-5` in the grid, matching CAPTION_ROW_CLASS on the media
+            // card: row one is a text line tall whether or not it holds text,
+            // so a nameless card is not shorter than a named one.
+            "[[data-virtual-grid]_&]:mt-2.5 [[data-virtual-grid]_&]:min-h-5 [[data-virtual-grid]_&]:pl-1.5 [[data-virtual-grid]_&]:pb-0",
             muted ? "pr-[4.75rem]" : "pr-1 [[data-virtual-grid]_&]:pr-1.5",
           ].join(" ")}
         >
@@ -1712,32 +1797,42 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             className="hidden size-4 shrink-0 text-zinc-400 [[data-virtual-grid]_&]:block"
           />
           <span
-            // The NAME swallows a plain click, so the card body's drill-in does
-            // not fire underneath it.
+            // ONE CLICK RENAMES. The name already swallowed the click — it had
+            // to, because a plain click on the card DRILLS IN, which unmounts
+            // this card before a second click can land, and that is what broke
+            // double-click-to-rename in the first place. So the click was being
+            // caught and thrown away: the label's advertised gesture cost two
+            // presses while one press did nothing at all. It now does the thing
+            // the label is for.
             //
-            // Required by the single-click drill-in, not decoration: click 1 of
-            // a double-click used to be harmless here (it selected), and now it
-            // NAVIGATES — which unmounts this card before the second click can
-            // arrive, so double-click-to-rename simply stopped working. Letting
-            // the label eat the single click is what gives the gesture somewhere
-            // to happen.
-            //
-            // The cost is a small dead zone: clicking a collection's name does
-            // nothing rather than opening it. That is the right trade for a
-            // label whose advertised gesture IS rename — and the rest of the
-            // card, which is most of it, still opens on one click.
-            onClick={(event) => event.stopPropagation()}
-            onDoubleClick={(event) => {
+            // `stopPropagation` is still what makes it work — without it the
+            // drill-in fires underneath and navigates away from the field that
+            // just opened. React's synthetic bubbling never reaches the
+            // surface's handler.
+            onClick={(event) => {
               event.stopPropagation();
               rename.begin();
               // (keyboard: F2 on the focused card — see OpenKeyBoundary)
             }}
-            title="Double-click or press F2 to rename"
-            className="min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-zinc-100 [[data-virtual-grid]_&]:text-sm"
+            title="Click or press F2 to rename"
+            className={[
+              "min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-zinc-100",
+              "[[data-virtual-grid]_&]:text-sm",
+              // HOVER SAYS IT IS A FIELD. A one-click target that looks exactly
+              // like static text is a trap in both directions: nobody discovers
+              // the rename, and anyone aiming at the card is surprised by an
+              // editor. The tint is the same shape the field itself takes, so
+              // the hover reads as a preview of what the click opens.
+              //
+              // Negative margin against the padding, so the hit area grows
+              // without the name shifting sideways on hover — and without it
+              // taking width from the count beside it at rest.
+              "-mx-1 rounded-sm px-1 transition-colors hover:bg-white/10",
+            ].join(" ")}
           >
             {displayName}
           </span>
-          <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] font-medium text-zinc-300 [[data-virtual-grid]_&]:text-xs">
+          <span className={CAPTION_META_CLASS}>
             {typeof totalSeconds === "number" && totalSeconds > 0 ? (
               <>
                 <span className="text-sky-300/90" title="Total duration of contents">
@@ -1753,20 +1848,37 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             </span>
           </span>
         </span>
-        {/* The collection's tags, in the GRID, under its name row — the twin of
-            the media card's caption tag row, and for the same reason: the cell
-            is tall enough to say this in words instead of stamping it over the
-            preview frames. A row of its own rather than squeezed in beside the
-            item count, which is already a name plus two numbers. */}
-        {detail?.tags?.length ? (
-          <span
-            aria-hidden="true"
-            data-collection-caption-tags={detail.tags.length}
-            className="hidden min-w-0 items-center pr-1.5 pb-1 pl-1.5 [[data-virtual-grid]_&]:flex"
-          >
+        {/* ROW TWO: the collection's tags, right-justified — the media card's
+            second row exactly, from the same two constants.
+
+            ALWAYS RENDERED in the grid, empty or not. It used to appear only
+            when there were tags, which made a tagged collection taller than an
+            untagged one sitting beside it. `data-collection-caption-tags` still
+            carries the count, so a test can tell "no tags" from "no row".
+
+            Grid-only, like everything else in this caption: the strip's footer
+            is a tight one-liner with no room for a second row. */}
+        <span
+          aria-hidden="true"
+          data-collection-caption-tags={detail?.tags?.length ?? 0}
+          // `pt-1` is the media caption's `gap-1` written as padding: these two
+          // rows are siblings on the selection surface rather than children of
+          // one flex column (row one is the STRIP's footer too, so it cannot be
+          // moved into a grid-only wrapper), and a gap needs a shared parent.
+          // Same 4px either way — the stories measure the two captions against
+          // each other rather than trusting that.
+          className={[
+            "hidden pt-1 pr-1.5 pb-1.5 pl-1.5",
+            "[[data-virtual-grid]_&]:flex",
+            CAPTION_TAG_ROW_CLASS,
+          ].join(" ")}
+        >
+          {detail?.tags?.length ? (
             <CaptionTagRow tags={detail.tags} />
-          </span>
-        ) : null}
+          ) : (
+            <CaptionTagRowSpacer />
+          )}
+        </span>
       </CollectionItem.SelectionSurface>
 
       {/* (PL10-001 moved the call-out itself onto the selection surface above.

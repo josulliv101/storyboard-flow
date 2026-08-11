@@ -193,12 +193,23 @@ export const PlaceholderAriaCountMatchesBadge: Story = {
     await expect(canvasElement).toHaveTextContent(/8\.0s\s*\/\s*2 items/);
 
     const name = canvasElement.querySelector<HTMLElement>(
-      '[title="Double-click or press F2 to rename"]',
+      '[title="Click or press F2 to rename"]',
     )!;
     const surfaceRect = surface.getBoundingClientRect();
     const nameRect = name.getBoundingClientRect();
-    await expect(nameRect.left - surfaceRect.left).toBeGreaterThanOrEqual(9);
-    await expect(surfaceRect.right - nameRect.right).toBeGreaterThanOrEqual(9);
+    // The name's TEXT must clear the card's edges — so its own padding counts.
+    //
+    // The label carries `-mx-1 px-1`: the box reaches 4px further out on each
+    // side to give the rename hover a target bigger than the glyphs, while the
+    // padding puts the text back exactly where it was. Measuring the raw box
+    // therefore reports a text inset 4px smaller than the one on screen, which
+    // is what this assertion used to do — it failed on a card whose text had
+    // not moved a pixel.
+    const style = getComputedStyle(name);
+    const padLeft = Number.parseFloat(style.paddingLeft) || 0;
+    const padRight = Number.parseFloat(style.paddingRight) || 0;
+    await expect(nameRect.left + padLeft - surfaceRect.left).toBeGreaterThanOrEqual(9);
+    await expect(surfaceRect.right - (nameRect.right - padRight)).toBeGreaterThanOrEqual(9);
     await expect(surfaceRect.bottom - nameRect.bottom).toBeGreaterThanOrEqual(7);
   },
 };
@@ -252,7 +263,9 @@ export const ComposedCardStructure: Story = {
     const label = Array.from(surface!.querySelectorAll("span")).find(
       (el) => el.textContent === "A timeline",
     )!;
-    await userEvent.dblClick(label);
+    // ONE click opens it now — the label used to swallow the first click
+    // and rename on the second.
+    await userEvent.click(label);
     const editor = canvasElement.querySelector<HTMLInputElement>(
       'input[aria-label="Timeline name"]',
     );
@@ -1083,6 +1096,46 @@ function renderCollectionInSelectMode(): Decorator {
 const CAPTION_INSET_PX = 13;
 const CAPTION_ICON_PX = 16;
 
+/**
+ * The caption block's height — the SAME on both card kinds, tagged or not.
+ *
+ * Two rows always: identity on top, tags underneath, and an untagged card keeps
+ * an empty second row rather than collapsing. Both halves of that were broken
+ * and neither was visible to a test that looked at one card alone:
+ *
+ *  - `min-h` on the tag row reserved the wrong thing. Under `border-box` it
+ *    includes the element's own padding, and the collection's row carries
+ *    `pt-1 pb-1.5` where the media card's carries none — so it reserved 14px
+ *    total, got 4px of content, and jumped to 24px once real chips arrived.
+ *    A tagged collection was 10px taller than an untagged one beside it.
+ *  - Row one collapsed to its ICON (16px) on a card with no name, against a
+ *    text line's 20px on a named one.
+ *
+ * Asserted in four stories against this one number rather than against each
+ * other, because a story renders one card and these two kinds cannot share a
+ * canvas. If a redesign moves it, move all four together.
+ */
+const CAPTION_BLOCK_PX = 54;
+
+/** Measure the caption block, whichever card kind rendered it. */
+async function expectCaptionBlockHeight(canvasElement: HTMLElement): Promise<void> {
+  const media = canvasElement.querySelector<HTMLElement>("[data-clip-caption]");
+  if (media !== null) {
+    await expect(Math.round(media.getBoundingClientRect().height)).toBe(CAPTION_BLOCK_PX);
+    return;
+  }
+  // The collection's two rows are siblings on the selection surface rather than
+  // children of one box (row one is the STRIP's footer too), so the block is
+  // measured across them — plus row one's top MARGIN, which is that card's
+  // version of the media caption's top padding.
+  const row = canvasElement.querySelector<HTMLElement>("[data-collection-metadata]")!;
+  const tags = canvasElement.querySelector<HTMLElement>("[data-collection-caption-tags]")!;
+  const marginTop = Number.parseFloat(getComputedStyle(row).marginTop) || 0;
+  const height =
+    tags.getBoundingClientRect().bottom - row.getBoundingClientRect().top + marginTop;
+  await expect(Math.round(height)).toBe(CAPTION_BLOCK_PX);
+}
+
 /** The caption's leading icon must start at the same inset on any card kind. */
 async function expectCaptionIconAligned(
   canvasElement: HTMLElement,
@@ -1122,6 +1175,8 @@ export const GridCardCaptionSitsUnderTheArtwork: Story = {
 
     // ALIGNED with a collection card's caption — see CAPTION_INSET_PX.
     await expectCaptionIconAligned(canvasElement, caption.querySelector("svg")!);
+    // ...and the same HEIGHT as one, with no tags to fill row two.
+    await expectCaptionBlockHeight(canvasElement);
 
     // BELOW the frame, not over it. Measured, because the whole change is a
     // geometric one and a caption that rendered on top of the artwork would
@@ -1209,6 +1264,10 @@ export const CaptionTagsFoldStatusFirst: Story = {
       .slice(0, 2)
       .map((chip) => chip.querySelector("[data-tag-accent]")?.getAttribute("data-tag-accent"));
     await expect(accents).toEqual(["ok", "progress"]);
+
+    // TAGGED, and exactly as tall as the untagged twin — the half the empty-row
+    // reservation exists for. See CAPTION_BLOCK_PX.
+    await expectCaptionBlockHeight(canvasElement);
   },
 };
 
@@ -1413,6 +1472,10 @@ export const CollectionGridTagsSitInTheCaption: Story = {
     await expect(caption.getBoundingClientRect().top).toBeGreaterThanOrEqual(
       frame.getBoundingClientRect().bottom - 1,
     );
+
+    // TAGGED, and exactly as tall as the untagged twin — this is the pairing
+    // that caught the reservation being 10px short. See CAPTION_BLOCK_PX.
+    await expectCaptionBlockHeight(canvasElement);
   },
 };
 
@@ -1438,6 +1501,7 @@ export const CollectionGridCaptionLeadsWithItsKind: Story = {
     // asserts the identical two numbers, which is what makes a mixed grid line
     // up. See CAPTION_INSET_PX.
     await expectCaptionIconAligned(canvasElement, kind);
+    await expectCaptionBlockHeight(canvasElement);
 
     // A LABEL: hidden from the a11y tree, and no control of its own.
     //
@@ -1455,7 +1519,7 @@ export const CollectionGridCaptionLeadsWithItsKind: Story = {
     // LEADS the name — left of it, on the same line. Both halves matter: an
     // icon that wrapped above the name would satisfy a left-of test on its own.
     const name = canvasElement.querySelector<HTMLElement>(
-      '[title="Double-click or press F2 to rename"]',
+      '[title="Click or press F2 to rename"]',
     )!;
     const kindRect = kind.getBoundingClientRect();
     const nameRect = name.getBoundingClientRect();
