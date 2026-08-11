@@ -15,6 +15,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "audit:ownership": "node --env-file=.env scripts/audit-ownerless-timelines.mjs",
+    "audit:review-findings": "node --env-file=.env scripts/audit-review-findings.mjs",
     "stamp:ownership": "node --env-file=.env scripts/stamp-ownerless-timelines.mjs"
   },
   "dependencies": {
