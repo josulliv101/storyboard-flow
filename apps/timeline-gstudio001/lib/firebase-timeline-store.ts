@@ -494,46 +494,72 @@ export async function saveFirebaseTimelineEntry(
 
   const normalizedDocument = normalizeDocument(document);
   const ref = collection().doc(normalizedDocument.id);
-  const existing = await withFirebaseTimeout(ref.get(), "Loading timeline document");
-  const existingData = existing.exists
-    ? (existing.data() as TimelineDocumentRecord)
-    : undefined;
-  if (existingData && resolveOwnership(existingData.ownerUid, requesterUid) === "denied") {
-    throw new TimelineAccessDeniedError(normalizedDocument.id);
-  }
-  const existingDocument = existingData
-    ? toTimelineDocument(existing.id, existingData)
-    : null;
 
-  if (
-    !options?.allowEmptying &&
-    existingDocument &&
-    existingDocument.clips.length > 0 &&
-    normalizedDocument.clips.length === 0
-  ) {
-    throw new Error(
-      "Refusing to save an empty timeline over an existing non-empty document.",
-    );
-  }
+  // ONE TRANSACTION for read, checks and write.
+  //
+  // Content here stays LAST-WRITE-WINS — legacy views carry no expectation and
+  // this path deliberately doesn't invent one. What could not stay loose is the
+  // REVISION. It was read outside any transaction and written back as
+  // `existing + 1`, so two concurrent saves both read 5 and both wrote 6 — and
+  // that number is not decoration, it is the compare-and-set token every OTHER
+  // writer trusts (`saveFirebaseTimelineDocumentsAtomic`, and the agent path
+  // through lib/mcp/apply-command.ts). A reader who took 6 between those two
+  // writes then passed CAS against a document whose content had been replaced
+  // underneath them: the exact stale-overwrite the check exists to stop,
+  // permitted because two distinct writes shared one number.
+  //
+  // Reading inside the transaction makes `existing + 1` sound, so every write
+  // gets its own number. It also closes the smaller TOCTOU the old shape had:
+  // ownership and the empty-over-non-empty guard were evaluated against a read
+  // that the write no longer had any claim on.
+  const { revision } = await withFirebaseTimeout(
+    getFirebaseDb().runTransaction(async (tx) => {
+      const existing = await tx.get(ref);
+      const existingData = existing.exists
+        ? (existing.data() as TimelineDocumentRecord)
+        : undefined;
+      if (existingData && resolveOwnership(existingData.ownerUid, requesterUid) === "denied") {
+        throw new TimelineAccessDeniedError(normalizedDocument.id);
+      }
+      const existingDocument = existingData
+        ? toTimelineDocument(existing.id, existingData)
+        : null;
 
-  // No expectation here: the single-save path keeps last-write-wins (legacy
-  // views). It still STAMPS the next revision so batch writers see honest
-  // counters.
-  const revision = (existingData?.revision ?? 0) + 1;
-  await withFirebaseTimeout(
-    ref.set(
-      buildSavePayload(normalizedDocument, existingData, requesterUid, revision, options),
-      { merge: true },
-    ),
+      if (
+        !options?.allowEmptying &&
+        existingDocument &&
+        existingDocument.clips.length > 0 &&
+        normalizedDocument.clips.length === 0
+      ) {
+        throw new Error(
+          "Refusing to save an empty timeline over an existing non-empty document.",
+        );
+      }
+
+      const next = (existingData?.revision ?? 0) + 1;
+      tx.set(
+        ref,
+        buildSavePayload(normalizedDocument, existingData, requesterUid, next, options),
+        { merge: true },
+      );
+      return { revision: next };
+    }),
     "Saving timeline document",
   );
 
-  const snapshot = await withFirebaseTimeout(ref.get(), "Loading timeline document");
-  const savedData = snapshot.data() as TimelineDocumentRecord;
-  return {
-    document: toTimelineDocument(snapshot.id, savedData),
-    revision: savedData.revision ?? revision,
-  };
+  // THIS write's document and THIS write's revision, not a re-read of both.
+  //
+  // The old re-read could return a LATER writer's revision alongside a later
+  // writer's content, and handing that pair back is worse than useless: the
+  // caller would hold an expectation that passes CAS for content it never
+  // produced. Reporting our own number instead fails CLOSED — if someone else
+  // has since written, the caller's next compare-and-set is refused and it
+  // refetches, which is the outcome the token is for.
+  //
+  // Nothing is lost by not re-reading: a TimelineDocument is id/title/
+  // description/clips, all of which we just wrote. The server-resolved fields
+  // (createdAt, updatedAt) are not part of it.
+  return { document: normalizedDocument, revision };
 }
 
 export async function saveFirebaseTimelineDocument(

@@ -105,6 +105,34 @@ const state = vi.hoisted(() => {
         },
       };
     },
+    // Refs here carry their own `__store`, so the transaction resolves the
+    // collection from the ref rather than closing over one. Writes STAGE and
+    // apply on commit, like the real thing — a double that applied them
+    // eagerly would hide a throw-after-write.
+    runTransaction: async <T>(
+      fn: (tx: {
+        get: (ref: { id: string; __store: Map<string, Stored> }) => Promise<
+          ReturnType<typeof snapshot>
+        >;
+        set: (
+          ref: { id: string; __store: Map<string, Stored> },
+          data: Stored,
+          opts?: { merge?: boolean },
+        ) => void;
+      }) => Promise<T>,
+    ): Promise<T> => {
+      const staged: Array<
+        [Map<string, Stored>, string, Stored, { merge?: boolean } | undefined]
+      > = [];
+      const result = await fn({
+        get: async (ref) => snapshot(ref.__store, ref.id),
+        set: (ref, data, opts) => {
+          staged.push([ref.__store, ref.id, data, opts]);
+        },
+      });
+      for (const [store, id, data, opts] of staged) applySet(store, id, data, opts);
+      return result;
+    },
   };
   return { docs, tombstones, current, db, cloudinaryDeletes };
 });
