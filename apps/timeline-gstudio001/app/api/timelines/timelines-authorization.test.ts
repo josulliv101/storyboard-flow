@@ -208,6 +208,22 @@ describe("timeline authorization", () => {
   // Both of these used to assert the opposite: a GET or a list CLAIMED an
   // unowned record for whoever arrived first. The legacy records that justified
   // that are migrated, so knowing an id is no longer a claim to it.
+  it("serves a demo fixture without claiming its global id", async () => {
+    // The fixture ids are short and SHARED (`root`, `promo`, `workbench`…) and
+    // `checkUserScopedId` does not recognise them, so persisting one on a READ
+    // handed a global name to whoever asked first — and every other user got a
+    // permanent 404 on it. A GET must serve the fixture and store nothing.
+    const response = await getTimeline(new Request("http://test.local"), params("root"));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { document: TimelineDocument; revision: number };
+    expect(body.document.id).toBe("root");
+    // revision 0 is the compare-and-set CREATE token, so the client's first
+    // real write still brings the document into existence under its own owner.
+    expect(body.revision).toBe(0);
+    expect(state.docs.has("root")).toBe(false);
+  });
+
   it("GET denies an unowned document and writes nothing", async () => {
     seedProject("project-legacy", undefined);
 

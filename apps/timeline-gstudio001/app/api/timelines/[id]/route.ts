@@ -90,8 +90,18 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const saved = await saveFirebaseTimelineEntry(fallbackDocument, user.uid);
-    return NextResponse.json({ document: saved.document, revision: saved.revision });
+    // SERVED, NOT PERSISTED — the same rule the heal above follows, and for a
+    // sharper reason. These fixture ids are short and SHARED (`root`, `promo`,
+    // `workbench`…), and `checkUserScopedId` does not recognise them, so
+    // saving one here handed a global id to whoever asked first: every other
+    // user then got a permanent 404 on it, with no way to see or clear the
+    // document holding it. An audit found five already claimed this way,
+    // seeded across three dates — a READ was quietly allocating shared names.
+    //
+    // Nothing is lost by only serving it. `revision: 0` is a compare-and-set
+    // CREATE token, so the client's first real write through the batch path
+    // still brings the document into existence, owned by that writer.
+    return NextResponse.json({ document: fallbackDocument, revision: 0 });
   } catch (error) {
     return storageErrorResponse(error, "Unable to load the timeline document.");
   }
