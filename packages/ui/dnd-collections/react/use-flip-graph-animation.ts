@@ -138,6 +138,12 @@ export function useFlipGraphAnimation(
     const container = containerRef.current;
     if (!container) return;
 
+    // Read and clear BEFORE the early returns below. The caller only arms this
+    // for a committing drop, so a value surviving a run of this effect would
+    // have to be stale — belt and braces on the same invariant.
+    const dropOrigin = dropOriginRef?.current ?? null;
+    if (dropOriginRef) dropOriginRef.current = null;
+
     const first = firstRects.current;
     firstRects.current = null;
     if (!first) return;
@@ -146,9 +152,6 @@ export function useFlipGraphAnimation(
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion) return;
-
-    const dropOrigin = dropOriginRef?.current ?? null;
-    if (dropOriginRef) dropOriginRef.current = null;
 
     const after = measureCards(container);
     const matches = matchBeforeRects(first, after);

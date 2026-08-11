@@ -8,6 +8,7 @@ import {
 
 import { normalizeTags, tagsField } from "@storyboard/timeline-model/tags";
 
+import { checkUserScopedId } from "@/lib/timeline-ownership";
 import { describeDispatchRejection, toolError, toolOk } from "@/lib/webmcp/results";
 import { resolveMovePlacement, type PlacementError } from "@/lib/webmcp/placement";
 import type { ToolResult } from "@/lib/webmcp/types";
@@ -347,6 +348,16 @@ export async function handleRemoveClip(
   ctx: WriteContext,
 ): Promise<ToolResult> {
   const nodeId = parseNodeId(args.nodeId);
+  // A SUPPLIED trashId must actually be a bin, and the requester's own.
+  // `checkUserScopedId` only ever accepts `trash-<requesterUid>` — the rule
+  // apply-command.ts already documents, which this path was not applying.
+  // Membership in the loaded graph is not enough on its own: any collection
+  // under the root passes that, so `remove_clip` would quietly become a move
+  // into it, exempt from the empty-collection guard by `allowEmptying`, and
+  // still report `recoverable: true` for an item that never reached the bin.
+  if (args.trashId !== undefined && checkUserScopedId(args.trashId, ctx.requesterUid) !== true) {
+    return toolError("`trashId` must be your own trash bin — omit it to use the default.");
+  }
   const trashId = parseNodeId(args.trashId ?? trashDocumentIdFor(ctx.requesterUid));
 
   const outcome = await applyCollectionsCommand(

@@ -265,6 +265,26 @@ describe("handleRemoveClip", () => {
     expect(storedClipIds("trash-someone-else")).toEqual([]);
   });
 
+  it("cannot be redirected into an ordinary collection dressed up as the bin", async () => {
+    // The other account's bin above fails because it never enters the graph.
+    // A collection UNDER THIS ROOT does, and membership was the only check —
+    // so `remove_clip` quietly became a move into it, exempt from the
+    // empty-collection guard by `allowEmptying`, and still answered
+    // `recoverable: true` for an item that never reached a bin.
+    seed("root", [clip("a"), collectionClip("lane")]);
+    seed("lane", [clip("existing")]);
+
+    const result = await handleRemoveClip(
+      { timelineId: "root", nodeId: "a", trashId: "lane" },
+      { requesterUid: OWNER },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(storedClipIds("root")).toEqual(["a", "lane"]);
+    expect(storedClipIds("lane")).toEqual(["existing"]);
+    expect(storedClipIds(TRASH)).toEqual([]);
+  });
+
   it("refuses another account's timeline without revealing that it exists", async () => {
     seed("root", [clip("a")], "someone-else");
 

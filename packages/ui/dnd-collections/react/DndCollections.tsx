@@ -735,7 +735,7 @@ function DndCollectionsContext({
       // start. Only the primary dragged node gets it; the rest of a
       // multi-select FLIPs from their own previous slots.
       const ghostBox = ghostRef.current?.getBoundingClientRect() ?? null;
-      dropOriginRef.current =
+      const dropOrigin =
         ghostBox && ghostBox.width > 0 && ghostBox.height > 0
           ? {
               nodeId: activeIds[0] as string,
@@ -749,6 +749,15 @@ function DndCollectionsContext({
           : null;
 
       const dispatched = store.dispatch(command);
+      // ARM IT ONLY FOR A COMMIT. The sweep that consumes this runs on a graph
+      // change and is the only thing that clears it, so arming before the
+      // dispatch left every non-committing outcome — a cycle, a policy veto,
+      // and above all `same-position`, which is just releasing a card near its
+      // own slot — holding a stale origin. The next unrelated move then read
+      // it and flew that earlier card in from the old ghost's position and
+      // scale. Measured before the dispatch (the overlay unmounts on commit),
+      // assigned after it.
+      dropOriginRef.current = dispatched.ok ? dropOrigin : null;
       store.endDrag();
 
       if (dispatched.ok) {
