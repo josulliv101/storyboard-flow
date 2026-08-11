@@ -393,7 +393,7 @@ test.describe('DndCollections E2E', () => {
     expect(await widthOf(vid)).toBe(192); // duration (and width) unchanged
   });
 
-  test('trim overview: amber window stays aligned to the clip during a real drag', async ({
+  test('trim overview: the showing window stays aligned to the clip during a real drag', async ({
     page,
   }) => {
     // TrimPlayground pre-selects "vid" (SelectOnMount), so the overview band

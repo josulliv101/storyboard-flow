@@ -49,7 +49,7 @@ function DefaultTrimReadout({ id, node }: { id: NodeId; node: MediaNode }) {
       {live !== null && (
         <span
           data-trim-preview={live.effectiveSeconds}
-          className="pointer-events-none absolute -top-5 left-1/2 z-30 -translate-x-1/2 rounded bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-black shadow"
+          className="pointer-events-none absolute -top-5 left-1/2 z-30 -translate-x-1/2 rounded bg-blue-400 px-1.5 py-0.5 text-[10px] font-bold text-black shadow"
         >
           {roundSecondsForDisplay(live.effectiveSeconds)}s
         </span>

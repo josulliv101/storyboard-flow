@@ -21,18 +21,18 @@ import { resolveTrim, useTrimPointerDrag, type TrimSide } from "./trim-gesture";
 // never reach dnd-kit's item-drag sensor or the strip's pan; they also carry
 // `data-trim-handle` so the pan's surface filter skips them) — while the
 // pixels INSIDE each zone come from the `TrimHandleContent` registry slot,
-// defaulting to the amber grip bar below. Duration readouts (the pill, the
+// defaulting to the blue grip bar below. Duration readouts (the pill, the
 // live preview bubble) are CONTENT, not handle chrome: the default ones live
 // in `DefaultItemContent`, driven by `useLiveTrim`.
 
-/** The stock handle pixels: amber fill, visible-on-hover, center grip line. */
+/** The stock handle pixels: blue fill, visible-on-hover, center grip line. */
 export const DefaultTrimHandleContent = memo(function DefaultTrimHandleContent({
   side,
 }: CollectionTrimHandleContentProps) {
   return (
     <span
       className={[
-        "flex h-full w-full items-center justify-center bg-amber-300 opacity-70 transition-opacity hover:opacity-100 group-hover:opacity-100",
+        "flex h-full w-full items-center justify-center bg-blue-500 opacity-70 transition-opacity hover:opacity-100 group-hover:opacity-100",
         side === "left" ? "rounded-l-md" : "rounded-r-md",
       ].join(" ")}
     >

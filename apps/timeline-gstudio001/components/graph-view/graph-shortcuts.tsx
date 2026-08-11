@@ -123,7 +123,7 @@ function ShortcutsSheet({ onClose }: Readonly<{ onClose: () => void }>) {
         <div className="grid gap-5 sm:grid-cols-2">
           {SECTIONS.map((section) => (
             <section key={section.title}>
-              <h3 className="text-[11px] font-semibold tracking-wide text-amber-200/80 uppercase">
+              <h3 className="text-[11px] font-semibold tracking-wide text-blue-300/80 uppercase">
                 {section.title}
               </h3>
               {section.note && (

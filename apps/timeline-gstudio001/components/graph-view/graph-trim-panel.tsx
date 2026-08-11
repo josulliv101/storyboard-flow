@@ -120,15 +120,17 @@ function LiveEdgeFrame({
         preload="auto"
         className="h-full w-full bg-black object-cover"
       />
-      {/* The trim-handle look — amber bar — on the pinned edge, so the frame
-          reads as an extension of the handle under the pointer. */}
+      {/* The trim-handle look — the same blue bar — on the pinned edge, so the
+          frame reads as an extension of the handle under the pointer. Tracks
+          GraphTrimHandle's colour: these two are one control seen twice, so
+          they must never diverge. */}
       <span
         className={[
-          "absolute inset-y-0 w-1 bg-amber-400",
+          "absolute inset-y-0 w-1 bg-blue-500",
           activeEdge === "right" ? "right-0" : "left-0",
         ].join(" ")}
       />
-      <span className="absolute right-0 bottom-0 bg-zinc-950/85 px-1 font-mono text-[11px] leading-tight tabular-nums text-amber-200">
+      <span className="absolute right-0 bottom-0 bg-zinc-950/85 px-1 font-mono text-[11px] leading-tight tabular-nums text-blue-300">
         {formatSeconds(time)}
       </span>
     </div>,

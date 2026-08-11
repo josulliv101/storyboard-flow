@@ -656,7 +656,7 @@ export function GraphTimelineView({
       {gatewayError !== null && (
         <p
           role="alert"
-          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+          className="rounded-md border border-blue-600/40 bg-blue-600/10 px-3 py-2 text-xs text-blue-300"
         >
           {gatewayError}
         </p>

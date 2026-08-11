@@ -204,7 +204,7 @@ export default function Home() {
     <div className="mx-auto grid w-full max-w-[1400px] gap-6 pt-7 animate-fade-in">
       <header className="flex flex-col gap-4 border-b border-zinc-800 pb-5 md:flex-row md:items-end md:justify-between">
         <div className="grid min-w-0 flex-1 gap-2">
-          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.24em] text-amber-300">
+          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.24em] text-blue-400">
             <FolderOpen className="h-4 w-4" />
             Projects
           </div>
@@ -227,12 +227,12 @@ export default function Home() {
             onChange={(event) => setProjectTitle(event.target.value)}
             maxLength={80}
             placeholder="New project name"
-            className="h-9 min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-600 focus:border-amber-400"
+            className="h-9 min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-600 focus:border-blue-500"
           />
           <Button
             type="submit"
             disabled={isCreating}
-            className="h-9 shrink-0 gap-2 bg-amber-400 px-3 text-xs font-bold uppercase tracking-widest text-zinc-950 hover:bg-amber-300"
+            className="h-9 shrink-0 gap-2 bg-blue-500 px-3 text-xs font-bold uppercase tracking-widest text-zinc-950 hover:bg-blue-400"
           >
             {isCreating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             New Project
@@ -305,7 +305,7 @@ export default function Home() {
             {projects.map((project) => (
               <div
                 key={project.id}
-                className="relative group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/55 shadow-xl shadow-black/20 transition-all duration-200 hover:border-amber-400/55 hover:bg-zinc-900"
+                className="relative group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/55 shadow-xl shadow-black/20 transition-all duration-200 hover:border-blue-500/55 hover:bg-zinc-900"
               >
                 {/* Link overlay covering the whole card area. It NEEDS a name:
                     as a childless anchor its accessible name was empty, so a
@@ -315,7 +315,7 @@ export default function Home() {
                     control's label. */}
                 <Link
                   href={`/timeline/${encodeURIComponent(project.id)}/graph`}
-                  className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                  className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <span className="sr-only">Open project {project.title}</span>
                 </Link>
@@ -343,7 +343,7 @@ export default function Home() {
                     type="button"
                     onClick={(e) => handleDeleteProject(e, project.id)}
                     aria-label={`Delete project ${project.title}`}
-                    className="absolute top-2.5 right-2.5 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/90 hover:bg-red-600/90 text-zinc-400 hover:text-white transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                    className="absolute top-2.5 right-2.5 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/90 hover:bg-red-600/90 text-zinc-400 hover:text-white transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                     title="Delete project"
                   >
                     <Trash2 aria-hidden="true" className="h-4 w-4" />

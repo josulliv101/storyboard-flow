@@ -369,7 +369,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
         <main className="flex-1 overflow-y-auto min-h-0 bg-zinc-950">
           {isLoading ? (
             <div className="flex h-32 items-center justify-center gap-2 text-sm text-zinc-400">
-              <LoaderCircle className="h-4 w-4 animate-spin text-amber-500" />
+              <LoaderCircle className="h-4 w-4 animate-spin text-blue-600" />
               Loading trash...
             </div>
           ) : error ? (

@@ -78,6 +78,7 @@ import {
   DROPDOWN_MENU_PARTS,
   SELECTION_MENU_CONTENT_CLASS,
   SelectionMenuItems,
+  SelectionMenuOverflowItems,
 } from "./graph-selection-menu";
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
 import { VideoFrameLookAhead } from "./graph-item-content";
@@ -259,7 +260,7 @@ function FocusedAggregate({
         // Visible at EVERY breakpoint, unlike the idle total below. This is the
         // subject the controls beside it act on, and a group of controls whose
         // count has been hidden away reads as chrome with no object.
-        className="block shrink-0 pl-3 text-center font-mono text-[11px] tabular-nums text-amber-300/90"
+        className="block shrink-0 pl-3 text-center font-mono text-[11px] tabular-nums text-blue-400/90"
         title="Selected items"
       >
         {/* COUNT ONLY. The selection's total duration was here and is not a
@@ -898,19 +899,43 @@ function useFittedVerbCount(
       const widths = Array.from(ruler.children).map((child) =>
         Math.ceil((child as HTMLElement).getBoundingClientRect().width),
       );
+      // The ruler's LAST child is the `⋮`, sitting past every verb index — see
+      // the note on it in SelectModeHeader.
+      const overflowWidth = widths[SELECT_MODE_VERBS.length] ?? 0;
+
+      // PASS 1 — does the whole run fit with NO `⋮` at all? Asked first, and
+      // against the full budget, because when everything fits there is no
+      // overflow control to make room for. Reserving its width unconditionally
+      // is what used to push the last verb into a menu that then existed only
+      // to hold the verb its own width had displaced.
+      const wholeRun = SELECT_MODE_VERBS.reduce(
+        (total, _action, index) =>
+          total + (widths[index] ?? 0) + (index > 0 ? SELECT_MODE_VERB_GAP_PX : 0),
+        0,
+      );
+      if (wholeRun <= budget) {
+        setCount(SELECT_MODE_VERBS.length);
+        return;
+      }
+
+      // PASS 2 — it does not fit, so the `⋮` IS going to be drawn, and it costs
+      // width like anything else beside it. Two passes rather than one is what
+      // keeps this one-way: the reserve depends on pass 1's answer and never on
+      // its own, so it cannot oscillate between "fits" and "does not".
+      const reduced = budget - overflowWidth - SELECT_MODE_VERB_GAP_PX;
       let used = 0;
       let fitted = 0;
       for (const action of SELECT_MODE_VERB_PRIORITY) {
         const index = SELECT_MODE_VERBS.indexOf(action);
         const width = widths[index] ?? 0;
         const next = used + width + (fitted > 0 ? SELECT_MODE_VERB_GAP_PX : 0);
-        if (next > budget) break;
+        if (next > reduced) break;
         used = next;
         fitted += 1;
       }
       // At least one, even in a window too narrow for it: a row with a count
       // and no verbs at all reads as broken, and the `⋮` beside it still holds
-      // everything.
+      // everything it dropped.
       setCount(Math.max(1, fitted));
     };
 
@@ -978,6 +1003,12 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
   const { selectionCount } = state;
 
   const { containerRef, rulerRef, visible } = useFittedVerbCount(state);
+  // What the row could not draw — exactly the overflow menu's contents, taken
+  // in DRAW order so the two halves of one list stay in one order.
+  const hidden = useMemo(
+    () => new Set(SELECT_MODE_VERBS.filter((action) => !visible.has(action))),
+    [visible],
+  );
 
   return (
     <div
@@ -1026,32 +1057,51 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
           {SELECT_MODE_VERBS.map((action) => (
             <SelectModeVerb key={action} action={action} state={state} />
           ))}
+          {/* The `⋮`'s own width, MEASURED rather than assumed: it is 32px
+              under a mouse and 44px under a finger (HEADER_SELECTION_SIZE), so
+              a constant would reserve the wrong number on one of them and drop
+              a verb early. Kept LAST, past every verb index, so the per-verb
+              lookup by `indexOf` above is unaffected by its presence. */}
+          <span data-select-mode-overflow-ruler="" className={cn(HEADER_SELECTION_SIZE, "shrink-0")} />
         </div>
         {SELECT_MODE_VERBS.filter((action) => visible.has(action)).map((action) => (
           <SelectModeVerb key={action} action={action} state={state} />
         ))}
+        {/* ONLY what did not fit, and only WHEN something did not fit.
+
+            Inside the run, so it lands immediately after the last verb drawn
+            rather than at the far end of the row's leftover space — the run is
+            `flex-1`, so out here it floated an inch away from the verbs it
+            belongs to. And absent entirely when all six fit: a `⋮` that is
+            always there says the row is a summary of some longer list, which
+            is what made the row's own verbs look decorative. Appearing only on
+            overflow says the row IS the list and this is its remainder. */}
+        {hidden.size > 0 ? (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`${hidden.size} more selection ${hidden.size === 1 ? "action" : "actions"}`}
+                data-header-selection-overflow
+                data-select-mode-overflow-count={hidden.size}
+                className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE, "shrink-0")}
+              >
+                <EllipsisVertical aria-hidden className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="center" className={SELECTION_MENU_CONTENT_CLASS}>
+              <SelectionMenuOverflowItems
+                parts={DROPDOWN_MENU_PARTS}
+                state={state}
+                actions={hidden}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
       </div>
       <HeaderPasteButton anchorName={anchorName} />
-      {/* Everything not promoted above — the SAME menu the anchor's `⋮` opens,
-          rendered from the identical definition rather than a hand-assembled
-          superset. */}
-      <DropdownMenu modal={false}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="More selection actions"
-            data-header-selection-overflow
-            className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE)}
-          >
-            <EllipsisVertical aria-hidden className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="bottom" align="center" className={SELECTION_MENU_CONTENT_CLASS}>
-          <SelectionMenuItems parts={DROPDOWN_MENU_PARTS} state={state} />
-        </DropdownMenuContent>
-      </DropdownMenu>
       {/* `ml-auto`: Done sits at the far end, away from Delete. Both end the
           gesture, only one of them destroys anything, and putting them
           shoulder to shoulder is how a mis-click becomes a deletion. */}

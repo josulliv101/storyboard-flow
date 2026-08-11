@@ -207,7 +207,7 @@ export function AnchorMenuButton({
             "relative z-20 flex size-7 shrink-0 items-center justify-center rounded",
             "bg-zinc-950/80 text-zinc-100 shadow-sm shadow-black/40 backdrop-blur-[1px]",
             "cursor-pointer transition-colors hover:bg-zinc-800 hover:text-white",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
             // 44px effective target on a coarse pointer (R6.3), from padding —
             // the visual control stays 28px so it matches the drill control it
             // replaces. Those two CROSS-FADE on the anchor card, so any size
@@ -242,6 +242,10 @@ export function AnchorMenuButton({
 /**
  * The card's top-right corner slot, holding the `⋮` when this card is the
  * anchor — and nothing at all otherwise.
+ *
+ * STRIP ONLY now. The grid hides it (see the class below); its actions are all
+ * in the select row there. This component still renders and still tracks the
+ * anchor on both surfaces, so restoring the grid `⋮` is a one-class change.
  *
  * It used to be a two-tenant slot: a collection card carried a drill chevron
  * here, and the `⋮` CROSS-FADED with it (R6.2) so the swap cost no layout. The
@@ -279,23 +283,32 @@ export function CardCornerSlot({
       // between card kinds in the same grid.
       className={cn(
         "absolute right-5 top-3 z-20 flex items-center gap-1.5",
-        // GRID: down into the CAPTION band, trailing the name — the mockup's
-        // shape, where the title row is chrome (type, name, actions) and the
-        // thumbnail stays content. Over the artwork it was the one piece of
-        // chrome still stamped across the picture.
+        // NO `⋮` IN THE GRID.
         //
-        // Anchored to the card's BOTTOM rather than to the caption's top, and
-        // that is what makes one offset work for both card kinds: a media
-        // caption (name + meta/tags) and a collection caption (name + count,
-        // plus optional tags) are different heights, but both END at the card's
-        // bottom padding. Measured on a 220px grid cell: artwork ends at 247,
-        // the caption band runs 247-292, the card ends at 298 — so `bottom-3`
-        // lands inside the band on either kind.
+        // Every action it opened is in the select row now — arm select mode (or
+        // click a card's checkbox, which arms it) and the row carries Edit,
+        // Copy, Cut, Duplicate, Disable and Delete, with the rest in its own
+        // overflow. A per-card menu on top of that is a second route to the
+        // same list, parked in the corner of every cell.
         //
-        // The STRIP keeps the corner. Its cards are as narrow as their duration
-        // and have no caption row to sit in, which is the same reason the kind
-        // icon and the caption tags are grid-only.
-        "[[data-virtual-grid]_&]:top-auto [[data-virtual-grid]_&]:bottom-3 [[data-virtual-grid]_&]:right-3",
+        // HIDDEN, not deleted, and `display:none` rather than opacity — a
+        // control that is invisible but still focusable is a tab stop that goes
+        // nowhere. Everything above and below this line still works: flip this
+        // one class back to the positioning it replaced and the grid `⋮`
+        // returns exactly as it was. That positioning was:
+        //
+        //   [[data-virtual-grid]_&]:top-auto bottom-3 right-3
+        //
+        // — down in the CAPTION band, anchored to the card's BOTTOM so one
+        // offset served both card kinds (their captions are different heights
+        // but both end at the card's bottom padding; measured on a 220px cell,
+        // artwork ends at 247, the band runs 247-292, the card ends at 298).
+        //
+        // The STRIP keeps its corner `⋮`: its cards are as narrow as their
+        // duration and have no caption band or select-row equivalent to fall
+        // back on, which is the same reason the kind icon and the caption tags
+        // are grid-only.
+        "[[data-virtual-grid]_&]:hidden",
         className,
       )}
     >

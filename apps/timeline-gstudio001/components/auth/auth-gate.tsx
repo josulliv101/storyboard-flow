@@ -66,7 +66,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <div className="grid min-h-screen flex-1 place-items-center bg-zinc-950 text-zinc-400">
         <div className="flex items-center gap-2 text-sm">
-          <LoaderCircle className="h-4 w-4 animate-spin text-amber-300" />
+          <LoaderCircle className="h-4 w-4 animate-spin text-blue-400" />
           Loading session
         </div>
       </div>
@@ -105,7 +105,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-1 items-center justify-center bg-zinc-950 px-6 py-10 text-white">
       <div className="grid w-full max-w-[420px] gap-6">
         <div className="grid gap-3 text-center">
-          <div className="mx-auto grid size-12 place-items-center rounded-lg border border-amber-500/40 bg-amber-500/10 text-[13px] font-black text-amber-300">
+          <div className="mx-auto grid size-12 place-items-center rounded-lg border border-blue-600/40 bg-blue-600/10 text-[13px] font-black text-blue-400">
             SW
           </div>
           <div className="grid gap-1">
@@ -134,7 +134,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             <label htmlFor="auth-email" className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
               Email
             </label>
-            <div className="flex h-10 items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-3 focus-within:border-amber-400">
+            <div className="flex h-10 items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-3 focus-within:border-blue-500">
               <Mail className="h-4 w-4 shrink-0 text-zinc-600" />
               <input
                 id="auth-email"
@@ -161,7 +161,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <Button
             type="submit"
             disabled={isSubmitting}
-            className="h-10 gap-2 bg-amber-400 text-xs font-bold uppercase tracking-widest text-zinc-950 hover:bg-amber-300"
+            className="h-10 gap-2 bg-blue-500 text-xs font-bold uppercase tracking-widest text-zinc-950 hover:bg-blue-400"
           >
             {isSubmitting ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -182,7 +182,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             }}
             className={cn(
               "h-9 rounded-md text-xs font-semibold text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
             )}
           >
             Use a different email

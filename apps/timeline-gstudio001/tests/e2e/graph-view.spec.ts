@@ -563,8 +563,36 @@ const anchorMenuButton = (page: Page): Locator =>
  * with like. One menu, one lookup.
  */
 async function selectionAction(page: Page, name: string | RegExp): Promise<void> {
-  await anchorMenuButton(page).first().click();
+  // The CARD's ⋮ where there is one, the HEADER's where there is not.
+  //
+  // Two cases have no card control: the grid, which carries none at all now
+  // (its actions are on the select row), and a strip clip too narrow to hold
+  // one. Both have always been served by the header's selection ⋮, which opens
+  // the identical menu from the identical definition — so this picks by LAYOUT
+  // rather than by surface and one helper covers every call site.
+  await openSelectionMenu(page);
   await page.getByRole("menuitem", { name }).first().click();
+}
+
+/**
+ * Open THE selection menu, from wherever this surface keeps its trigger.
+ *
+ * The card's `⋮` where there is one, the HEADER's where there is not. Two cases
+ * have no card control: the grid, which carries none at all now (its actions
+ * are on the select row), and a strip clip too narrow to hold one. Both have
+ * always been served by the header's `⋮`, which opens the identical menu from
+ * the identical definition — so this picks by LAYOUT rather than by surface and
+ * every call site works on both.
+ *
+ * `isVisible()`, NEVER `boundingBox()`. boundingBox WAITS for visibility, so
+ * asking it about the grid's `⋮` — `display:none` there — burns the whole 60s
+ * timeout and fails on a control that is behaving correctly. isVisible resolves
+ * immediately and answers exactly the question being asked.
+ */
+async function openSelectionMenu(page: Page): Promise<void> {
+  const onCard = anchorMenuButton(page).first();
+  if (await onCard.isVisible()) await onCard.click();
+  else await page.locator("[data-header-selection-overflow]").first().click();
 }
 
 /**
@@ -4388,7 +4416,9 @@ test.describe("graph view E2E", () => {
     // through a modal close and a re-render made this test flaky about
     // something it was not testing.
     await selectCard(bravo);
-    await anchorMenuButton(page).first().click();
+    // Whichever `⋮` this surface has — the grid's cards carry none, so here it
+    // is the header's. The menu is the same definition either way.
+    await openSelectionMenu(page);
     const edit = page.getByRole("menuitem", { name: "Edit", exact: true });
     await edit.focus();
     await expect(edit).toBeFocused();
@@ -5956,23 +5986,24 @@ test.describe("graph view E2E", () => {
       .poll(() => gridOrder(page, PROJECT_ID), { timeout: 15000 })
       .toContain("bravo");
 
-    // Still selected, and the toolbar re-anchored to the card's new position
-    // rather than pointing at where it used to be.
+    // Still selected — which is what this test is actually about.
     await expect(
       page.locator(
         `[data-virtual-grid="${PROJECT_ID}"] [data-node-id="bravo"][data-selected="true"]`,
       ),
     ).toHaveCount(1);
-    await expect(anchorMenuButton(page)).toBeVisible();
-    const card = (await page
-      .locator(`[data-virtual-grid="${PROJECT_ID}"] [data-node-id="bravo"]`)
-      .boundingBox())!;
-    const bar = (await anchorMenuButton(page).boundingBox())!;
-    // Contained by the card, in its top-right corner slot. Not a centre check:
-    // the control took the chevron's place, so its centre is deliberately not
-    // the card's.
-    expect(bar.x).toBeGreaterThanOrEqual(card.x - 1);
-    expect(bar.x + bar.width).toBeLessThanOrEqual(card.x + card.width + 1);
+
+    // The card's ⋮ does NOT come with it: the grid carries none. This used to
+    // assert the opposite (visible, and contained by the card's box), which was
+    // the placement test before the control left the grid entirely.
+    //
+    // `toBeHidden`, not a boundingBox measurement — boundingBox WAITS for
+    // visibility, so measuring a `display:none` control burns the timeout.
+    await expect(anchorMenuButton(page).first()).toBeHidden();
+
+    // But the SELECTION's actions are still one click away, from the header —
+    // the same fallback a too-narrow strip clip uses.
+    await expect(page.locator("[data-header-selection-overflow]").first()).toBeVisible();
   });
 
   test("the ⋮ follows the last-clicked card, not the whole selection", async ({
@@ -6612,18 +6643,39 @@ test.describe("graph view E2E", () => {
     const declared = () =>
       run.locator("[data-select-mode-verb-ruler] [data-header-action]").count();
 
+    const overflow = page.locator("[data-header-selection-overflow]");
+
+    // WIDE: the whole run fits, so there is NO `⋮` at all. It used to be
+    // permanent, which said the row was a summary of some longer list and made
+    // the verbs beside it look decorative.
     await page.setViewportSize({ width: 1400, height: 800 });
-    await expect.poll(shown).toBeGreaterThan(1);
+    await expect.poll(shown).toBe(await declared());
     const wide = await shown();
-    // The ruler always holds the FULL run — that is what makes it a stable
-    // yardstick — so the visible count can never exceed it.
-    expect(wide).toBeLessThanOrEqual(await declared());
+    expect(wide).toBeGreaterThan(1);
+    await expect(overflow).toHaveCount(0);
 
     // Narrow: strictly fewer verbs, and never zero — a count with no verbs at
-    // all reads as broken, and the `⋮` still holds everything either way.
+    // all reads as broken, and the `⋮` holds whatever it dropped.
     await page.setViewportSize({ width: 620, height: 800 });
     await expect.poll(shown).toBeLessThan(wide);
-    expect(await shown()).toBeGreaterThanOrEqual(1);
+    const narrow = await shown();
+    expect(narrow).toBeGreaterThanOrEqual(1);
+
+    // ...and NOW it appears, reporting exactly how many it swallowed.
+    await expect(overflow).toBeVisible();
+    await expect(overflow).toHaveAttribute(
+      "data-select-mode-overflow-count",
+      String(wide - narrow),
+    );
+
+    // It sits WITH the verbs, not at the far end of the row. Asserted
+    // structurally rather than by coordinates: the run is `flex-1`, so a `⋮`
+    // outside it floats away from the verbs by however much space is spare,
+    // and being inside the container is what puts it against the last verb
+    // drawn whatever the width.
+    expect(
+      await overflow.evaluate((e) => e.closest("[data-select-mode-verbs]") !== null),
+    ).toBe(true);
 
     // THE ROW NEVER GROWS TALLER. Wrapping was the old answer to running out
     // of width, and it moved the whole board down — the thing the height
@@ -6632,18 +6684,33 @@ test.describe("graph view E2E", () => {
     const narrowHeight = await header.evaluate((e) =>
       Math.round(e.getBoundingClientRect().height),
     );
+
+    // THE MENU HOLDS THE REMAINDER, NOT THE WHOLE LIST. Every verb already on
+    // the row was also in here, an inch to the left of itself — which is what
+    // made the fold look like it had not happened at all.
+    const onRow = await run
+      .locator(":scope > [data-header-action]")
+      .evaluateAll((els) => els.map((e) => e.getAttribute("data-header-action")));
+    await overflow.click();
+    const menu = page.getByRole("menu");
+    await expect(menu).toHaveCount(1);
+    const inMenu = await menu
+      .locator("[data-menu-action]")
+      .evaluateAll((els) => els.map((e) => e.getAttribute("data-menu-action")));
+    // Nothing repeated...
+    for (const action of onRow) expect(inMenu).not.toContain(action);
+    // ...and nothing lost: the two halves add back up to the full run.
+    expect(inMenu.length).toBe(wide - narrow);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+
+    // Back to wide: every verb returns and the `⋮` withdraws with them.
     await page.setViewportSize({ width: 1400, height: 800 });
     await expect.poll(shown).toBe(wide);
+    await expect(overflow).toHaveCount(0);
     expect(
       await header.evaluate((e) => Math.round(e.getBoundingClientRect().height)),
     ).toBe(narrowHeight);
-
-    // Everything dropped is still reachable: the `⋮` renders the full action
-    // list from one definition, so overflow is a shortcut being withdrawn, not
-    // a capability.
-    await page.locator("[data-header-selection-overflow]").click();
-    await expect(page.getByRole("menu")).toHaveCount(1);
-    await expect(page.getByRole("menuitem", { name: /^Delete/ })).toBeVisible();
   });
 
   test("select mode takes the breadcrumb's place at the SAME height, from the first click", async ({
@@ -6680,54 +6747,53 @@ test.describe("graph view E2E", () => {
     expect(await height()).toBe(browseHeight);
   });
 
-  test("in the grid the anchor's ⋮ sits in the CAPTION, not on the artwork", async ({
+  test("the grid card carries NO ⋮ — the select row holds its actions", async ({
     page,
   }) => {
-    // The mockup's split: the title row is chrome (type, name, actions) and the
-    // thumbnail is content. Ours had the one remaining piece of chrome stamped
-    // across the picture, in the top-right corner.
+    // This used to assert WHERE the grid's ⋮ sat (down in the caption band,
+    // trailing the name). It is gone from the grid entirely: every action it
+    // opened is on the select row, so a per-card menu was a second route to the
+    // same list parked in the corner of every cell.
     //
-    // Measured as bands rather than asserted on classes, because the property
-    // is positional and three things feed it — the card's own box, the caption's
-    // height, and the offset. A class assertion would pass with the control
-    // sitting anywhere.
+    // Measured as zero height rather than as absence. The control is HIDDEN,
+    // not deleted — `CardCornerSlot` still renders and still tracks the anchor
+    // so restoring it is one class — so it is still in the DOM, and an absence
+    // assertion would fail for a reason that is not the behaviour.
     await installGraphApi(page);
     await openGraph(page);
     await surfaceButton(page, "grid").click();
 
     for (const nodeId of ["alpha", CHILD_ID]) {
       // Ctrl/Cmd+click: a plain click on the COLLECTION would drill in, and
-      // this needs the card to become the anchor while staying on screen.
+      // this needs the card to become the ANCHOR while staying on screen —
+      // which is the point. Asserting on a card that was never anchored would
+      // pass whether or not the grid rule exists.
       await page
         .locator(`[data-virtual-grid] [data-node-id="${nodeId}"]`)
         .click({ modifiers: ["ControlOrMeta"] });
-      const geometry = await page.evaluate((id) => {
-        const card = document.querySelector(`[data-virtual-grid] [data-node-id="${CSS.escape(id)}"]`);
-        const dots = document.querySelector("[data-anchor-menu]");
-        const art = card?.querySelector("img");
-        if (!card || !dots) return null;
-        const c = card.getBoundingClientRect();
-        const d = dots.getBoundingClientRect();
-        return {
-          artworkBottom: art ? art.getBoundingClientRect().bottom : null,
-          dotsTop: d.top,
-          dotsBottom: d.bottom,
-          cardBottom: c.bottom,
-          cardRight: c.right,
-          dotsRight: d.right,
-        };
-      }, nodeId);
-      expect(geometry, `no anchor ⋮ for ${nodeId}`).not.toBeNull();
+      await expect(
+        page.locator(`[data-virtual-grid] [data-node-id="${nodeId}"]`),
+      ).toHaveAttribute("data-selected", "true");
 
-      // BELOW the artwork — the assertion the old top-right position failed.
-      if (geometry!.artworkBottom !== null) {
-        expect(geometry!.dotsTop).toBeGreaterThanOrEqual(geometry!.artworkBottom - 1);
-      }
-      // …and still inside the card, not hanging off its bottom edge.
-      expect(geometry!.dotsBottom).toBeLessThanOrEqual(geometry!.cardBottom);
-      // Trailing the row, not floating mid-card.
-      expect(geometry!.cardRight - geometry!.dotsRight).toBeLessThanOrEqual(16);
+      const dots = await page.evaluate(() => {
+        const found = document.querySelector("[data-anchor-menu]");
+        return found === null ? null : found.getBoundingClientRect().height;
+      });
+      expect(dots ?? 0, `grid ⋮ still laid out for ${nodeId}`).toBe(0);
     }
+
+    // And the actions ARE reachable: arming select mode gives the row.
+    await page.locator("[data-select-mode-toggle]").click();
+    await expect(page.locator("[data-graph-board-header]")).toHaveAttribute(
+      "data-header-mode",
+      "select",
+    );
+    // Scoped to the run's OWN children: the row renders a hidden ruler copy of
+    // every verb to measure against, so an unscoped lookup finds each of them
+    // twice and trips strict mode.
+    await expect(
+      page.locator("[data-select-mode-verbs] > [data-header-action='delete']"),
+    ).toBeVisible();
   });
 
   test("the STRIP keeps its ⋮ on the card, where there is no caption to hold it", async ({
@@ -6795,6 +6861,41 @@ test.describe("graph view E2E", () => {
     await alpha.hover();
     await alpha.locator("[data-selection-indicator]").click();
     await expect(alpha).toHaveAttribute("data-selected", "true");
+  });
+
+  test("the checkbox ARMS the mode — the header swaps its breadcrumbs for the select row", async ({
+    page,
+  }) => {
+    // THE HEADER IS THE BUG. The checkbox filled in, but the row above it is
+    // driven by `multiSelectMode` alone (GraphBoard's `selectModeRow`), and
+    // toggling a selection never armed that — so a picked card got no count, no
+    // verbs and no Done, while the breadcrumb trail sat there as if nothing had
+    // happened. Pressing Select produced the right row; the checkbox did not.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const card = surface.locator('[data-node-id="alpha"]');
+    const header = page.locator("[data-graph-board-header]");
+    const checkbox = card.locator("[data-selection-indicator]");
+
+    // The premise: browsing, with the trail showing.
+    await expect(header).toHaveAttribute("data-header-mode", "browse");
+
+    await card.hover();
+    await checkbox.click();
+
+    await expect(card).toHaveAttribute("data-selected", "true");
+    await expect(header).toHaveAttribute("data-header-mode", "select");
+    await expect(page.locator("[data-select-mode-count]")).toHaveText("1 selected");
+
+    // Un-checking the last card does NOT throw you back out. It holds at
+    // "0 selected", which is where pressing Select and picking nothing lands
+    // too — disarming here would yank the row away at the exact moment someone
+    // is correcting a mis-pick, and Done is the deliberate way out.
+    await checkbox.click();
+    await expect(card).not.toHaveAttribute("data-selected", "true");
+    await expect(header).toHaveAttribute("data-header-mode", "select");
+    await expect(page.locator("[data-select-mode-count]")).toHaveText("0 selected");
   });
 
   test("a hidden checkbox is not a click trap", async ({ page }) => {
