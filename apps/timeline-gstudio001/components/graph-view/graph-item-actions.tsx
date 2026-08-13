@@ -572,6 +572,25 @@ export function GraphItemActionsBridge({
       // source is gone by paste time — see `pasteFromClipboard`.
       graphClipboard.markPendingCut(selected);
       store.clearSelection();
+      handOverToDestinationPicking();
+    };
+
+    /**
+     * Hand the board back for NAVIGATION once something is on the clipboard.
+     *
+     * With multi-select armed a plain click toggles selection
+     * (`handleSelectionSurfaceClick`), so a collection cannot be opened — and
+     * the destination is usually somewhere else in the tree. Leaving the mode
+     * restores click-to-open and takes the checkboxes off the cards.
+     *
+     * Only meaningful FROM select mode: the flag it records is what keeps the
+     * selection row on screen afterwards, and a copy made while ordinary
+     * browsing must leave the browse toolbar exactly where it is.
+     */
+    const handOverToDestinationPicking = () => {
+      if (!store.getSnapshot().interaction.multiSelectMode) return;
+      graphClipboard.markPickingDestination();
+      store.setMultiSelectMode(false);
     };
 
     const pasteSelection = () => {
@@ -602,6 +621,12 @@ export function GraphItemActionsBridge({
               toast(`Copied ${selected.length} item${selected.length === 1 ? "" : "s"}.`, {
                 id: "graph-item-copy",
               });
+              // Same reason as Cut: the next thing this gesture needs is a
+              // DESTINATION, and with multi-select armed a click cannot open a
+              // collection to reach one. The selection is deliberately kept —
+              // unlike Cut, nothing about a copy makes the source stale, and
+              // the ring is what says which items are on the clipboard.
+              handOverToDestinationPicking();
             }
           });
           break;

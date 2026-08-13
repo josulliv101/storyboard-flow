@@ -87,6 +87,21 @@ export function usePendingCutCount(): number {
 }
 
 /**
+ * Whether the row should stay in its SELECT face while a destination is chosen.
+ *
+ * Copy and Cut leave multi-select so the board can be navigated, which would
+ * otherwise take this row down with them. True only when the gesture began in
+ * select mode — see `isPickingDestination`.
+ */
+export function useIsPickingDestination(): boolean {
+  return useSyncExternalStore(
+    graphClipboard.subscribe,
+    () => graphClipboard.isPickingDestination(),
+    () => false,
+  );
+}
+
+/**
  * The anchor: the card hosting the pill, and the card a paste follows.
  *
  * A plain store read now. It used to be derived here from `selectedIds` with a
