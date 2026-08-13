@@ -11,3 +11,7 @@ playwright-report/
 
 # Vite intermediate output for the MCP Apps UI; the committed artifact is lib/mcp-apps/timeline-app-html.ts
 mcp-app/dist/
+
+# Written by `npm run audit:orphans` so --offline can re-answer questions
+# without re-reading the collection. Local cache; never committed.
+.orphan-snapshot.json
