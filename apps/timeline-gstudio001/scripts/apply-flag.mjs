@@ -35,18 +35,48 @@ export function readApplyFlag(script, envVar) {
 }
 
 /**
+ * The env fallback, in the syntax of the shell actually in use.
+ *
+ * THE SECOND FAILURE. The first version of this notice printed the bash form
+ * unconditionally. On Windows/PowerShell `PRUNE_APPLY=1 npm run …` is not a
+ * command at all — PowerShell answers "PRUNE_APPLY=1 is not recognized" — so
+ * the notice told a PowerShell operator to run something that cannot work.
+ * Printing a confident, wrong instruction is the same bug this file exists to
+ * stop, so the escape hatch has to be written in the reader's shell.
+ */
+function envForms(script, envVar) {
+  if (process.platform !== "win32") return [`  ${envVar}=1 npm run ${script}`];
+  return [
+    `  $env:${envVar}="1"; npm run ${script}     (PowerShell)`,
+    `  set ${envVar}=1 && npm run ${script}      (cmd.exe)`,
+    "",
+    `  In PowerShell $env:${envVar} STAYS SET for the rest of the session, so a`,
+    `  later plain \`npm run ${script}\` will also delete. Clear it when done:`,
+    `  Remove-Item Env:${envVar}`,
+  ];
+}
+
+/**
  * The closing line of a dry run. Deliberately states the NEGATIVE outcome
  * first: "Dry run" alone reads as a mode, not as a result, and the whole
  * failure above was someone reading it as success.
+ *
+ * `-- --apply` is given first because it is the one form that works from both
+ * the repo root and this workspace, in every shell, and leaves nothing behind.
+ * It only survives the root proxy because those scripts end in a trailing `--`
+ * (root package.json) — without it npm re-swallows the flag one level down.
  */
 export function dryRunNotice(script, envVar) {
   return [
     "",
     "NOTHING WAS DELETED — this was a dry run.",
     "",
-    "To actually delete, use one of these EXACTLY:",
+    "To actually delete, run this EXACTLY (works from the repo root or this",
+    "workspace, in any shell):",
     `  npm run ${script} -- --apply        (note the bare -- separator)`,
-    `  ${envVar}=1 npm run ${script}`,
+    "",
+    "Or set the environment variable instead:",
+    ...envForms(script, envVar),
     "",
     `Beware: \`npm run ${script} --apply\` without the separator is silently`,
     "discarded by npm. The script never sees it and you get this message again.",
