@@ -20,6 +20,27 @@ import { type CollectionsPatch, type NodeAdd, type NodeMove, applyPatch } from "
 // `update-media` is the one DATA mutation (image duration / video trim).
 
 /**
+ * The shortest a media clip may be left showing.
+ *
+ * THE REDUCER IS WHERE THIS BELONGS, because every surface reaches media
+ * duration through it: pointer drags on the trim handles, the keyboard trim
+ * actions (which resolve to an `update-media` command and do no clamping of
+ * their own), and the agent's `trim_clip`. Putting a floor in the UI instead
+ * would leave the other two free to go under it, which is how the paths came
+ * to disagree — the reducer let the trim ends meet while the agent path
+ * refused the same edit outright.
+ *
+ * 0.1s matches the finest keyboard trim step (`FINE_TRIM_STEP_SECONDS`), so
+ * stepping down lands exactly on the floor rather than stopping short of it.
+ *
+ * A zero-length clip is not a rendering hazard — `durationToWidth` floors
+ * every slot at `MIN_ITEM_WIDTH`, so it stays visible and grabbable. It is
+ * simply not a thing the product means to store: it plays nothing, counts as
+ * nothing, and the agent path has always said so.
+ */
+export const MIN_MEDIA_DURATION_SECONDS = 0.1;
+
+/**
  * A media node's new trim/duration, discriminated to match the node's kind.
  * For video, omitted `trim*` fields keep the current value (change one end).
  */
@@ -459,10 +480,17 @@ function applyMediaUpdate(
     if (!Number.isFinite(nextIn) || !Number.isFinite(nextOut)) {
       return { ok: false, error: { reason: "invalid-media-update", nodeId } };
     }
-    // Clamp so both ends are >= 0 and together never exceed the source length
-    // (effective duration stays >= 0) — a drag past the limit lands at it.
-    const trimInSeconds = Math.max(0, Math.min(nextIn, node.fullDurationSeconds));
-    const trimOutSeconds = Math.max(0, Math.min(nextOut, node.fullDurationSeconds - trimInSeconds));
+    // Clamp so both ends are >= 0 and together leave at least
+    // MIN_MEDIA_DURATION_SECONDS showing — a drag past the limit lands at it.
+    //
+    // It used to allow the ends to meet, so `trimIn + trimOut` could equal the
+    // source length and the clip persisted showing nothing. A source SHORTER
+    // than the floor cannot honour it, and the whole clip is then the most it
+    // can show, so the floor is itself clamped to the source.
+    const full = node.fullDurationSeconds;
+    const floor = Math.min(MIN_MEDIA_DURATION_SECONDS, full);
+    const trimInSeconds = Math.max(0, Math.min(nextIn, full - floor));
+    const trimOutSeconds = Math.max(0, Math.min(nextOut, full - trimInSeconds - floor));
     if (trimInSeconds === node.trimInSeconds && trimOutSeconds === node.trimOutSeconds) {
       return { ok: false, error: { reason: "same-position" } };
     }
@@ -477,7 +505,8 @@ function applyMediaUpdate(
     if (!Number.isFinite(update.durationSeconds)) {
       return { ok: false, error: { reason: "invalid-media-update", nodeId } };
     }
-    const durationSeconds = Math.max(0, update.durationSeconds);
+    // An image has no source length to bound it, so the floor always applies.
+    const durationSeconds = Math.max(MIN_MEDIA_DURATION_SECONDS, update.durationSeconds);
     if (durationSeconds === node.durationSeconds) {
       return { ok: false, error: { reason: "same-position" } };
     }

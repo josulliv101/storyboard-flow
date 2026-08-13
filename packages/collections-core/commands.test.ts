@@ -8,7 +8,11 @@ import {
   type CollectionsGraph,
   type GraphNodeSpec,
 } from "./graph";
-import { applyCommand, type CollectionsCommand } from "./commands";
+import {
+  applyCommand,
+  MIN_MEDIA_DURATION_SECONDS,
+  type CollectionsCommand,
+} from "./commands";
 import { applyPatch, invertPatch } from "./patches";
 
 const media = (id: string): GraphNodeSpec => ({ kind: "media", id, name: id });
@@ -574,13 +578,36 @@ describe("applyCommand: update-media", () => {
     expect(dur(graph, "V")).toBe(5); // 10 - 1 - 4
   });
 
-  test("video: clamps trim so the effective duration never goes negative", () => {
+  // REVERSED (#341). This asserted the ends could meet at exactly 0, which is
+  // what let a drag leave a clip showing nothing while the agent path refused
+  // the identical edit. The floor is now the reducer's, so every surface —
+  // pointer, keyboard, agent — inherits it.
+  test("video: clamps trim so at least the minimum stays showing", () => {
     const { graph: next } = apply(withVideo(), {
       type: "update-media",
       nodeId: parseNodeId("V"),
       update: { mediaKind: "video", trimInSeconds: 8, trimOutSeconds: 8 },
     });
-    expect(dur(next, "V")).toBe(0); // trimIn -> 10, trimOut -> 0
+    // trimIn -> 9.9 (10 - floor), trimOut -> 0.
+    expect(dur(next, "V")).toBeCloseTo(MIN_MEDIA_DURATION_SECONDS, 6);
+  });
+
+  test("video: an over-trimmed START edge alone still leaves the minimum", () => {
+    const { graph: next } = apply(withVideo(), {
+      type: "update-media",
+      nodeId: parseNodeId("V"),
+      update: { mediaKind: "video", trimInSeconds: 99 },
+    });
+    expect(dur(next, "V")).toBeCloseTo(MIN_MEDIA_DURATION_SECONDS, 6);
+  });
+
+  test("image: a zero or negative duration lands on the floor, not on nothing", () => {
+    const { graph: next } = apply(withVideo(), {
+      type: "update-media",
+      nodeId: parseNodeId("A"),
+      update: { mediaKind: "image", durationSeconds: 0 },
+    });
+    expect(dur(next, "A")).toBe(MIN_MEDIA_DURATION_SECONDS);
   });
 
   test("rejects non-media targets, kind mismatch, non-finite values, and no-ops", () => {
