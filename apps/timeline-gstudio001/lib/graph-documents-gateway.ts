@@ -498,14 +498,35 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       abandonSaveInFlight?.();
     }
     if (dirtyIds.size === 0) return;
-    const writes: { document: TimelineDocument; expectedRevision?: number }[] = [];
+    const writes: {
+      document: TimelineDocument;
+      expectedRevision?: number;
+      allowEmptying?: boolean;
+    }[] = [];
     for (const timelineId of dirtyIds) {
       const document = documents[timelineId];
       if (!document) continue;
       const revision = revisions.get(timelineId);
+      // REMOVING THE LAST CLIP is a legal edit, and without this it is not:
+      // the store refuses to write an empty document over a non-empty one
+      // unless the write says the empty is deliberate. That escape reached the
+      // MCP surface only, so the app could not empty a collection at all — and
+      // a per-shot lane holds exactly one clip, so any correction to one hit it.
+      //
+      // Gated on `expectedRevision`, NOT set for every empty write. The guard
+      // exists to stop a stale or half-loaded client wiping a document it never
+      // really read; a write carrying a revision is CAS-protected against
+      // exactly that, so an empty one is an edit rather than an accident. A
+      // blind write (no revision known) still meets the guard, which is the
+      // case worth keeping it for.
+      //
+      // Per-document too, never per-batch: a move empties its source while
+      // filling its target, and only the source asked for the exemption.
+      const emptiesDocument = document.clips.length === 0 && revision !== undefined;
       writes.push({
         document,
         ...(revision !== undefined ? { expectedRevision: revision } : {}),
+        ...(emptiesDocument ? { allowEmptying: true } : {}),
       });
     }
     dirtyIds.clear();
