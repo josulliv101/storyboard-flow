@@ -394,6 +394,11 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                 // paints comes from the first copy, which is safe precisely
                 // because copies of one asset share them.
                 const clip = group.clips[0];
+                // A group is BUILT from at least one clip, so this holds —
+                // rendering nothing is still the right answer if a future
+                // grouping ever produces an empty one, rather than a row of
+                // "undefined" where a filename should be.
+                if (clip === undefined) return null;
                 const busy = group.clips.some((entry) => restoringIds.includes(entry.id));
                 // `title` lives only on a COLLECTION clip, so it needs the
                 // discriminant to reach — media clips fall straight through to

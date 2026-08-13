@@ -8,6 +8,7 @@ import {
   assetRefKey,
   unreferencedCandidates,
 } from "./asset-references";
+import { at } from "../../lib/test-support/at";
 
 function mediaClip(
   id: string,
@@ -115,7 +116,7 @@ describe("assetCandidatesFromClips", () => {
       mediaClip("a1", { providerId: "cloudinary", assetId: "takes/vo.flac" }, "audio"),
     ]);
 
-    expect(candidates[0].kind).toBe("video");
+    expect(at(candidates, 0).kind).toBe("video");
   });
 
   it("gives audio an EMPTY thumbnail rather than its own src", () => {
@@ -126,7 +127,7 @@ describe("assetCandidatesFromClips", () => {
       mediaClip("a1", { providerId: "cloudinary", assetId: "takes/vo.flac" }, "audio"),
     ]);
 
-    expect(candidates[0].thumbnailUrl).toBe("");
+    expect(at(candidates, 0).thumbnailUrl).toBe("");
   });
 
   it("still names an audio candidate from the asset id when it has no title", () => {
@@ -135,7 +136,7 @@ describe("assetCandidatesFromClips", () => {
     ]);
 
     // A row that prints nothing at all is worse than one printing the leaf.
-    expect(candidates[0].name).toBe("a1");
+    expect(at(candidates, 0).name).toBe("a1");
   });
 
   it("snapshots a name and a thumbnail, because no clip will be left to ask", () => {

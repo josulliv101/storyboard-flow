@@ -87,7 +87,10 @@ export function useDialogFocus<T extends HTMLElement>() {
       const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1];
       const wrapTo = event.shiftKey ? focusable[focusable.length - 1] : focusable[0];
       const active = document.activeElement;
-      if (active === edge || !panel.contains(active)) {
+      // `focusable` was length-checked above, so both ends exist; with nothing
+      // to wrap to there is no trap to enforce and the key should pass through
+      // rather than be swallowed.
+      if (wrapTo !== undefined && (active === edge || !panel.contains(active))) {
         event.preventDefault();
         wrapTo.focus();
       }

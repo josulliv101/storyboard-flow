@@ -6,6 +6,7 @@ import {
   listCloudinaryAssets,
   uploadCloudinaryMedia,
 } from "./cloudinary-media-store";
+import { at } from "../lib/test-support/at";
 
 const CLOUDINARY_URL = "cloudinary://key:secret@demo";
 
@@ -46,7 +47,7 @@ describe("Cloudinary project folders", () => {
 
     const assets = await listCloudinaryAssets("user-project-list", "project-a");
     expect(assets).toHaveLength(1);
-    expect(assets[0].relativePath).toBe("Scenes/frame-1");
+    expect(at(assets, 0).relativePath).toBe("Scenes/frame-1");
 
     const imageRequest = new URL(
       requests.find((request) => request.url.includes("/resources/image/upload"))!.url,
@@ -131,8 +132,8 @@ describe("Cloudinary project folders", () => {
     });
 
     expect(requests).toHaveLength(2);
-    const firstHeaders = new Headers(requests[0].headers);
-    const secondHeaders = new Headers(requests[1].headers);
+    const firstHeaders = new Headers(at(requests, 0).headers);
+    const secondHeaders = new Headers(at(requests, 1).headers);
     expect(firstHeaders.get("Content-Range")).toBe(
       `bytes 0-${20 * 1024 * 1024 - 1}/${20 * 1024 * 1024 + 1}`,
     );
@@ -143,9 +144,9 @@ describe("Cloudinary project folders", () => {
     expect(secondHeaders.get("X-Unique-Upload-Id")).toBe(
       firstHeaders.get("X-Unique-Upload-Id"),
     );
-    expect(((requests[0].body as FormData).get("file") as Blob).size).toBe(
+    expect(((at(requests, 0).body as FormData).get("file") as Blob).size).toBe(
       20 * 1024 * 1024,
     );
-    expect(((requests[1].body as FormData).get("file") as Blob).size).toBe(1);
+    expect(((at(requests, 1).body as FormData).get("file") as Blob).size).toBe(1);
   });
 });

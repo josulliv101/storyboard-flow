@@ -6,6 +6,7 @@ import {
   videoFrameUrls,
   type VideoFrameUrlBuilder,
 } from "./video-frame-url";
+import { at } from "../lib/test-support/at";
 
 const CLOUDINARY_FRAME =
   "https://res.cloudinary.com/demo/video/upload/so_0.35,w_640,h_360,c_fill,q_auto,f_jpg/folder/Scene.jpg";
@@ -120,7 +121,7 @@ describe("videoFrameUrls", () => {
     // effective 0.06s: end - 0.05 = 0.01 would land BEFORE the first slot's
     // centre — the midpoint floor keeps the pair ordered.
     videoFrameUrls(["poster"], 2, { trimInSeconds: 0, effectiveSeconds: 0.06 }, record);
-    expect(times[1]).toBeGreaterThanOrEqual(times[0]);
+    expect(at(times, 1)).toBeGreaterThanOrEqual(at(times, 0));
     expect(times[1]).toBeCloseTo(0.03);
   });
 

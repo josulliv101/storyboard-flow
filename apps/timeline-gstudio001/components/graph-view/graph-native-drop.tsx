@@ -126,9 +126,11 @@ function neighborsAt(
   children: readonly NodeId[],
   index: number,
 ): Pick<DropAnchor, "beforeId" | "afterId"> {
+  // `?? null` rather than a cast: an index at either edge legitimately has no
+  // neighbour, which is exactly what the null already means to DropAnchor.
   return {
-    beforeId: index > 0 ? children[index - 1] : null,
-    afterId: index < children.length ? children[index] : null,
+    beforeId: (index > 0 ? children[index - 1] : null) ?? null,
+    afterId: (index < children.length ? children[index] : null) ?? null,
   };
 }
 
@@ -187,8 +189,12 @@ async function mapWithConcurrency<T, R>(
   const worker = async () => {
     for (;;) {
       const index = cursor++;
-      if (index >= items.length) return;
-      results[index] = await run(items[index]);
+      const item = items[index];
+      // The bound above already stops at the end; reading the item through a
+      // check keeps the worker from calling `run(undefined)` if the list is
+      // ever mutated while the pool is draining it.
+      if (index >= items.length || item === undefined) return;
+      results[index] = await run(item);
     }
   };
   await Promise.all(
@@ -748,7 +754,7 @@ function useNativeDrop(collectionId: string, projectId: string) {
           // no error — the upload silently went nowhere.
           if (!added) {
             commitError =
-              landed.length === 1
+              landed.length === 1 && landed[0] !== undefined
                 ? `"${landed[0].node.name}" uploaded but could not be added here.`
                 : `${landed.length} files uploaded but could not be added here.`;
           }
@@ -1202,7 +1208,7 @@ export function NativeDropGrid({
     // boundary. The same `before` cell resolves the actual DropAnchor below,
     // so the line cannot advertise one insertion point and commit another.
     const beforeIndex = before ? geometry.cells.indexOf(before) : -1;
-    const previous = beforeIndex > 0 ? geometry.cells[beforeIndex - 1] : null;
+    const previous = (beforeIndex > 0 ? geometry.cells[beforeIndex - 1] : null) ?? null;
     const boundaryStartsRow = before !== null && previous !== null && previous.top < before.top - 1;
     const anchorPreviousRowEnd = boundaryStartsRow && previous !== null && clientY <= previous.bottom;
     const halfGap = geometry.gap / 2;
@@ -1210,8 +1216,11 @@ export function NativeDropGrid({
     let x: number;
     let y: number;
     let height: number;
+    const last = geometry.cells[geometry.cells.length - 1];
+    // No cells means nothing to draw an indicator against — the caller's own
+    // empty-strip path already covers that case.
+    if (last === undefined) return null;
     if (!before) {
-      const last = geometry.cells[geometry.cells.length - 1];
       x = last.right + halfGap - halfIndicator - geometry.wrapperLeft;
       y = last.top - geometry.wrapperTop;
       height = last.bottom - last.top;

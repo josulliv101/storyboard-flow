@@ -612,7 +612,7 @@ export async function saveFirebaseTimelineEntry(
           );
           // Already gone, or never there: a dangling reference being tidied
           // up, which is a repair rather than a loss.
-          const stranded = released.filter((_childId, index) => snapshots[index].exists);
+          const stranded = released.filter((_childId, index) => snapshots[index]?.exists === true);
           if (stranded.length > 0) {
             throw new TimelineOrphanError(
               stranded.map((id) => ({ id, fromTimelineId: normalizedDocument.id })),
@@ -697,9 +697,13 @@ export async function saveFirebaseTimelineDocumentsAtomic(
       const releasedChildren = new Map<string, string>();
       const claimedChildren = new Set<string>();
 
-      for (let index = 0; index < writes.length; index += 1) {
-        const normalizedDocument = normalizeDocument(writes[index].document);
+      // entries() pairs each write with its own snapshot instead of indexing
+      // two arrays separately — they are produced together by the Promise.all
+      // above, and reading them apart is what let them drift in principle.
+      for (const [index, write] of writes.entries()) {
+        const normalizedDocument = normalizeDocument(write.document);
         const snapshot = snapshots[index];
+        if (snapshot === undefined) continue;
         const existingData = snapshot.exists
           ? (snapshot.data() as TimelineDocumentRecord)
           : undefined;
@@ -709,7 +713,7 @@ export async function saveFirebaseTimelineDocumentsAtomic(
         }
 
         const actualRevision = existingData?.revision ?? 0;
-        const expected = writes[index].expectedRevision;
+        const expected = write.expectedRevision;
         if (expected !== undefined && expected !== actualRevision) {
           conflicts.push({ id: normalizedDocument.id, actualRevision });
           continue;
@@ -737,7 +741,7 @@ export async function saveFirebaseTimelineDocumentsAtomic(
         }
 
         if (
-          !writes[index].allowEmptying &&
+          !write.allowEmptying &&
           existingDocument &&
           existingDocument.clips.length > 0 &&
           normalizedDocument.clips.length === 0
@@ -747,8 +751,13 @@ export async function saveFirebaseTimelineDocumentsAtomic(
           );
         }
 
+        const ref = refs[index];
+        // Built by the same map as `writes`, so this holds; skipping keeps a
+        // mismatch from staging a write against the WRONG document reference,
+        // which is the one failure worse than not writing at all.
+        if (ref === undefined) continue;
         staged.push({
-          ref: refs[index],
+          ref,
           id: normalizedDocument.id,
           revision: actualRevision + 1,
           payload: buildSavePayload(
@@ -761,7 +770,7 @@ export async function saveFirebaseTimelineDocumentsAtomic(
             // back whenever a stored document has no clips, so leaving it would
             // re-hydrate the very clips this write removed and the empty would
             // never stick.
-            { allowEmptying: writes[index].allowEmptying },
+            { allowEmptying: write.allowEmptying },
           ),
         });
       }
@@ -797,7 +806,7 @@ export async function saveFirebaseTimelineDocumentsAtomic(
         // for the same timeline is minted with its own clip id and so is not
         // owning — which is exactly what makes "released and unclaimed" mean
         // "unreachable" without a reverse index to consult.
-        const stranded = orphaned.filter((_id, index) => orphanSnapshots[index].exists);
+        const stranded = orphaned.filter((_id, index) => orphanSnapshots[index]?.exists === true);
         if (stranded.length > 0) {
           throw new TimelineOrphanError(
             stranded.map((id) => ({ id, fromTimelineId: releasedChildren.get(id) ?? null })),
@@ -981,7 +990,11 @@ async function mapWithConcurrency<In, Out>(
   let cursor = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     for (let index = cursor++; index < items.length; index = cursor++) {
-      results[index] = await task(items[index]);
+      const item = items[index];
+      // The bound stops at the end; the check also covers the list being
+      // mutated while this pool drains it.
+      if (item === undefined) continue;
+      results[index] = await task(item);
     }
   });
   await Promise.all(workers);

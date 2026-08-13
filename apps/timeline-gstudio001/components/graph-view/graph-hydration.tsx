@@ -167,6 +167,10 @@ export function HydrationController({
       // grandchildren stay lazy. Best-effort per child: a failure reports its
       // own issue (see hydrateTimeline) and never blocks the focus view.
       const focusedId = focusChain[focusChain.length - 1];
+      // Inside the async body, AFTER every hook — an early return placed above
+      // a hook is a rules-of-hooks violation, which is how the first attempt
+      // at this guard broke lint.
+      if (focusedId === undefined) return;
       for (const childId of getChildren(store.getSnapshot().graph, parseNodeId(focusedId))) {
         if (cancelled) return;
         const child = store.getSnapshot().graph.nodesById.get(childId);

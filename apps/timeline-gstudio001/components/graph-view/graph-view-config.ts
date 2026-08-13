@@ -127,7 +127,9 @@ export const DEFAULT_ITEM_SIZE: ItemSize = "lg";
  */
 export function stepDownItemSize(size: ItemSize): ItemSize {
   const index = ITEM_SIZES.indexOf(size);
-  return ITEM_SIZES[Math.max(0, index - 1)];
+  // One step down, never past the smallest. Unreachable for a non-empty
+  // constant — stated so the function stays total whatever the caller passes.
+  return ITEM_SIZES[Math.max(0, index - 1)] ?? ITEM_SIZES[0];
 }
 
 /**

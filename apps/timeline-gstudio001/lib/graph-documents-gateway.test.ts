@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 import { createGraphDocumentsGateway } from "./graph-documents-gateway";
+import { at } from "../lib/test-support/at";
 
 const SAVE_DEBOUNCE_MS = 900;
 const SAVE_RETRY_MS = 5000;
@@ -234,8 +235,8 @@ describe("graph-documents-gateway", () => {
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(1);
-    expect(batches[0].writes).toHaveLength(2);
-    const byId = new Map(batches[0].writes?.map((write) => [write.document.id, write]));
+    expect(at(batches, 0).writes).toHaveLength(2);
+    const byId = new Map(at(batches, 0).writes?.map((write) => [write.document.id, write]));
     expect(clipIds(byId.get("a")?.document)).toEqual(["a2"]);
     expect(byId.get("a")?.expectedRevision).toBe(3);
     expect(clipIds(byId.get("b")?.document)).toEqual(["b2"]);
@@ -276,8 +277,8 @@ describe("graph-documents-gateway", () => {
     await vi.advanceTimersByTimeAsync(0);
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(2);
-    expect(clipIds(batches[1].writes?.[0].document)).toEqual(["a4"]);
-    expect(batches[1].writes?.[0].expectedRevision).toBe(2);
+    expect(clipIds(at(batches, 1).writes?.[0].document)).toEqual(["a4"]);
+    expect(at(batches, 1).writes?.[0].expectedRevision).toBe(2);
   });
 
   // The refresh/save race. Awaiting only the batch that happened to be in
@@ -346,8 +347,8 @@ describe("graph-documents-gateway", () => {
     gateway.flushPendingWrites({ keepalive: true });
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(1);
-    expect(batches[0].keepalive).toBe(true);
-    expect(clipIds(batches[0].writes?.[0].document)).toEqual(["a2"]);
+    expect(at(batches, 0).keepalive).toBe(true);
+    expect(clipIds(at(batches, 0).writes?.[0].document)).toEqual(["a2"]);
 
     // The debounce timer was consumed — no duplicate batch later.
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
@@ -380,12 +381,12 @@ describe("graph-documents-gateway", () => {
 
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(2); // it did NOT wait for the stuck request
-    expect(batches[0].signal?.aborted).toBe(true); // the stuck one was abandoned
-    expect(batches[1].keepalive).toBe(true);
+    expect(at(batches, 0).signal?.aborted).toBe(true); // the stuck one was abandoned
+    expect(at(batches, 1).keepalive).toBe(true);
     // Carries the LATEST cache, and still expects the revision the abandoned
     // batch expected — no response landed, so the ledger never advanced.
-    expect(clipIds(batches[1].writes?.[0].document)).toEqual(["a3"]);
-    expect(batches[1].writes?.[0].expectedRevision).toBe(1);
+    expect(clipIds(at(batches, 1).writes?.[0].document)).toEqual(["a3"]);
+    expect(at(batches, 1).writes?.[0].expectedRevision).toBe(1);
     // Abandoning is not a failure: it must not surface as a save error.
     expect(gateway.lastError()).toBeNull();
   });
@@ -410,8 +411,8 @@ describe("graph-documents-gateway", () => {
     // The in-flight batch's own content is what would have been lost.
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(2);
-    expect(batches[1].keepalive).toBe(true);
-    expect(clipIds(batches[1].writes?.[0].document)).toEqual(["a2"]);
+    expect(at(batches, 1).keepalive).toBe(true);
+    expect(clipIds(at(batches, 1).writes?.[0].document)).toEqual(["a2"]);
   });
 
   it("a second unload flush leaves an already-keepalive batch alone", async () => {
@@ -452,10 +453,10 @@ describe("graph-documents-gateway", () => {
 
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(1);
-    expect(batches[0].bodyBytes).toBeGreaterThan(64 * 1024);
-    expect(batches[0].keepalive).toBeFalsy(); // sent best-effort instead
+    expect(at(batches, 0).bodyBytes).toBeGreaterThan(64 * 1024);
+    expect(at(batches, 0).keepalive).toBeFalsy(); // sent best-effort instead
     // The batch still went out INTACT — atomicity is not traded away.
-    expect(clipIds(batches[0].writes?.[0].document)).toEqual(["a2"]);
+    expect(clipIds(at(batches, 0).writes?.[0].document)).toEqual(["a2"]);
     // And the risk is surfaced rather than swallowed.
     expect(gateway.lastError()).toMatch(/too large/i);
   });
@@ -473,8 +474,8 @@ describe("graph-documents-gateway", () => {
     gateway.flushPendingWrites({ keepalive: true });
 
     const batches = batchesOf(calls);
-    expect(batches[0].bodyBytes).toBeLessThan(56 * 1024);
-    expect(batches[0].keepalive).toBe(true);
+    expect(at(batches, 0).bodyBytes).toBeLessThan(56 * 1024);
+    expect(at(batches, 0).keepalive).toBe(true);
     expect(gateway.lastError()).toBeNull();
   });
 

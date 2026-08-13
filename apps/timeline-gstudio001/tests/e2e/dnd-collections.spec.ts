@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { at } from "../../lib/test-support/at";
 
 // E2E coverage for packages/ui/dnd-collections, driven with REAL mouse input
 // against the Storybook iframe (the vitest story tests dispatch synthetic
@@ -100,7 +101,7 @@ test.describe('DndCollections E2E', () => {
       const ids = await panelOrder(page, 'panel-a');
       expect(ids).toHaveLength(4);
       expect(ids[3]).toMatch(/^col-/);
-      newId = ids[3];
+      newId = at(ids, 3);
     }).toPass();
 
     // The fresh collection is immediately droppable: nest alpha inside.

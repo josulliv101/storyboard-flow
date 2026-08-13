@@ -37,6 +37,13 @@ import { cn } from "@/lib/utils";
 
 import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
 
+/** The avatar letter. Written once because the same nested ternary appeared in
+ *  two places, and an empty name string made `name[0]` undefined in both. */
+function initialOf(user: { name?: string | null; email?: string | null } | null | undefined): string {
+  return (user?.name?.[0] ?? user?.email?.[0] ?? "U").toUpperCase();
+}
+
+
 type UtilityItem = {
   id: "assets" | "trash";
   label: string;
@@ -614,7 +621,7 @@ export function TimelineSidebar() {
             />
           ) : (
             <div className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100">
-              {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
+              {initialOf(user)}
             </div>
           )}
           <SidebarTooltipLabel
@@ -638,7 +645,7 @@ export function TimelineSidebar() {
                 />
               ) : (
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-sm font-bold text-zinc-300">
-                  {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
+                  {initialOf(user)}
                 </div>
               )}
               <div className="min-w-0 flex-1">

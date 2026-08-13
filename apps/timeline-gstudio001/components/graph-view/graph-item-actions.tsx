@@ -535,7 +535,10 @@ export function GraphItemActionsBridge({
         const siblings = getChildren(store.getSnapshot().graph, parentId);
         const at = (item: Built) => siblings.indexOf(item.sourceId);
         group.sort((a, b) => at(a) - at(b));
-        const lastAt = at(group[group.length - 1]);
+        const lastOfGroup = group[group.length - 1];
+        // A group only exists because something was put in it; appending is
+        // the same answer the not-found branch already gives.
+        const lastAt = lastOfGroup === undefined ? -1 : at(lastOfGroup);
         const toIndex = lastAt >= 0 ? lastAt + 1 : siblings.length;
         newIds.push(
           ...insertClones(

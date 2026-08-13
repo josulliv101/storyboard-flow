@@ -69,11 +69,12 @@ function nestedPreviewItemsFrom(clips: readonly TimelineDocument["clips"][number
       : previewItemsFrom([clip]),
   );
   if (nested.length <= 3) return nested;
-  return [
-    nested[0],
-    nested[Math.floor(nested.length / 2)],
-    nested[nested.length - 1],
-  ];
+  // Indices then a bounds check, matching `previewItemsFrom` and
+  // `hydratedCollectionPreviews` — this projection is PERSISTED, so a hole
+  // would write a summary entry with undefined fields.
+  return [0, Math.floor(nested.length / 2), nested.length - 1].flatMap(
+    (index) => nested[index] ?? [],
+  );
 }
 
 export function deriveCollectionSummaries(

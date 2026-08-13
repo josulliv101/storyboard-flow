@@ -139,8 +139,11 @@ function SeekRailRow({
   const cells = rowCards.length;
   const pitch = cellWidth + GRID_GAP;
   const extent = Math.max(1, cells * pitch - GRID_GAP);
-  const rowStart = rowCards[0].startTime;
-  const rowEnd = rowCards[cells - 1].endTime;
+  // Defaults rather than an early return: this sits above the hooks below, and
+  // returning here would call them conditionally. An empty row collapses to a
+  // zero-length span, which the rail already renders as nothing.
+  const rowStart = rowCards[0]?.startTime ?? 0;
+  const rowEnd = rowCards[cells - 1]?.endTime ?? 0;
 
   // Thumb/fill/aria track the channel imperatively — time moves at pointer
   // rate during a scrub, no reason to re-render. Deps cover everything the
@@ -585,8 +588,8 @@ export function GraphStripSeekRail({
     [graph, details, spans, focusedId, pixelsPerSecond, cardHeight, flatItems],
   );
   const map = useMemo(() => buildPlayheadMap(cards), [cards]);
-  const start = cards.length > 0 ? cards[0].startTime : 0;
-  const end = cards.length > 0 ? cards[cards.length - 1].endTime : 0;
+  const start = cards[0]?.startTime ?? 0;
+  const end = cards[cards.length - 1]?.endTime ?? 0;
   // The rail is a SIBLING of the strip, so it queries across for the scroller
   // rather than climbing to it like the ruler does — same window, two routes.
   const [scroller, setScroller] = useState<HTMLElement | null>(null);

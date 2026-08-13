@@ -132,13 +132,13 @@ function buildRootsGraph(
     {
       kind: "collection",
       id: rootTimelineId,
-      name: documents[rootTimelineId].title,
+      name: documents[rootTimelineId]?.title ?? rootTimelineId,
       children: rootSpecs.value.specs,
     },
     {
       kind: "collection",
       id: trashId,
-      name: documents[trashId].title || "Trash Bin",
+      name: documents[trashId]?.title || "Trash Bin",
       children: trashSpecs.value.specs,
     },
   ];
@@ -382,8 +382,11 @@ export async function applyCollectionsCommand(
     return { document, expectedRevision: 0 };
   });
   const writes: TimelineBatchWrite[] = affectedIds.map((id) => {
+    const existing = documents[id];
+    // `affectedIds` is filtered to loaded documents just above, so this holds.
+    if (existing === undefined) throw new Error(`no loaded document "${id}" to write`);
     const document: TimelineDocument = {
-      ...documents[id],
+      ...existing,
       ...(id === retitled && command?.type === "rename-node" ? { title: command.name } : {}),
       clips: graphChildrenToClips(nextGraph, details, id),
     };

@@ -164,7 +164,10 @@ export async function getMediaMetadata(pathname: string) {
 export function createMediaReadStream(
   pathname: string,
   range?: { start: number; end: number },
-  bucketName = getFirebaseBucketNames()[0],
+  // The first configured bucket. `?? ""` keeps the default total; an empty
+  // name fails in the SDK with the bucket it was given, which is a clearer
+  // error than a TypeError here.
+  bucketName = getFirebaseBucketNames()[0] ?? "",
 ) {
   const file = getFirebaseBucketByName(bucketName).file(pathname);
   return range

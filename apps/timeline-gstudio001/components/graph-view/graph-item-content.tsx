@@ -314,7 +314,9 @@ export function useCollectionPreviewFrames(
   // Picture" for one collection. A representative frame (the midpoint of the
   // collection's own duration) is the better answer and needs the preview
   // machinery to resolve a time, which is its own change.
-  return useMemo(() => (all.length > 1 ? [all[0]] : all), [all]);
+  // `slice(0, 1)` rather than `[all[0]]`: it yields the same one-frame list
+  // without constructing an array that could hold `undefined`.
+  return useMemo(() => (all.length > 1 ? all.slice(0, 1) : all), [all]);
 }
 
 /**
@@ -1567,7 +1569,10 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
     : [];
   // FIRST and LAST only (or the single frame) — never three, exactly as the
   // card picks its two representative frames.
-  const chosen = all.length > 1 ? [all[0], all[all.length - 1]] : all;
+  // Built by index PAIR rather than as a literal of two possibly-undefined
+  // reads — same two frames, and the ghost cannot end up rendering a hole.
+  const chosen =
+    all.length > 1 ? [0, all.length - 1].flatMap((i) => all[i] ?? []) : all;
   const derivedFrames: string[] = isCollection
     ? chosen.map((preview) => collectionPreviewFrameUrl(preview)).filter(Boolean)
     : (() => {

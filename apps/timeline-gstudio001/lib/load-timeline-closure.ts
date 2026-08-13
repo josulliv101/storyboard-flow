@@ -50,7 +50,9 @@ async function mapWithConcurrency<In, Out>(
   let cursor = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     for (let index = cursor++; index < items.length; index = cursor++) {
-      results[index] = await run(items[index]);
+      const item = items[index];
+      if (item === undefined) return;
+      results[index] = await run(item);
     }
   });
   await Promise.all(workers);
