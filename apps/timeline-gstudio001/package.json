@@ -16,6 +16,7 @@
     "test:e2e:ui": "playwright test --ui",
     "audit:ownership": "node --env-file=.env scripts/audit-ownerless-timelines.mjs",
     "audit:orphans": "node --env-file=.env scripts/audit-orphaned-timelines.mjs",
+    "prune:orphans": "node --env-file=.env scripts/prune-empty-orphans.mjs",
     "audit:review-findings": "node --env-file=.env scripts/audit-review-findings.mjs",
     "inspect:squatted": "node --env-file=.env scripts/inspect-squatted-fixtures.mjs",
     "stamp:ownership": "node --env-file=.env scripts/stamp-ownerless-timelines.mjs"
