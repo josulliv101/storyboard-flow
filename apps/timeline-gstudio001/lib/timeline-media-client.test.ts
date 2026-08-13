@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { uploadTimelineMedia } from "./timeline-media-client";
+import { at } from "../lib/test-support/at";
 
 // The upload boundary. `response.json()` is `any`, so the function's
 // `Promise<TimelineMediaUploadResult>` annotation proves nothing about what
@@ -162,13 +163,13 @@ describe("uploadTimelineMedia video thumbnails", () => {
     ).resolves.toEqual(ok);
 
     expect(bodies).toHaveLength(1);
-    expect(bodies[0].get("projectId")).toBe("project-a");
+    expect(at(bodies, 0).get("projectId")).toBe("project-a");
     // FormData re-wraps a Blob as a File, so compare content, not identity.
-    const sent = bodies[0].get("thumbnail");
+    const sent = at(bodies, 0).get("thumbnail");
     expect(sent).toBeInstanceOf(Blob);
     expect((sent as Blob).type).toBe("image/jpeg");
     expect(await (sent as Blob).arrayBuffer()).toEqual(await poster.arrayBuffer());
-    expect(String(bodies[0].get("thumbnailFilename"))).toMatch(/^timeline-thumbnails\/a-thumbnail-/);
+    expect(String(at(bodies, 0).get("thumbnailFilename"))).toMatch(/^timeline-thumbnails\/a-thumbnail-/);
   });
 
   it("treats a supplied null thumbnail as 'already tried, none available'", async () => {
@@ -182,8 +183,8 @@ describe("uploadTimelineMedia video thumbnails", () => {
       }),
     ).resolves.toEqual(ok);
 
-    expect(bodies[0].get("thumbnail")).toBeNull();
-    expect(bodies[0].get("thumbnailFilename")).toBeNull();
+    expect(at(bodies, 0).get("thumbnail")).toBeNull();
+    expect(at(bodies, 0).get("thumbnailFilename")).toBeNull();
   });
 
   it("passes an abort signal through to the request", async () => {

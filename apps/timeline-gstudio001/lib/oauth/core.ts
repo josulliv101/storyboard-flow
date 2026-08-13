@@ -129,6 +129,12 @@ export function verifyAccessToken(
   const parts = token.split(".");
   if (parts.length !== 3) return { ok: false, reason: "malformed" };
   const [header, payload, signature] = parts;
+  // `length === 3` above guarantees all three; a malformed token is the same
+  // answer either way, and saying so keeps the crypto below reading real
+  // strings rather than "undefined".
+  if (header === undefined || payload === undefined || signature === undefined) {
+    return { ok: false, reason: "malformed" };
+  }
 
   if (!safeEqual(hmac(signingInput(header, payload), secret), signature)) {
     return { ok: false, reason: "bad-signature" };

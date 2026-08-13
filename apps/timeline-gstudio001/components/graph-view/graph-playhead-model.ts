@@ -421,22 +421,42 @@ export function buildPlayheadMap(cards: readonly ChildSpan[]): PlayheadMap {
     x += card.width + STRIP_GAP_PX;
   }
   const count = times.length;
-  const total = count > 0 ? times[count - 1] : 0;
+  const total = times[count - 1] ?? 0;
+
+  /**
+   * Read one of the two parallel arrays.
+   *
+   * `times` and `xs` are pushed in the same loop, two entries per card, so
+   * they always share `count` — and every index below is 0, `count - 1`, or a
+   * binary-search midpoint between them. This states that once rather than
+   * bounds-checking each of the ten reads in a mapping that runs per frame
+   * while scrubbing.
+   *
+   * Throws rather than defaulting: a 0 here would map the playhead to the
+   * start of the strip, which looks like a seek the user did not make.
+   */
+  const readAt = (values: readonly number[], index: number): number => {
+    const value = values[index];
+    if (value === undefined) {
+      throw new RangeError(`playhead map: index ${index} outside 0..${count - 1}`);
+    }
+    return value;
+  };
 
   const interpolate = (value: number, from: number[], to: number[]): number => {
     if (count === 0) return 0;
-    if (value <= from[0]) return to[0];
-    if (value >= from[count - 1]) return to[count - 1];
+    if (value <= readAt(from, 0)) return readAt(to, 0);
+    if (value >= readAt(from, count - 1)) return readAt(to, count - 1);
     let low = 0;
     let high = count - 1;
     while (low < high - 1) {
       const middle = (low + high) >> 1;
-      if (from[middle] <= value) low = middle;
+      if (readAt(from, middle) <= value) low = middle;
       else high = middle;
     }
-    const span = from[high] - from[low];
-    const fraction = span > 0 ? (value - from[low]) / span : 0;
-    return to[low] + fraction * (to[high] - to[low]);
+    const span = readAt(from, high) - readAt(from, low);
+    const fraction = span > 0 ? (value - readAt(from, low)) / span : 0;
+    return readAt(to, low) + fraction * (readAt(to, high) - readAt(to, low));
   };
 
   return {
@@ -459,7 +479,10 @@ export function rulerMajorSpacing(pixelsPerSecond: number): number {
   const target = RULER_LABEL_MIN_GAP_PX / Math.max(1, pixelsPerSecond);
   return (
     RULER_NICE_SECONDS.find((step) => step >= target) ??
-    RULER_NICE_SECONDS[RULER_NICE_SECONDS.length - 1]
+    RULER_NICE_SECONDS[RULER_NICE_SECONDS.length - 1] ??
+    // Only reachable if the constant is emptied; one second is the smallest
+    // spacing that still draws a ruler rather than dividing by zero.
+    1
   );
 }
 
@@ -545,13 +568,13 @@ export function buildRulerTicks(
   // walks — one pass carrying the running left edge.
   const ranges: Array<{ x0: number; x1: number; isCollection: boolean }> = [];
   let cursorX = 0;
-  for (let index = 0; index < cards.length; index += 1) {
+  for (const [index, card] of cards.entries()) {
     ranges.push({
       x0: cursorX,
-      x1: cursorX + cards[index].width,
+      x1: cursorX + card.width,
       isCollection: isCollectionCard[index] === true,
     });
-    cursorX += cards[index].width + STRIP_GAP_PX;
+    cursorX += card.width + STRIP_GAP_PX;
   }
 
   // Ranges are sorted and disjoint (widths are positive, the gap separates
@@ -559,15 +582,19 @@ export function buildRulerTicks(
   // edge lies before it. Binary search for that candidate, then apply the
   // exact interior predicate to it alone.
   const inCollectionInterior = (cx: number): boolean => {
-    if (ranges[0].x0 >= cx) return false;
+    const first = ranges[0];
+    // No cards means no interiors — the same answer as "left of the first".
+    if (first === undefined || first.x0 >= cx) return false;
     let low = 0;
     let high = ranges.length - 1;
     while (low < high) {
       const middle = (low + high + 1) >> 1;
-      if (ranges[middle].x0 < cx) low = middle;
+      const candidate = ranges[middle];
+      if (candidate !== undefined && candidate.x0 < cx) low = middle;
       else high = middle - 1;
     }
     const range = ranges[low];
+    if (range === undefined) return false;
     return range.isCollection && cx > range.x0 + 1 && cx <= range.x1;
   };
 
@@ -627,8 +654,7 @@ export function buildRulerCollectionSpans(
 ): RulerCollectionSpan[] {
   const out: RulerCollectionSpan[] = [];
   let cursorX = 0;
-  for (let index = 0; index < cards.length; index += 1) {
-    const card = cards[index];
+  for (const [index, card] of cards.entries()) {
     const x1 = cursorX + card.width;
     if (
       isCollectionCard[index] === true &&
@@ -668,24 +694,42 @@ export function buildGridPlayheadMap(
   const cellY = (index: number) => Math.floor(index / columns) * (cellHeight + GRID_GAP);
   const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
+  /**
+   * Read one of the two parallel span arrays.
+   *
+   * `starts` and `ends` are built together with one entry per cell, and every
+   * index below is clamped to `0..count - 1` before it gets here. Stated once
+   * rather than per read, in a mapping the grid playhead runs every frame.
+   *
+   * Throws rather than defaulting: a 0 would place the playhead at the origin,
+   * which reads as a seek nobody asked for.
+   */
+  const spanAt = (values: readonly number[], index: number): number => {
+    const value = values[index];
+    if (value === undefined) {
+      throw new RangeError(`grid playhead: index ${index} outside 0..${count - 1}`);
+    }
+    return value;
+  };
+
   return {
     rowHeight: cellHeight,
-    totalDurationSeconds: total,
+    totalDurationSeconds: total ?? 0,
     posAt: (time) => {
       if (count === 0) return { x: 0, y: 0 };
       let low = 0;
-      if (time >= starts[count - 1]) {
+      if (time >= spanAt(starts, count - 1)) {
         low = count - 1;
-      } else if (time > starts[0]) {
+      } else if (time > spanAt(starts, 0)) {
         let high = count - 1;
         while (low < high - 1) {
           const middle = (low + high) >> 1;
-          if (starts[middle] <= time) low = middle;
+          if (spanAt(starts, middle) <= time) low = middle;
           else high = middle;
         }
       }
-      const span = ends[low] - starts[low];
-      const fraction = span > 0 ? clamp01((time - starts[low]) / span) : 0;
+      const span = spanAt(ends, low) - spanAt(starts, low);
+      const fraction = span > 0 ? clamp01((time - spanAt(starts, low)) / span) : 0;
       return { x: cellX(low) + fraction * cellWidth, y: cellY(low) };
     },
     timeAt: (x, y) => {
@@ -695,8 +739,8 @@ export function buildGridPlayheadMap(
       const index = Math.max(0, Math.min(count - 1, row * columns + column));
       const fraction = clamp01((x - cellX(index)) / cellWidth);
       return Math.min(
-        total,
-        Math.max(0, starts[index] + fraction * (ends[index] - starts[index])),
+        total ?? 0,
+        Math.max(0, spanAt(starts, index) + fraction * (spanAt(ends, index) - spanAt(starts, index))),
       );
     },
   };

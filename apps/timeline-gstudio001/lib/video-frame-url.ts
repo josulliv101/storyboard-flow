@@ -126,7 +126,7 @@ export function videoFrameUrls(
         : index === slots - 1
           ? range.trimInSeconds + Math.max(effective / 2, effective - LAST_FRAME_BACKOFF_SECONDS)
           : range.trimInSeconds + ((index + 0.5) / slots) * effective;
-    urls.push(build(base, time));
+    if (base !== undefined) urls.push(build(base, time));
   }
   return urls;
 }

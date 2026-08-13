@@ -140,9 +140,9 @@ export async function handleMoveClip(
   // subsequent read_timeline.
   const parentId = placedParent as NodeId | null;
   const newOrder =
-    parentId && outcome.documents[parentId as string]
-      ? outcome.documents[parentId as string].clips.map((clip) => clip.id)
-      : undefined;
+    parentId === null
+      ? undefined
+      : outcome.documents[parentId as string]?.clips.map((clip) => clip.id);
 
   return toolOk(`Moved "${args.nodeId}" into "${parentId}" at index ${placedIndex}.`, {
     movedId: args.nodeId,

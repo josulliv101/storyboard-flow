@@ -7,6 +7,7 @@ import {
   isUntouchedEmptyCollection,
   visibleTrashClips,
 } from "./trash-groups";
+import { at } from "../lib/test-support/at";
 
 function image(id: string, overrides: Partial<TimelineClip> = {}): TimelineClip {
   return {
@@ -37,7 +38,7 @@ describe("groupTrashClips", () => {
       image("b", { sourceAsset: CLOUDINARY }),
     ]);
     expect(groups).toHaveLength(1);
-    expect(groups[0].clips.map((c) => c.id)).toEqual(["a", "b"]);
+    expect(at(groups, 0).clips.map((c) => c.id)).toEqual(["a", "b"]);
   });
 
   it("falls back to src for clips minted before provenance was tracked", () => {
@@ -74,7 +75,7 @@ describe("groupTrashClips", () => {
       image("first-again", { src: "https://cdn.test/1.jpg" }),
     ]);
     expect(groups.map((g) => g.clips[0].id)).toEqual(["first", "second"]);
-    expect(groups[0].clips).toHaveLength(2);
+    expect(at(groups, 0).clips).toHaveLength(2);
   });
 
   it("keeps EVERY copy in the group — restoring the row restores them all", () => {
@@ -85,7 +86,7 @@ describe("groupTrashClips", () => {
       image("b", { sourceAsset: CLOUDINARY }),
       image("c", { sourceAsset: CLOUDINARY }),
     ]);
-    expect(groups[0].clips.map((c) => c.id)).toEqual(["a", "b", "c"]);
+    expect(at(groups, 0).clips.map((c) => c.id)).toEqual(["a", "b", "c"]);
   });
 
   it("leaves a single clip as a group of one, and an empty bin as nothing", () => {

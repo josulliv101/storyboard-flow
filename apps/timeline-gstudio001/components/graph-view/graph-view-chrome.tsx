@@ -451,7 +451,7 @@ export function GraphBreadcrumb({
     <div className="flex min-w-0 items-center gap-3 overflow-hidden">
       <ParentLink
         href={parentHref}
-        parentId={parentCrumbId}
+        parentId={parentCrumbId ?? null}
         title={focusedId === projectId ? "Go to Projects" : "Go to parent timeline"}
       />
       <nav

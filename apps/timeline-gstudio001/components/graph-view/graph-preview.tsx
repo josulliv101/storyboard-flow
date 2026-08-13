@@ -564,8 +564,13 @@ export function GraphWaveformBand({
 
       context.fillStyle = card.disabled === true ? "rgba(161,161,170,0.35)" : "rgba(125,211,252,0.85)";
       for (let column = 0; column < columns; column += 1) {
-        const min = window_[column * 2] * scale;
-        const max = window_[column * 2 + 1] * scale;
+        // Peaks are written in min/max PAIRS; a half-written column is skipped
+        // rather than drawn as a spike at zero.
+        const rawMin = window_[column * 2];
+        const rawMax = window_[column * 2 + 1];
+        if (rawMin === undefined || rawMax === undefined) continue;
+        const min = rawMin * scale;
+        const max = rawMax * scale;
         const top = midline - Math.max(max, 0.5);
         const height = Math.max(1, Math.max(max, 0.5) - Math.min(min, -0.5));
         // Canvas x is window-relative: the element is translated to startX.
@@ -1036,10 +1041,9 @@ export function PreviewShell({
     channel.set(0);
   }, [channel, focusedId]);
 
+  const lastClip = clips[clips.length - 1];
   const totalDuration =
-    clips.length > 0
-      ? clips[clips.length - 1].startTime + clips[clips.length - 1].duration
-      : 0;
+    lastClip === undefined ? 0 : lastClip.startTime + lastClip.duration;
   useEffect(() => {
     if (channel.get() > totalDuration) channel.set(totalDuration);
   }, [channel, totalDuration]);

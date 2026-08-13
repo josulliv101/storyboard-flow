@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { at } from "../../lib/test-support/at";
 
 // E2E for the graph project view (/timeline/[projectId]/graph) — the REAL
 // Next app driven with real mouse input. The server surface the view touches
@@ -3947,7 +3948,7 @@ test.describe("graph view E2E", () => {
     const TITLES = ["Depth One", "Depth Two", "Depth Three", "Depth Four"];
     // project → d1 → d2 → d3 → d4
     api.documents.get(PROJECT_ID)!.clips.push(
-      collectionClip("clip-d1", DEPTH_IDS[0], 9, TITLES[0], 1),
+      collectionClip("clip-d1", at(DEPTH_IDS, 0), 9, at(TITLES, 0), 1),
     );
     DEPTH_IDS.forEach((id, index) => {
       const child = DEPTH_IDS[index + 1];
@@ -3961,7 +3962,7 @@ test.describe("graph view E2E", () => {
     });
 
     await page.goto(`${GRAPH_URL}/${DEPTH_IDS.join("/")}?surface=strip`);
-    await expect(strip(page, DEPTH_IDS[3])).toBeVisible({ timeout: 30000 });
+    await expect(strip(page, at(DEPTH_IDS, 3))).toBeVisible({ timeout: 30000 });
 
     const trail = page.getByRole("navigation", { name: "Timeline focus path" });
     const overflow = trail.locator("[data-graph-crumb-overflow]");
@@ -3976,7 +3977,7 @@ test.describe("graph view E2E", () => {
       await expect(trail.getByRole("link", { name: title })).toBeVisible();
     }
     await expect(trail.getByRole("link", { name: "E2E Project" })).toBeVisible();
-    await expect(trail).toContainText(TITLES[3]);
+    await expect(trail).toContainText(at(TITLES, 3));
 
     // NARROW: now it must fold, earliest first, and what folds stays reachable.
     await page.setViewportSize({ width: 720, height: 900 });
@@ -3984,7 +3985,7 @@ test.describe("graph view E2E", () => {
     // The immediate parent and the focused crumb survive — the parent is the
     // one the eye uses, and the focused crumb is where you are.
     await expect(trail.getByRole("link", { name: TITLES[2] })).toBeVisible();
-    await expect(trail).toContainText(TITLES[3]);
+    await expect(trail).toContainText(at(TITLES, 3));
     await expect(trail.getByRole("link", { name: TITLES[0] })).toHaveCount(0);
 
     // Reachable: open the menu and navigate to a folded level.
@@ -5810,7 +5811,10 @@ test.describe("graph view E2E", () => {
         (els, range) =>
           els.filter((el) => {
             const match = /translateX\(([\d.]+)px\)/.exec((el as HTMLElement).style.transform);
-            return match !== null && +match[1] >= range.fromX && +match[1] <= range.toX;
+            // Read into a local: this callback is serialized into the BROWSER,
+            // where the test file's imports do not exist.
+            const x = match?.[1];
+            return x !== undefined && +x >= range.fromX && +x <= range.toX;
           }).length,
         { fromX, toX },
       );

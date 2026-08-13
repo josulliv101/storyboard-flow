@@ -111,7 +111,9 @@ export function tagAccent(tag: string): TagAccent {
     hash ^= key.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
-  return DESCRIPTIVE_ACCENTS[hash % DESCRIPTIVE_ACCENTS.length];
+  // Modulo into a non-empty constant, so the fallback is unreachable — it is
+  // here so emptying the palette degrades to one accent instead of undefined.
+  return DESCRIPTIVE_ACCENTS[hash % DESCRIPTIVE_ACCENTS.length] ?? DESCRIPTIVE_ACCENTS[0];
 }
 
 /** True for the tags that say where something STANDS rather than what it is. */

@@ -37,7 +37,10 @@ export function parseRangeHeader(header: string | null, size: number): ParsedRan
   const match = /^\s*bytes\s*=\s*(.*)$/i.exec(header);
   if (!match) return IGNORE;
 
-  const spec = match[1].trim();
+  // The capture group is part of the pattern that just matched, so it is
+  // present; IGNORE is the same answer the non-matching branch above gives.
+  const spec = match[1]?.trim();
+  if (spec === undefined) return IGNORE;
   // Multiple ranges (`bytes=0-1,5-6`) are valid but unimplemented — serve the
   // whole body rather than pretending the first part was the whole request,
   // which is what the old unanchored regex silently did.

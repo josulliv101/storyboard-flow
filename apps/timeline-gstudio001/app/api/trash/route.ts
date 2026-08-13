@@ -199,7 +199,8 @@ export async function POST(request: Request) {
     for (const clipId of clipIds) {
       const index = remaining.findIndex((clip) => clip.id === clipId);
       if (index === -1) continue;
-      dropped.push(remaining[index]);
+      const removed = remaining[index];
+      if (removed !== undefined) dropped.push(removed);
       remaining.splice(index, 1);
     }
     const discarded = dropped.length;
