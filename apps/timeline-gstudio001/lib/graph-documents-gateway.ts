@@ -137,6 +137,28 @@ export type GraphDocumentsGateway = Readonly<{
    * not get, or to surface the state in their own UI.
    */
   isConflicted: (timelineId: string) => boolean;
+  /**
+   * Declare that the CACHE is ahead of the live graph for this document, so
+   * clip writes projected from that graph must stop.
+   *
+   * `writeClips` already refuses this exact hazard for a document that lost a
+   * revision conflict, and says why: the cache is fresh while the graph the
+   * clips came from is not, so writing them overwrites the other writer's
+   * content with a stale full collection. A 409 was only ever ONE way to reach
+   * that state. The remote-change poller reaches it too — it refreshes a
+   * document (and its revision) and then declines to apply the difference, at
+   * which point the ledger is current, CAS will happily pass, and the next
+   * ancestor write silently deletes whatever the other writer added.
+   *
+   * That is not hypothetical: it is how an open tab reverted two collections an
+   * agent had just created, ~40s after each write, with CAS passing both times.
+   * Mandatory CAS would not have caught it — the revision was correct; the
+   * CONTENT was not.
+   *
+   * Same block and same lifting point as a conflict: cleared by `refresh()`,
+   * when entering the view rebuilds the graph from fresh documents.
+   */
+  markGraphBehind: (timelineId: string, reason: string) => void;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
   /**
@@ -634,31 +656,44 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
             // claim, actually re-persists the entire stale collection against
             // the fresh revision and silently deletes the other writer's
             // additions. Further clip writes are therefore BLOCKED for these
-            // ids until the graph is rebuilt from documents. Unconflicted
-            // writes from the batch re-queue as-is.
+            // ids until the graph is rebuilt from documents.
+            //
+            // THE WHOLE BATCH IS DROPPED, not just the conflicted ids.
+            //
+            // This used to re-queue the unconflicted writes and flush them on
+            // their own, and that broke the all-or-nothing guarantee this
+            // module's header promises — from the client side, after the server
+            // had honoured it. A batch is one CHANGE: a move is
+            // `[source −child, destination +child]`, a delete is
+            // `[parent −child, trash +child]`. The server rejected the pair, so
+            // re-sending the surviving half applies half a change — the source
+            // loses the child and nothing gains it. That is an orphan, created
+            // deliberately by the error path.
+            //
+            // The conflicted document reloads; the rest are blocked too,
+            // because the change they belonged to no longer exists and their
+            // projections came from the same now-suspect graph. Everything
+            // lifts together on `refresh()`.
             for (const write of writes) {
               const timelineId = write.document.id;
-              if (conflictIds.has(timelineId)) {
-                staleIds.add(timelineId);
-                conflictedIds.add(timelineId);
-                // Anything already queued for this id was projected from the
-                // stale graph too.
-                dirtyIds.delete(timelineId);
-                // The message lands AFTER the reload (a successful fetch
-                // clears that document's error slot — set before, it would
-                // flash and vanish); it then stands until the document next
-                // saves cleanly. A failed reload keeps its own load error.
-                void ensure(timelineId).then((document) => {
-                  if (document !== null) {
-                    setError(
-                      timelineId,
-                      `"${write.document.title}" changed in another view. Your unsaved edits to it are not being saved — reopen this timeline to continue editing.`,
-                    );
-                  }
-                });
-              } else {
-                dirtyIds.add(timelineId);
-              }
+              staleIds.add(timelineId);
+              conflictedIds.add(timelineId);
+              // Anything already queued for these ids was projected from the
+              // stale graph too.
+              dirtyIds.delete(timelineId);
+              if (!conflictIds.has(timelineId)) continue;
+              // The message lands AFTER the reload (a successful fetch
+              // clears that document's error slot — set before, it would
+              // flash and vanish); it then stands until the document next
+              // saves cleanly. A failed reload keeps its own load error.
+              void ensure(timelineId).then((document) => {
+                if (document !== null) {
+                  setError(
+                    timelineId,
+                    `"${write.document.title}" changed in another view. Your unsaved edits to it are not being saved — reopen this timeline to continue editing.`,
+                  );
+                }
+              });
             }
             if (dirtyIds.size > 0) scheduleFlush();
             return;
@@ -851,6 +886,16 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     hasPendingWrite: (timelineId) =>
       dirtyIds.has(timelineId) || saveInFlightIds.includes(timelineId),
     isConflicted: (timelineId) => conflictedIds.has(timelineId),
+    markGraphBehind: (timelineId, reason) => {
+      if (documents[timelineId] === undefined) return;
+      if (conflictedIds.has(timelineId)) return;
+      conflictedIds.add(timelineId);
+      setError(
+        timelineId,
+        `"${documents[timelineId]?.title ?? timelineId}" changed in another view and this board could not merge it. Its edits are not being saved — reopen this timeline to continue. (${reason})`,
+      );
+      notify();
+    },
     saveState: readSaveState,
     subscribe: (listener) => {
       listeners.add(listener);

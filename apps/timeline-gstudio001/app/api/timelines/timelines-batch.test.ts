@@ -167,6 +167,45 @@ function batchRequest(
   });
 }
 
+function collectionClip(childTimelineId: string, clipId = childTimelineId): TimelineClip {
+  return {
+    id: clipId,
+    index: 0,
+    kind: "collection",
+    childTimelineId,
+    title: `Timeline ${childTimelineId}`,
+    itemCount: 0,
+    previewItems: [],
+    alt: `${childTimelineId} collection`,
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: 0,
+    duration: 3,
+    sourceDuration: 3,
+    trimIn: 0,
+    trimOut: 0,
+  } as unknown as TimelineClip;
+}
+
+function seedParentWithChild(parentId: string, childId: string, revision = 1) {
+  const document: TimelineDocument = {
+    id: parentId,
+    title: `Timeline ${parentId}`,
+    clips: [collectionClip(childId)],
+  };
+  state.docs.set(parentId, {
+    id: parentId, title: document.title, document, clips: document.clips,
+    isProject: true, ownerUid: "user-a", revision,
+  });
+  const child: TimelineDocument = { id: childId, title: `Timeline ${childId}`, clips: [clip(`${childId}-c0`)] };
+  state.docs.set(childId, {
+    id: childId, title: child.title, document: child, clips: child.clips,
+    isProject: false, ownerUid: "user-a", revision: 1,
+  });
+}
+
+const emptyDoc = (id: string): TimelineDocument => ({ id, title: `Timeline ${id}`, clips: [] });
+
 function docOf(id: string, clipId: string): TimelineDocument {
   return { id, title: `Timeline ${id}`, clips: [clip(clipId)] };
 }
@@ -367,6 +406,111 @@ describe("timeline batch writes", () => {
     );
     expect(response.status).toBe(400);
     expect(state.docs.get("doc-1")?.revision).toBe(1);
+  });
+
+  // ── THE ORPHAN GUARD ──────────────────────────────────────────────────────
+  //
+  // A collection is reachable only through a clip in some parent. Drop the last
+  // one and the document survives in storage with no path to it: invisible in
+  // the UI, absent from the trash, recoverable only by querying the database.
+
+  it("REFUSES a write that removes a collection nothing else takes up", async () => {
+    seedParentWithChild("parent-1", "child-1");
+
+    const response = await batchWrite(
+      batchRequest([{ document: emptyDoc("parent-1"), expectedRevision: 1, allowEmptying: true }]),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string; orphans?: { id: string }[] };
+    expect(body.error).toContain("Refusing to strand");
+    expect(body.orphans?.map((orphan) => orphan.id)).toEqual(["child-1"]);
+    // Nothing committed — the parent still points at it.
+    expect((state.docs.get("parent-1")?.clips as TimelineClip[]).length).toBe(1);
+  });
+
+  it("ALLOWS a move: the destination takes it up in the same batch", async () => {
+    seedParentWithChild("parent-1", "child-1");
+    state.docs.set("parent-2", {
+      id: "parent-2", title: "Timeline parent-2", document: emptyDoc("parent-2"),
+      clips: [], isProject: true, ownerUid: "user-a", revision: 1,
+    });
+
+    const response = await batchWrite(
+      batchRequest([
+        { document: emptyDoc("parent-1"), expectedRevision: 1, allowEmptying: true },
+        {
+          document: { id: "parent-2", title: "Timeline parent-2", clips: [collectionClip("child-1")] },
+          expectedRevision: 1,
+        },
+      ]),
+    );
+
+    expect(response.status).toBe(200);
+    expect((state.docs.get("parent-2")?.clips as TimelineClip[])[0].id).toBe("child-1");
+  });
+
+  it("ALLOWS a delete: the trash is the document taking it up", async () => {
+    seedParentWithChild("parent-1", "child-1");
+    state.docs.set("trash-user-a", {
+      id: "trash-user-a", title: "Trash Bin", document: emptyDoc("trash-user-a"),
+      clips: [], isProject: false, ownerUid: "user-a", revision: 1,
+    });
+
+    const response = await batchWrite(
+      batchRequest([
+        { document: emptyDoc("parent-1"), expectedRevision: 1, allowEmptying: true },
+        {
+          document: { id: "trash-user-a", title: "Trash Bin", clips: [collectionClip("child-1")] },
+          expectedRevision: 1,
+        },
+      ]),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("ALLOWS dropping a DUPLICATE REFERENCE — it never owned the child", async () => {
+    // A second card for the same timeline is minted with its own clip id. The
+    // owning placement is elsewhere and untouched, so removing this strands
+    // nothing; counting it would refuse a legitimate edit.
+    const parent: TimelineDocument = {
+      id: "parent-1",
+      title: "Timeline parent-1",
+      clips: [collectionClip("child-1", "clip-duplicate-ref")],
+    };
+    state.docs.set("parent-1", {
+      id: "parent-1", title: parent.title, document: parent, clips: parent.clips,
+      isProject: true, ownerUid: "user-a", revision: 1,
+    });
+    const child: TimelineDocument = { id: "child-1", title: "Timeline child-1", clips: [clip("c0")] };
+    state.docs.set("child-1", {
+      id: "child-1", title: child.title, document: child, clips: child.clips,
+      isProject: false, ownerUid: "user-a", revision: 1,
+    });
+
+    const response = await batchWrite(
+      batchRequest([{ document: emptyDoc("parent-1"), expectedRevision: 1, allowEmptying: true }]),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("ALLOWS tidying a DANGLING reference to a child that does not exist", async () => {
+    const parent: TimelineDocument = {
+      id: "parent-1", title: "Timeline parent-1", clips: [collectionClip("ghost-child")],
+    };
+    state.docs.set("parent-1", {
+      id: "parent-1", title: parent.title, document: parent, clips: parent.clips,
+      isProject: true, ownerUid: "user-a", revision: 1,
+    });
+
+    const response = await batchWrite(
+      batchRequest([{ document: emptyDoc("parent-1"), expectedRevision: 1, allowEmptying: true }]),
+    );
+
+    // A repair, not a loss — there was never a document to strand.
+    expect(response.status).toBe(200);
   });
 
   it("rejects a batch that repeats a timeline id", async () => {

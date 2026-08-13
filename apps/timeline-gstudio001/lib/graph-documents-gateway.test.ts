@@ -461,7 +461,55 @@ describe("graph-documents-gateway", () => {
     expect(clipIds(refetched)).toEqual(["v2"]);
   });
 
-  it("a revision conflict reloads the conflicted document, surfaces it, and re-queues the rest", async () => {
+  // The OTHER way the cache gets ahead of the graph — and the one that actually
+  // cost two collections. No conflict, no error, nothing rejected: the poller
+  // refreshes a document, declines to apply the difference to the graph, and
+  // the revision ledger moves anyway. The next projection of the stale graph
+  // then passes CAS with a perfectly current revision.
+  it("a refreshed-but-unabsorbed document blocks clip writes, CAS or no CAS", async () => {
+    const calls = installFetch((call) =>
+      call.method === "GET"
+        ? jsonResponse({ document: doc(call.id, [clip("a-seed")]), revision: 1 })
+        : okResults(call.writes),
+    );
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    // Normal edit: goes out, carrying the revision it read.
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
+    expect(batchesOf(calls)[0].writes?.[0].expectedRevision).toBe(1);
+
+    // Now the poller refreshes it and declines to apply — the state that used
+    // to be invisible. Without this marker the write below goes out with a
+    // CURRENT revision and a STALE clip list, which is the whole bug: the
+    // server accepts it and the other writer's content is gone.
+    gateway.markGraphBehind("a", "not on this board");
+    expect(gateway.isConflicted("a")).toBe(true);
+
+    gateway.writeClips("a", [clip("a3")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1); // refused, no second batch
+    expect(gateway.lastError()).toContain("could not merge it");
+
+    // Reopening the view rebuilds the graph from fresh documents, which is the
+    // reconciliation the block was waiting for — the same lifting point a
+    // conflict uses.
+    gateway.refresh();
+    expect(gateway.isConflicted("a")).toBe(false);
+  });
+
+  it("markGraphBehind is inert for a document the cache has never seen", async () => {
+    installFetch(() => okResults([]));
+    const gateway = createGraphDocumentsGateway();
+    // Nothing to protect and nothing to name in a message — marking an unknown
+    // id would block a document that might legitimately arrive later.
+    gateway.markGraphBehind("never-loaded", "not on this board");
+    expect(gateway.isConflicted("never-loaded")).toBe(false);
+  });
+
+  it("a revision conflict reloads the conflicted document and DROPS THE WHOLE BATCH", async () => {
     let conflictOnce = true;
     const serverA = doc("a", [clip("a-server")]);
     const calls = installFetch((call) => {
@@ -496,11 +544,24 @@ describe("graph-documents-gateway", () => {
     expect(clipIds(gateway.peek("a"))).toEqual(["a-server"]);
     expect(gateway.lastError()).toContain('"Timeline a" changed in another view');
 
-    // The unconflicted write re-queued and goes out on its own.
+    // The UNCONFLICTED write is dropped too, and this expectation is a
+    // reversal: it used to assert that "b" re-queued and went out on its own.
+    //
+    // That broke the all-or-nothing guarantee this module promises, from the
+    // client side, after the server had honoured it. A batch is one CHANGE —
+    // a move is `[source -child, destination +child]`, a delete is
+    // `[parent -child, trash +child]`. The server rejected the pair, so
+    // sending the surviving half applies half a change: the source loses the
+    // child and nothing gains it. An orphan, manufactured by the error path.
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    const second = batchesOf(calls)[1];
-    expect(second.writes?.map((write) => write.document.id)).toEqual(["b"]);
-    expect(second.writes?.[0].expectedRevision).toBe(1);
+    expect(batchesOf(calls)).toHaveLength(1); // no second batch at all
+    expect(gateway.isConflicted("b")).toBe(true);
+
+    // And "b" is blocked from further clip writes for the same reason "a" is:
+    // the change its projection belonged to no longer exists.
+    gateway.writeClips("b", [clip("b3")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
 
     // The next edit to "a" is BLOCKED, and this expectation is the fix.
     //
@@ -512,7 +573,7 @@ describe("graph-documents-gateway", () => {
     // against a revision fresh enough that the server accepts it.
     gateway.writeClips("a", [clip("a3")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    expect(batchesOf(calls)).toHaveLength(2); // no third batch
+    expect(batchesOf(calls)).toHaveLength(1); // still no further batch
     expect(clipIds(gateway.peek("a"))).toEqual(["a-server"]); // cache untouched
     expect(gateway.lastError()).toContain("not being saved");
   });

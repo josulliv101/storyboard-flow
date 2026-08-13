@@ -62,6 +62,34 @@ export type TimelineRevisionConflict = {
 
 /** A batch was rejected because at least one expected revision no longer
  *  matched — NOTHING in the batch was written. */
+export type TimelineOrphan = Readonly<{
+  /** The child that would be left with no path to it. */
+  id: string;
+  /** The parent that let go of it, for the message. */
+  fromTimelineId: string | null;
+}>;
+
+/**
+ * A write was refused because it would strand a collection document.
+ *
+ * Deliberately an error and not a repair. A collection reachable from nowhere
+ * is invisible in the UI, absent from the trash, and recoverable only by
+ * querying the database — so the owner's rule is that the app must never be
+ * able to reach that state, rather than notice afterwards that it has.
+ */
+export class TimelineOrphanError extends Error {
+  readonly orphans: readonly TimelineOrphan[];
+
+  constructor(orphans: readonly TimelineOrphan[]) {
+    super(
+      `Refusing to strand ${orphans.map((orphan) => orphan.id).join(", ")}: ` +
+        `removed from its parent with nothing in this write taking it up.`,
+    );
+    this.name = "TimelineOrphanError";
+    this.orphans = orphans;
+  }
+}
+
 export class TimelineRevisionConflictError extends Error {
   readonly conflicts: readonly TimelineRevisionConflict[];
 
@@ -117,6 +145,24 @@ async function withFirebaseTimeout<T>(operation: Promise<T>, label: string): Pro
 
 function collection() {
   return getFirebaseDb().collection(TIMELINE_COLLECTION);
+}
+
+/**
+ * The children this document OWNS, as opposed to merely points at.
+ *
+ * A collection clip whose `id` equals its `childTimelineId` is the owning
+ * placement — the one whose removal makes the child unreachable. A duplicate
+ * reference card is minted with its own clip id and so is excluded, which is
+ * what keeps the orphan guard from refusing a legitimate edit to one.
+ */
+function owningCollectionChildIds(document: TimelineDocument): string[] {
+  const owned: string[] = [];
+  for (const clip of document.clips) {
+    if (clip.kind !== "collection") continue;
+    if (clip.childTimelineId !== clip.id) continue;
+    owned.push(clip.childTimelineId);
+  }
+  return owned;
 }
 
 function normalizeDocument(document: TimelineDocument): TimelineDocument {
@@ -606,6 +652,11 @@ export async function saveFirebaseTimelineDocumentsAtomic(
         revision: number;
         payload: ReturnType<typeof buildSavePayload>;
       }[] = [];
+      // For the orphan guard below: which children this batch lets go of, and
+      // which it takes up. Gathered in the loop that is already reading both
+      // sides of every document, so the guard costs no extra reads here.
+      const releasedChildren = new Map<string, string>();
+      const claimedChildren = new Set<string>();
 
       for (let index = 0; index < writes.length; index += 1) {
         const normalizedDocument = normalizeDocument(writes[index].document);
@@ -628,6 +679,24 @@ export async function saveFirebaseTimelineDocumentsAtomic(
         const existingDocument = existingData
           ? toTimelineDocument(snapshot.id, existingData)
           : null;
+
+        // OWNING placements only, on both sides.
+        //
+        // A collection clip whose `id` differs from its `childTimelineId` is a
+        // DUPLICATE REFERENCE — a second card pointing at a timeline that lives
+        // somewhere else. Dropping one of those orphans nothing, because the
+        // owning placement is untouched, so counting them here would refuse a
+        // legitimate edit. Multi-parent is legal in this model; that asymmetry
+        // is what makes it safe to reason about from inside one batch.
+        for (const childId of owningCollectionChildIds(normalizedDocument)) {
+          claimedChildren.add(childId);
+        }
+        if (existingDocument) {
+          for (const childId of owningCollectionChildIds(existingDocument)) {
+            releasedChildren.set(childId, normalizedDocument.id);
+          }
+        }
+
         if (
           !writes[index].allowEmptying &&
           existingDocument &&
@@ -659,6 +728,43 @@ export async function saveFirebaseTimelineDocumentsAtomic(
       }
 
       if (conflicts.length > 0) throw new TimelineRevisionConflictError(conflicts);
+
+      // THE ORPHAN GUARD.
+      //
+      // A collection document is reachable only through a clip in some parent.
+      // Drop the last such clip and the document survives in storage with no
+      // path to it: invisible in the UI, absent from the trash, unrecoverable
+      // without a database query. There is no reverse index to consult, so
+      // this asks the one question that IS answerable from inside the batch —
+      // did anything take up what this batch put down?
+      //
+      // A legitimate operation always answers yes, by construction. A move
+      // writes source and destination together; a delete is a move into the
+      // trash bin, which is itself one of the written documents. What fails is
+      // half a change: the source write arriving alone, which is precisely the
+      // shape the client's own error paths used to manufacture.
+      const orphaned = [...releasedChildren.keys()].filter((id) => !claimedChildren.has(id));
+      if (orphaned.length > 0) {
+        // Reads, and they must all happen before the first `tx.set` below.
+        // Bounded by the batch size, and normally zero — a batch that removes
+        // nothing never gets here.
+        const orphanSnapshots = await Promise.all(
+          orphaned.map((id) => tx.get(collection().doc(id))),
+        );
+        // Already gone, or never existed: a dangling reference being tidied up,
+        // which is a repair rather than a loss.
+        //
+        // Nothing else to check. An OWNING placement is unique — a second card
+        // for the same timeline is minted with its own clip id and so is not
+        // owning — which is exactly what makes "released and unclaimed" mean
+        // "unreachable" without a reverse index to consult.
+        const stranded = orphaned.filter((_id, index) => orphanSnapshots[index].exists);
+        if (stranded.length > 0) {
+          throw new TimelineOrphanError(
+            stranded.map((id) => ({ id, fromTimelineId: releasedChildren.get(id) ?? null })),
+          );
+        }
+      }
 
       for (const entry of staged) tx.set(entry.ref, entry.payload, { merge: true });
       return staged.map(({ id, revision }) => ({ id, revision }));
