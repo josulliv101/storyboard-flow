@@ -3954,9 +3954,9 @@ test.describe("graph view E2E", () => {
       const child = DEPTH_IDS[index + 1];
       api.documents.set(id, {
         id,
-        title: TITLES[index],
+        title: at(TITLES, index),
         clips: child
-          ? [collectionClip(`clip-${child}`, child, 0, TITLES[index + 1], 1)]
+          ? [collectionClip(`clip-${child}`, child, 0, at(TITLES, index + 1), 1)]
           : [mediaClip("deep-leaf", "image", 0, 4)],
       });
     });
@@ -4053,7 +4053,10 @@ test.describe("graph view E2E", () => {
     // edge: each sample is further right than the last, and the last one is
     // near the card's far side rather than back at its start.
     for (let i = 1; i < samples.length; i++) {
-      expect(samples[i]).toBeGreaterThan(samples[i - 1]);
+      const current = samples[i];
+      const previous = samples[i - 1];
+      if (current === undefined || previous === undefined) throw new Error(`missing sample ${i}`);
+      expect(current).toBeGreaterThan(previous);
     }
     expect(samples[samples.length - 1]).toBeGreaterThan(card.x + card.width * 0.6);
   });
@@ -4101,7 +4104,10 @@ test.describe("graph view E2E", () => {
     await page.mouse.up();
 
     for (let i = 1; i < samples.length; i++) {
-      expect(samples[i]).toBeGreaterThan(samples[i - 1]);
+      const current = samples[i];
+      const previous = samples[i - 1];
+      if (current === undefined || previous === undefined) throw new Error(`missing sample ${i}`);
+      expect(current).toBeGreaterThan(previous);
     }
     expect(samples[samples.length - 1]).toBeGreaterThan(cell.x + cell.width * 0.5);
   });
@@ -5208,11 +5214,16 @@ test.describe("graph view E2E", () => {
       animation.currentTime = 128; // the 1.06 peak
       const peak = snap();
       animation.play();
-      return peak.flatMap((size, i) =>
-        size === rest[i]
+      return peak.flatMap((size, i) => {
+        // Read into locals: this runs in the BROWSER, so the test file's
+        // helpers do not exist here.
+        const before = rest[i];
+        const element = chain[i];
+        if (before === undefined || element === undefined) return [];
+        return size === before
           ? []
-          : [`${chain[i].tagName}.${chain[i].className}: ${rest[i]} -> ${size}`],
-      );
+          : [`${element.tagName}.${element.className}: ${before} -> ${size}`];
+      });
     });
     expect(changed).toEqual([]);
   });

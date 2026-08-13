@@ -74,7 +74,7 @@ describe("groupTrashClips", () => {
       image("second", { src: "https://cdn.test/2.jpg" }),
       image("first-again", { src: "https://cdn.test/1.jpg" }),
     ]);
-    expect(groups.map((g) => g.clips[0].id)).toEqual(["first", "second"]);
+    expect(groups.map((g) => at(g.clips, 0).id)).toEqual(["first", "second"]);
     expect(at(groups, 0).clips).toHaveLength(2);
   });
 
@@ -90,7 +90,7 @@ describe("groupTrashClips", () => {
   });
 
   it("leaves a single clip as a group of one, and an empty bin as nothing", () => {
-    expect(groupTrashClips([image("solo")])[0].clips).toHaveLength(1);
+    expect(at(groupTrashClips([image("solo")]), 0).clips).toHaveLength(1);
     expect(groupTrashClips([])).toEqual([]);
   });
 });

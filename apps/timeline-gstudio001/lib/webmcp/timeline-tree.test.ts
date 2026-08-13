@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildGraph, parseNodeId, type CollectionsGraph } from "@storyboard/ui/dnd-collections";
 
 import { buildTimelineTree } from "./timeline-tree";
+import { at } from "../../lib/test-support/at";
 
 /** project ─ img1 (image 3s), vid1 (video full 10, trim 1/2 → 7s), scene-a[ c1, c2 ] */
 function fixture(): CollectionsGraph {
@@ -61,21 +62,21 @@ describe("buildTimelineTree", () => {
 
   it("summarizes a nested collection at depth 1 (no children)", () => {
     const tree = buildTimelineTree(graph, project, "project", 1, allHydrated);
-    const collection = tree.nodes[2];
+    const collection = at(tree.nodes, 2);
     expect(collection).toMatchObject({ id: "scene-a", kind: "collection", hydrated: true, childCount: 2 });
     expect(collection.children).toBeUndefined();
   });
 
   it("expands a hydrated collection at depth 2", () => {
     const tree = buildTimelineTree(graph, project, "project", 2, allHydrated);
-    expect(tree.nodes[2].children?.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(at(tree.nodes, 2).children?.map((c) => c.id)).toEqual(["c1", "c2"]);
   });
 
   it("never expands an un-hydrated placeholder, even within depth", () => {
     const isHydrated = (id: string) => id !== "scene-a";
     const tree = buildTimelineTree(graph, project, "project", 2, isHydrated);
     expect(tree.nodes[2]).toMatchObject({ id: "scene-a", hydrated: false });
-    expect(tree.nodes[2].children).toBeUndefined();
+    expect(at(tree.nodes, 2).children).toBeUndefined();
   });
 
   it("reports focused:false when reading a non-focused collection", () => {

@@ -387,6 +387,7 @@ describe("DELETE /api/trash", () => {
       ownerUid: "user-a",
     });
     // 30 days out, not now.
+    if (tombstone === undefined) throw new Error("no tombstone was written");
     const grace = (tombstone.deleteAfterMs as number) - (tombstone.markedAtMs as number);
     expect(grace).toBe(30 * 24 * 60 * 60 * 1000);
   });

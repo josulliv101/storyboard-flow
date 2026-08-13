@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
+import { at } from "../lib/test-support/at";
 
 // RSC payload-loader tests over the REAL serve path (heal + read-time
 // summary derivation) against the in-memory fake Firestore: bootstrap
@@ -147,8 +148,8 @@ describe("loadGraphBootstrapPayloads", () => {
   it("serves an unstored trash as an empty revision-0 document", async () => {
     seed("project-1", "user-a", [image("a", 0, 4)]);
     const payloads = await loadGraphBootstrapPayloads("project-1", "user-a");
-    expect(payloads![1].document.clips).toEqual([]);
-    expect(payloads![1].revision).toBe(0);
+    expect(at(payloads ?? [], 1).document.clips).toEqual([]);
+    expect(at(payloads ?? [], 1).revision).toBe(0);
   });
 
   it("returns null for a missing or foreign project — the client boot handles it", async () => {

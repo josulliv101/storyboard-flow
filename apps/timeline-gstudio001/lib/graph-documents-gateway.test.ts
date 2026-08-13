@@ -87,6 +87,35 @@ function installFetch(handler: (call: FetchCall) => Promise<MockResponse> | Mock
 }
 
 const batchesOf = (calls: FetchCall[]) => calls.filter((call) => call.method === "POST");
+
+/**
+ * The Nth write of the Nth batch, asserted.
+ *
+ * `writeOf(calls, 0, 0)` is what these assertions used to say, and
+ * when the batch never happened it failed as "cannot read writes of
+ * undefined" — which does not distinguish "no batch was sent" from "the batch
+ * was empty". Those are different bugs, so this names which.
+ */
+const writeOf = (calls: FetchCall[], batchIndex = 0, writeIndex = 0): BatchWrite => {
+  const batch = batchesOf(calls)[batchIndex];
+  if (batch === undefined) {
+    throw new Error(`expected batch ${batchIndex}, but only ${batchesOf(calls).length} were sent`);
+  }
+  const write = batch.writes?.[writeIndex];
+  if (write === undefined) {
+    throw new Error(`batch ${batchIndex} carried no write ${writeIndex}`);
+  }
+  return write;
+};
+
+/** A batch's Nth write, asserted. `writeAt(batch, 0)` reads as optional but
+ *  never is in these tests — every batch under assertion carried writes. */
+const writeAt = (batch: FetchCall, index = 0): BatchWrite => {
+  const write = batch.writes?.[index];
+  if (write === undefined) throw new Error(`batch carried no write ${index}`);
+  return write;
+};
+
 const getsOf = (calls: FetchCall[], id?: string) =>
   calls.filter((call) => call.method === "GET" && (id === undefined || call.id === id));
 const clipIds = (document: TimelineDocument | null | undefined) =>
@@ -151,7 +180,7 @@ describe("graph-documents-gateway", () => {
     gateway.writeClips("a", []);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
 
-    expect(batchesOf(calls)[0].writes?.[0]).toMatchObject({
+    expect(writeOf(calls, 0, 0)).toMatchObject({
       allowEmptying: true,
       expectedRevision: 4,
     });
@@ -167,7 +196,7 @@ describe("graph-documents-gateway", () => {
     await gateway.renameTimeline("a", "Renamed");
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
 
-    const write = batchesOf(calls)[0].writes?.[0];
+    const write = writeOf(calls, 0, 0);
     expect(write?.document.title).toBe("Renamed");
     expect(write).not.toHaveProperty("allowEmptying");
   });
@@ -183,7 +212,7 @@ describe("graph-documents-gateway", () => {
     gateway.writeClips("a", [clip("a1")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
 
-    expect(batchesOf(calls)[0].writes?.[0]).not.toHaveProperty("allowEmptying");
+    expect(writeOf(calls, 0, 0)).not.toHaveProperty("allowEmptying");
   });
 
   it("does not carry the exemption into a LATER unrelated write", async () => {
@@ -195,11 +224,11 @@ describe("graph-documents-gateway", () => {
 
     gateway.writeClips("a", []);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    expect(batchesOf(calls)[0].writes?.[0]).toMatchObject({ allowEmptying: true });
+    expect(writeOf(calls, 0, 0)).toMatchObject({ allowEmptying: true });
 
     await gateway.renameTimeline("a", "After");
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    expect(batchesOf(calls)[1].writes?.[0]).not.toHaveProperty("allowEmptying");
+    expect(writeOf(calls, 1, 0)).not.toHaveProperty("allowEmptying");
   });
 
   it("writeClips is a no-op for documents the session has not loaded", async () => {
@@ -246,9 +275,9 @@ describe("graph-documents-gateway", () => {
     // expects 4, not 3.
     gateway.writeClips("a", [clip("a3")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    const second = batchesOf(calls)[1];
+    const second = at(batchesOf(calls), 1);
     expect(second.writes).toHaveLength(1);
-    expect(second.writes?.[0].expectedRevision).toBe(4);
+    expect(writeAt(second, 0).expectedRevision).toBe(4);
   });
 
   it("serializes batches: writes during a flight queue one trailing batch with the latest cache", async () => {
@@ -277,8 +306,8 @@ describe("graph-documents-gateway", () => {
     await vi.advanceTimersByTimeAsync(0);
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(2);
-    expect(clipIds(at(batches, 1).writes?.[0].document)).toEqual(["a4"]);
-    expect(at(batches, 1).writes?.[0].expectedRevision).toBe(2);
+    expect(clipIds(writeAt(at(batches, 1), 0).document)).toEqual(["a4"]);
+    expect(writeAt(at(batches, 1), 0).expectedRevision).toBe(2);
   });
 
   // The refresh/save race. Awaiting only the batch that happened to be in
@@ -348,7 +377,7 @@ describe("graph-documents-gateway", () => {
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(1);
     expect(at(batches, 0).keepalive).toBe(true);
-    expect(clipIds(at(batches, 0).writes?.[0].document)).toEqual(["a2"]);
+    expect(clipIds(writeAt(at(batches, 0), 0).document)).toEqual(["a2"]);
 
     // The debounce timer was consumed — no duplicate batch later.
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
@@ -385,8 +414,8 @@ describe("graph-documents-gateway", () => {
     expect(at(batches, 1).keepalive).toBe(true);
     // Carries the LATEST cache, and still expects the revision the abandoned
     // batch expected — no response landed, so the ledger never advanced.
-    expect(clipIds(at(batches, 1).writes?.[0].document)).toEqual(["a3"]);
-    expect(at(batches, 1).writes?.[0].expectedRevision).toBe(1);
+    expect(clipIds(writeAt(at(batches, 1), 0).document)).toEqual(["a3"]);
+    expect(writeAt(at(batches, 1), 0).expectedRevision).toBe(1);
     // Abandoning is not a failure: it must not surface as a save error.
     expect(gateway.lastError()).toBeNull();
   });
@@ -412,7 +441,7 @@ describe("graph-documents-gateway", () => {
     const batches = batchesOf(calls);
     expect(batches).toHaveLength(2);
     expect(at(batches, 1).keepalive).toBe(true);
-    expect(clipIds(at(batches, 1).writes?.[0].document)).toEqual(["a2"]);
+    expect(clipIds(writeAt(at(batches, 1), 0).document)).toEqual(["a2"]);
   });
 
   it("a second unload flush leaves an already-keepalive batch alone", async () => {
@@ -433,7 +462,7 @@ describe("graph-documents-gateway", () => {
     // must not abandon and re-send a request that is already unload-safe.
     gateway.flushPendingWrites({ keepalive: true });
     expect(batchesOf(calls)).toHaveLength(1);
-    expect(batchesOf(calls)[0].signal?.aborted).toBe(false);
+    expect(at(batchesOf(calls), 0).signal?.aborted).toBe(false);
   });
 
   it("an over-budget unload batch drops keepalive rather than being refused outright", async () => {
@@ -456,7 +485,7 @@ describe("graph-documents-gateway", () => {
     expect(at(batches, 0).bodyBytes).toBeGreaterThan(64 * 1024);
     expect(at(batches, 0).keepalive).toBeFalsy(); // sent best-effort instead
     // The batch still went out INTACT — atomicity is not traded away.
-    expect(clipIds(at(batches, 0).writes?.[0].document)).toEqual(["a2"]);
+    expect(clipIds(writeAt(at(batches, 0), 0).document)).toEqual(["a2"]);
     // And the risk is surfaced rather than swallowed.
     expect(gateway.lastError()).toMatch(/too large/i);
   });
@@ -510,7 +539,7 @@ describe("graph-documents-gateway", () => {
     expect(getsOf(calls)).toHaveLength(2);
     gateway.writeClips("a", [clip("v3")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    expect(batchesOf(calls)[0].writes?.[0].expectedRevision).toBe(6);
+    expect(writeOf(calls, 0, 0).expectedRevision).toBe(6);
   });
 
   it("a stale ensure waits for the in-flight batch to settle before refetching", async () => {
@@ -560,7 +589,7 @@ describe("graph-documents-gateway", () => {
     gateway.writeClips("a", [clip("a2")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
     expect(batchesOf(calls)).toHaveLength(1);
-    expect(batchesOf(calls)[0].writes?.[0].expectedRevision).toBe(1);
+    expect(writeOf(calls, 0, 0).expectedRevision).toBe(1);
 
     // Now the poller refreshes it and declines to apply — the state that used
     // to be invisible. Without this marker the write below goes out with a
@@ -761,7 +790,7 @@ describe("graph-documents-gateway", () => {
     gateway.writeClips("a", [clip("a4")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
     expect(batchesOf(calls)).toHaveLength(2);
-    expect(clipIds(batchesOf(calls)[1].writes?.[0].document)).toEqual(["a4"]);
+    expect(clipIds(writeOf(calls, 1, 0).document)).toEqual(["a4"]);
   });
 
   it("reportIssue surfaces app-reported problems in the banner without touching gateway errors", async () => {
@@ -790,9 +819,9 @@ describe("graph-documents-gateway", () => {
 
     gateway.writeClips("fresh", [clip("f1")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    const batch = batchesOf(calls)[0];
-    expect(batch.writes?.[0].expectedRevision).toBe(0); // CAS create
-    expect(clipIds(batch.writes?.[0].document)).toEqual(["f1"]);
+    const batch = at(batchesOf(calls), 0);
+    expect(writeAt(batch, 0).expectedRevision).toBe(0); // CAS create
+    expect(clipIds(writeAt(batch, 0).document)).toEqual(["f1"]);
 
     // Seeding never clobbers an existing cache entry.
     gateway.seed({ ...doc("fresh"), title: "Other" });
@@ -813,7 +842,7 @@ describe("graph-documents-gateway", () => {
 
     gateway.writeClips("a", [clip("a2")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    expect(batchesOf(calls)[0].writes?.[0].expectedRevision).toBe(7);
+    expect(writeOf(calls, 0, 0).expectedRevision).toBe(7);
   });
 
   it("holds primes that arrive before bind and replays them for the bound user only", () => {

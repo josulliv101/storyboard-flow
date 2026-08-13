@@ -31,6 +31,14 @@ function props(name: string): Record<string, Record<string, unknown>> {
   return schemaFor(name).properties as Record<string, Record<string, unknown>>;
 }
 
+/** One property of a generated schema, asserted — a missing field should say
+ *  WHICH field, not fail as "cannot read description of undefined". */
+function prop(name: string, field: string): Record<string, unknown> {
+  const value = props(name)[field];
+  if (value === undefined) throw new Error(`${name} has no "${field}" property`);
+  return value;
+}
+
 describe("generated in-page tool schemas", () => {
   it("keeps trim_clip's shape, bounds and closedness", () => {
     const schema = schemaFor("trim_clip");
@@ -51,8 +59,8 @@ describe("generated in-page tool schemas", () => {
     // The regression this refactor exists to prevent. "Video only." passes
     // every structural assertion above and still invites the wrong call.
     const p = props("trim_clip");
-    expect(p.trimInSeconds.description).toMatch(/removed from the START/i);
-    expect(p.trimOutSeconds.description).toMatch(/removed from the END/i);
+    expect(prop("trim_clip", "trimInSeconds").description).toMatch(/removed from the START/i);
+    expect(prop("trim_clip", "trimOutSeconds").description).toMatch(/removed from the END/i);
   });
 
   it("keeps move_clip's placement fields, and its in-page-only `select`", () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
+import { at } from "../../lib/test-support/at";
 
 // attach_media, over the real graph adapter and the real store transaction.
 // Cloudinary is faked at its module boundary (nothing here should reach the
@@ -156,6 +157,9 @@ describe("attachMedia", () => {
 
     expect(result.isError).toBeFalsy();
     const added = storedClips(PROJECT).find((c) => c.id === attachedNodeId(result));
+    // The attach reported this id, so the clip must be there; saying so names
+    // the failure instead of every later assertion reading undefined.
+    if (added === undefined) throw new Error("the attached clip is not in the document");
     expect(added).toBeDefined();
     // TimelineClip is a union; provenance only exists on media clips.
     if (!added || added.kind === "collection") throw new Error("expected a media clip");
@@ -183,7 +187,7 @@ describe("attachMedia", () => {
       OWNER,
     );
 
-    const added = storedClips(PROJECT)[0];
+    const added = at(storedClips(PROJECT), 0);
     // Cleaned on the way in: trimmed, de-duplicated case-insensitively with
     // the first spelling kept, blanks dropped.
     expect(added.tags).toEqual(["SCAIL-2", "S02", "keeper"]);
@@ -197,7 +201,7 @@ describe("attachMedia", () => {
       OWNER,
     );
 
-    expect("tags" in storedClips(PROJECT)[0]).toBe(false);
+    expect("tags" in at(storedClips(PROJECT), 0)).toBe(false);
   });
 
   it("carries the real source duration and url from the upload", async () => {
@@ -208,7 +212,7 @@ describe("attachMedia", () => {
       OWNER,
     );
 
-    const added = storedClips(PROJECT)[0];
+    const added = at(storedClips(PROJECT), 0);
     if (added.kind === "collection") throw new Error("expected a media clip");
     expect(added.kind).toBe("video");
     expect(added.src).toBe("https://res.cloudinary.com/demo/video/upload/render-123.mp4");
@@ -229,7 +233,7 @@ describe("attachMedia", () => {
       OWNER,
     );
 
-    const added = storedClips(PROJECT)[0];
+    const added = at(storedClips(PROJECT), 0);
     if (added.kind !== "video") throw new Error("expected a video clip");
     expect(added.trimIn).toBe(0);
     expect(added.trimOut).toBe(0);
@@ -249,7 +253,7 @@ describe("attachMedia", () => {
       OWNER,
     );
 
-    const added = storedClips(PROJECT)[0];
+    const added = at(storedClips(PROJECT), 0);
     if (added.kind !== "video") throw new Error("expected a video clip");
     expect(added.duration).toBe(5);
     expect(added.trimIn).toBe(0);
@@ -334,7 +338,7 @@ describe("attachMedia", () => {
     );
 
     expect(result.isError).toBeFalsy();
-    const added = storedClips(PROJECT)[0];
+    const added = at(storedClips(PROJECT), 0);
     expect(added.kind).toBe("audio");
     if (added.kind !== "audio") throw new Error("expected an audio clip");
     // Windowed like video: the full source length with no trim taken.
@@ -370,7 +374,7 @@ describe("attachMedia", () => {
     );
 
     expect(result.isError).toBeFalsy();
-    const added = storedClips(PROJECT)[0];
+    const added = at(storedClips(PROJECT), 0);
     expect(added.title).toBe('Brian VO — "You worry about the door"');
     expect(added.alt).toBe('Brian VO — "You worry about the door"');
   });
@@ -386,7 +390,7 @@ describe("attachMedia", () => {
       OWNER,
     );
 
-    expect(storedClips(PROJECT)[0].title).toBeUndefined();
+    expect(at(storedClips(PROJECT), 0).title).toBeUndefined();
   });
 
   it("refuses when the upload never landed, instead of minting a dead clip", async () => {

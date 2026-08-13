@@ -26,6 +26,7 @@ import {
   type PreviewCardSpans,
   type RulerTick,
 } from "./graph-playhead-model";
+import { at } from "../../lib/test-support/at";
 
 const media = (id: string, durationSeconds: number): GraphNodeSpec => ({
   kind: "media",
@@ -187,7 +188,7 @@ describe("disabled cards", () => {
 
     expect(isDisabledByAncestor(graph, "inner")).toBe(true);
     expect(isDisabledByAncestor(graph, "deep")).toBe(true);
-    expect(childSpans(graph, {}, "inner", null, flatWidth)[0].disabled).toBe(true);
+    expect(at(childSpans(graph, {}, "inner", null, flatWidth), 0).disabled).toBe(true);
   });
 
   it("does not report a node's OWN flag as inherited", () => {

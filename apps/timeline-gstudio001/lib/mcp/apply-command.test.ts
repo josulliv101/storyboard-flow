@@ -73,6 +73,7 @@ vi.mock("firebase-admin/firestore", () => {
 import { parseNodeId } from "@storyboard/ui/dnd-collections";
 
 import { applyCollectionsCommand } from "./apply-command";
+import { at } from "../../lib/test-support/at";
 
 const OWNER = "user-a";
 
@@ -164,7 +165,7 @@ describe("applyCollectionsCommand", () => {
 
     expect(result.ok).toBe(true);
     const stored = state.docs.get("root") as { clips: TimelineClip[] };
-    expect(stored.clips[0].title).toBe("Opening shot");
+    expect(at(stored.clips, 0).title).toBe("Opening shot");
   });
 
 
@@ -282,11 +283,15 @@ describe("applyCollectionsCommand — details-only writes", () => {
 
     const result = await applyCollectionsCommand(
       "root",
-      (_graph, details) => ({
-        ok: true,
-        details: { a: { ...details.a, tags: ["keeper", "S02"] } },
-        affectedCollectionIds: ["root"],
-      }),
+      (_graph, details) => {
+        const detail = details.a;
+        if (detail === undefined) throw new Error('the fixture has no detail for "a"');
+        return {
+          ok: true,
+          details: { a: { ...detail, tags: ["keeper", "S02"] } },
+          affectedCollectionIds: ["root"],
+        };
+      },
       OWNER,
     );
 
@@ -312,15 +317,19 @@ describe("applyCollectionsCommand — details-only writes", () => {
 
     await applyCollectionsCommand(
       "root",
-      (_graph, details) => ({
-        ok: true,
-        details: { a: { ...details.a, tags: ["keeper"] } },
-        affectedCollectionIds: ["root"],
-      }),
+      (_graph, details) => {
+        const detail = details.a;
+        if (detail === undefined) throw new Error('the fixture has no detail for "a"');
+        return {
+          ok: true,
+          details: { a: { ...detail, tags: ["keeper"] } },
+          affectedCollectionIds: ["root"],
+        };
+      },
       OWNER,
     );
 
-    const stored = (state.docs.get("root") as { clips: TimelineClip[] }).clips[0];
+    const stored = at((state.docs.get("root") as { clips: TimelineClip[] }).clips, 0);
     if (stored.kind === "collection") throw new Error("expected a media clip");
     expect(stored.sourceAsset).toEqual({ providerId: "cloudinary", assetId: "x/y" });
     expect(stored.tags).toEqual(["keeper"]);
@@ -331,11 +340,15 @@ describe("applyCollectionsCommand — details-only writes", () => {
 
     await applyCollectionsCommand(
       "root",
-      (_graph, details) => ({
-        ok: true,
-        details: { a: { ...details.a, tags: ["keeper"] } },
-        affectedCollectionIds: ["root"],
-      }),
+      (_graph, details) => {
+        const detail = details.a;
+        if (detail === undefined) throw new Error('the fixture has no detail for "a"');
+        return {
+          ok: true,
+          details: { a: { ...detail, tags: ["keeper"] } },
+          affectedCollectionIds: ["root"],
+        };
+      },
       OWNER,
     );
 

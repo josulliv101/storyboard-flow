@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { successRedirectUrl, validateAuthorizeRequest } from "./authorize-request";
 import type { OAuthClient } from "./core";
+import { at } from "../../lib/test-support/at";
 
 const CLIENT: OAuthClient = {
   clientId: "client-abc",
@@ -12,7 +13,7 @@ const CLIENT: OAuthClient = {
 function query(overrides: Record<string, string | null> = {}) {
   const base: Record<string, string> = {
     client_id: CLIENT.clientId,
-    redirect_uri: CLIENT.redirectUris[0],
+    redirect_uri: at(CLIENT.redirectUris, 0),
     response_type: "code",
     code_challenge: "a".repeat(43),
     code_challenge_method: "S256",

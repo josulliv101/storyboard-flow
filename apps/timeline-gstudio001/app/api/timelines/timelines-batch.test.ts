@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
+import { at } from "../../../lib/test-support/at";
 
 // Batch-write tests over the REAL route handler and the REAL
 // firebase-timeline-store transaction — only the process boundaries are
@@ -233,8 +234,8 @@ describe("timeline batch writes", () => {
       { id: "doc-2", revision: 1 },
     ]);
 
-    expect((state.docs.get("doc-1")?.document as TimelineDocument).clips[0].id).toBe("new-1");
-    expect((state.docs.get("doc-2")?.document as TimelineDocument).clips[0].id).toBe("new-2");
+    expect(at((state.docs.get("doc-1")?.document as TimelineDocument).clips, 0).id).toBe("new-1");
+    expect(at((state.docs.get("doc-2")?.document as TimelineDocument).clips, 0).id).toBe("new-2");
     expect(state.docs.get("doc-1")?.revision).toBe(4);
     expect(state.docs.get("doc-1")?.ownerUid).toBe("user-a");
     expect(state.docs.get("doc-1")?.isProject).toBe(true); // preserved, not reset
@@ -447,7 +448,7 @@ describe("timeline batch writes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect((state.docs.get("parent-2")?.clips as TimelineClip[])[0].id).toBe("child-1");
+    expect(at((state.docs.get("parent-2")?.clips as TimelineClip[]), 0).id).toBe("child-1");
   });
 
   it("ALLOWS a delete: the trash is the document taking it up", async () => {

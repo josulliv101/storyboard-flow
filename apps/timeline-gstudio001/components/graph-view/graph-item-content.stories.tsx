@@ -693,7 +693,10 @@ export const TrimOverviewSamplesDistinctFrames: Story = {
     });
     expect(new Set(offsets).size).toBe(offsets.length);
     for (let i = 1; i < offsets.length; i += 1) {
-      expect(offsets[i]).toBeGreaterThan(offsets[i - 1]);
+      const current = offsets[i];
+      const previous = offsets[i - 1];
+      if (current === undefined || previous === undefined) throw new Error(`missing offset ${i}`);
+      expect(current).toBeGreaterThan(previous);
     }
 
     // The last slot is pinned to the source's end (10s − 0.05 back-off) —
