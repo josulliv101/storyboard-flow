@@ -238,6 +238,14 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   // change that touches several documents writes them in the same window,
   // so they travel in the SAME atomic batch.
   const dirtyIds = new Set<string>();
+  // Documents this session has actually EMPTIED — observed at the moment the
+  // clips went from some to none, not inferred later from a projection that
+  // happens to be empty. The store refuses an empty-over-non-empty write
+  // unless told the empty is deliberate, and this is what earns that
+  // exemption. Held until the write COMMITS: a retry after an abandoned
+  // request carries the same intent, and forgetting it there would fail the
+  // resend on the very guard the first attempt was exempt from.
+  const emptiedIds = new Set<string>();
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   // At most one batch in flight; a write requested meanwhile queues one
   // trailing batch that re-reads the latest cache. Without this, an older
@@ -331,6 +339,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     abandonSaveInFlight?.();
     abandonSaveInFlight = null;
     dirtyIds.clear();
+    emptiedIds.clear();
     saveInFlight = null;
     saveQueued = false;
     saveInFlightKeepalive = false;
@@ -544,7 +553,17 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       //
       // Per-document too, never per-batch: a move empties its source while
       // filling its target, and only the source asked for the exemption.
-      const emptiesDocument = document.clips.length === 0 && revision !== undefined;
+      //
+      // Read from `emptiedIds`, which records the moment clips went from some
+      // to none, rather than asking "is this projection empty?" here. The two
+      // differ for a document that was ALREADY empty and is being written for
+      // another reason — a rename, or a resend — where the old test handed out
+      // the exemption to a write that empties nothing. Harmless, since the
+      // store's guard only fires against an existing non-empty document, but
+      // it made the flag mean "happens to be empty" instead of "this write
+      // empties it", and a flag that overstates what it permits is the kind
+      // that gets widened later by someone reading it literally.
+      const emptiesDocument = emptiedIds.has(timelineId) && revision !== undefined;
       writes.push({
         document,
         ...(revision !== undefined ? { expectedRevision: revision } : {}),
@@ -631,6 +650,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
             };
             if (gen !== generation) return;
             lastSavedAt = Date.now();
+            // Committed, so the intent is spent. Left set, a document emptied
+            // once would carry the exemption for the rest of the session and
+            // hand it to some later, unrelated write.
+            for (const write of writes) emptiedIds.delete(write.document.id);
             for (const write of writes) setError(write.document.id, null);
             for (const entry of result.results ?? []) {
               if (typeof entry.revision === "number") revisions.set(entry.id, entry.revision);
@@ -681,6 +704,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
               // Anything already queued for these ids was projected from the
               // stale graph too.
               dirtyIds.delete(timelineId);
+              // The change this belonged to no longer exists, so neither does
+              // the intent behind it. `refresh()` rebuilds from the server and
+              // any re-emptying is recorded fresh.
+              emptiedIds.delete(timelineId);
               if (!conflictIds.has(timelineId)) continue;
               // The message lands AFTER the reload (a successful fetch
               // clears that document's error slot — set before, it would
@@ -825,6 +852,13 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       // GRAPH these clips were projected from is not; writing them would
       // overwrite the other writer's content with a stale full collection.
       if (conflictedIds.has(timelineId)) return;
+      // THE TRANSITION, recorded where it is visible. This is the only place
+      // both the previous clips and the new ones are in hand; by flush time
+      // the old ones are gone and all that is left is "it is empty now",
+      // which is a different question. Re-filling clears it, so an empty
+      // followed by an undo in the same window asks for no exemption.
+      if (clips.length === 0 && document.clips.length > 0) emptiedIds.add(timelineId);
+      else if (clips.length > 0) emptiedIds.delete(timelineId);
       documents = { ...documents, [timelineId]: { ...document, clips } };
       notify();
       dirtyIds.add(timelineId);
