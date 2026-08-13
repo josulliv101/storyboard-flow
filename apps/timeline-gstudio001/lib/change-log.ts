@@ -98,13 +98,43 @@ export function changeLogDocuments(
  *
  * Deliberately queried on the denormalized `timelineIds` array rather than the
  * nested `documents` — Firestore cannot index into an array of objects.
+ *
+ * REQUIRES the timelineChanges composite index (firestore.indexes.json).
+ * array-contains combined with an orderBy is not merge-joinable from the
+ * automatic single-field indexes, so without it every call throws
+ * FAILED_PRECONDITION — which is exactly what this function did, unnoticed,
+ * for as long as it has existed: the log was written faithfully for weeks and
+ * the one helper built to read it could never run.
+ *
+ * Sorting client-side instead was rejected. Dropping the orderBy means reading
+ * EVERY entry that ever touched the timeline just to find the newest few, and
+ * that read grows without bound as the log does.
  */
 export async function recentChanges(timelineId: string, limit = 25) {
-  const snapshot = await getFirebaseDb()
-    .collection(CHANGE_LOG_COLLECTION)
-    .where("timelineIds", "array-contains", timelineId)
-    .orderBy("at", "desc")
-    .limit(limit)
-    .get();
-  return snapshot.docs.map((doc) => doc.data());
+  try {
+    const snapshot = await getFirebaseDb()
+      .collection(CHANGE_LOG_COLLECTION)
+      .where("timelineIds", "array-contains", timelineId)
+      .orderBy("at", "desc")
+      .limit(limit)
+      .get();
+    return snapshot.docs.map((doc) => doc.data());
+  } catch (error) {
+    // A missing index is an OPERATIONAL fact with a known fix, not a bug in
+    // the caller. Firestore's own message carries a one-click console link to
+    // create it, so it is preserved rather than replaced. Unlike recordChange
+    // above, this must NOT be swallowed: a read that silently returns nothing
+    // would read as "no changes", which is the opposite of the truth.
+    if (
+      error instanceof Error &&
+      (("code" in error && error.code === 9) || /requires an index/i.test(error.message))
+    ) {
+      throw new Error(
+        `The timelineChanges index is not deployed, so the change log cannot be read. ` +
+          `Deploy it with: npx firebase deploy --only firestore:indexes --project <id> ` +
+          `(see firestore.indexes.json). Original error: ${error.message}`,
+      );
+    }
+    throw error;
+  }
 }
