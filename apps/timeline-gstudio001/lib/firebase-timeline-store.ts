@@ -582,6 +582,45 @@ export async function saveFirebaseTimelineEntry(
         );
       }
 
+      // ORPHAN GUARD. The same rule `saveFirebaseTimelineDocumentsAtomic`
+      // enforces, applied to what is simply a batch of one.
+      //
+      // This path had none, which made it the way around the invariant: the
+      // batch endpoint refuses a write that drops a collection's last parent,
+      // and PATCH on this route would take exactly that write and commit it.
+      // Nothing in the app sends PATCH today — the graph view writes through
+      // the batch endpoint — but "no caller right now" is not a guarantee, and
+      // an open endpoint that can silently strand a document is the same hole
+      // whether or not the app happens to use it.
+      //
+      // "Released and unclaimed" means unreachable ONLY because an owning
+      // placement is unique (`clip.id === clip.childTimelineId`); a duplicate
+      // reference card is minted with its own clip id and so never counts as
+      // owning. That asymmetry is what makes this answerable without a reverse
+      // index. With one document there is nothing else to claim what it drops,
+      // so any owning child it releases is released for good.
+      if (existingDocument) {
+        const claimed = new Set(owningCollectionChildIds(normalizedDocument));
+        const released = owningCollectionChildIds(existingDocument).filter(
+          (childId) => !claimed.has(childId),
+        );
+        if (released.length > 0) {
+          // Reads, so they must happen before the `tx.set` below. Normally
+          // zero — a save that removes no collection never gets here.
+          const snapshots = await Promise.all(
+            released.map((childId) => tx.get(collection().doc(childId))),
+          );
+          // Already gone, or never there: a dangling reference being tidied
+          // up, which is a repair rather than a loss.
+          const stranded = released.filter((_childId, index) => snapshots[index].exists);
+          if (stranded.length > 0) {
+            throw new TimelineOrphanError(
+              stranded.map((id) => ({ id, fromTimelineId: normalizedDocument.id })),
+            );
+          }
+        }
+      }
+
       const next = (existingData?.revision ?? 0) + 1;
       tx.set(
         ref,

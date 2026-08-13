@@ -4,6 +4,7 @@ import type { TimelineClip } from "@storyboard/timeline-model/types";
 import {
   saveFirebaseTimelineEntry,
   deleteFirebaseTimelineDocument,
+  TimelineOrphanError,
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import { readJsonObject } from "@/lib/read-json-body";
@@ -145,6 +146,17 @@ export async function PATCH(
     const saved = await saveFirebaseTimelineEntry(body.document, user.uid);
     return NextResponse.json({ document: saved.document, revision: saved.revision });
   } catch (error) {
+    // Same shape the batch endpoint answers with, so a caller handling one
+    // handles both: 409, the message, and WHICH documents would have been
+    // stranded. The ids are the point — without them the client knows only
+    // that it was refused, not what it nearly lost.
+    if (error instanceof TimelineOrphanError) {
+      return NextResponse.json(
+        { error: error.message, orphans: error.orphans },
+        { status: 409 },
+      );
+    }
+
     if (
       error instanceof Error &&
       error.message.startsWith("Refusing to save an empty timeline")
