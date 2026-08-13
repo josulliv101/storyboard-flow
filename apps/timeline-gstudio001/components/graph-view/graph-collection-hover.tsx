@@ -110,11 +110,31 @@ export function useCollectionHoverSource(collectionId: string): Readonly<{
 }
 
 /**
- * How long the card's call-out animation runs. MUST stay in sync with
- * `collection-paired-callout` in globals.css — this is the hold below, and a
- * hold shorter than the keyframes would cut them off again.
+ * How long the card's call-out keyframes run. MUST stay in sync with
+ * `collection-paired-callout` in globals.css.
  */
-export const COLLECTION_CALLOUT_MS = 320;
+const COLLECTION_CALLOUT_KEYFRAMES_MS = 320;
+
+/**
+ * How long the class is HELD on the card, which is deliberately longer.
+ *
+ * The hold must OUTLAST the keyframes, not merely match them. This timer
+ * starts when the class is set; the animation does not start until the frame
+ * AFTER the browser has applied it. So a hold equal to the duration expires a
+ * frame or two BEFORE the animation ends, drops the class mid-flight, and
+ * cancels precisely what the hold exists to protect — the last frames of the
+ * elastic settle. The old value was exactly 320 and did this on roughly half
+ * of runs, reporting `cancelled` instead of `finished`.
+ *
+ * That is also why the e2e asserts on the animation's own outcome rather than
+ * on the class still being present: presence is a race, `finished` vs
+ * `cancelled` is the actual question.
+ *
+ * The margin is a few frames at 60Hz — enough to absorb a couple of slow ones,
+ * and imperceptible because the class does nothing once the keyframes have
+ * ended (no fill mode, so the card is already back at rest).
+ */
+export const COLLECTION_CALLOUT_MS = COLLECTION_CALLOUT_KEYFRAMES_MS + 80;
 
 /**
  * The TARGET end, for a collection card: whether its row is being hovered
