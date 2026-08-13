@@ -46,6 +46,21 @@ export type GraphClipboard = Readonly<{
    *  since a fresh copy replaces whatever the clipboard was doing. */
   markPendingCut: (ids: Iterable<NodeId>) => void;
   /**
+   * Whether the copy/cut that armed this clipboard came from SELECT MODE.
+   *
+   * Copy and Cut both leave select mode, so the board can be navigated to a
+   * destination. The header row has to survive that — it carries the count, the
+   * breadcrumb, Paste and Cancel — but only when the gesture started there: a
+   * copy from ordinary browsing must leave the browse toolbar alone rather than
+   * replacing it with a selection row the user never asked for.
+   *
+   * Lives here because its lifetime is the clipboard's exactly: armed with the
+   * payload, gone the moment the payload is pasted, replaced or cancelled.
+   */
+  isPickingDestination: () => boolean;
+  /** Same contract as `markPendingCut` — call AFTER `set`, which resets it. */
+  markPickingDestination: () => void;
+  /**
    * Install new contents. Pass the `generation()` observed BEFORE any async
    * capture work: if the clipboard was rebound to a different user (or
    * otherwise reset) while the capture ran, the stale write is refused and
@@ -74,6 +89,7 @@ const NO_PENDING_CUT: ReadonlySet<NodeId> = new Set();
 function createGraphClipboard(): GraphClipboard {
   let entries: readonly ClipboardEntry[] = [];
   let pendingCut: ReadonlySet<NodeId> = NO_PENDING_CUT;
+  let pickingDestination = false;
   let boundUid: string | null = null;
   let generation = 0;
   const listeners = new Set<() => void>();
@@ -84,6 +100,12 @@ function createGraphClipboard(): GraphClipboard {
     read: () => entries,
     pendingCutIds: () => pendingCut,
     isPendingCut: (id) => pendingCut.has(id),
+    isPickingDestination: () => pickingDestination,
+    markPickingDestination: () => {
+      if (pickingDestination) return;
+      pickingDestination = true;
+      emit();
+    },
     markPendingCut: (ids) => {
       pendingCut = new Set(ids);
       emit();
@@ -95,24 +117,27 @@ function createGraphClipboard(): GraphClipboard {
       // clipboard was doing, so nothing stays dimmed waiting for a paste that
       // will never carry it.
       pendingCut = NO_PENDING_CUT;
+      pickingDestination = false;
       emit();
       return true;
     },
     clear: () => {
-      if (entries.length === 0 && pendingCut.size === 0) return;
+      if (entries.length === 0 && pendingCut.size === 0 && !pickingDestination) return;
       entries = [];
       pendingCut = NO_PENDING_CUT;
+      pickingDestination = false;
       emit();
     },
     isEmpty: () => entries.length === 0,
     generation: () => generation,
     bindUser: (uid) => {
       if (boundUid === uid) return;
-      const hadState = entries.length > 0 || pendingCut.size > 0;
+      const hadState = entries.length > 0 || pendingCut.size > 0 || pickingDestination;
       boundUid = uid;
       generation += 1;
       entries = [];
       pendingCut = NO_PENDING_CUT;
+      pickingDestination = false;
       if (hadState) emit();
     },
     subscribe: (listener) => {

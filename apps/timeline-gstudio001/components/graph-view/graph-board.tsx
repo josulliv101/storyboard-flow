@@ -74,6 +74,7 @@ import { Slider } from "@/components/core/slider";
 
 import {
   useClipboardCount,
+  useIsPickingDestination,
   useHasPendingCut,
   usePendingCutCount,
   useSelectionActionState,
@@ -1114,17 +1115,25 @@ function SelectModeHeader({
   const state = useSelectionActionState();
   const { selectionCount } = state;
 
-  // A cut CLEARS the selection (see `cutSelection`), so from here on
-  // `selectionCount` is 0 and every verb is dimmed by `!hasSelection`. Rather
-  // than draw five dead words, the row hands the space to the breadcrumb: the
-  // one thing a half-finished cut actually needs is a way to reach the
-  // collection it is going to be pasted into.
-  const cutCount = usePendingCutCount();
-  const cutPending = cutCount > 0;
+  // ARMED = the clipboard holds something, by Copy or by Cut. One state, one
+  // job: choose where it lands.
+  //
+  // Keyed on the clipboard rather than on the pending cut, because a copy needs
+  // the destination just as much — and on the COUNT rather than the selection,
+  // because a cut clears the selection outright and a copy loses it as soon as
+  // the user clicks into a collection to navigate. The clipboard is the only
+  // thing that still knows how many items are in flight.
+  const armedCount = useClipboardCount();
+  const armed = useIsPickingDestination() && armedCount > 0;
+  // Kept only to distinguish a cut from a copy for the tests and for anyone
+  // reading the DOM: the row itself treats the two identically, because from
+  // here on they want exactly the same things.
+  const cutPending = usePendingCutCount() > 0;
 
   return (
     <div
       data-select-mode-header=""
+      data-select-mode-armed={armed ? "" : undefined}
       data-select-mode-cut-pending={cutPending ? "" : undefined}
       // NOT `flex-wrap` any more. Wrapping was how this row coped with running
       // out of width, and it coped by growing taller — which is exactly what
@@ -1133,7 +1142,7 @@ function SelectModeHeader({
       className="flex min-w-0 flex-1 items-center gap-x-5"
     >
       <span
-        data-select-mode-count={cutPending ? cutCount : selectionCount}
+        data-select-mode-count={armed ? armedCount : selectionCount}
         // Mono and tabular so the row does not twitch sideways as the count
         // crosses 9 — this number changes on every tap, which is precisely the
         // moment a reflowing toolbar is most annoying.
@@ -1145,7 +1154,7 @@ function SelectModeHeader({
         // that read as a third accent rather than the selection colour.
         className="shrink-0 font-mono text-[13px] tabular-nums text-blue-500"
       >
-        {cutPending ? cutCount : selectionCount} selected
+        {armed ? armedCount : selectionCount} selected
       </span>
       {/* THE SWAP. Dimmed verbs are worse than absent ones here: after a cut
           all five are unavailable for the same reason, and the row still has
@@ -1155,9 +1164,10 @@ function SelectModeHeader({
           Its crumbs are also the up-a-level DROP targets, which is the other
           half of "where am I pasting this": the same row now answers it by
           click and by drag. */}
-      {cutPending ? (
+      {armed ? (
         <div
           data-select-mode-breadcrumb=""
+          data-crumb-wing
           className="flex min-w-0 flex-1 items-center overflow-hidden"
         >
           {breadcrumb}
@@ -1177,7 +1187,13 @@ function SelectModeHeader({
         variant="ghost"
         size="sm"
         data-select-mode-done
-        title={cutPending ? "Finish selecting and cancel the cut" : "Finish selecting"}
+        title={
+          armed
+            ? cutPending
+              ? "Cancel the cut and leave the items where they are"
+              : "Cancel — discard what was copied"
+            : "Finish selecting"
+        }
         // Clear THEN disarm. The store keeps the mode armed through an empty
         // selection for this view (keepMultiSelectModeWhenEmpty), so the clear
         // cannot disarm it out from under this and the order is only about
@@ -1210,7 +1226,11 @@ function SelectModeHeader({
           "text-zinc-100 hover:border-zinc-500 hover:bg-transparent hover:text-white",
         )}
       >
-        Done
+        {/* CANCEL while armed. The button does the same thing either way —
+            clear the clipboard, drop the selection, leave the mode — but the
+            word has to match what the user is walking away from. "Done" over a
+            half-finished paste reads as "commit it", which is the opposite. */}
+        {armed ? "Cancel" : "Done"}
       </Button>
       {/* History lives on the RIGHT of Done, fenced off by its own rule.
           Undo/redo are not selection verbs — they act on the board whatever is
@@ -1457,9 +1477,18 @@ export function GraphBoard({
   // things, and a mode that shows no sign of itself until the first item lands
   // reads as a button that did nothing. The row at zero is not empty either —
   // it says "0 selected" and offers Done, which is the way back out.
+  // A THIRD condition now: an armed clipboard keeps the row up on its own.
+  //
+  // Copy and Cut both leave multi-select, so the board can be navigated to a
+  // destination — checkboxes off, a click opens a collection again. That would
+  // have taken this row down with it, and the row is exactly what the user
+  // still needs: the count, the breadcrumb, Paste, and the way to cancel. So
+  // the row outlives the flag, and the two halves of the gesture are split —
+  // the flag governs the CARDS, the clipboard governs the HEADER.
   const multiSelectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
   const isDragging = useCollectionsSelector((s) => s.interaction.isDragging);
-  const selectModeRow = multiSelectMode && !isDragging;
+  const pickingDestination = useIsPickingDestination();
+  const selectModeRow = (multiSelectMode || pickingDestination) && !isDragging;
 
   return (
     <OpenKeyBoundary trashId={trashRootId}>
@@ -1550,7 +1579,10 @@ export function GraphBoard({
               <SelectModeHeader anchorName={anchorName} breadcrumb={breadcrumb} />
             ) : (
               <>
-            <div className="flex min-w-0 flex-1 items-center gap-3">
+            {/* `data-crumb-wing`: the box whose width the trail measures
+                itself against. The trail is content-width on purpose, so it
+                cannot read its own budget — see useFittedAncestorCount. */}
+            <div data-crumb-wing className="flex min-w-0 flex-1 items-center gap-3">
               {breadcrumb}
               <GraphSaveStatus />
             </div>
