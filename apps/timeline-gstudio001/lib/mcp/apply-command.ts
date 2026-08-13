@@ -18,6 +18,7 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
 import {
   saveFirebaseTimelineDocumentsAtomic,
+  TimelineOrphanError,
   TimelineRevisionConflictError,
   type TimelineBatchWrite,
 } from "@/lib/firebase-timeline-store";
@@ -428,6 +429,33 @@ export async function applyCollectionsCommand(
     }
     if (error instanceof TimelineAccessDeniedError) {
       return { ok: false, kind: "error", message: `Not authorized to edit timeline "${rootTimelineId}".` };
+    }
+    // The store's two REFUSALS. Both are answers — the write was understood
+    // and declined — so they belong in the tool result, where the caller can
+    // read and act on them. Rethrown, they left the MCP surface with a raw
+    // exception and no explanation, which is how `move_clip` emptying its
+    // source looked from the outside: not "refused because X" but a failure.
+    if (error instanceof TimelineOrphanError) {
+      const ids = error.orphans.map((orphan) => orphan.id).join(", ");
+      return {
+        ok: false,
+        kind: "error",
+        message:
+          `That change would leave ${ids} with no parent, so it was refused. ` +
+          `Move it somewhere else in the same call, or remove it to the trash instead.`,
+      };
+    }
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Refusing to save an empty timeline")
+    ) {
+      return {
+        ok: false,
+        kind: "error",
+        message:
+          "That change would empty a collection, and this command did not ask to. " +
+          "Use remove_clip to take the last item out, or move something in first.",
+      };
     }
     throw error;
   }
