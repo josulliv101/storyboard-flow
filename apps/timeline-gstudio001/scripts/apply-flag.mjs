@@ -44,14 +44,14 @@ export function readApplyFlag(script, envVar) {
  * Printing a confident, wrong instruction is the same bug this file exists to
  * stop, so the escape hatch has to be written in the reader's shell.
  */
-function envForms(script, envVar) {
+function envForms(script, envVar, verb) {
   if (process.platform !== "win32") return [`  ${envVar}=1 npm run ${script}`];
   return [
     `  $env:${envVar}="1"; npm run ${script}     (PowerShell)`,
     `  set ${envVar}=1 && npm run ${script}      (cmd.exe)`,
     "",
     `  In PowerShell $env:${envVar} STAYS SET for the rest of the session, so a`,
-    `  later plain \`npm run ${script}\` will also delete. Clear it when done:`,
+    `  later plain \`npm run ${script}\` will also ${verb}. Clear it when done:`,
     `  Remove-Item Env:${envVar}`,
   ];
 }
@@ -66,17 +66,18 @@ function envForms(script, envVar) {
  * It only survives the root proxy because those scripts end in a trailing `--`
  * (root package.json) — without it npm re-swallows the flag one level down.
  */
-export function dryRunNotice(script, envVar) {
+export function dryRunNotice(script, envVar, verb = "delete") {
+  const past = verb === "delete" ? "DELETED" : `${verb.toUpperCase()}D`;
   return [
     "",
-    "NOTHING WAS DELETED — this was a dry run.",
+    `NOTHING WAS ${past} — this was a dry run.`,
     "",
-    "To actually delete, run this EXACTLY (works from the repo root or this",
+    `To actually ${verb}, run this EXACTLY (works from the repo root or this`,
     "workspace, in any shell):",
     `  npm run ${script} -- --apply        (note the bare -- separator)`,
     "",
     "Or set the environment variable instead:",
-    ...envForms(script, envVar),
+    ...envForms(script, envVar, verb),
     "",
     `Beware: \`npm run ${script} --apply\` without the separator is silently`,
     "discarded by npm. The script never sees it and you get this message again.",
