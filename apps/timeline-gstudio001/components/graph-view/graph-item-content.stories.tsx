@@ -84,6 +84,34 @@ const audioCollectionGraph = (() => {
   return result.value;
 })();
 
+
+/** An audio MEDIA card — the clip itself, not a collection that leads with one.
+ *  #314: the feature shipped without this. An audio card has no frame to draw
+ *  and no poster to fall back to, so what it paints is the placeholder, and
+ *  the kind stamp has to say AUDIO rather than defaulting to IMAGE. */
+const AUDIO_CLIP_ID = "vo-solo" as NodeId;
+const audioClipGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "audio-parent" as NodeId,
+      name: "Takes",
+      children: [
+        {
+          kind: "media",
+          id: AUDIO_CLIP_ID,
+          name: "Pat VO",
+          mediaKind: "audio",
+          src: "data:audio/wav;base64,UklGRg==",
+          fullDurationSeconds: 8,
+        },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
 const emptyCollectionNode = emptyCollectionGraph.nodesById.get(EMPTY_COLLECTION_ID);
 if (emptyCollectionNode?.kind !== "collection") {
   throw new Error("Empty collection ghost fixture did not build.");
@@ -321,6 +349,54 @@ export const AudioLedCollectionShowsMusicGlyph: Story = {
     // nothing about this change.
     await expect(fallback!.getAttribute("data-collection-preview-kind")).toBe("audio");
     await expect(previewImages(canvasElement)).toHaveLength(0);
+  },
+};
+
+/**
+ * #314 item 2: an audio CLIP had no card story at all — and writing one found
+ * a live bug.
+ *
+ * The media card here is the PACKAGE default (`NodeThumbnail`); the graph view
+ * registers its own shell for COLLECTIONS only. That default asked "is it
+ * video?", and everything else took the image branch — so an audio node, which
+ * does have a `src`, rendered `<img src="…take.flac">`: a broken image on
+ * every audio card. Exactly the shape of #312.
+ */
+export const AudioClipCardDoesNotRenderItsFlacAsAnImage: Story = {
+  args: { ...baseArgs, id: AUDIO_CLIP_ID },
+  decorators: [
+    (Story) => {
+      const store = createGraphDetailsStore({
+        [AUDIO_CLIP_ID]: {
+          alt: "Pat VO",
+          aspect: 16 / 9,
+          trackIndex: 0,
+          duration: 8,
+        } satisfies ClipDetail,
+      });
+      return (
+        <DndCollections initialGraph={audioClipGraph}>
+          <GraphDetailsProvider store={store}>
+            <div className="h-32 w-40 bg-zinc-950 p-2">
+              <Story />
+            </div>
+          </GraphDetailsProvider>
+        </DndCollections>
+      );
+    },
+  ],
+  play: async ({ canvasElement }) => {
+    // THE REGRESSION GUARD. One <img> here means the audio branch is gone and
+    // a .flac is being painted as a picture.
+    await expect(previewImages(canvasElement)).toHaveLength(0);
+    await expect(
+      canvasElement.querySelector("[data-node-thumbnail='image']"),
+    ).toBeNull();
+
+    // And it says what it IS. "No preview" would describe a picture that
+    // failed; there was never going to be one.
+    await expect(canvasElement.textContent).toContain("Audio");
+    await expect(canvasElement.textContent).not.toContain("No image");
   },
 };
 

@@ -19,6 +19,16 @@ export const NodeThumbnail = memo(function NodeThumbnail({ node }: { node: Media
     return <VideoThumbnail key={JSON.stringify(posters)} node={node} posters={posters} />;
   }
 
+  // AUDIO HAS NO PICTURE, and it has a `src` — so without this it fell through
+  // to the image branch and rendered `<img src="…/take.flac">`: a broken image
+  // on every audio card. The same shape as #312, where audio sailed through
+  // gates that only ever asked "is it video?".
+  //
+  // Labelled "Audio" rather than "No preview": the other fallbacks describe a
+  // picture that is missing or failed, and this one is neither — there was
+  // never going to be a picture, and saying so is not an error state.
+  if (node.mediaKind === "audio") return <ThumbnailFallback label="Audio" />;
+
   if (!node.src) return <ThumbnailFallback label="No image" />;
   return <ImageThumbnail key={node.src} src={node.src} />;
 });

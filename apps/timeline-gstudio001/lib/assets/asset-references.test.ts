@@ -12,7 +12,7 @@ import {
 function mediaClip(
   id: string,
   source?: { providerId: string; assetId: string },
-  kind: "image" | "video" = "image",
+  kind: "image" | "video" | "audio" = "image",
 ): TimelineClip {
   return {
     id,
@@ -89,6 +89,53 @@ describe("assetCandidatesFromClips", () => {
         kind: "video",
       }),
     ]);
+  });
+
+  // #314. The polarity here was inverted so audio yields a candidate at all —
+  // `sourceAssetOf` excludes COLLECTIONS rather than allow-listing image and
+  // video, precisely so a new media kind cannot be silently omitted. Nothing
+  // tested it. An omitted kind is never marked for reclaim, so its file lives
+  // in storage forever and NOTHING FAILS: the app looks perfect while the
+  // bill grows. That is the whole reason this test exists.
+  it("yields a reclaim candidate for an AUDIO clip", () => {
+    const ref = { providerId: "cloudinary", assetId: "takes/vo.flac" };
+
+    const candidates = assetCandidatesFromClips([mediaClip("a1", ref, "audio")]);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({ ref });
+  });
+
+  it("addresses audio as the provider's `video` resource type", () => {
+    // AssetKind is the PROVIDER's taxonomy, not the clip's. Cloudinary serves
+    // audio under `video` and its destroy endpoint is per resource type, so
+    // `kind: "audio"` here would fail to delete the file — the same leak by a
+    // different route.
+    const candidates = assetCandidatesFromClips([
+      mediaClip("a1", { providerId: "cloudinary", assetId: "takes/vo.flac" }, "audio"),
+    ]);
+
+    expect(candidates[0].kind).toBe("video");
+  });
+
+  it("gives audio an EMPTY thumbnail rather than its own src", () => {
+    // Audio has no poster and is not its own thumbnail. Falling back to `src`
+    // would put a .flac URL in the recently-deleted list where a row renders
+    // it as an <img> — a broken image for every deleted voice take.
+    const candidates = assetCandidatesFromClips([
+      mediaClip("a1", { providerId: "cloudinary", assetId: "takes/vo.flac" }, "audio"),
+    ]);
+
+    expect(candidates[0].thumbnailUrl).toBe("");
+  });
+
+  it("still names an audio candidate from the asset id when it has no title", () => {
+    const candidates = assetCandidatesFromClips([
+      mediaClip("a1", { providerId: "cloudinary", assetId: "takes/vo.flac" }, "audio"),
+    ]);
+
+    // A row that prints nothing at all is worse than one printing the leaf.
+    expect(candidates[0].name).toBe("a1");
   });
 
   it("snapshots a name and a thumbnail, because no clip will be left to ask", () => {
