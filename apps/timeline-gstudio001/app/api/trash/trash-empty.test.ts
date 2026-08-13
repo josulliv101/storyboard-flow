@@ -211,6 +211,40 @@ function seedTrash(clips: TimelineClip[], revision = 3) {
   });
 }
 
+/** A trashed COLLECTION entry: its clip id IS the child timeline's id. */
+function trashedCollection(childTimelineId: string): TimelineClip {
+  return {
+    id: childTimelineId,
+    index: 0,
+    kind: "collection",
+    childTimelineId,
+    title: `Timeline ${childTimelineId}`,
+    itemCount: 0,
+    previewItems: [],
+    alt: `${childTimelineId} collection`,
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: 0,
+    duration: 3,
+    sourceDuration: 3,
+    trimIn: 0,
+    trimOut: 0,
+  } as unknown as TimelineClip;
+}
+
+/** The document behind a trashed collection, plus an optional child of its own. */
+function seedCollectionDocument(id: string, childIds: string[] = [], ownerUid = "user-a") {
+  const clips = childIds.map((childId) => trashedCollection(childId));
+  state.docs.set(id, {
+    id,
+    title: `Timeline ${id}`,
+    document: { id, title: `Timeline ${id}`, clips },
+    clips,
+    ownerUid,
+    revision: 1,
+  });
+}
+
 /** A LIVE (non-trash) document that still points at `assetIds`. */
 function seedLiveTimeline(id: string, assetIds: string[], ownerUid = "user-a") {
   const clips = assetIds.map((assetId, index) =>
@@ -242,6 +276,48 @@ beforeEach(() => {
 });
 
 describe("DELETE /api/trash", () => {
+  // ── Trashed COLLECTIONS have documents behind them ────────────────────────
+  //
+  // Emptying the bin cleared its clips and left every collection document in
+  // storage with nothing pointing at it: invisible in the UI, gone from the bin
+  // it was just removed from, reachable only by querying the database.
+
+  it("DELETES the document behind a trashed collection, not just the bin entry", async () => {
+    seedTrash([trashedCollection("timeline-gone")]);
+    seedCollectionDocument("timeline-gone");
+
+    const response = await emptyTrash();
+    expect(response.status).toBe(200);
+
+    // The whole point: no unreachable record left behind.
+    expect(state.docs.has("timeline-gone")).toBe(false);
+    expect((await readBack()).clips).toEqual([]);
+  });
+
+  it("cascades into the trashed collection's own children", async () => {
+    seedTrash([trashedCollection("timeline-parent")]);
+    seedCollectionDocument("timeline-parent", ["timeline-nested"]);
+    seedCollectionDocument("timeline-nested");
+
+    await emptyTrash();
+
+    // A subtree, not one document — a nested collection is just as unreachable.
+    expect(state.docs.has("timeline-parent")).toBe(false);
+    expect(state.docs.has("timeline-nested")).toBe(false);
+  });
+
+  it("leaves a DUPLICATE REFERENCE entry's document alone", async () => {
+    // A second card for a timeline that lives elsewhere: its clip id differs
+    // from the child id, it owns nothing, and the real placement still needs
+    // the document.
+    const reference = { ...trashedCollection("timeline-shared"), id: "clip-duplicate-ref" };
+    seedTrash([reference as TimelineClip]);
+    seedCollectionDocument("timeline-shared");
+
+    expect((await emptyTrash()).status).toBe(200);
+    expect(state.docs.has("timeline-shared")).toBe(true);
+  });
+
   it("empties the bin", async () => {
     seedTrash([
       clip("c1", "https://example.test/a.png"),
@@ -393,6 +469,20 @@ const discard = (clipIds: unknown) =>
 // the open timeline, and the copies that never moved have to go too — or the
 // row returns holding duplicates of something already taken back.
 describe("POST /api/trash", () => {
+  it("DELETES the document behind a discarded collection", async () => {
+    seedTrash([trashedCollection("timeline-a"), trashedCollection("timeline-b")]);
+    seedCollectionDocument("timeline-a");
+    seedCollectionDocument("timeline-b");
+
+    const response = await discard(["timeline-a"]);
+    expect(response.status).toBe(200);
+
+    // Only the discarded one — the entry left in the bin still needs its
+    // document, or restoring it would restore nothing.
+    expect(state.docs.has("timeline-a")).toBe(false);
+    expect(state.docs.has("timeline-b")).toBe(true);
+  });
+
   it("discards the named entries and leaves the rest", async () => {
     seedTrash([
       clip("c1", "https://example.test/a.png"),
