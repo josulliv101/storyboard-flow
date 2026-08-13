@@ -129,9 +129,58 @@ describe("videoFrameUrls", () => {
     expect(videoFrameUrls(["p"], 0, { trimInSeconds: 0, effectiveSeconds: 5 })).toEqual([]);
   });
 
+  // A LONE slot is a thumbnail for the whole clip, not one cell of a strip.
+  // The slot-centre rule put it at the clip's MIDPOINT, so a card stood for its
+  // shot with a frame from halfway through it.
+  it("samples a SINGLE frame at the start of the clip, not its midpoint", () => {
+    const times: number[] = [];
+    const record: VideoFrameUrlBuilder = (_url, t) => {
+      times.push(t);
+      return "x";
+    };
+    videoFrameUrls(["poster"], 1, { trimInSeconds: 0, effectiveSeconds: 8 }, record);
+    // 0.05 in, not 4. Nudged off the exact zero because an encode's first
+    // frame is so often black; one frame at 24fps, invisible as a thumbnail.
+    expect(times).toEqual([0.05]);
+  });
+
+  it("takes a trimmed clip's in-point exactly, with no nudge", () => {
+    const times: number[] = [];
+    const record: VideoFrameUrlBuilder = (_url, t) => {
+      times.push(t);
+      return "x";
+    };
+    videoFrameUrls(["poster"], 1, { trimInSeconds: 10, effectiveSeconds: 4 }, record);
+    // The user chose this frame and it is mid-source, so the black-frame
+    // reasoning behind the nudge does not apply.
+    expect(times).toEqual([10]);
+  });
+
+  it("never nudges a single frame past a very short clip", () => {
+    const times: number[] = [];
+    const record: VideoFrameUrlBuilder = (_url, t) => {
+      times.push(t);
+      return "x";
+    };
+    videoFrameUrls(["poster"], 1, { trimInSeconds: 0, effectiveSeconds: 0.04 }, record);
+    // Half the range rather than 0.05, which would sample past the end.
+    expect(times).toEqual([0.02]);
+  });
+
+  it("leaves multi-slot strips sampling at centres", () => {
+    const times: number[] = [];
+    const record: VideoFrameUrlBuilder = (_url, t) => {
+      times.push(t);
+      return "x";
+    };
+    // The single-frame rule must not leak into the filmstrip: its first slot
+    // stays at its centre so the frames remain evenly distributed.
+    videoFrameUrls(["poster"], 3, { trimInSeconds: 0, effectiveSeconds: 6 }, record);
+    expect(times).toEqual([1, 3, 5.95]);
+  });
+
   it("defaults to the Cloudinary builder", () => {
     const urls = videoFrameUrls([CLOUDINARY_FRAME], 1, { trimInSeconds: 0, effectiveSeconds: 4 });
-    // count 1 → centre at 2s.
-    expect(urls[0]).toContain("so_2,");
+    expect(urls[0]).toContain("so_0.05,");
   });
 });
