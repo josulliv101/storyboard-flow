@@ -9,8 +9,14 @@
 // obviously-nothing and leaves a list a person can actually read.
 //
 //   npm run prune:orphans                  # dry run
+//   npm run prune:orphans -- --offline     # dry run from the last snapshot, ZERO reads
 //   npm run prune:orphans -- --apply       # delete (note the bare -- separator)
 //   PRUNE_APPLY=1 npm run prune:orphans    # delete, in a form npm cannot swallow
+//
+// A dry run reading the whole collection to tell you what it WOULD do is the
+// clearest case of a read that need not be live: --offline answers from the
+// snapshot the last live run wrote. --offline with --apply is REFUSED — see
+// refuseOfflineWrite in timeline-snapshot.mjs.
 //
 // `npm run prune:orphans --apply` WITHOUT the separator is discarded by npm
 // before the script runs — see scripts/apply-flag.mjs.
@@ -36,61 +42,36 @@
 // move the mess. Anything with content goes to review instead — see the list
 // this prints under KEEPING.
 
-import { cert, applicationDefault, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
 import { dryRunNotice, readApplyFlag } from "./apply-flag.mjs";
+import {
+  COLLECTION,
+  announceSnapshot,
+  clipsOf,
+  childIdsOf,
+  loadDocuments,
+  refuseOfflineWrite,
+  snapshotFlags,
+  walkReachable,
+} from "./timeline-snapshot.mjs";
 
-// Must track TIMELINE_COLLECTION in lib/firebase-timeline-store.ts.
-const COLLECTION = "gstudioTimelineDocuments";
 const apply = readApplyFlag("prune:orphans", "PRUNE_APPLY");
+const { offline, snapshotPath } = snapshotFlags();
 
 /** Titles that mean "made by a button, never used". Only ever consulted for a
  *  document already proven to hold nothing. */
 const SCRATCH_TITLE = /^(new collection|new timeline|untitled|\(untitled\))$/i;
 
-function credential() {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (clientEmail && privateKey) {
-    return { credential: cert({ projectId, clientEmail, privateKey }), projectId };
-  }
-  return { credential: applicationDefault(), projectId };
-}
-
-function clipsOf(data) {
-  if (Array.isArray(data?.document?.clips)) return data.document.clips;
-  if (Array.isArray(data?.clips)) return data.clips;
-  return [];
-}
-
-function childIdsOf(data) {
-  return clipsOf(data)
-    .filter((clip) => clip?.kind === "collection" && typeof clip.childTimelineId === "string")
-    .map((clip) => clip.childTimelineId);
-}
-
 async function main() {
-  initializeApp(credential());
-  const db = getFirestore();
+  if (refuseOfflineWrite({ offline, apply, script: "prune:orphans" })) return;
 
-  const snapshot = await db.collection(COLLECTION).get();
-  const documents = new Map();
-  snapshot.forEach((doc) => documents.set(doc.id, doc.data()));
+  const loaded = await loadDocuments({ offline, snapshotPath });
+  if (loaded === null) return;
+  const { documents } = loaded;
+  announceSnapshot(loaded);
 
-  const reachable = new Set();
-  const queue = [...documents.entries()]
-    .filter(([id, data]) => data?.isProject === true || id.startsWith("trash-"))
-    .map(([id]) => id);
-  while (queue.length > 0) {
-    const id = queue.shift();
-    if (reachable.has(id)) continue;
-    reachable.add(id);
-    for (const childId of childIdsOf(documents.get(id))) {
-      if (!reachable.has(childId)) queue.push(childId);
-    }
-  }
+  const { reachable } = walkReachable(documents);
 
   const deletable = [];
   const keeping = [];
@@ -142,6 +123,10 @@ async function main() {
     console.log(dryRunNotice("prune:orphans", "PRUNE_APPLY"));
     return;
   }
+
+  // Live only — refuseOfflineWrite above guarantees it, so the app is
+  // initialized and this handle is safe to take.
+  const db = getFirestore();
 
   // Firestore caps a batch at 500 writes; chunk well under it.
   const CHUNK = 200;

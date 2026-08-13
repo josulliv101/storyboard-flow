@@ -51,186 +51,32 @@
 //                                    project tree, so they are reported apart
 //                                    from the rest and are probably fine.
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { cert, applicationDefault, initializeApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import {
+  COLLECTION,
+  announceSnapshot,
+  clipsOf,
+  childIdsOf,
+  isAssetLibrary,
+  isTrashBin,
+  loadDocuments,
+  snapshotFlags,
+  srcOf,
+  walkReachable,
+} from "./timeline-snapshot.mjs";
 
-// Must track TIMELINE_COLLECTION in lib/firebase-timeline-store.ts.
-const COLLECTION = "gstudioTimelineDocuments";
 const listAll = process.argv.includes("--list");
-const offline = process.argv.includes("--offline");
 const withAssets = process.argv.includes("--assets");
 const uidIndex = process.argv.indexOf("--uid");
 const onlyUid = uidIndex === -1 ? null : process.argv[uidIndex + 1];
-const snapshotIndex = process.argv.indexOf("--snapshot");
-const SNAPSHOT_PATH =
-  snapshotIndex === -1 ? ".orphan-snapshot.json" : process.argv[snapshotIndex + 1];
-
-/**
- * The subset of a document this audit reasons about. Deliberately NOT the raw
- * document: the snapshot exists to be re-read many times, and the media `src`
- * strings alone are most of the payload. Everything below is needed —
- * `clips` for reachability and counts, `src` for the --assets cross-reference.
- */
-function toSnapshotEntry(data) {
-  return {
-    title: data?.title ?? null,
-    ownerUid: data?.ownerUid ?? null,
-    isProject: data?.isProject === true,
-    clips: clipsOf(data).map((clip) => ({
-      kind: clip?.kind ?? null,
-      childTimelineId: clip?.childTimelineId ?? null,
-      src: clip?.src ?? clip?.assetId ?? null,
-    })),
-  };
-}
-
-function credential() {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-
-  if (clientEmail && privateKey) {
-    return { credential: cert({ projectId, clientEmail, privateKey }), projectId };
-  }
-  return { credential: applicationDefault(), projectId };
-}
-
-/**
- * The stored clips, from whichever field carries them.
- *
- * `document.clips` is the live copy and `clips` the denormalized one; they
- * agree in practice, but a record written by an older path may only have the
- * latter. `lastNonEmptyDocument` is deliberately NOT consulted — it is a
- * recovery snapshot of content that has since been removed, and treating it as
- * a reference would report a genuinely emptied parent as still holding its
- * children.
- */
-function clipsOf(data) {
-  if (Array.isArray(data?.document?.clips)) return data.document.clips;
-  if (Array.isArray(data?.clips)) return data.clips;
-  return [];
-}
-
-function childIdsOf(data) {
-  const ids = [];
-  for (const clip of clipsOf(data)) {
-    if (clip?.kind !== "collection") continue;
-    if (typeof clip.childTimelineId !== "string") continue;
-    ids.push(clip.childTimelineId);
-  }
-  return ids;
-}
-
-const isTrashBin = (id) => id.startsWith("trash-");
-const isAssetLibrary = (id) => id.startsWith("asset-library");
-
-/** A clip's asset identity, or null when it names none. Collection clips have
- *  no src — they are the edges of the graph, not its payload. */
-function srcOf(clip) {
-  const value = clip?.src ?? clip?.assetId;
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-}
-
-/**
- * The documents, from Firestore or from the last snapshot.
- *
- * A live read always writes the snapshot back. That costs nothing — the data
- * is already in hand — and it means the NEXT question can be asked for free
- * instead of re-reading the collection.
- */
-async function loadDocuments() {
-  if (offline) {
-    let raw;
-    try {
-      raw = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"));
-    } catch (error) {
-      console.error(`No usable snapshot at ${SNAPSHOT_PATH}: ${error.message}`);
-      console.error("Run the audit live once (without --offline) to create one.");
-      process.exitCode = 2;
-      return null;
-    }
-    return {
-      documents: new Map(Object.entries(raw.documents ?? {})),
-      takenAt: raw.takenAt ?? "unknown",
-      forUid: raw.forUid ?? null,
-    };
-  }
-
-  initializeApp(credential());
-  const db = getFirestore();
-  const query = onlyUid
-    ? db.collection(COLLECTION).where("ownerUid", "==", onlyUid)
-    : db.collection(COLLECTION);
-  const snapshot = await query.get();
-
-  const documents = new Map();
-  snapshot.forEach((doc) => documents.set(doc.id, doc.data()));
-
-  const takenAt = new Date().toISOString();
-  try {
-    writeFileSync(
-      SNAPSHOT_PATH,
-      JSON.stringify({
-        takenAt,
-        forUid: onlyUid,
-        documents: Object.fromEntries(
-          [...documents].map(([id, data]) => [id, toSnapshotEntry(data)]),
-        ),
-      }),
-    );
-  } catch (error) {
-    // Never fail the audit over the cache.
-    console.error(`(could not write ${SNAPSHOT_PATH}: ${error.message})`);
-  }
-  return { documents, takenAt, forUid: onlyUid };
-}
+const { offline, snapshotPath } = snapshotFlags();
 
 async function main() {
-  const loaded = await loadDocuments();
+  const loaded = await loadDocuments({ offline, snapshotPath, onlyUid });
   if (loaded === null) return;
-  const { documents, takenAt } = loaded;
+  const { documents } = loaded;
+  announceSnapshot(loaded);
 
-  if (offline) {
-    // Say it loudly. An offline run answering a question about live data is
-    // only safe if the reader knows how old the answer is — and the whole
-    // point of the mode is that it will be re-run many times.
-    console.log(`SNAPSHOT from ${takenAt} — no reads. Live state may differ.`);
-    if (loaded.forUid !== null) console.log(`snapshot covers only uid ${loaded.forUid}`);
-    console.log("");
-  }
-
-  const roots = [...documents.entries()]
-    .filter(([id, data]) => data?.isProject === true || isTrashBin(id))
-    .map(([id]) => id);
-
-  // Breadth-first from every root. A child appearing under two parents is
-  // legal (duplicate-reference cards), so `seen` is what keeps this linear and
-  // cycle-proof rather than a tree walk.
-  //
-  // A childTimelineId can name a document that does not exist — the mirror
-  // image of an orphan, and just as invisible: the parent shows a collection
-  // card that opens onto nothing. Those ids are recorded separately and kept
-  // OUT of `reachable`, which otherwise counts them and reports more reachable
-  // documents than the collection contains.
-  const reachable = new Set();
-  const dangling = new Map();
-  const queue = [...roots];
-  while (queue.length > 0) {
-    const id = queue.shift();
-    if (reachable.has(id)) continue;
-    reachable.add(id);
-    for (const childId of childIdsOf(documents.get(id))) {
-      if (!documents.has(childId)) {
-        if (!dangling.has(childId)) dangling.set(childId, []);
-        dangling.get(childId).push(id);
-        continue;
-      }
-      if (!reachable.has(childId)) queue.push(childId);
-    }
-  }
+  const { roots, reachable, dangling } = walkReachable(documents);
 
   const orphans = [];
   for (const [id, data] of documents) {
