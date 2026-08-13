@@ -17,6 +17,7 @@ import {
   releaseAt,
   waitForLayout,
 } from "./stories-helpers";
+import { at } from "../test-support/at";
 
 // Phase 6 coverage: external palette sources (brand-new nodes committed as
 // add-nodes) and trash (a hidden root collection fed by the ordinary move
@@ -258,7 +259,7 @@ export const PaletteDropAddsNewCollection: Story = {
       expect(order.slice(0, 3)).toEqual(["alpha", "bravo", "charlie"]);
       expect(order[3]).toMatch(/^col-/);
     });
-    const newId = panelOrder(canvasElement, "panel-a")[3];
+    const newId = at(panelOrder(canvasElement, "panel-a"), 3);
     expect(nodeCard(canvasElement, newId).getAttribute("aria-label")).toMatch(
       /collection, 0 items/i
     );

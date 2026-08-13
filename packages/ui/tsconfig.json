@@ -5,6 +5,13 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    // Types `arr[i]` and `record[key]` as `T | undefined`. #283 step 4.
+    // 119 sites, and no `arr[i]!` among them: the flag is only worth having
+    // if the fixes are real. The hot paths (strip geometry, the virtual
+    // window) read through one documented accessor rather than a bounds
+    // check per access; tests read through `test-support/at`, which names
+    // the index and the actual length when a list is shorter than expected.
+    "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true,
     "module": "esnext",
     "moduleResolution": "bundler",

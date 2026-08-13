@@ -350,7 +350,13 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       }
       return Math.max(MIN_ITEM_WIDTH, itemWidth);
     };
-    const widthForIndex = (index: number): number => widthForNode(nodesById.get(childIds[index]));
+    const widthForIndex = (index: number): number => {
+      const childId = childIds[index];
+      // An out-of-range estimate falls back to the same minimum an unknown node
+      // gets — the virtualizer asks about indexes around the edges of its
+      // window, so this is a normal question, not an error.
+      return widthForNode(childId === undefined ? undefined : nodesById.get(childId));
+    };
 
     // The LIVE slot size for a mid-gesture trim, routed through the SAME
     // width resolution as the committed layout by synthesizing a node that
@@ -382,7 +388,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // closure here would rebuild all N measurements — re-running
     // itemWidthFor for every item — on every render, e.g. once per indicator
     // move during a drag (WidthCallbackColdDuringDrag pins this).
-    const getItemKey = useCallback((index: number) => childIds[index], [childIds]);
+    // Falls back to the INDEX rather than returning undefined: the virtualizer
+    // memoizes measurements by this key, and an undefined key would collapse
+    // every out-of-range probe onto one entry. The index is unique and stable
+    // for the render where the id is momentarily missing.
+    const getItemKey = useCallback(
+      (index: number) => childIds[index] ?? index,
+      [childIds],
+    );
 
     // The FIRST item is the one case that can't reveal its overview's
     // trimmed-in room by scrolling: its offset is 0 with no content (and no
@@ -665,7 +678,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       (s) => s.graph.nodesById.get(collectionId)?.name ?? String(collectionId)
     );
     const focusByIndex = useCallback(
-      (index: number) => focusNode(childIds[index]),
+      (index: number) => {
+        // The roving index can outlive the list it points into for a render
+        // after a removal; focusing nothing is the right answer there.
+        const childId = childIds[index];
+        if (childId !== undefined) focusNode(childId);
+      },
       [focusNode, childIds]
     );
     const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
@@ -913,7 +931,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   style={{ left: indicatorLeft }}
                 />
               )}
-              {virtualizer.getVirtualItems().map((item) => (
+              {virtualizer.getVirtualItems().map((item) => {
+                // Resolved ONCE per item. The virtualizer's window can lag a
+                // removal by a render, so an index here is not guaranteed to
+                // still name a child; skipping is the only correct answer, and
+                // it keeps both reads below honest about it.
+                const childId = childIds[item.index];
+                if (childId === undefined) return null;
+                return (
                 <div
                   key={item.key}
                   data-virtual-index={item.index}
@@ -921,7 +946,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   aria-colindex={item.index + 1}
                   // Sync the roving index to whatever card actually gains focus
                   // (click, programmatic focus), not just keyboard navigation.
-                  onFocus={() => onItemFocus(childIds[item.index])}
+                  onFocus={() => onItemFocus(childId)}
                   style={
                     {
                       position: "absolute",
@@ -948,7 +973,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                       With panToScroll, item drags move to the grip bar or behind
                       a press-and-hold so the body is free to pan the strip. */}
                   <ItemShell
-                    id={childIds[item.index]}
+                    id={childId}
                     className="h-full w-full"
                     dragActivation={cardActivation}
                     rovingTabIndex={item.index === rovingIndex ? 0 : -1}
@@ -956,7 +981,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                     itemContent={itemContent}
                   />
                 </div>
-              ))}
+                );
+              })}
               {trailingSlot && (
                 <div
                   data-virtual-trailing-slot

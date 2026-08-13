@@ -16,7 +16,11 @@ export const VIDEO_SOURCES = [
   "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/people-detection.mp4",
   "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/store-aisle-detection.mp4",
   "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/bottle-detection.mp4",
-];
+  // `as const` makes this a TUPLE, so the fixed indexes below (VIDEO_SOURCES[0]
+  // … [6] in the MEDIA table) are known to exist rather than being
+  // `string | undefined` under noUncheckedIndexedAccess. Typing the literal is
+  // the honest fix here: the entries really are fixed and really are present.
+] as const;
 
 export type ItemSize = "xs" | "sm" | "md" | "lg" | "xl";
 

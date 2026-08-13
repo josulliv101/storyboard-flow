@@ -132,7 +132,13 @@ export const LiveAnnouncementRegion = memo(function LiveAnnouncementRegion({
       speak("Selection cleared.");
     } else if (selectedIds.size === 1) {
       const [onlyId] = selectedIds;
-      const name = store.getSnapshot().graph.nodesById.get(onlyId)?.name ?? "item";
+      // `size === 1` guarantees it; `?? "item"` is the same fallback the
+      // missing-node case already uses, so the announcement degrades the way
+      // the rest of this function does rather than saying "undefined".
+      const name =
+        onlyId === undefined
+          ? "item"
+          : (store.getSnapshot().graph.nodesById.get(onlyId)?.name ?? "item");
       speak(`"${name}" selected.`);
     } else {
       speak(`${selectedIds.size} items selected.`);

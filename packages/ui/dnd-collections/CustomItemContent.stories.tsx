@@ -320,7 +320,9 @@ const UserCollectionBookendCover = memo(function UserCollectionBookendCover({
   const lastImageSrc = useCollectionsSelector((snapshot) => {
     const childIds = snapshot.graph.childrenById.get(id) ?? [];
     for (let index = childIds.length - 1; index >= 0; index -= 1) {
-      const child = snapshot.graph.nodesById.get(childIds[index]);
+      const childId = childIds[index];
+      if (childId === undefined) continue;
+      const child = snapshot.graph.nodesById.get(childId);
       if (
         child?.kind === "media" &&
         child.mediaKind !== "video" &&

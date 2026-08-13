@@ -68,7 +68,9 @@ export function computePeaks(
     let seen = false;
     for (let i = start; i < end; i += 1) {
       const value = samples[i];
-      if (!Number.isFinite(value)) continue;
+      // `Number.isFinite` already rejects undefined at runtime, but it is not a
+      // type guard — the explicit check is what lets `min`/`max` stay numbers.
+      if (value === undefined || !Number.isFinite(value)) continue;
       if (!seen) {
         min = value;
         max = value;
@@ -139,6 +141,11 @@ export function peaksForWindow(
     for (let b = fromIndex; b < toIndex && b < totalBuckets; b += 1) {
       const bucketMin = peaks.values[b * 2];
       const bucketMax = peaks.values[b * 2 + 1];
+      // Buckets are written in min/max PAIRS, so both halves exist for any b
+      // inside the loop bound. Skipping a half-written pair keeps the running
+      // min/max as numbers instead of letting one `undefined` poison the whole
+      // span into NaN and flatten the lane.
+      if (bucketMin === undefined || bucketMax === undefined) continue;
       if (!seen) {
         min = bucketMin;
         max = bucketMax;
@@ -166,8 +173,10 @@ export function peaksForWindow(
  */
 export function peakMagnitude(values: Float32Array): number {
   let peak = 0;
-  for (let i = 0; i < values.length; i += 1) {
-    const magnitude = Math.abs(values[i]);
+  // for...of over a Float32Array yields numbers directly — no index, nothing
+  // to be undefined.
+  for (const value of values) {
+    const magnitude = Math.abs(value);
     if (magnitude > peak) peak = magnitude;
   }
   return peak;

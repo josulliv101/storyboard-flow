@@ -6,6 +6,7 @@ import {
   createCollectionsStore,
   type CollectionsChange,
 } from "./collections-store";
+import { at } from "../../test-support/at";
 
 // Direct tests for the store's CONTRACTS — the invariants every selector
 // depends on and a refactor can silently break: snapshot fields keep their
@@ -73,7 +74,7 @@ describe("createCollectionsStore", () => {
     expect(canUndo).toBe(true);
     expect(historyEntries).toHaveLength(1);
     expect(changes).toHaveLength(1);
-    expect(changes[0].origin).toBe("command");
+    expect(at(changes, 0).origin).toBe("command");
   });
 
   test("reentrant listeners preserve onChange order and graph-patch pairing", () => {
@@ -100,8 +101,8 @@ describe("createCollectionsStore", () => {
         change.command?.type === "move-nodes" ? change.command.nodeIds[0] : null
       )
     ).toEqual(["x", "y"]);
-    expect([...(changes[0].graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["x"]);
-    expect([...(changes[1].graph.childrenById.get(id("root-b")) ?? [])]).toEqual([
+    expect([...(at(changes, 0).graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["x"]);
+    expect([...(at(changes, 1).graph.childrenById.get(id("root-b")) ?? [])]).toEqual([
       "y",
       "x",
     ]);
@@ -1290,7 +1291,7 @@ describe("applyRemotePatch", () => {
     store.applyRemotePatch(patch);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0].origin).toBe("remote");
-    expect(changes[0].command).toBeUndefined();
+    expect(at(changes, 0).origin).toBe("remote");
+    expect(at(changes, 0).command).toBeUndefined();
   });
 });

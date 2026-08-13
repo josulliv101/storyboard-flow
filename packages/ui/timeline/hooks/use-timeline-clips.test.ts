@@ -8,6 +8,7 @@ import {
   packClipsLeftToRight,
   resizeClipsFromBaseline,
 } from "./use-timeline-clips";
+import { at } from "../../test-support/at";
 
 function clip(overrides: Partial<TimelineClip> = {}): TimelineClip {
   return {
@@ -34,8 +35,8 @@ describe("timeline clip math", () => {
       clip({ id: "clip-1", index: 1, startTime: 20, duration: 2 }),
     ], 0, clip());
 
-    expect(packed[0].startTime).toBe(0);
-    expect(packed[1].startTime).toBeCloseTo(4 + CLIP_GAP_SECONDS);
+    expect(at(packed, 0).startTime).toBe(0);
+    expect(at(packed, 1).startTime).toBeCloseTo(4 + CLIP_GAP_SECONDS);
   });
 
   it("lays out both sides of an anchored clip", () => {
@@ -47,21 +48,21 @@ describe("timeline clip math", () => {
     const next = layoutClipsAroundAnchor(
       clips,
       1,
-      { ...clips[1], startTime: 10, duration: 4 },
+      { ...at(clips, 1), startTime: 10, duration: 4 },
     );
 
-    expect(next[0].startTime + next[0].duration + CLIP_GAP_SECONDS).toBeCloseTo(10);
-    expect(next[2].startTime).toBeCloseTo(14 + CLIP_GAP_SECONDS);
+    expect(at(next, 0).startTime + at(next, 0).duration + CLIP_GAP_SECONDS).toBeCloseTo(10);
+    expect(at(next, 2).startTime).toBeCloseTo(14 + CLIP_GAP_SECONDS);
   });
 
   it("left trim grows into available source and preserves trim accounting", () => {
-    const [resized] = resizeClipsFromBaseline({
+    const resized = at(resizeClipsFromBaseline({
       baselineClips: [clip()],
       anchorIndex: 0,
       edge: "left",
       deltaTime: -2,
       minDuration: 0.6,
-    });
+    }), 0);
 
     expect(resized.duration).toBe(6);
     expect(resized.trimIn).toBe(1);
@@ -69,26 +70,26 @@ describe("timeline clip math", () => {
   });
 
   it("enforces minimum duration while right trimming", () => {
-    const [resized] = resizeClipsFromBaseline({
+    const resized = at(resizeClipsFromBaseline({
       baselineClips: [clip()],
       anchorIndex: 0,
       edge: "right",
       deltaTime: -20,
       minDuration: 0.6,
-    });
+    }), 0);
 
     expect(resized.duration).toBe(0.6);
     expect(resized.trimOut).toBeCloseTo(6.4);
   });
 
   it("resizes images without source-duration clamping", () => {
-    const [resized] = resizeClipsFromBaseline({
+    const resized = at(resizeClipsFromBaseline({
       baselineClips: [clip({ kind: "image", duration: 4, sourceDuration: 4, trimIn: 0, trimOut: 0 })],
       anchorIndex: 0,
       edge: "right",
       deltaTime: 2,
       minDuration: 0.6,
-    });
+    }), 0);
 
     expect(resized.duration).toBe(6);
     expect(resized.sourceDuration).toBe(6);
@@ -97,13 +98,13 @@ describe("timeline clip math", () => {
   });
 
   it("moves a video source window without changing visible duration", () => {
-    const [edited] = editVideoSourceWindowFromBaseline({
+    const edited = at(editVideoSourceWindowFromBaseline({
       baselineClips: [clip()],
       anchorIndex: 0,
       mode: "move",
       deltaTime: 2,
       minDuration: 0.6,
-    });
+    }), 0);
 
     expect(edited.duration).toBe(4);
     expect(edited.trimIn).toBe(1);
@@ -111,13 +112,13 @@ describe("timeline clip math", () => {
   });
 
   it("uses image source handles to resize duration", () => {
-    const [edited] = editVideoSourceWindowFromBaseline({
+    const edited = at(editVideoSourceWindowFromBaseline({
       baselineClips: [clip({ kind: "image", duration: 4, sourceDuration: 4, trimIn: 0, trimOut: 0 })],
       anchorIndex: 0,
       mode: "right",
       deltaTime: 2,
       minDuration: 0.6,
-    });
+    }), 0);
 
     expect(edited.duration).toBe(6);
     expect(edited.sourceDuration).toBe(6);

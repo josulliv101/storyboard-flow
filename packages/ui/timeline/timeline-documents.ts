@@ -442,8 +442,11 @@ export function syncParentCollectionsInState(
   let nextDocuments = state.documents;
 
   let totalDuration = 3;
-  if (childClips.length > 0) {
-    const lastClip = childClips[childClips.length - 1];
+  const lastClip = childClips[childClips.length - 1];
+  // The empty case and the unreachable out-of-range case answer alike, which is
+  // the same rule `collectionSpanSeconds` follows: a zero-width collection card
+  // cannot be seen or clicked either way.
+  if (lastClip !== undefined) {
     totalDuration = lastClip.startTime + lastClip.duration + TIMELINE_LEADING_PADDING_SECONDS;
   }
 
