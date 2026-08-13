@@ -34,36 +34,22 @@
 //   they are addressed directly rather than through a project tree, so the
 //   walk cannot see them and they are not orphans.
 
-import { cert, applicationDefault, initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 import { dryRunNotice, readApplyFlag } from "./apply-flag.mjs";
+import {
+  COLLECTION,
+  announceSnapshot,
+  clipsOf,
+  childIdsOf,
+  loadDocuments,
+  refuseOfflineWrite,
+  snapshotFlags,
+  walkReachable,
+} from "./timeline-snapshot.mjs";
 
-// Must track TIMELINE_COLLECTION in lib/firebase-timeline-store.ts.
-const COLLECTION = "gstudioTimelineDocuments";
 const apply = readApplyFlag("bin:orphans", "BIN_APPLY");
-
-function credential() {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (clientEmail && privateKey) {
-    return { credential: cert({ projectId, clientEmail, privateKey }), projectId };
-  }
-  return { credential: applicationDefault(), projectId };
-}
-
-const clipsOf = (data) =>
-  Array.isArray(data?.document?.clips)
-    ? data.document.clips
-    : Array.isArray(data?.clips)
-      ? data.clips
-      : [];
-
-const childIdsOf = (data) =>
-  clipsOf(data)
-    .filter((clip) => clip?.kind === "collection" && typeof clip.childTimelineId === "string")
-    .map((clip) => clip.childTimelineId);
+const { offline, snapshotPath } = snapshotFlags();
 
 /** A collection clip in the shape the app stores, so a filed document is
  *  indistinguishable from one binned through the UI. `id === childTimelineId`
@@ -100,25 +86,14 @@ function collectionClip(id, data, index, startTime) {
 }
 
 async function main() {
-  initializeApp(credential());
-  const db = getFirestore();
+  if (refuseOfflineWrite({ offline, apply, script: "bin:orphans" })) return;
 
-  const snapshot = await db.collection(COLLECTION).get();
-  const documents = new Map();
-  snapshot.forEach((doc) => documents.set(doc.id, doc.data()));
+  const loaded = await loadDocuments({ offline, snapshotPath });
+  if (loaded === null) return;
+  const { documents } = loaded;
+  announceSnapshot(loaded);
 
-  const reachable = new Set();
-  const queue = [...documents.entries()]
-    .filter(([id, data]) => data?.isProject === true || id.startsWith("trash-"))
-    .map(([id]) => id);
-  while (queue.length > 0) {
-    const id = queue.shift();
-    if (reachable.has(id)) continue;
-    reachable.add(id);
-    for (const childId of childIdsOf(documents.get(id))) {
-      if (!reachable.has(childId)) queue.push(childId);
-    }
-  }
+  const { reachable } = walkReachable(documents);
 
   // Group by owner: each owner's orphans go to that owner's bin, never a
   // shared one.
@@ -189,6 +164,10 @@ async function main() {
     console.log(dryRunNotice("bin:orphans", "BIN_APPLY", "file"));
     return;
   }
+
+  // Live only — refuseOfflineWrite above guarantees it, so the app is
+  // initialized and this handle is safe to take.
+  const db = getFirestore();
 
   for (const plan of plans) {
     if (plan.additions.length === 0) continue;
