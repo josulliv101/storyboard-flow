@@ -214,9 +214,14 @@ body {
 }
 
 .animate-collection-paired-callout {
-  /* 320ms is also COLLECTION_CALLOUT_MS in graph-collection-hover.tsx, which
-     holds the class on for exactly this long so a flick across a folder still
-     plays the whole thing. Change one, change the other. */
+  /* 320ms is COLLECTION_CALLOUT_KEYFRAMES_MS in graph-collection-hover.tsx.
+     Change one, change the other.
+
+     The class is held on for LONGER than this on purpose (see
+     COLLECTION_CALLOUT_MS there). Holding it for exactly this long looks
+     right and is not: the hold timer starts when the class is applied, the
+     animation starts a frame later, so an equal hold cancels the final
+     frames of the settle. */
   animation: collection-paired-callout 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
   /* Grow from the card's middle, so a card at either end of the strip pushes
      out symmetrically instead of sliding off its own origin. */

@@ -4183,24 +4183,53 @@ test.describe("graph view E2E", () => {
     // Row folder → the matching card, and only that one.
     await rowFolder.hover();
     await expect(calledOut).toHaveCount(1);
-    const inCard = await calledOut.evaluate((el) =>
-      el.closest("[data-node-wrapper]")?.querySelector("[data-node-id]")?.getAttribute("data-node-id"),
-    );
-    expect(inCard).toBe(CHILD_ID);
 
+    // EVERYTHING that has to be observed mid-animation is read in ONE
+    // evaluate, because the keyframes last 320ms and each round trip to the
+    // page spends part of that. Split across four calls, as this once was, a
+    // loaded CI runner reaches the end of the animation before the last one
+    // lands and the test fails on timing rather than on behaviour.
+    //
     // The class is not the point — the KEYFRAMES are. Assert the card is
     // actually running them, and that they scale it (an animation whose name
     // resolves but whose rule was renamed away would still pass on class
     // presence alone).
     const running = await calledOut.evaluate((el) => {
       const style = getComputedStyle(el);
+      const animation = el
+        .getAnimations()
+        .find(
+          (candidate) =>
+            (candidate as CSSAnimation).animationName === "collection-paired-callout",
+        );
+
+      // How the flick is judged, instead of by looking for the class again
+      // later and hoping to be quick enough. `finished` resolves if the
+      // keyframes play out and REJECTS if the animation is cancelled — and
+      // dropping the class is exactly what cancels it. So the outcome is
+      // recorded here, while the animation is definitely still in hand, and
+      // simply read back afterwards. No wall-clock race either way.
+      const target = window as Window & { __calloutOutcome?: string };
+      target.__calloutOutcome = "pending";
+      animation?.finished.then(
+        () => {
+          target.__calloutOutcome = "finished";
+        },
+        () => {
+          target.__calloutOutcome = "cancelled";
+        },
+      );
+
       return {
         name: style.animationName,
-        scales: el.getAnimations().some((animation) =>
-          (animation as CSSAnimation).animationName === "collection-paired-callout",
-        ),
+        scales: animation !== undefined,
+        inCard: el
+          .closest("[data-node-wrapper]")
+          ?.querySelector("[data-node-id]")
+          ?.getAttribute("data-node-id"),
       };
     });
+    expect(running.inCard).toBe(CHILD_ID);
     expect(running.name).toBe("collection-paired-callout");
     expect(running.scales).toBe(true);
 
@@ -4212,11 +4241,24 @@ test.describe("graph view E2E", () => {
     expect(neighbourDuring.x).toBeCloseTo(neighbourBefore.x, 0);
     expect(neighbourDuring.width).toBeCloseTo(neighbourBefore.width, 0);
 
-    // PL10-002: a flick still plays the whole animation. The pointer is gone
-    // and the call-out is still on the card — without the hold it would be
-    // torn off mid-keyframe, one or two frames in.
+    // PL10-002: a flick still plays the whole animation. Without the hold the
+    // class would come off one or two frames in, cancelling the animation
+    // mid-keyframe; with it, the keyframes run to their end.
+    //
+    // This used to assert `calledOut.count() === 1` right after the move —
+    // "the class is still there" — which is only true inside the remaining
+    // slice of those 320ms. It was reading the clock, not the behaviour, and
+    // failed whenever the runner was slow enough to have spent the animation
+    // already. Waiting for the recorded outcome asks the real question, and a
+    // torn-off animation reports `cancelled` however long the wait takes.
     await page.mouse.move(0, 0);
-    expect(await calledOut.count()).toBe(1);
+    await page.waitForFunction(
+      () => (window as Window & { __calloutOutcome?: string }).__calloutOutcome !== "pending",
+    );
+    const outcome = await page.evaluate(
+      () => (window as Window & { __calloutOutcome?: string }).__calloutOutcome,
+    );
+    expect(outcome).toBe("finished");
 
     // ...and then it ends on its own.
     await expect(calledOut).toHaveCount(0);

@@ -17,7 +17,26 @@ export default defineConfig({
   // the whole story behind the suite's "1-4 tests time out per run, all green
   // in isolation" reputation — tests were dying on the 30s budget with a
   // median of 15s, so anything heavier than typical lost the race.
-  workers: 6,
+  //
+  // CI GETS FEWER, NOT THE SAME. Those numbers were measured here, and the
+  // reasoning above is about the dev server being the bottleneck — a shared
+  // runner running `next dev` is a slower server than this machine's, so its
+  // capacity is lower and 6 reproduces the very oversubscription described
+  // above. It showed up as three consecutive runs failing on three DIFFERENT
+  // timing-sensitive tests, each of which passed repeatedly in isolation
+  // locally: the signature of queueing, not of a broken test.
+  workers: process.env.CI ? 2 : 6,
+
+  // Retry in CI only. `trace: "on-first-retry"` below was already written for
+  // a retry that could not happen: with retries unset (0), a single
+  // timing-sensitive failure both red-lights the run AND produces no trace to
+  // diagnose it with, which is why the CI-only failures above had to be
+  // chased by re-running rather than read.
+  //
+  // This does not paper over breakage. A genuinely broken test still fails all
+  // three attempts, and Playwright reports one that recovers as FLAKY rather
+  // than green — so instability stays visible instead of being hidden.
+  retries: process.env.CI ? 2 : 0,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:6006",
