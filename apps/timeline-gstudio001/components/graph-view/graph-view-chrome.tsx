@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { useContext, useSyncExternalStore } from "react";
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import { useDroppable } from "@dnd-kit/core";
 
 import {
@@ -179,13 +186,124 @@ function AncestorCrumb({
   );
 }
 
-/** How many ancestors the trail shows before it starts folding, and how many
- *  it keeps visible when it does. Counting rather than measuring: a
- *  width-driven collapse has to observe the header, re-measure on every rename
- *  and resize, and still picks a threshold — this picks one honestly, and the
- *  crumbs it does show already truncate at 180px each. */
-const MAX_VISIBLE_ANCESTORS = 2;
-const VISIBLE_TRAILING_ANCESTORS = 1;
+/**
+ * The trail folds on MEASURED WIDTH, not on a fixed count.
+ *
+ * It used to fold past two ancestors whatever the window was doing, on the
+ * reasoning that measuring costs a ResizeObserver and a re-measure per rename.
+ * That reasoning traded the wrong thing away: on a wide screen the row had
+ * hundreds of empty pixels beside a trail that had hidden levels behind a "…"
+ * for no reason. Space that exists should be used.
+ *
+ * Same shape as `useFittedVerbCount` in graph-board — hidden ruler, two passes,
+ * one ResizeObserver — so there is one way this is done in the app, not two.
+ *
+ * Only ANCESTORS fold. The root and the focused crumb render outside the list
+ * and are never eligible; the immediate parent is kept longest, because it is
+ * the one the eye actually uses.
+ */
+const MIN_VISIBLE_ANCESTORS = 1;
+/** `gap-2` between a crumb and its separator, as a number. */
+const CRUMB_GAP_PX = 8;
+
+function useFittedAncestorCount(
+  ancestors: readonly CrumbEntry[],
+): Readonly<{
+  navRef: RefObject<HTMLElement | null>;
+  rulerRef: RefObject<HTMLDivElement | null>;
+  visibleCount: number;
+}> {
+  const navRef = useRef<HTMLElement | null>(null);
+  const rulerRef = useRef<HTMLDivElement | null>(null);
+  const [visibleCount, setVisibleCount] = useState(ancestors.length);
+
+  // The labels, as ONE string: the effect must re-measure when a rename changes
+  // a crumb's width, and the array identity changes on every render.
+  const signature = ancestors.map((ancestor) => ancestor.label).join(" ");
+
+  useEffect(() => {
+    const nav = navRef.current;
+    const ruler = rulerRef.current;
+    if (!nav || !ruler) return;
+
+    const measure = () => {
+      // The budget is the WING's width, not the nav's.
+      //
+      // The trail is deliberately content-width so the save status sits beside
+      // the last crumb rather than an inch away (see the note on the root
+      // below), which means the nav reports the width of its own contents and
+      // can never tell you there is room to grow. So: take the wing, subtract
+      // everything in it that is not the trail, and what is left is what the
+      // trail may use. Falls back to the nav's own width if the wing marker is
+      // missing, which folds exactly as it did before rather than crashing.
+      const wing = nav.closest("[data-crumb-wing]");
+      let budget = nav.clientWidth;
+      if (wing instanceof HTMLElement) {
+        let taken = 0;
+        for (const child of Array.from(wing.children)) {
+          if (!(child instanceof HTMLElement)) continue;
+          // The trail's own root counts only for the parts that are NOT the
+          // nav — the back arrow and the gap beside it.
+          taken += child.contains(nav)
+            ? child.offsetWidth - nav.offsetWidth
+            : child.offsetWidth;
+        }
+        budget = wing.clientWidth - taken;
+      }
+      // 0 while the row is not laid out (the other header face is showing) —
+      // keep the last answer rather than folding everything for one frame.
+      if (budget <= 0) return;
+      const children = Array.from(ruler.children).map((child) =>
+        Math.ceil((child as HTMLElement).getBoundingClientRect().width),
+      );
+      // Ruler order: [...ancestors+separators, "…"]. It holds ONLY the crumbs
+      // that can be hidden.
+      //
+      // The root and focused crumbs are measured from the REAL elements
+      // instead, because they are always on screen — and because duplicating
+      // their text into a hidden box makes `getByText(...).first()` resolve to
+      // the invisible copy, which is exactly how this broke an unrelated
+      // drill-in test. Never put text in the ruler that something else queries.
+      const overflowWidth = children[children.length - 1] ?? 0;
+      const ancestorWidths = children.slice(0, ancestors.length);
+      const fixed = Array.from(nav.querySelectorAll("[data-crumb-fixed]")).reduce(
+        (total, element) => total + Math.ceil(element.getBoundingClientRect().width),
+        0,
+      );
+
+      // PASS 1 — everything, with no "…" drawn at all. Asked first and against
+      // the FULL budget: when the trail fits there is no overflow control to
+      // reserve room for, and reserving it anyway is what folds a crumb purely
+      // to make space for the menu holding the crumb it just folded.
+      const whole = ancestorWidths.reduce((total, width) => total + width + CRUMB_GAP_PX, fixed);
+      if (whole <= budget) {
+        setVisibleCount(ancestors.length);
+        return;
+      }
+
+      // PASS 2 — it does not fit, so the "…" is going to be drawn and costs
+      // width like anything else. Keep the LAST ancestors (nearest the focused
+      // crumb) and fold the earliest, which is the direction the eye reads.
+      const reduced = budget - overflowWidth - CRUMB_GAP_PX - fixed;
+      let used = 0;
+      let fitted = 0;
+      for (let index = ancestorWidths.length - 1; index >= 0; index -= 1) {
+        const next = used + (ancestorWidths[index] ?? 0) + CRUMB_GAP_PX;
+        if (next > reduced) break;
+        used = next;
+        fitted += 1;
+      }
+      setVisibleCount(Math.max(MIN_VISIBLE_ANCESTORS, fitted));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [signature, ancestors.length]);
+
+  return { navRef, rulerRef, visibleCount };
+}
 
 type CrumbEntry = Readonly<{ id: string; href: string; label: string }>;
 
@@ -295,17 +413,13 @@ export function GraphBreadcrumb({
       .join("/")}`,
     label: documents[segment]?.title ?? segment,
   }));
-  // Deep paths crowd the header out. Past the threshold the EARLIEST ancestors
-  // fold into one "…" — the immediate parent stays put, because that is the
-  // one the eye actually uses, and the root and focused crumbs are never
-  // eligible (they are rendered outside this list).
-  const collapse = ancestors.length > MAX_VISIBLE_ANCESTORS;
-  const collapsedAncestors = collapse
-    ? ancestors.slice(0, ancestors.length - VISIBLE_TRAILING_ANCESTORS)
-    : [];
-  const visibleAncestors = collapse
-    ? ancestors.slice(ancestors.length - VISIBLE_TRAILING_ANCESTORS)
-    : ancestors;
+  // Deep paths crowd the header out — but only when they actually run out of
+  // room. What does not fit folds into one "…", earliest first, and everything
+  // that does fit is drawn.
+  const { navRef, rulerRef, visibleCount } = useFittedAncestorCount(ancestors);
+  const shown = Math.min(visibleCount, ancestors.length);
+  const collapsedAncestors = ancestors.slice(0, ancestors.length - shown);
+  const visibleAncestors = ancestors.slice(ancestors.length - shown);
   const parentHref =
     timelinePath.length > 1
       ? `${base}/${timelinePath.slice(0, -1).map(encodeURIComponent).join("/")}`
@@ -341,22 +455,50 @@ export function GraphBreadcrumb({
         title={focusedId === projectId ? "Go to Projects" : "Go to parent timeline"}
       />
       <nav
+        ref={navRef}
         aria-label="Timeline focus path"
-        className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-zinc-400 select-none"
+        // Still CONTENT-WIDTH, deliberately — see the root's note. `relative`
+        // is new, so the measuring ruler below positions against this box
+        // instead of some ancestor.
+        className="relative flex min-w-0 items-center gap-2 overflow-hidden text-xs text-zinc-400 select-none"
       >
+        {/* THE RULER — every crumb at its natural width, laid out but not
+            painted, in the order the measure reads them:
+            [root+separator, ...ancestors+separators, focused, "…"].
+            `visibility: hidden` rather than `display: none`, because a
+            display-none box measures as zero; `absolute` so it cannot widen the
+            box being measured; `inert` so a duplicate trail is not a second set
+            of tab stops for a keyboard or a screen reader. */}
+        <div
+          ref={rulerRef}
+          aria-hidden="true"
+          inert
+          data-crumb-ruler=""
+          className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-2"
+        >
+          {ancestors.map((ancestor) => (
+            <span key={ancestor.id} className="flex shrink-0 items-center gap-2">
+              <span className="max-w-[180px] truncate">{ancestor.label}</span>
+              <span>/</span>
+            </span>
+          ))}
+          <span className="shrink-0" data-crumb-overflow-ruler>
+            &hellip;
+          </span>
+        </div>
         {/* The project is the ROOT crumb, not a child of a "Projects / Graph"
             chrome path: the trail reads as the timeline tree the user is
             standing in. At the root the project IS the focused crumb, so it
             renders once, as the current one. */}
         {focusedId !== projectId && (
-          <>
+          <span data-crumb-fixed className="flex shrink-0 items-center gap-2">
             <AncestorCrumb
               crumbId={projectId}
               href={base}
               label={documents[projectId]?.title ?? projectId}
             />
-            <span aria-hidden="true" className="shrink-0">/</span>
-          </>
+            <span aria-hidden="true">/</span>
+          </span>
         )}
         {collapsedAncestors.length > 0 && (
           <span className="flex shrink-0 items-center gap-2">
@@ -370,7 +512,9 @@ export function GraphBreadcrumb({
             <span aria-hidden="true" className="shrink-0">/</span>
           </span>
         ))}
-        <EditableCrumbName crumbId={focusedId} label={focusedTitle} />
+        <span data-crumb-fixed className="flex min-w-0 items-center">
+          <EditableCrumbName crumbId={focusedId} label={focusedTitle} />
+        </span>
       </nav>
     </div>
   );
