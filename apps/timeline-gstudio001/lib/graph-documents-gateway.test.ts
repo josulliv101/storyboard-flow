@@ -44,7 +44,11 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-type BatchWrite = { document: TimelineDocument; expectedRevision?: number };
+type BatchWrite = {
+  document: TimelineDocument;
+  expectedRevision?: number;
+  allowEmptying?: boolean;
+};
 
 type FetchCall = {
   method: string;
@@ -119,6 +123,82 @@ describe("graph-documents-gateway", () => {
     await gateway.ensure("a");
     expect(getsOf(calls)).toHaveLength(1);
     expect(clipIds(gateway.peek("a"))).toEqual(["a1"]);
+  });
+
+
+  // ── allowEmptying ─────────────────────────────────────────────────────────
+  //
+  // The store refuses to write an empty document over a non-empty one unless
+  // the write says the empty is deliberate. What earns that exemption is the
+  // TRANSITION — clips going from some to none — not the projection happening
+  // to be empty at flush time. The two differ for a document that was already
+  // empty and is written for another reason, where the old test handed the
+  // exemption to a write that empties nothing.
+
+  const serveEmptyThenBatch = (seed: TimelineClip[]) =>
+    installFetch((call) =>
+      call.method === "POST"
+        ? okResults(call.writes)
+        : jsonResponse({ document: doc(call.id, seed), revision: 4 }),
+    );
+
+  it("asks for allowEmptying when the write actually empties the document", async () => {
+    const calls = serveEmptyThenBatch([clip("a1")]);
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", []);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+
+    expect(batchesOf(calls)[0].writes?.[0]).toMatchObject({
+      allowEmptying: true,
+      expectedRevision: 4,
+    });
+  });
+
+  it("does NOT ask for it when the document was ALREADY empty", async () => {
+    // A rename on an empty collection. Nothing is being removed, so nothing
+    // needs exempting — the old projection-based test flagged this anyway.
+    const calls = serveEmptyThenBatch([]);
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    await gateway.renameTimeline("a", "Renamed");
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+
+    const write = batchesOf(calls)[0].writes?.[0];
+    expect(write?.document.title).toBe("Renamed");
+    expect(write).not.toHaveProperty("allowEmptying");
+  });
+
+  it("drops the request when the clips come back before the flush", async () => {
+    // Emptied then undone inside one debounce window: the write that lands is
+    // not an emptying write, so it must not carry the exemption.
+    const calls = serveEmptyThenBatch([clip("a1")]);
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", []);
+    gateway.writeClips("a", [clip("a1")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+
+    expect(batchesOf(calls)[0].writes?.[0]).not.toHaveProperty("allowEmptying");
+  });
+
+  it("does not carry the exemption into a LATER unrelated write", async () => {
+    // Spent on commit. Left set, one emptying would exempt every subsequent
+    // write to that document for the rest of the session.
+    const calls = serveEmptyThenBatch([clip("a1")]);
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", []);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)[0].writes?.[0]).toMatchObject({ allowEmptying: true });
+
+    await gateway.renameTimeline("a", "After");
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)[1].writes?.[0]).not.toHaveProperty("allowEmptying");
   });
 
   it("writeClips is a no-op for documents the session has not loaded", async () => {
