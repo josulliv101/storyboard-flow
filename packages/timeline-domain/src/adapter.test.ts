@@ -1029,6 +1029,124 @@ describe("hydratedCollectionPreviews (card frames)", () => {
   });
 });
 
+describe("previews when the walk sees only PART of the subtree (#293)", () => {
+  // #290 covered the walk returning NOTHING. This is the other half: it returns
+  // something real, computed over an incomplete set, so the frames are WRONG
+  // rather than merely fewer.
+  //
+  // A card paints exactly one frame and it is always `frames[0]`, so the whole
+  // question is whether the walk could see the START of the collection.
+
+  const storedFirst = [
+    { id: "true-first", kind: "image" as const, src: "https://example.com/first.jpg", alt: "first" },
+  ];
+
+  it("defers to the summary when an unloaded branch sits BEFORE the first media", () => {
+    // run1 is a placeholder; run2 is loaded. The live walk cannot reach run1's
+    // media, so the first frame it finds belongs to run2 — a later branch. The
+    // server's summary was derived across the whole closure and knows the
+    // real first frame.
+    const focused = buildFocusedGraph(
+      {
+        scene: {
+          id: "scene",
+          title: "Scene one",
+          clips: packTimelineClips([
+            collectionClip("clip-run1", "run1", "Run 1"),
+            collectionClip("clip-run2", "run2", "Run 2"),
+          ]),
+        },
+        // run1 deliberately ABSENT.
+        run2: { id: "run2", title: "Run 2", clips: packTimelineClips([image("r2-a", 4)]) },
+      },
+      "scene",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    const live = hydratedCollectionPreviews(focused.value.graph, "scene");
+    // The walk DID find a frame — this is not the #290 blank case.
+    expect(live.frames.map((p) => p.id)).toEqual(["r2-a"]);
+    expect(live.firstFrameUncertain).toBe(true);
+    expect(resolveCollectionPreviews(live, storedFirst)).toEqual(storedFirst);
+  });
+
+  it("keeps the live frames when the unloaded branch is AFTER the first media", () => {
+    // The distinction that stops this from becoming "prefer stored whenever
+    // the walk is incomplete". run1 is loaded, so `frames[0]` is already the
+    // collection's real first frame and no summary can improve on it —
+    // deferring here would throw away an edit the user just made in run1.
+    const focused = buildFocusedGraph(
+      {
+        scene: {
+          id: "scene",
+          title: "Scene one",
+          clips: packTimelineClips([
+            collectionClip("clip-run1", "run1", "Run 1"),
+            collectionClip("clip-run2", "run2", "Run 2"),
+          ]),
+        },
+        run1: { id: "run1", title: "Run 1", clips: packTimelineClips([image("r1-a", 4)]) },
+        // run2 deliberately ABSENT.
+      },
+      "scene",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    const live = hydratedCollectionPreviews(focused.value.graph, "scene");
+    expect(live.frames.map((p) => p.id)).toEqual(["r1-a"]);
+    expect(live.firstFrameUncertain).toBe(false);
+    expect(resolveCollectionPreviews(live, storedFirst).map((p) => p.id)).toEqual(["r1-a"]);
+  });
+
+  it("shows what it found when there is no summary to fall back to", () => {
+    // A partial answer beats an empty card.
+    const focused = buildFocusedGraph(
+      {
+        scene: {
+          id: "scene",
+          title: "Scene one",
+          clips: packTimelineClips([
+            collectionClip("clip-run1", "run1", "Run 1"),
+            collectionClip("clip-run2", "run2", "Run 2"),
+          ]),
+        },
+        run2: { id: "run2", title: "Run 2", clips: packTimelineClips([image("r2-a", 4)]) },
+      },
+      "scene",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    const live = hydratedCollectionPreviews(focused.value.graph, "scene");
+    expect(live.firstFrameUncertain).toBe(true);
+    expect(resolveCollectionPreviews(live, undefined).map((p) => p.id)).toEqual(["r2-a"]);
+  });
+
+  it("does not defer for a collection whose OWN media lead it", () => {
+    // Media directly under the collection are found before any descent, so an
+    // unloaded sub-collection later in the list changes nothing visible.
+    const focused = buildFocusedGraph(
+      {
+        scene: {
+          id: "scene",
+          title: "Scene one",
+          clips: packTimelineClips([
+            image("own-a", 4),
+            collectionClip("clip-run2", "run2", "Run 2"),
+          ]),
+        },
+        // run2 deliberately ABSENT.
+      },
+      "scene",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    const live = hydratedCollectionPreviews(focused.value.graph, "scene");
+    expect(live.frames.map((p) => p.id)).toEqual(["own-a"]);
+    expect(live.firstFrameUncertain).toBe(false);
+    expect(resolveCollectionPreviews(live, storedFirst).map((p) => p.id)).toEqual(["own-a"]);
+  });
+});
+
 describe("previews when the walk cannot see the whole subtree (#290)", () => {
   // The reported bug, in its exact shape. On the project board a top-level
   // collection is HYDRATED — its own children are loaded — but those children
@@ -1062,7 +1180,7 @@ describe("previews when the walk cannot see the whole subtree (#290)", () => {
 
     const live = hydratedCollectionPreviews(focused.value.graph, "scene");
     expect(live.frames).toEqual([]);
-    expect(live.sawChildlessCollection).toBe(true);
+    expect(live.firstFrameUncertain).toBe(true);
 
     const stored = [
       { id: "s1", kind: "image" as const, src: "https://example.com/s1.jpg", alt: "s1" },
@@ -1089,7 +1207,7 @@ describe("previews when the walk cannot see the whole subtree (#290)", () => {
     const live = hydratedCollectionPreviews(focused.value.graph, "kid");
     expect(live.frames).toEqual([]);
     // No child COLLECTION was involved, so the empty result is authoritative.
-    expect(live.sawChildlessCollection).toBe(false);
+    expect(live.firstFrameUncertain).toBe(false);
 
     const stored = [
       { id: "old", kind: "image" as const, src: "https://example.com/old.jpg", alt: "old" },
@@ -1113,7 +1231,7 @@ describe("previews when the walk cannot see the whole subtree (#290)", () => {
 
     const live = hydratedCollectionPreviews(focused.value.graph, "scene");
     expect(live.frames.map((p) => p.id)).toEqual(["r-a"]);
-    expect(live.sawChildlessCollection).toBe(false);
+    expect(live.firstFrameUncertain).toBe(false);
 
     const stored = [
       { id: "s1", kind: "image" as const, src: "https://example.com/s1.jpg", alt: "s1" },

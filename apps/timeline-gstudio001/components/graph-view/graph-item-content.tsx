@@ -160,7 +160,7 @@ const NO_PREVIEWS: readonly CollectionPreviewFrame[] = [];
  *  make useSyncExternalStore loop. */
 const NO_PREVIEW_RESULT: CollectionPreviewsResult = {
   frames: NO_PREVIEWS,
-  sawChildlessCollection: false,
+  firstFrameUncertain: false,
 };
 
 /**
@@ -197,7 +197,7 @@ function useHydratedCollectionPreviews(
       // on the frames alone and the cache hands back the stale reference, so
       // the card never repaints when its children finish loading.
       contentKey: (result) =>
-        `${result.sawChildlessCollection ? 1 : 0}\x02` +
+        `${result.firstFrameUncertain ? 1 : 0}\x02` +
         result.frames
           .map((p) => `${p.id}\0${p.poster ?? p.src}\0${p.trimIn ?? 0}`)
           .join("\x01"),

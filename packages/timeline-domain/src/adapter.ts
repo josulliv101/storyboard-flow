@@ -483,11 +483,23 @@ export type CollectionPreviewFrame = Readonly<{
 export type CollectionPreviewsResult = Readonly<{
   frames: readonly CollectionPreviewFrame[];
   /**
-   * The walk descended into a collection with no children in the graph, so
-   * media under it could not be seen. Only meaningful when `frames` is empty —
-   * see `resolveCollectionPreviews`.
+   * The walk hit a collection with no children in the graph — an unloaded
+   * branch — BEFORE it had found any media. So whatever ended up first in
+   * `frames` is not necessarily the collection's first frame: the real one may
+   * live in the branch that could not be read.
+   *
+   * Deliberately "before the first media", not "anywhere in the walk". A card
+   * paints ONE frame (`useCollectionPreviewFrames`, PL13-003) and it is always
+   * `frames[0]`, so an unloaded branch encountered AFTER the first media
+   * cannot change anything anyone sees. Flagging those too would send a
+   * perfectly good live result back to the stored summary and throw away the
+   * user's just-made edits — the staleness this walk exists to fix.
+   *
+   * When `frames` is empty this is exactly the old `sawChildlessCollection`:
+   * every childless collection was necessarily seen before a first media that
+   * never arrived. That is why one field now covers both cases.
    */
-  sawChildlessCollection: boolean;
+  firstFrameUncertain: boolean;
 }>;
 
 /**
@@ -522,7 +534,7 @@ export function hydratedCollectionPreviews(
 ): CollectionPreviewsResult {
   const media: CollectionPreviewFrame[] = [];
   const seen = new Set<string>([collectionId]);
-  let sawChildlessCollection = false;
+  let firstFrameUncertain = false;
   const collect = (id: NodeId): void => {
     for (const childId of getChildren(graph, id)) {
       const node = graph.nodesById.get(childId);
@@ -564,7 +576,10 @@ export function hydratedCollectionPreviews(
           // here. Either way this walk cannot see media under it. Recorded so
           // an EMPTY result can be told apart from "looked and found nothing";
           // `resolveCollectionPreviews` explains why conflating the two is safe.
-          if (getChildren(graph, childId).length === 0) sawChildlessCollection = true;
+          // Only while nothing has been found yet — see `firstFrameUncertain`.
+          if (media.length === 0 && getChildren(graph, childId).length === 0) {
+            firstFrameUncertain = true;
+          }
           collect(childId);
         }
       }
@@ -575,7 +590,7 @@ export function hydratedCollectionPreviews(
     media.length <= 3
       ? media
       : [media[0], media[Math.floor(media.length / 2)], media[media.length - 1]];
-  return { frames, sawChildlessCollection };
+  return { frames, firstFrameUncertain };
 }
 
 /**
@@ -596,21 +611,31 @@ export function hydratedCollectionPreviews(
  * and the fallback returns the same thing.
  *
  * What must keep working — and does — is a collection whose own media were all
- * deleted. No child collection is involved, so `sawChildlessCollection` stays
+ * deleted. No child collection is involved, so `firstFrameUncertain` stays
  * false, the empty result stands, and the card goes blank as it should. That is
  * the case a bare `frames.length === 0` check would have broken, resurrecting
  * stale frames on a collection the user just emptied.
  *
- * A NON-EMPTY partial walk is deliberately left alone: it is preferred as it
- * always has been, even though first/middle/last over a partially loaded tree
- * can pick different frames than the complete set would. That predates this and
- * is a separate concern from a card rendering blank.
+ * #293: a NON-EMPTY walk that never saw the START of the collection is now
+ * covered by the same rule, because it has the same defect — it knows less
+ * than the server's summary about the one frame that gets painted. A card
+ * shows `frames[0]`, and if an unloaded branch sits before the first media
+ * found, `frames[0]` belongs to a later branch and the true first frame was
+ * never reachable. Whatever the user just edited in a loaded child cannot be
+ * that frame either, so nothing fresh is lost by deferring.
+ *
+ * This is NOT "prefer stored whenever the walk is incomplete". An unloaded
+ * branch AFTER the first media leaves `frames[0]` correct, so the live result
+ * still wins — which is what keeps a just-made edit on screen. The
+ * middle/last slots of such a walk can still be unrepresentative; they are not
+ * rendered, and merging two ordered frame lists without duplicating media
+ * needs a rule that does not exist yet.
  */
 export function resolveCollectionPreviews(
   live: CollectionPreviewsResult,
   stored: readonly CollectionPreviewFrame[] | undefined,
 ): readonly CollectionPreviewFrame[] {
-  if (live.frames.length > 0 || !live.sawChildlessCollection) return live.frames;
+  if (!live.firstFrameUncertain) return live.frames;
   return stored ?? live.frames;
 }
 
