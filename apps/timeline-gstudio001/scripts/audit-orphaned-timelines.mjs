@@ -104,13 +104,25 @@ async function main() {
   // Breadth-first from every root. A child appearing under two parents is
   // legal (duplicate-reference cards), so `seen` is what keeps this linear and
   // cycle-proof rather than a tree walk.
+  //
+  // A childTimelineId can name a document that does not exist — the mirror
+  // image of an orphan, and just as invisible: the parent shows a collection
+  // card that opens onto nothing. Those ids are recorded separately and kept
+  // OUT of `reachable`, which otherwise counts them and reports more reachable
+  // documents than the collection contains.
   const reachable = new Set();
+  const dangling = new Map();
   const queue = [...roots];
   while (queue.length > 0) {
     const id = queue.shift();
     if (reachable.has(id)) continue;
     reachable.add(id);
     for (const childId of childIdsOf(documents.get(id))) {
+      if (!documents.has(childId)) {
+        if (!dangling.has(childId)) dangling.set(childId, []);
+        dangling.get(childId).push(id);
+        continue;
+      }
       if (!reachable.has(childId)) queue.push(childId);
     }
   }
@@ -145,7 +157,28 @@ async function main() {
   console.log(`ORPHANED:          ${stranded.length}`);
   console.log(`  holding media:     ${withMedia.length} (${mediaClips} clips)`);
   console.log(`asset libraries:   ${library.length} (reported apart — addressed directly)`);
+  console.log(`DANGLING refs:     ${dangling.size} (parent points at a document that does not exist)`);
   console.log("");
+
+  // These three plus the dangling count must account for every document. If
+  // they do not, the walk is wrong and so is everything below it.
+  const accounted = reachable.size + stranded.length + library.length;
+  if (accounted !== documents.size) {
+    console.log(`INTERNAL: ${accounted} accounted for vs ${documents.size} documents — the`);
+    console.log("walk is inconsistent. Do not act on the list below.");
+    console.log("");
+    process.exitCode = 2;
+    return;
+  }
+
+  if (dangling.size > 0) {
+    console.log("Referenced as a child, but no such document exists. The parent shows a");
+    console.log("collection card that opens onto nothing:");
+    for (const [childId, parents] of dangling) {
+      console.log(`  ${childId}  referenced by ${parents.join(", ")}`);
+    }
+    console.log("");
+  }
 
   if (stranded.length === 0) {
     console.log("Every document is reachable from a project or the trash.");
