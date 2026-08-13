@@ -4,9 +4,11 @@ import { readJsonObject } from "@/lib/read-json-body";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
   collectOwnedTimelineClips,
+  deleteFirebaseTimelineDocument,
   readStoredTimelineDocument,
   saveFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
+import type { TimelineClip } from "@storyboard/timeline-model/types";
 import {
   assetCandidatesFromClips,
   assetKeysFromClips,
@@ -16,6 +18,56 @@ import { markAssetsForDeletion } from "@/lib/asset-tombstones";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * The collection documents a set of bin entries OWNS.
+ *
+ * A trashed collection sits in the bin as a clip whose id is the child
+ * timeline's own id. Dropping that clip without deleting the document behind
+ * it leaves the document in storage with nothing pointing at it — invisible in
+ * the UI, absent from the bin it was just removed from, and reachable only by
+ * querying the database. Emptying the bin did exactly that, to every
+ * collection in it, every time.
+ *
+ * A clip whose `id` differs from its `childTimelineId` is a duplicate
+ * reference and owns nothing, so it is excluded — the same rule the write
+ * guard uses (`owningCollectionChildIds` in firebase-timeline-store).
+ */
+function owningCollectionIds(clips: readonly TimelineClip[]): string[] {
+  const ids: string[] = [];
+  for (const clip of clips) {
+    if (clip.kind !== "collection") continue;
+    if (clip.childTimelineId !== clip.id) continue;
+    ids.push(clip.childTimelineId);
+  }
+  return ids;
+}
+
+/**
+ * Delete the documents behind trashed collections, BEFORE the bin lets go.
+ *
+ * The order is the whole point, and it is the OPPOSITE of the asset marking
+ * below. Marking leaks storage when it fails, which is the failure direction
+ * that design deliberately chose. This one cannot use the same order: clear
+ * first and fail here, and the documents are stranded — the exact state the
+ * app is now supposed to be unable to reach. Delete first and fail to clear,
+ * and the bin points at documents that no longer exist: visible, harmless, and
+ * tidied by the next empty.
+ *
+ * So unlike marking, this is allowed to FAIL THE REQUEST. The bin stays as it
+ * was and the user can retry; nothing is stranded either way.
+ */
+async function deleteTrashedCollections(
+  clips: readonly TimelineClip[],
+  requesterUid: string,
+): Promise<void> {
+  // Sequential on purpose: each of these walks and deletes a whole subtree, so
+  // running them together is a burst of unbounded width. A bin holds tens of
+  // entries, not thousands.
+  for (const id of owningCollectionIds(clips)) {
+    await deleteFirebaseTimelineDocument(id, requesterUid);
+  }
+}
 
 /**
  * Empty the signed-in user's trash bin, and MARK the uploaded files nothing
@@ -46,6 +98,10 @@ export async function DELETE() {
     if (!trashDoc || cleared === 0) return NextResponse.json({ success: true, cleared });
 
     const candidates = assetCandidatesFromClips(trashDoc.clips);
+
+    // BEFORE the bin lets go — see `deleteTrashedCollections`. A failure here
+    // aborts the request with the bin intact rather than stranding documents.
+    await deleteTrashedCollections(trashDoc.clips, user.uid);
 
     // `allowEmptying` is what makes this work at all. The save path refuses
     // an empty write over a non-empty document (a stale client erasing real
@@ -139,14 +195,21 @@ export async function POST(request: Request) {
     // trashed from two timelines arrives twice), and a caller asking to
     // discard one of them must not lose the other.
     const remaining = [...trashDoc.clips];
-    let discarded = 0;
+    const dropped: TimelineClip[] = [];
     for (const clipId of clipIds) {
       const index = remaining.findIndex((clip) => clip.id === clipId);
       if (index === -1) continue;
+      dropped.push(remaining[index]);
       remaining.splice(index, 1);
-      discarded += 1;
     }
+    const discarded = dropped.length;
     if (discarded === 0) return NextResponse.json({ success: true, discarded: 0 });
+
+    // Only what this request actually drops, and only the OWNING entry: the bin
+    // can hold the same id twice, and a copy staying behind still needs its
+    // document or restoring it would restore nothing. Before the write, for the
+    // reason in `deleteTrashedCollections`.
+    await deleteTrashedCollections(dropped, user.uid);
 
     await saveFirebaseTimelineDocument({ ...trashDoc, clips: remaining }, user.uid, {
       allowEmptying: true,
