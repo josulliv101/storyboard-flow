@@ -513,6 +513,88 @@ describe("timeline batch writes", () => {
     expect(response.status).toBe(200);
   });
 
+  // ── THE SAME GUARD ON THE SINGLE-DOCUMENT PATH ────────────────────────────
+  //
+  // PATCH /api/timelines/[id] goes through saveFirebaseTimelineEntry, NOT the
+  // atomic batch write, and so had no orphan guard at all: the batch endpoint
+  // refused a write that dropped a collection's last parent, and this route
+  // took the same write and committed it. Nothing in the app sends PATCH
+  // today, but an open endpoint that can silently strand a document is the
+  // hole whether or not the app uses it.
+  //
+  // THE PARENT KEEPS A MEDIA CLIP in these. Emptying it would trip "Refusing
+  // to save an empty timeline" first — PATCH passes no allowEmptying — and the
+  // test would go green on the wrong 409 without the guard existing at all.
+  // Leaving one clip behind means only the orphan guard can reject this.
+  function seedParentWithChildAndMedia(parentId: string, childId: string) {
+    const parent: TimelineDocument = {
+      id: parentId,
+      title: `Timeline ${parentId}`,
+      clips: [collectionClip(childId), clip("keeper")],
+    };
+    state.docs.set(parentId, {
+      id: parentId, title: parent.title, document: parent, clips: parent.clips,
+      isProject: true, ownerUid: "user-a", revision: 1,
+    });
+  }
+
+  const patchWith = (id: string, document: TimelineDocument) =>
+    patchTimeline(
+      new Request(`http://test.local/api/timelines/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document }),
+      }),
+      params(id),
+    );
+
+  it("PATCH REFUSES a write that removes a collection nothing else takes up", async () => {
+    seedParentWithChildAndMedia("parent-1", "child-1");
+    state.docs.set("child-1", {
+      id: "child-1", title: "Timeline child-1", document: { id: "child-1", title: "Timeline child-1", clips: [clip("c0")] },
+      clips: [clip("c0")], isProject: false, ownerUid: "user-a", revision: 1,
+    });
+
+    const response = await patchWith("parent-1", {
+      id: "parent-1", title: "Timeline parent-1", clips: [clip("keeper")],
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string; orphans?: { id: string }[] };
+    expect(body.error).toContain("Refusing to strand");
+    expect(body.orphans?.map((orphan) => orphan.id)).toEqual(["child-1"]);
+    // Nothing committed: the parent still points at it, at its original revision.
+    expect((state.docs.get("parent-1")?.clips as TimelineClip[]).length).toBe(2);
+    expect(state.docs.get("parent-1")?.revision).toBe(1);
+  });
+
+  it("PATCH ALLOWS a write that keeps the collection", async () => {
+    seedParentWithChildAndMedia("parent-1", "child-1");
+    state.docs.set("child-1", {
+      id: "child-1", title: "Timeline child-1", document: { id: "child-1", title: "Timeline child-1", clips: [clip("c0")] },
+      clips: [clip("c0")], isProject: false, ownerUid: "user-a", revision: 1,
+    });
+
+    const response = await patchWith("parent-1", {
+      id: "parent-1", title: "Renamed", clips: [collectionClip("child-1"), clip("keeper")],
+    });
+
+    expect(response.status).toBe(200);
+    expect(state.docs.get("parent-1")?.revision).toBe(2);
+  });
+
+  it("PATCH ALLOWS tidying a DANGLING reference to a child that does not exist", async () => {
+    seedParentWithChildAndMedia("parent-1", "ghost-child");
+
+    const response = await patchWith("parent-1", {
+      id: "parent-1", title: "Timeline parent-1", clips: [clip("keeper")],
+    });
+
+    // A repair, not a loss — there was never a document to strand.
+    expect(response.status).toBe(200);
+    expect(state.docs.get("parent-1")?.revision).toBe(2);
+  });
+
   it("rejects a batch that repeats a timeline id", async () => {
     seedTimeline("doc-1", "user-a", 1);
     const response = await batchWrite(
