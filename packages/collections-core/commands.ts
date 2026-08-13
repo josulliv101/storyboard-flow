@@ -305,8 +305,8 @@ export function applyCommand(
   const indexedParents = new Set(parentByMovingId.values());
   for (const parentId of indexedParents) {
     const children = getChildren(graph, parentId);
-    for (let index = 0; index < children.length; index++) {
-      sourceIndexById.set(children[index], index);
+    for (const [index, childId] of children.entries()) {
+      sourceIndexById.set(childId, index);
     }
   }
 

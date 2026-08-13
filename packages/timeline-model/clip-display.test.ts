@@ -191,8 +191,13 @@ describe("clipStripWidths", () => {
       media({ duration: 10 }),
       media({ duration: 100 }),
     ]);
-    expect(widths[0]).toBeLessThan(widths[1]);
-    expect(widths[1]).toBeLessThan(widths[2]);
+    // Length asserted first so the comparisons below read three defined
+    // numbers — and so a change that returns fewer widths fails HERE, saying
+    // what happened, rather than as a confusing comparison against undefined.
+    expect(widths).toHaveLength(3);
+    const [narrow, middle, wide] = widths as [number, number, number];
+    expect(narrow).toBeLessThan(middle);
+    expect(middle).toBeLessThan(wide);
   });
 
   // The actual regression: the old strip compressed a 30:1 duration range into
