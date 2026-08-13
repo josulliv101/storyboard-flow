@@ -144,6 +144,9 @@ beforeEach(() => {
 });
 
 describe("handleMoveClip — emptying the source", () => {
+
+
+
   it("moves the LAST clip out of a collection", async () => {
     seed("root", [collectionClip("src"), collectionClip("dst")]);
     seed("src", [clip("only")]);
@@ -190,5 +193,71 @@ describe("handleMoveClip — emptying the source", () => {
 
     expect(result.isError).toBeFalsy();
     expect(storedClipIds("lane")).toEqual(["b", "a"]);
+  });
+});
+
+describe("handleMoveClip — re-parenting a collection (#304)", () => {
+  // #304 reports a move leaving a node under BOTH parents, silently. These pin
+  // the shapes it describes; all of them detach correctly, so whatever
+  // produced that state is not reached by a plain move on a clean closure.
+
+  it("detaches a collection from its old parent", async () => {
+    seed("root", [collectionClip("A"), collectionClip("B")]);
+    seed("A", [collectionClip("C")]);
+    seed("B", []);
+    seed("C", [clip("leaf")]);
+
+    const result = await handleMoveClip(
+      { timelineId: "root", nodeId: "C", into: "B", position: "end" },
+      { requesterUid: OWNER },
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(storedClipIds("A")).toEqual([]);
+    expect(storedClipIds("B")).toEqual(["C"]);
+  });
+
+  it("detaches when the collection moves UP to the root", async () => {
+    seed("root", [collectionClip("A")]);
+    seed("A", [collectionClip("C")]);
+    seed("C", [clip("leaf")]);
+
+    const result = await handleMoveClip(
+      { timelineId: "root", nodeId: "C", into: "root", position: "end" },
+      { requesterUid: OWNER },
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(storedClipIds("root")).toEqual(["A", "C"]);
+    expect(storedClipIds("A")).toEqual([]);
+  });
+
+  it("leaves a DUPLICATE REFERENCE elsewhere in place — and that looks like #304", async () => {
+    // The one shape that reproduces the reported SYMPTOM. A duplicate
+    // reference card carries its own clip id; the owning placement is the one
+    // with `id === childTimelineId`. Moving the owning placement is not
+    // supposed to disturb the other card, so afterwards the collection is
+    // legitimately listed in two places — indistinguishable, on a re-read,
+    // from a move that failed to detach.
+    //
+    // It is NOT the duplicate-ID corruption #304 also describes: these two
+    // clips have different ids, so `buildGraph` is happy. That state needs two
+    // OWNING placements, which a move does not mint.
+    const duplicateReference = { ...collectionClip("C"), id: "ref-to-C" } as TimelineClip;
+    seed("root", [collectionClip("A"), collectionClip("B"), duplicateReference]);
+    seed("A", [collectionClip("C")]);
+    seed("B", []);
+    seed("C", [clip("leaf")]);
+
+    const result = await handleMoveClip(
+      { timelineId: "root", nodeId: "C", into: "B", position: "end" },
+      { requesterUid: OWNER },
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(storedClipIds("A")).toEqual([]);
+    expect(storedClipIds("B")).toEqual(["C"]);
+    // Still referenced from the root, by its own clip id.
+    expect(storedClipIds("root")).toEqual(["A", "B", "ref-to-C"]);
   });
 });
