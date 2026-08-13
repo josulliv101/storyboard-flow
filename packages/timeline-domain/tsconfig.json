@@ -3,6 +3,11 @@
     "target": "ES2020",
     "lib": ["esnext"],
     "strict": true,
+    // Types `arr[i]` and `record[key]` as `T | undefined`. #283, applied
+    // package by package. Every site fixed here was a provably in-range
+    // index loop; each got a real check or an idiom that does not index at
+    // all, because the mechanical `arr[i]!` defeats the point of the flag.
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "module": "esnext",

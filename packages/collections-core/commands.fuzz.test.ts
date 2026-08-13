@@ -105,7 +105,11 @@ function childrenEqual(a: CollectionsGraph, b: CollectionsGraph): boolean {
 }
 
 function pick<T>(rand: () => number, items: readonly T[]): T {
-  return items[Math.floor(rand() * items.length)];
+  const chosen = items[Math.floor(rand() * items.length)];
+  // A fuzz run that silently picked `undefined` would report a failure against
+  // a value it never actually chose, so say which call was empty instead.
+  if (chosen === undefined) throw new Error("pick() was given an empty list");
+  return chosen;
 }
 
 describe("fuzz: command -> patch -> inverse round-trips", () => {

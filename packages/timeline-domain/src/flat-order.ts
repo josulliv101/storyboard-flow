@@ -103,6 +103,11 @@ export function resolveFlatDropTarget(
   if (clamped === 0) return { parentId: focusedId, index: 0 };
 
   const left = items[clamped - 1];
+  // `clamped` is already bounded by items.length and the zero case returned
+  // above, so this holds — and if the clamping ever stops holding, appending
+  // into the focused collection is the same safe reading the stale-list case
+  // below takes.
+  if (left === undefined) return { parentId: focusedId, index: 0 };
   const parentId = left.collectionPath[left.collectionPath.length - 1] ?? focusedId;
   const siblings = getChildren(graph, parentId);
   const leftIndex = siblings.indexOf(left.nodeId);

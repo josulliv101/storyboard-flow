@@ -8,6 +8,7 @@ import {
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "./constants";
 import { isVisualClip } from "./types";
+import type { ImageTimelineClip, VideoTimelineClip } from "./types";
 import type { TimelineClip, TimelineDocument } from "./types";
 
 /** First/middle/last media of a collection's clips, as stored preview
@@ -19,23 +20,32 @@ export function previewItemsFrom(clips: TimelineClip[]) {
   // qualify, then be rendered as an <img> pointing at a .flac. Preview items
   // are persisted, so letting one through writes the mistake to storage.
   const mediaClips = clips.filter(isVisualClip);
-  const previewClips =
+  // Pick INDICES, then read them back through a bounds check rather than
+  // building an array of `T | undefined` and asserting the holes away. All
+  // three are provably in range (the branch guarantees length > 3), so
+  // `flatMap` drops nothing in practice — but writing it this way means a
+  // future change to the arithmetic gets caught by the compiler instead of
+  // producing a preview entry with `undefined` fields.
+  const indices =
     mediaClips.length <= 3
-      ? mediaClips
-      : [
-          mediaClips[0],
-          mediaClips[Math.floor(mediaClips.length / 2)],
-          mediaClips[mediaClips.length - 1],
-        ];
+      ? mediaClips.map((_clip, index) => index)
+      : [0, Math.floor(mediaClips.length / 2), mediaClips.length - 1];
 
-  return previewClips.map((clip) => ({
+  return indices.flatMap((index) => {
+    const clip = mediaClips[index];
+    return clip === undefined ? [] : [previewItemOf(clip)];
+  });
+}
+
+function previewItemOf(clip: ImageTimelineClip | VideoTimelineClip) {
+  return {
     id: clip.id,
     kind: clip.kind,
     src: clip.src,
     poster: clip.poster,
     ...(clip.kind === "video" && clip.trimIn > 0 ? { trimIn: clip.trimIn } : {}),
     alt: clip.alt,
-  }));
+  };
 }
 
 /** Derive startTime/index for a clip sequence: leading padding, then each
@@ -75,8 +85,10 @@ export function enabledClips(clips: readonly TimelineClip[]): TimelineClip[] {
  * span.
  */
 export function collectionSpanSeconds(clips: readonly TimelineClip[]): number {
-  if (clips.length === 0) return 3;
   const last = clips[clips.length - 1];
+  // The empty case and the unreachable out-of-range case answer alike: a
+  // zero-width collection card cannot be seen or clicked either way.
+  if (last === undefined) return 3;
   return last.startTime + last.duration + TIMELINE_LEADING_PADDING_SECONDS;
 }
 

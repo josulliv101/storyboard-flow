@@ -390,7 +390,9 @@ export function buildGraph(
       // duplicate-id reporting deterministic (first duplicate in reading
       // order wins the error).
       for (let i = children.length - 1; i >= 0; i--) {
-        stack.push({ spec: children[i], parentId: id });
+        const spec = children[i];
+        if (spec === undefined) continue;
+        stack.push({ spec, parentId: id });
       }
     }
     parentById.set(id, parentId);
@@ -452,7 +454,10 @@ export function isSameOrAncestor(
 export function getDocumentOrder(graph: CollectionsGraph): ReadonlyMap<NodeId, number> {
   const order = new Map<NodeId, number>();
   const stack: NodeId[] = [];
-  for (let i = graph.rootIds.length - 1; i >= 0; i--) stack.push(graph.rootIds[i]);
+  for (let i = graph.rootIds.length - 1; i >= 0; i--) {
+    const rootId = graph.rootIds[i];
+    if (rootId !== undefined) stack.push(rootId);
+  }
 
   while (stack.length > 0) {
     const id = stack.pop()!;
@@ -460,7 +465,10 @@ export function getDocumentOrder(graph: CollectionsGraph): ReadonlyMap<NodeId, n
     order.set(id, order.size);
     const children = graph.childrenById.get(id);
     if (children) {
-      for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+      for (let i = children.length - 1; i >= 0; i--) {
+        const childId = children[i];
+        if (childId !== undefined) stack.push(childId);
+      }
     }
   }
   return order;

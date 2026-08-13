@@ -176,7 +176,9 @@ function findSiblingCollection(
   direction: 1 | -1
 ): NodeId | null {
   for (let i = fromIndex + direction; i >= 0 && i < siblings.length; i += direction) {
-    if (graph.nodesById.get(siblings[i])?.kind === "collection") return siblings[i];
+    const siblingId = siblings[i];
+    if (siblingId === undefined) continue;
+    if (graph.nodesById.get(siblingId)?.kind === "collection") return siblingId;
   }
   return null;
 }

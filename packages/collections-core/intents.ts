@@ -248,10 +248,9 @@ export function resolveCommandFromIntent(
     // insert-adjacent branch below).
     const siblings = getChildren(graph, intent.collectionId);
     const boundary = Math.max(0, Math.min(intent.index, siblings.length));
-    let draggedBeforeBoundary = 0;
-    for (let i = 0; i < boundary; i++) {
-      if (draggedSet.has(siblings[i])) draggedBeforeBoundary++;
-    }
+    const draggedBeforeBoundary = siblings
+      .slice(0, boundary)
+      .filter((siblingId) => draggedSet.has(siblingId)).length;
     return {
       ok: true,
       value: {
@@ -277,10 +276,9 @@ export function resolveCommandFromIntent(
   const boundary = intent.side === "before" ? targetVisibleIndex : targetVisibleIndex + 1;
   // Post-removal index: subtract the dragged nodes sitting before the
   // boundary in this same collection.
-  let draggedBeforeBoundary = 0;
-  for (let i = 0; i < boundary; i++) {
-    if (draggedSet.has(siblings[i])) draggedBeforeBoundary++;
-  }
+  const draggedBeforeBoundary = siblings
+    .slice(0, boundary)
+    .filter((siblingId) => draggedSet.has(siblingId)).length;
 
   return {
     ok: true,

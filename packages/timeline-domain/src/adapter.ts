@@ -586,10 +586,19 @@ export function hydratedCollectionPreviews(
     }
   };
   collect(parseNodeId(collectionId));
-  const frames =
+  // Same shape as `previewItemsFrom`: pick INDICES and read them back through
+  // a bounds check, rather than building an array of `T | undefined` and
+  // asserting the holes away. All three are provably in range, so nothing is
+  // dropped — but a future change to the arithmetic becomes a compile error
+  // instead of a frame with undefined fields written into storage.
+  const frameIndices =
     media.length <= 3
-      ? media
-      : [media[0], media[Math.floor(media.length / 2)], media[media.length - 1]];
+      ? media.map((_frame, index) => index)
+      : [0, Math.floor(media.length / 2), media.length - 1];
+  const frames = frameIndices.flatMap((index) => {
+    const frame = media[index];
+    return frame === undefined ? [] : [frame];
+  });
   return { frames, firstFrameUncertain };
 }
 
