@@ -7,7 +7,7 @@ import {
   signAccessToken,
   verifyPkce,
 } from "@/lib/oauth/core";
-import { mcpResourceUrl, originFromRequest } from "@/lib/oauth/metadata";
+import { mcpResourceUrl, resolveIssuerOrigin } from "@/lib/oauth/metadata";
 import { consumeAuthCode, issueRefreshToken, rotateRefreshToken } from "@/lib/oauth/store";
 
 // OAuth 2.1 token endpoint: authorization_code (with PKCE) and refresh_token.
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
     return oauthError("invalid_client", "Unknown client or bad secret.", 401);
   }
 
-  const origin = originFromRequest(request);
+  const { origin } = resolveIssuerOrigin(request);
   const resource = mcpResourceUrl(origin);
   const grantType = form.get("grant_type");
 

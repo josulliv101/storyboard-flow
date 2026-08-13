@@ -1,6 +1,7 @@
 import {
-  METADATA_HEADERS,
-  originFromRequest,
+  METADATA_PREFLIGHT_HEADERS,
+  metadataHeaders,
+  resolveIssuerOrigin,
   protectedResourceMetadata,
 } from "@/lib/oauth/metadata";
 
@@ -12,12 +13,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export function GET(request: Request) {
-  const origin = originFromRequest(request);
+  const { origin, pinned } = resolveIssuerOrigin(request);
   return new Response(JSON.stringify(protectedResourceMetadata(origin), null, 2), {
-    headers: METADATA_HEADERS,
+    headers: metadataHeaders(pinned),
   });
 }
 
 export function OPTIONS() {
-  return new Response(null, { status: 204, headers: METADATA_HEADERS });
+  return new Response(null, { status: 204, headers: METADATA_PREFLIGHT_HEADERS });
 }

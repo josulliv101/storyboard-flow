@@ -4,7 +4,7 @@ import {
   successRedirectUrl,
   validateAuthorizeRequest,
 } from "@/lib/oauth/authorize-request";
-import { mcpResourceUrl, originFromRequest } from "@/lib/oauth/metadata";
+import { mcpResourceUrl, resolveIssuerOrigin } from "@/lib/oauth/metadata";
 import { issueAuthCode } from "@/lib/oauth/store";
 import { getAuthUser } from "@/lib/firebase-auth-session";
 
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const origin = originFromRequest(request);
+  const { origin } = resolveIssuerOrigin(request);
   const code = await issueAuthCode({
     clientId: validation.params.clientId,
     redirectUri: validation.params.redirectUri,

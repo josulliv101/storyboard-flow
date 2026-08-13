@@ -29,7 +29,7 @@ import {
   NO_LIVE_PUSH_NOTE,
 } from "@/lib/mcp/write-handlers";
 import { MCP_SCOPE, getSigningSecret, verifyAccessToken } from "@/lib/oauth/core";
-import { mcpResourceUrl, originFromRequest } from "@/lib/oauth/metadata";
+import { mcpResourceUrl, resolveIssuerOrigin } from "@/lib/oauth/metadata";
 
 // Remote MCP endpoint — the "give Claude a URL" surface, distinct from the
 // in-page WebMCP tools (see docs/webmcp-agent-tools.md). Those run in the
@@ -495,7 +495,10 @@ const authedHandler = withMcpAuth(
     //    so a token minted for another resource can't be replayed here.
     const signingSecret = getSigningSecret();
     if (signingSecret) {
-      const audience = mcpResourceUrl(originFromRequest(request));
+      // PINNED where configured. Deriving this from the request made the
+      // check self-referential: the token was minted against the same
+      // client-supplied header it is verified against, so it always matched.
+      const audience = mcpResourceUrl(resolveIssuerOrigin(request).origin);
       const verified = verifyAccessToken(bearerToken, signingSecret, audience);
       if (verified.ok) {
         return {
