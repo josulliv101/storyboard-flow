@@ -14,7 +14,18 @@
     "",
     "The updatedAt ordering matches the JS sort listFirebaseTimelineProjects",
     "already applies, so switching to a server-side sort is a one-line change",
-    "once this is deployed."
+    "once this is deployed.",
+    "",
+    "timelineChanges: recentChanges() filters timelineIds with array-contains",
+    "AND orders by `at`. That combination REQUIRES a composite index — it is",
+    "not merge-joinable — so without this the query throws FAILED_PRECONDITION",
+    "every time. The log has been written faithfully for weeks and the one",
+    "helper built to read it could never run.",
+    "",
+    "The alternative, sorting client-side, was rejected: dropping the orderBy",
+    "means reading EVERY entry that ever touched the timeline just to find the",
+    "newest few, and that read grows without bound as the log does. Unbounded",
+    "reads are what exhausted this project's daily quota once already."
   ],
   "indexes": [
     {
@@ -24,6 +35,14 @@
         { "fieldPath": "ownerUid", "order": "ASCENDING" },
         { "fieldPath": "isProject", "order": "ASCENDING" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timelineChanges",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "timelineIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "at", "order": "DESCENDING" }
       ]
     }
   ],

@@ -13,6 +13,39 @@ type Stored = Record<string, unknown>;
 const state = vi.hoisted(() => {
   const added: Stored[] = [];
   let addThrows = false;
+  let queryThrows: Error | null = null;
+  let queryResult: Stored[] = [];
+  const queryCalls: { where?: unknown[]; orderBy?: unknown[]; limit?: number }[] = [];
+
+  const query = () => {
+    // Records the chain so a test can assert the query SHAPE — the shape is
+    // what the composite index has to match, and a mismatch there is exactly
+    // the failure this suite exists for. Recorded on `where`, not here: every
+    // recordChange call goes through collection() too, and counting those
+    // would leave the read assertions reading someone else's writes.
+    const call: { where?: unknown[]; orderBy?: unknown[]; limit?: number } = {};
+    const chain = {
+      where: (...args: unknown[]) => {
+        call.where = args;
+        queryCalls.push(call);
+        return chain;
+      },
+      orderBy: (...args: unknown[]) => {
+        call.orderBy = args;
+        return chain;
+      },
+      limit: (value: number) => {
+        call.limit = value;
+        return chain;
+      },
+      get: async () => {
+        if (queryThrows) throw queryThrows;
+        return { docs: queryResult.map((data) => ({ data: () => data })) };
+      },
+    };
+    return chain;
+  };
+
   const db = {
     collection: () => ({
       add: async (data: Stored) => {
@@ -20,13 +53,21 @@ const state = vi.hoisted(() => {
         added.push(data);
         return { id: `entry-${added.length}` };
       },
+      ...query(),
     }),
   };
   return {
     added,
     db,
+    queryCalls,
     setAddThrows: (value: boolean) => {
       addThrows = value;
+    },
+    setQueryThrows: (error: Error | null) => {
+      queryThrows = error;
+    },
+    setQueryResult: (rows: Stored[]) => {
+      queryResult = rows;
     },
   };
 });
@@ -37,7 +78,7 @@ vi.mock("firebase-admin/firestore", () => ({
   FieldValue: { serverTimestamp: () => "SERVER_TIME" },
 }));
 
-import { changeLogDocuments, recordChange } from "./change-log";
+import { changeLogDocuments, recentChanges, recordChange } from "./change-log";
 
 function clip(id: string): TimelineClip {
   return {
@@ -62,7 +103,10 @@ function doc(id: string, clipIds: string[]): TimelineDocument {
 
 beforeEach(() => {
   state.added.length = 0;
+  state.queryCalls.length = 0;
   state.setAddThrows(false);
+  state.setQueryThrows(null);
+  state.setQueryResult([]);
 });
 
 describe("recordChange", () => {
@@ -136,5 +180,59 @@ describe("recordChange", () => {
     await recordChange({ uid: "user-a", source: "app", documents: [] });
 
     expect(state.added).toHaveLength(0);
+  });
+});
+
+// The log has been written faithfully for weeks; the one helper built to read
+// it could never run. array-contains combined with an orderBy needs a
+// composite index, and there wasn't one — so every call threw
+// FAILED_PRECONDITION, and nothing called it, so nobody found out.
+describe("recentChanges", () => {
+  it("asks the question the composite index is declared for", async () => {
+    state.setQueryResult([{ uid: "user-a", source: "app" }]);
+
+    const rows = await recentChanges("scene", 10);
+
+    expect(rows).toEqual([{ uid: "user-a", source: "app" }]);
+    // Pinned because firestore.indexes.json has to MATCH this shape. If the
+    // field or the direction moves here and not there, the query starts
+    // throwing again in exactly the way that went unnoticed before.
+    expect(state.queryCalls[0]).toEqual({
+      where: ["timelineIds", "array-contains", "scene"],
+      orderBy: ["at", "desc"],
+      limit: 10,
+    });
+  });
+
+  it("turns a missing index into the command that fixes it", async () => {
+    const missing = Object.assign(
+      new Error("9 FAILED_PRECONDITION: The query requires an index. Create it here: https://console.firebase.google.com/x"),
+      { code: 9 },
+    );
+    state.setQueryThrows(missing);
+
+    await expect(recentChanges("scene")).rejects.toThrow(
+      /firebase deploy --only firestore:indexes/,
+    );
+    // Firestore's own message carries a one-click link to create the index, so
+    // it must survive being wrapped rather than be replaced by ours.
+    await expect(recentChanges("scene")).rejects.toThrow(/console\.firebase\.google\.com/);
+  });
+
+  it("does NOT dress up an unrelated failure as a missing index", async () => {
+    state.setQueryThrows(new Error("permission denied"));
+
+    // The wrong diagnosis is worse than none: it would send someone to deploy
+    // an index that is already there.
+    await expect(recentChanges("scene")).rejects.toThrow(/^permission denied$/);
+  });
+
+  it("propagates the failure rather than reporting an empty history", async () => {
+    state.setQueryThrows(new Error("firestore unavailable"));
+
+    // recordChange swallows on purpose; this must not. An empty array here
+    // reads as "nothing ever touched this timeline", which is the opposite of
+    // the truth and the exact wrong answer during an investigation.
+    await expect(recentChanges("scene")).rejects.toThrow();
   });
 });
