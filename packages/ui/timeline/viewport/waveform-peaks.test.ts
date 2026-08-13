@@ -10,7 +10,14 @@ import {
 
 /** Read one bucket's [min, max] out of the interleaved array. */
 function bucket(values: Float32Array, index: number): [number, number] {
-  return [values[index * 2], values[index * 2 + 1]];
+  const min = values[index * 2];
+  const max = values[index * 2 + 1];
+  // Buckets are written in pairs, so asking for one past the end is a bug in
+  // the TEST — say which bucket rather than comparing against undefined.
+  if (min === undefined || max === undefined) {
+    throw new Error(`no bucket ${index} in ${values.length / 2} buckets`);
+  }
+  return [min, max];
 }
 
 /** Compare a bucket with tolerance: these are Float32Array cells, so a literal

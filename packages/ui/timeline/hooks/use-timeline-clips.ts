@@ -2,6 +2,7 @@ import { TimelineClip, VideoSourceWindowEditMode } from "../types";
 import {
   baseWidth,
   clamp,
+  cycle,
   getPackedDurationBefore,
   getSpec,
 } from "../utils";
@@ -25,7 +26,7 @@ export function createClip(
     spec = {
       ...spec,
       kind: "video",
-      src: VIDEO_SOURCES[index % VIDEO_SOURCES.length],
+      src: cycle(VIDEO_SOURCES, index, "VIDEO_SOURCES"),
       duration: 12,
     };
   }
@@ -97,19 +98,25 @@ export function layoutClipsAroundAnchor(
   const nextClips = clips.map((clip) => ({ ...clip }));
   nextClips[anchorIndex] = anchorClip;
 
+  // Walking OUTWARD from the anchor, so each step's neighbour was written by
+  // the previous one and `current` is inside the array by the loop bound. Both
+  // are read into consts and checked rather than indexed three times each: a
+  // hole here would silently produce `NaN` startTimes that pack every later
+  // clip on top of its neighbour, which is far harder to trace than a stop.
   for (let index = anchorIndex - 1; index >= 0; index -= 1) {
     const clipToRight = nextClips[index + 1];
+    const current = nextClips[index];
+    if (clipToRight === undefined || current === undefined) break;
     const endTime = clipToRight.startTime - CLIP_GAP_SECONDS;
-    nextClips[index] = {
-      ...nextClips[index],
-      startTime: endTime - nextClips[index].duration,
-    };
+    nextClips[index] = { ...current, startTime: endTime - current.duration };
   }
 
   for (let index = anchorIndex + 1; index < nextClips.length; index += 1) {
     const clipToLeft = nextClips[index - 1];
+    const current = nextClips[index];
+    if (clipToLeft === undefined || current === undefined) break;
     nextClips[index] = {
-      ...nextClips[index],
+      ...current,
       startTime: clipToLeft.startTime + clipToLeft.duration + CLIP_GAP_SECONDS,
     };
   }
@@ -202,13 +209,13 @@ export function packClipsLeftToRight(
   const nextClips = clips.map((clip) => ({ ...clip }));
   nextClips[anchorIndex] = anchorClip;
 
+  // entries() rather than an index: the loop only ever wanted each clip and
+  // its position, and indexing three times per iteration is what made this
+  // read as three separate lookups that could disagree.
   let nextStartTime = TIMELINE_LEADING_PADDING_SECONDS;
-  for (let index = 0; index < nextClips.length; index += 1) {
-    nextClips[index] = {
-      ...nextClips[index],
-      startTime: nextStartTime,
-    };
-    nextStartTime += nextClips[index].duration + CLIP_GAP_SECONDS;
+  for (const [index, clip] of nextClips.entries()) {
+    nextClips[index] = { ...clip, startTime: nextStartTime };
+    nextStartTime += clip.duration + CLIP_GAP_SECONDS;
   }
 
   return nextClips;
@@ -242,6 +249,10 @@ export function reorderClipsFromBaseline({
 
   const nextClips = baselineClips.map((clip) => ({ ...clip }));
   const [activeClip] = nextClips.splice(sourceIndex, 1);
+  // `findIndex` found it above, so the splice removed exactly one — but the
+  // destructure cannot know that. Returning the baseline unchanged is the same
+  // answer the not-found branch already gives.
+  if (activeClip === undefined) return baselineClips;
   nextClips.splice(clamp(Math.floor(targetIndex), 0, nextClips.length), 0, activeClip);
 
   return reindexAndPackClips(nextClips);

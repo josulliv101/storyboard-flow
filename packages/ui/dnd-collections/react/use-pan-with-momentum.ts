@@ -138,7 +138,11 @@ export function usePanWithMomentum(
       lastPosition = position;
       const now = performance.now();
       samples.push({ t: now, p: position });
-      while (samples.length > 1 && now - samples[0].t > SAMPLE_WINDOW_MS) samples.shift();
+      // `length > 1` guarantees samples[0]; the `?? now` keeps that provable
+      // and makes the window a no-op rather than a crash if it ever does not.
+      while (samples.length > 1 && now - (samples[0]?.t ?? now) > SAMPLE_WINDOW_MS) {
+        samples.shift();
+      }
     };
 
     const endPan = (event: PointerEvent) => {

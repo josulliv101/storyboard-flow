@@ -88,8 +88,12 @@ function matchBeforeRects(
 
   for (const [nodeId, afterCandidates] of unmatchedAfterById) {
     const beforeCandidates = unmatchedBeforeById.get(nodeId);
-    if (beforeCandidates?.length === 1 && afterCandidates.length === 1) {
-      matches.set(afterCandidates[0].card, beforeCandidates[0].point);
+    const onlyAfter = afterCandidates.length === 1 ? afterCandidates[0] : undefined;
+    const onlyBefore = beforeCandidates?.length === 1 ? beforeCandidates[0] : undefined;
+    // Read through the same length check that gates the pairing, so the "exactly
+    // one on each side" rule is stated once instead of being asserted twice.
+    if (onlyAfter !== undefined && onlyBefore !== undefined) {
+      matches.set(onlyAfter.card, onlyBefore.point);
     }
   }
 

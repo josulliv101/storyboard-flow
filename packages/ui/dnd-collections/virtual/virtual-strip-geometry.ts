@@ -175,26 +175,46 @@ export function createTimeToOffset(config: TimeToOffsetConfig): TimeToOffsetLook
   const count = timeStarts.length;
   const endOffset = lastMediaRight;
 
+  /**
+   * Read one of the four parallel arrays.
+   *
+   * They are built together in the walk above and never grow again, and every
+   * index below is either produced by `locate()` (bounded by `count - 1`) or
+   * guarded by `< count`. This states that invariant ONCE instead of putting a
+   * bounds check on every access in a per-frame scrub path.
+   *
+   * It throws rather than falling back to 0: a fallback would silently distort
+   * the geometry — a clip drawn at the wrong offset, a playhead that drifts —
+   * which is far harder to trace than a stop that names the index.
+   */
+  const readAt = (values: readonly number[], index: number): number => {
+    const value = values[index];
+    if (value === undefined) {
+      throw new RangeError(`strip geometry: index ${index} outside 0..${count - 1}`);
+    }
+    return value;
+  };
+
   /** Index of the last segment whose start time is <= t (t must be >= 0). */
   const locate = (t: number): number => {
     let lo = 0;
     let hi = count - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (timeStarts[mid] <= t) lo = mid;
+      if (readAt(timeStarts, mid) <= t) lo = mid;
       else hi = mid - 1;
     }
     return lo;
   };
 
   const offsetWithin = (index: number, t: number): number => {
-    const within = Math.max(0, t - timeStarts[index]) * pixelsPerSecond;
-    return xStarts[index] + Math.min(within, widths[index]);
+    const within = Math.max(0, t - readAt(timeStarts, index)) * pixelsPerSecond;
+    return readAt(xStarts, index) + Math.min(within, readAt(widths, index));
   };
 
   const at = (timeSeconds: number): number => {
     if (count === 0) return endOffset;
-    if (timeSeconds <= timeStarts[0]) return xStarts[0];
+    if (timeSeconds <= readAt(timeStarts, 0)) return readAt(xStarts, 0);
     if (timeSeconds >= clock) return endOffset;
     return offsetWithin(locate(timeSeconds), timeSeconds);
   };
@@ -206,17 +226,17 @@ export function createTimeToOffset(config: TimeToOffsetConfig): TimeToOffsetLook
       return {
         at: (timeSeconds: number): number => {
           if (count === 0) return endOffset;
-          if (timeSeconds <= timeStarts[0]) return xStarts[0];
+          if (timeSeconds <= readAt(timeStarts, 0)) return readAt(xStarts, 0);
           if (timeSeconds >= clock) return endOffset;
-          if (timeSeconds < timeStarts[index]) {
+          if (timeSeconds < readAt(timeStarts, index)) {
             // Backward seek: re-anchor.
             index = locate(timeSeconds);
-          } else if (timeSeconds >= timeStarts[index] + durations[index]) {
+          } else if (timeSeconds >= readAt(timeStarts, index) + readAt(durations, index)) {
             // Forward: the adjacent segment is the common playback hop (O(1));
             // anything farther is a seek (O(log n)).
             if (
               index + 1 < count &&
-              timeSeconds < timeStarts[index + 1] + durations[index + 1]
+              timeSeconds < readAt(timeStarts, index + 1) + readAt(durations, index + 1)
             ) {
               index += 1;
             } else {

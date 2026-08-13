@@ -66,8 +66,25 @@ export function getFallbackImage(
   };
 }
 
+/**
+ * Read a fixture array cyclically.
+ *
+ * Both callers index a non-empty literal with a modulo, so this never throws.
+ * Written as a throw rather than `!` so that emptying the array fails HERE,
+ * naming which array, instead of surfacing as `undefined.aspect` several
+ * frames away in a caller.
+ *
+ * The double modulo also makes a NEGATIVE index wrap rather than miss, which
+ * the bare `index % length` did not.
+ */
+export function cycle<T>(items: readonly T[], index: number, name: string): T {
+  const value = items[((index % items.length) + items.length) % items.length];
+  if (value === undefined) throw new Error(`${name} is empty`);
+  return value;
+}
+
 export function getSpec(index: number) {
-  return MEDIA[index % MEDIA.length];
+  return cycle(MEDIA, index, "MEDIA");
 }
 
 export function baseWidth(index: number) {
@@ -77,8 +94,11 @@ export function baseWidth(index: number) {
 export function getPackedDurationBefore(clips: TimelineClip[], anchorIndex: number) {
   let durationBefore = 0;
 
-  for (let index = 0; index < anchorIndex; index += 1) {
-    durationBefore += clips[index].duration;
+  // slice() rather than an index loop: `anchorIndex` is a caller's number and
+  // may sit past the end, in which case slice simply stops — the old loop
+  // would have added `undefined.duration`.
+  for (const clip of clips.slice(0, Math.max(0, anchorIndex))) {
+    durationBefore += clip.duration;
     durationBefore += CLIP_GAP_SECONDS;
   }
 

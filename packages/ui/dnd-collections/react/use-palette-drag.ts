@@ -142,7 +142,10 @@ export function usePaletteDrag(args: {
       return true;
     }
     const targetName = graph.nodesById.get(command.toParentId)?.name ?? "collection";
-    announce(`Added "${nodes[0].name}" to "${targetName}".`);
+    // A drop always carries at least one node; naming the count is the honest
+    // reading if that ever stops holding, rather than announcing "undefined".
+    const firstName = nodes[0]?.name ?? `${nodes.length} items`;
+    announce(`Added "${firstName}" to "${targetName}".`);
     return true;
   }, [paletteNodes, store, intentRef, announce, onDiscard, setPaletteNodes]);
 

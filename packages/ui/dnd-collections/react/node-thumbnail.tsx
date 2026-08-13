@@ -80,7 +80,11 @@ function VideoThumbnail({
       className="flex min-h-0 flex-1 overflow-hidden rounded-sm bg-muted"
     >
       {Array.from({ length: count }).map((_, index) => {
-        const src = posters[index % posters.length];
+        // The caller returns a fallback when `posters` is empty, so the
+        // modulo always lands; `?? ""` keeps that provable rather than
+        // asserted, and an empty src would take the same failed-image path the
+        // component already handles.
+        const src = posters[index % posters.length] ?? "";
         const frameClass =
           "h-full min-w-0 flex-1 border-r border-background object-cover last:border-r-0";
         return failedSources.has(src) ? (

@@ -7,6 +7,7 @@ import {
   type MinimalAudioContext,
   type MinimalGainNode,
 } from "./audio-graph";
+import { at } from "../../test-support/at";
 
 /** A fake Web Audio context: enough surface for the mixer, none of the browser.
  *  `sourceCalls` is what proves the attach-once guard, since the real
@@ -115,7 +116,7 @@ describe("createAudioMixer", () => {
     mixer.attach(fakeElement());
 
     // gains[0] is the master, created with the context; gains[1] is the source.
-    expect(fake.gains[1].gain.value).toBe(0);
+    expect(at(fake.gains, 1).gain.value).toBe(0);
   });
 
   it("takes level away from the element so the two do not multiply", () => {
@@ -137,7 +138,7 @@ describe("createAudioMixer", () => {
     mixer.attach(element);
     mixer.setSourceGain(element, 0.5);
 
-    expect(fake.gains[1].gain.value).toBeCloseTo(0.25, 5);
+    expect(at(fake.gains, 1).gain.value).toBeCloseTo(0.25, 5);
   });
 
   it("zeroes master gain while muted and restores the level on unmute", () => {
@@ -146,7 +147,7 @@ describe("createAudioMixer", () => {
     mixer.attach(fakeElement());
     mixer.setMasterVolume(0.5);
 
-    const master = fake.gains[0];
+    const master = at(fake.gains, 0);
     expect(master.gain.value).toBeCloseTo(0.25, 5);
 
     mixer.setMuted(true);

@@ -253,7 +253,12 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       (s) => s.graph.nodesById.get(collectionId)?.name ?? String(collectionId)
     );
     const focusByIndex = useCallback(
-      (index: number) => focusNode(childIds[index]),
+      (index: number) => {
+        // The roving index can outlive the list it points into for a render
+        // after a removal; focusing nothing is the right answer there.
+        const childId = childIds[index];
+        if (childId !== undefined) focusNode(childId);
+      },
       [focusNode, childIds]
     );
     const resolveGridIndex = useCallback(
