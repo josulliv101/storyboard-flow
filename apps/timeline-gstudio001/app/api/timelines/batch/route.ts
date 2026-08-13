@@ -5,6 +5,7 @@ import { requireAuthUser } from "@/lib/firebase-auth-session";
 import { readJsonObject } from "@/lib/read-json-body";
 import {
   saveFirebaseTimelineDocumentsAtomic,
+  TimelineOrphanError,
   TimelineRevisionConflictError,
   type TimelineBatchWrite,
 } from "@/lib/firebase-timeline-store";
@@ -132,6 +133,16 @@ export async function POST(request: Request) {
     if (error instanceof TimelineRevisionConflictError) {
       return NextResponse.json(
         { error: error.message, conflicts: error.conflicts },
+        { status: 409 },
+      );
+    }
+    // A write that would strand a collection. 409 like the other refusals the
+    // client already knows how to back off from, and NOT lumped in with the
+    // conflict branch: it carries no `conflicts` array, so the gateway's
+    // conflict handling (reload the named ids) would have nothing to act on.
+    if (error instanceof TimelineOrphanError) {
+      return NextResponse.json(
+        { error: error.message, orphans: error.orphans },
         { status: 409 },
       );
     }
