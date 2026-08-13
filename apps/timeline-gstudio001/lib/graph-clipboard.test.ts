@@ -40,6 +40,40 @@ describe("graphClipboard", () => {
     unsubscribe();
   });
 
+  // The pending-cut half had no coverage at all, and Done now depends on it:
+  // leaving select mode without pasting calls `clear()` to abandon the move,
+  // and the un-dimming of the sources is exactly this set emptying.
+  it("clear() abandons a pending cut, in the same notify as the contents", async () => {
+    const clipboard = await freshClipboard();
+    const seen: number[] = [];
+    const unsubscribe = clipboard.subscribe(() => seen.push(clipboard.pendingCutIds().size));
+
+    clipboard.set([entry]);
+    clipboard.markPendingCut([parseNodeId("m1"), parseNodeId("m2")]);
+    expect(clipboard.pendingCutIds().size).toBe(2);
+    expect(clipboard.isPendingCut(parseNodeId("m1"))).toBe(true);
+    expect(clipboard.isPendingCut(parseNodeId("nope"))).toBe(false);
+
+    clipboard.clear();
+    expect(clipboard.pendingCutIds().size).toBe(0);
+    expect(clipboard.isEmpty()).toBe(true);
+    // set → markPendingCut → clear. One notify each, and the clear reports
+    // both halves gone at once rather than emptying them in two steps.
+    expect(seen).toEqual([0, 2, 0]);
+    unsubscribe();
+  });
+
+  it("a fresh copy replaces a pending cut, so nothing stays dimmed for it", async () => {
+    const clipboard = await freshClipboard();
+    clipboard.set([entry]);
+    clipboard.markPendingCut([parseNodeId("m1")]);
+    // `set` clears the pending move: the dimmed sources belonged to a cut this
+    // copy just replaced, and a paste will no longer carry them.
+    clipboard.set([entry]);
+    expect(clipboard.pendingCutIds().size).toBe(0);
+    expect(clipboard.isEmpty()).toBe(false);
+  });
+
   it("binding a DIFFERENT user wipes the contents; same user keeps them", async () => {
     const clipboard = await freshClipboard();
     clipboard.bindUser("user-a");

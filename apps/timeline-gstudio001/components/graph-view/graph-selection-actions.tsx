@@ -67,6 +67,26 @@ export function useHasPendingCut(): boolean {
 }
 
 /**
+ * HOW MANY items a cut is waiting to move.
+ *
+ * The select row needs the number, not the boolean above: a cut clears the
+ * selection (`cutSelection` in graph-item-actions), so `selectionCount` drops
+ * to zero and the row would otherwise report "0 selected" while three items sit
+ * dimmed waiting for a destination. During a cut this is what the count means.
+ *
+ * Separate from `useHasPendingCut` rather than replacing it — the browse header
+ * only ever asks "is one pending", and subscribing it to the Set's size would
+ * re-render it on every membership change for an answer it does not use.
+ */
+export function usePendingCutCount(): number {
+  return useSyncExternalStore(
+    graphClipboard.subscribe,
+    () => graphClipboard.pendingCutIds().size,
+    () => 0,
+  );
+}
+
+/**
  * The anchor: the card hosting the pill, and the card a paste follows.
  *
  * A plain store read now. It used to be derived here from `selectedIds` with a
