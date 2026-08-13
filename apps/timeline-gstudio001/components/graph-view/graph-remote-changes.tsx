@@ -79,7 +79,21 @@ export function RemoteChangesBridge({
 
       const live = store.getSnapshot().graph;
       const parentId = parseNodeId(timelineId);
-      if (!live.nodesById.has(parentId)) return;
+      // REFRESHED BUT NOT ABSORBED — the dangerous half-state.
+      //
+      // `ensure` above has already replaced the cached document AND advanced
+      // the revision ledger. Returning here leaves the graph without the
+      // change, and nothing else notices: a later edit anywhere BELOW this
+      // document still writes it (the affected set walks ancestors), projecting
+      // the stale graph over the fresh cache with a revision that is current,
+      // so CAS passes and the other writer's content is deleted.
+      //
+      // Blocking clip writes for the document is the same posture the conflict
+      // gate takes, and for the same reason — see `markGraphBehind`.
+      if (!live.nodesById.has(parentId)) {
+        graphDocumentsGateway.markGraphBehind(timelineId, "not on this board");
+        return;
+      }
 
       const { added: incoming, departed } = diffRemoteChildren(
         live,
@@ -127,10 +141,23 @@ export function RemoteChangesBridge({
         const ok = applied.ok && store.applyRemotePatch(applied.value.patch);
         // On refusal the details must not be left parked — they would attach
         // themselves to whatever later minted a node with the same id.
-        if (!ok) for (const id of parked) unparkPendingDetail(id);
+        if (!ok) {
+          for (const id of parked) unparkPendingDetail(id);
+          // Refused, so the graph does not have the arrivals the cache does.
+          graphDocumentsGateway.markGraphBehind(timelineId, "remote additions refused");
+          return;
+        }
       }
 
-      if (departed.length === 0 || !settled || cancelled) return;
+      if (departed.length === 0 || cancelled) return;
+      // Departures are deliberately skipped while a local write is pending —
+      // converging under it would delete work in progress. But the cache and
+      // the ledger already moved, so the same half-state applies and the next
+      // ancestor write would resurrect what the other writer removed.
+      if (!settled) {
+        graphDocumentsGateway.markGraphBehind(timelineId, "local edit in flight");
+        return;
+      }
 
       // Built against the graph as it stands NOW — the additions above committed
       // and shifted the indices.
