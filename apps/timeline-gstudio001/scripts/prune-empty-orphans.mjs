@@ -8,8 +8,12 @@
 // that matter is the reason nobody ever cleans this up, so this removes the
 // obviously-nothing and leaves a list a person can actually read.
 //
-//   npm run prune:orphans            # dry run — prints exactly what it would delete
-//   npm run prune:orphans -- --apply # delete
+//   npm run prune:orphans                  # dry run
+//   npm run prune:orphans -- --apply       # delete (note the bare -- separator)
+//   PRUNE_APPLY=1 npm run prune:orphans    # delete, in a form npm cannot swallow
+//
+// `npm run prune:orphans --apply` WITHOUT the separator is discarded by npm
+// before the script runs — see scripts/apply-flag.mjs.
 //
 // SAFETY, and this is the whole design:
 //
@@ -35,9 +39,11 @@
 import { cert, applicationDefault, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
+import { dryRunNotice, readApplyFlag } from "./apply-flag.mjs";
+
 // Must track TIMELINE_COLLECTION in lib/firebase-timeline-store.ts.
 const COLLECTION = "gstudioTimelineDocuments";
-const apply = process.argv.includes("--apply");
+const apply = readApplyFlag("prune:orphans", "PRUNE_APPLY");
 
 /** Titles that mean "made by a button, never used". Only ever consulted for a
  *  document already proven to hold nothing. */
@@ -133,7 +139,7 @@ async function main() {
   console.log("");
 
   if (!apply) {
-    console.log("Dry run. Re-run with --apply to delete.");
+    console.log(dryRunNotice("prune:orphans", "PRUNE_APPLY"));
     return;
   }
 
