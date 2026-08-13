@@ -37,7 +37,7 @@ type FixtureDocument = { id: string; title: string; clips: FixtureClip[] };
 
 function mediaClip(
   id: string,
-  kind: "image" | "video",
+  kind: "image" | "video" | "audio",
   index: number,
   duration: number,
   sourceDuration = duration,
@@ -47,7 +47,10 @@ function mediaClip(
     index,
     kind,
     src: PIXEL,
-    poster: PIXEL,
+    // Audio must NOT carry a poster: the field exists on the shared type, and
+    // a poster minted for a sound file is a broken image wherever a card or
+    // the recently-deleted list paints one.
+    ...(kind === "audio" ? {} : { poster: PIXEL }),
     alt: id,
     aspect: 16 / 9,
     trackIndex: 0,
@@ -675,6 +678,37 @@ test.describe("graph view E2E", () => {
     expect(labelBox).not.toBeNull();
     expect(stripBox).not.toBeNull();
     expect(Math.abs(stripBox!.x - labelBox!.x)).toBeLessThanOrEqual(2);
+  });
+
+  // #314 item 3: the e2e suite never asserted `data-media-kind="audio"`. The
+  // stamp is three-way since audio landed, and its ternary asks "is it video?"
+  // first — so a lost audio arm falls through to IMAGE and a voice take is
+  // labelled a picture. That is invisible on a board of images, which is how
+  // #312 shipped.
+  //
+  // Its own document rather than the shared fixture: 160-odd tests assert that
+  // fixture's exact contents, and adding a clip to it would be a large blast
+  // radius for one attribute.
+  test("an audio clip is stamped AUDIO, not IMAGE", async ({ page }) => {
+    const api = await installGraphApi(page);
+    api.documents
+      .get(CHILD_ID)!
+      .clips.push(collectionClip("clip-takes", GRANDCHILD_ID, 2, "Takes", 1));
+    api.documents.set(GRANDCHILD_ID, {
+      id: GRANDCHILD_ID,
+      title: "Takes",
+      clips: [mediaClip("vo-1", "audio", 0, 8)],
+    });
+
+    await openGraph(page);
+    await expandSubGraph(page, "Scene A");
+    await expandSubGraph(page, "Takes");
+
+    const card = strip(page, GRANDCHILD_ID).locator('[data-node-id="vo-1"]');
+    await expect(card).toBeVisible();
+    const stamp = card.locator("[data-media-kind]");
+    await expect(stamp).toHaveAttribute("data-media-kind", "audio");
+    await expect(stamp).toHaveText("AUDIO");
   });
 
   test("sub-graphs nest recursively: expanding a child reveals its own collapsed children", async ({
