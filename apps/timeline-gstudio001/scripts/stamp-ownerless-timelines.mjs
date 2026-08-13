@@ -18,11 +18,13 @@
 import { cert, applicationDefault, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
+import { dryRunNotice, readApplyFlag } from "./apply-flag.mjs";
+
 // Must track TIMELINE_COLLECTION in lib/firebase-timeline-store.ts.
 const COLLECTION = "gstudioTimelineDocuments";
 const BATCH_SIZE = 400; // Firestore caps a batch at 500 writes.
 
-const apply = process.argv.includes("--apply");
+const apply = readApplyFlag("stamp:ownership", "STAMP_APPLY");
 
 function credential() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -83,7 +85,7 @@ async function main() {
   console.log("");
 
   if (!apply) {
-    console.log("Dry run. Re-run with --apply to write.");
+    console.log(dryRunNotice("stamp:ownership", "STAMP_APPLY"));
     return;
   }
 

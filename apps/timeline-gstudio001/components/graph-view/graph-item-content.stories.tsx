@@ -57,6 +57,33 @@ const emptyCollectionGraph = (() => {
   return result.value;
 })();
 
+/** A HYDRATED collection whose first child is audio. Audio is skipped by the
+ *  preview walk (it has no frame), so this card has nothing to draw — and the
+ *  film-leader glyph it used to fall back to says "no picture" where the true
+ *  answer is "this is sound". */
+const AUDIO_COLLECTION_ID = "audio-col" as NodeId;
+const audioCollectionGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: AUDIO_COLLECTION_ID,
+      name: "Voice takes",
+      children: [
+        {
+          kind: "media",
+          id: "vo-1" as NodeId,
+          name: "Pat VO",
+          mediaKind: "audio",
+          src: "data:audio/wav;base64,UklGRg==",
+          fullDurationSeconds: 8,
+        },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
 const emptyCollectionNode = emptyCollectionGraph.nodesById.get(EMPTY_COLLECTION_ID);
 if (emptyCollectionNode?.kind !== "collection") {
   throw new Error("Empty collection ghost fixture did not build.");
@@ -247,6 +274,56 @@ export const EmptyCardUsesCleanIconFallback: Story = {
  * plain click opens the collection now, so a 28px corner button was a second
  * way to do the easy thing, parked over the artwork of every collection card.
  */
+/**
+ * A collection that LEADS WITH AUDIO shows the music glyph, not the leader.
+ *
+ * The thumbnail is the first child's frame and audio has none, so a collection
+ * of voice takes fell through to `CollectionLeaderPlaceholder` — the film
+ * crosshair, which means "no picture here". For sound that is the wrong
+ * sentence, and the audio media card already had the right glyph.
+ */
+export const AudioLedCollectionShowsMusicGlyph: Story = {
+  args: { ...baseArgs, id: AUDIO_COLLECTION_ID },
+  decorators: [
+    (Story) => {
+      // HYDRATED, unlike the other stories here: the audio branch reads the
+      // collection's live graph children, which is the only place the lead
+      // child's kind exists. A stored summary carries no entry for audio.
+      const store = createGraphDetailsStore({
+        [AUDIO_COLLECTION_ID]: {
+          alt: "Voice takes",
+          aspect: 16 / 9,
+          trackIndex: 0,
+          hydrated: true,
+          itemCount: 1,
+          duration: 8,
+          previewItems: [],
+        } satisfies ClipDetail,
+      });
+      return (
+        <DndCollections initialGraph={audioCollectionGraph}>
+          <GraphDetailsProvider store={store}>
+            <div className="h-32 w-40 bg-zinc-950 p-2">
+              <Story />
+            </div>
+          </GraphDetailsProvider>
+        </DndCollections>
+      );
+    },
+  ],
+  play: async ({ canvasElement }) => {
+    const fallback = canvasElement.querySelector<HTMLElement>(
+      "[data-empty-collection-preview]",
+    );
+    await expect(fallback).not.toBeNull();
+    // The marker is what distinguishes the two glyphs — both are bare SVGs, so
+    // asserting "an svg is present" would pass for the leader too and prove
+    // nothing about this change.
+    await expect(fallback!.getAttribute("data-collection-preview-kind")).toBe("audio");
+    await expect(previewImages(canvasElement)).toHaveLength(0);
+  },
+};
+
 export const ComposedCardStructure: Story = {
   args: baseArgs,
   decorators: [renderWithDetail([ASSET_A, ASSET_B])],

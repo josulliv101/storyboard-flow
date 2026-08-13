@@ -226,6 +226,38 @@ function useHydratedCollectionPreviews(
  * two copies of "enabled children" would drift, and the two sit on screen
  * together.
  */
+/**
+ * Whether this collection LEADS with audio.
+ *
+ * A collection's thumbnail is its first child's frame, and audio has no frame
+ * — so a collection of voice takes fell through to `CollectionLeaderPlaceholder`,
+ * the film-leader crosshair, which says "no picture here" when the honest
+ * answer is "this is sound". The audio card already has the right glyph
+ * (`AudioPlaceholder`); this is what lets the collection reach for it.
+ *
+ * FIRST child, not "any" and not "all": it mirrors exactly what the thumbnail
+ * would otherwise have shown, so the glyph and the frame it replaces are
+ * answering the same question. A collection whose first item is a video and
+ * whose second is audio still shows the video's frame, which is correct.
+ *
+ * Hydrated collections only. A placeholder has no graph children to read and
+ * its stored summary carries no preview entry for audio, so it keeps the
+ * leader — visibly wrong-ish, but inventing an answer from no data is worse.
+ */
+export function useFirstChildIsAudio(id: NodeId): boolean {
+  const store = useCollectionsStore();
+  const getSnapshot = useCallback(() => {
+    const graph = store.getSnapshot().graph;
+    const first = graph.childrenById.get(id)?.[0];
+    if (first === undefined) return false;
+    const node = graph.nodesById.get(first);
+    return node?.kind === "media" && node.mediaKind === "audio";
+  }, [store, id]);
+  // A boolean, so the selector's identity is stable by construction — the
+  // package's render-efficiency model requires selectors not to allocate.
+  return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
+}
+
 export function useEnabledChildCount(id: NodeId): number {
   const store = useCollectionsStore();
   const [derive] = useState(() =>
@@ -1624,6 +1656,9 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   // card without a reload; placeholders fall back to their stored summary.
   const hydrated = detail?.hydrated === true;
   const enabledChildCount = useEnabledChildCount(id);
+  // Audio has no frame, so a collection leading with it has no thumbnail to
+  // show — see useFirstChildIsAudio.
+  const leadsWithAudio = useFirstChildIsAudio(id);
   const liveSeconds = useHydratedCollectionSeconds(id as string, hydrated);
 
   // ENABLED children only, so the card agrees with the time totals and with
@@ -1747,10 +1782,14 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           {previews.length === 0 ? (
             <span
               data-empty-collection-preview
+              data-collection-preview-kind={leadsWithAudio ? "audio" : "leader"}
               aria-hidden="true"
               className="flex flex-1 items-center justify-center overflow-hidden rounded-sm"
             >
-              <CollectionLeaderPlaceholder />
+              {/* The film leader means "no picture". For a collection of voice
+                  takes that is the wrong sentence — the right one is "this is
+                  sound", and the audio card's own glyph already says it. */}
+              {leadsWithAudio ? <AudioPlaceholder /> : <CollectionLeaderPlaceholder />}
             </span>
           ) : (
             previews.map((preview, index) => (
