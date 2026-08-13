@@ -1718,6 +1718,32 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             armed={selectMode}
             revealOnHover={SELECT_HOVER_REVEAL_COLLECTION}
           />
+          {/* THE COLLECTION MARK, dead centre over the frames.
+              A collection's frames are its children's pictures, so at a glance
+              the card looks like the media inside it — the dashed border and
+              the caption glyph both say "collection" at the EDGES, where the
+              eye is not. This says it over the picture itself.
+
+              Half-opacity on purpose: it has to be legible without hiding the
+              frame it sits on, since the frame is how you recognise WHICH
+              collection this is. `pointer-events-none` keeps the card's own
+              click, drag and checkbox untouched, and it is `aria-hidden`
+              because the surface's label already announces "collection".
+
+              Only over real frames — the empty state below draws its own
+              placeholder, and two glyphs stacked would just read as a bug. */}
+          {previews.length > 0 ? (
+            <span
+              data-collection-mark
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 z-10 grid place-items-center"
+            >
+              <Layers
+                className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.5}
+              />
+            </span>
+          ) : null}
           {previews.length === 0 ? (
             <span
               data-empty-collection-preview
