@@ -119,6 +119,17 @@ export async function handleMoveClip(
       } as const;
     },
     ctx.requesterUid,
+    // A move EMPTIES ITS SOURCE whenever it takes the last clip out, and that
+    // is as deliberate as a removal — the same exemption `remove_clip` has
+    // carried since it hit this. Without it the store refused the write with
+    // "Refusing to save an empty timeline over an existing non-empty
+    // document", which the catch in apply-command rethrew, so the tool did not
+    // even fail politely.
+    //
+    // Safe to pass unconditionally: apply-command scopes the flag to the
+    // documents this command actually emptied, so the DESTINATION — which is
+    // gaining a clip, not losing one — never receives it.
+    { allowEmptying: true },
   );
 
   if (!outcome.ok) return reportFailure(outcome);

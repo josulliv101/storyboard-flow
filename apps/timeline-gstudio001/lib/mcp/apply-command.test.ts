@@ -93,6 +93,25 @@ function clip(id: string): TimelineClip {
   };
 }
 
+
+function collectionClip(id: string): TimelineClip {
+  return {
+    id,
+    index: 0,
+    kind: "collection",
+    title: id,
+    childTimelineId: id,
+    alt: `${id} collection`,
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: 0,
+    duration: 3,
+    sourceDuration: 3,
+    trimIn: 0,
+    trimOut: 0,
+  } as TimelineClip;
+}
+
 function seed(id: string, clips: TimelineClip[], ownerUid = OWNER, revision = 1) {
   const document: TimelineDocument = { id, title: id, clips };
   state.docs.set(id, { ...document, ownerUid, revision });
@@ -146,6 +165,45 @@ describe("applyCollectionsCommand", () => {
     expect(result.ok).toBe(true);
     const stored = state.docs.get("root") as { clips: TimelineClip[] };
     expect(stored.clips[0].title).toBe("Opening shot");
+  });
+
+
+  // ── THE STORE'S REFUSALS ARE ANSWERS, NOT CRASHES ─────────────────────────
+  //
+  // The catch here handled a revision conflict and an access denial and
+  // rethrew everything else. The store has two other refusals — the empty
+  // guard and the orphan guard — and both left this surface as a raw
+  // exception with no explanation. A refusal is a decision the caller has to
+  // read and act on, so it belongs in the result.
+
+  it("reports the empty-collection refusal instead of throwing", async () => {
+    seed("root", [collectionClip("src"), collectionClip("dst")]);
+    seed("src", [clip("only")]);
+    seed("dst", [clip("other")]);
+
+    // No allowEmptying: this stands in for any command that empties a source
+    // without meaning to. `move_clip` now passes the flag; this is the path
+    // taken when something does not.
+    const result = await applyCollectionsCommand(
+      "root",
+      {
+        type: "move-nodes",
+        nodeIds: [parseNodeId("only")],
+        toParentId: parseNodeId("dst"),
+        toIndex: 1,
+      },
+      OWNER,
+    );
+
+    expect(result.ok).toBe(false);
+    // Narrowed rather than cast: a "rejected" outcome carries a structured
+    // rejection and no message, and this must be the plain-error kind.
+    if (result.ok || result.kind !== "error") throw new Error("expected an error outcome");
+    expect(result.message).toMatch(/would empty a collection/i);
+    // Refused means refused — the destination must not have been written
+    // either, since the batch is atomic.
+    expect(storedClipIds("src")).toEqual(["only"]);
+    expect(storedClipIds("dst")).toEqual(["other"]);
   });
 
   it("surfaces a reducer refusal as a rejection rather than throwing", async () => {
