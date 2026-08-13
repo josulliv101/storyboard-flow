@@ -115,6 +115,36 @@ function seed(id: string, ownerUid: string | undefined, childIds: string[] = [])
   });
 }
 
+
+/**
+ * Seed a LEGACY record: clips at the top level only, with no nested
+ * `document`. `buildSavePayload` always writes all three fields today, so
+ * anything current code produced stays in sync — but a record written by an
+ * older path, restored from a backup, or created externally does not, and
+ * `toTimelineDocument` still serves these correctly.
+ */
+function seedLegacyTopLevel(id: string, ownerUid: string, childIds: string[] = []) {
+  const clips = childIds.map((childId, index) => ({
+    ...collectionClip(`${id}-c${index}`, childId),
+    index,
+  }));
+  state.docs.set(id, { id, title: `Doc ${id}`, clips, ownerUid });
+}
+
+/** Seed a record whose live clips resolve ONLY from the recovery snapshot. */
+function seedRecoveryOnly(id: string, ownerUid: string, childIds: string[] = []) {
+  const clips = childIds.map((childId, index) => ({
+    ...collectionClip(`${id}-c${index}`, childId),
+    index,
+  }));
+  state.docs.set(id, {
+    id,
+    title: `Doc ${id}`,
+    lastNonEmptyDocument: { id, title: `Doc ${id}`, clips },
+    ownerUid,
+  });
+}
+
 beforeEach(() => {
   state.docs.clear();
   state.reads.length = 0;
@@ -133,6 +163,66 @@ describe("cascade deletion", () => {
     await deleteFirebaseTimelineDocument("root", "user-a");
 
     expect([...state.docs.keys()]).toEqual(["unrelated"]);
+  });
+
+
+  // ── ONE DEFINITION OF "THIS RECORD'S CLIPS" ───────────────────────────────
+  //
+  // The walk used to read `data.document?.clips ?? []` — the only
+  // single-source read in the file, where every other reader resolves three
+  // sources. A record serving its clips from either of the other two enqueued
+  // no children, so the root was deleted and everything beneath it survived:
+  // unreachable, still owned, its media never eligible for reclaim, and with
+  // no path left to reach it. A silent, permanent storage leak.
+
+  it("cascades into children of a LEGACY record with no nested document", async () => {
+    seedLegacyTopLevel("root", "user-a", ["child-a"]);
+    seed("child-a", "user-a", ["grandchild"]);
+    seed("grandchild", "user-a");
+    seed("unrelated", "user-a");
+
+    await deleteFirebaseTimelineDocument("root", "user-a");
+
+    // Before the fix: only "root" went, leaving child-a and grandchild
+    // orphaned and unreachable.
+    expect([...state.docs.keys()]).toEqual(["unrelated"]);
+  });
+
+  it("cascades into children a record serves from its RECOVERY snapshot", async () => {
+    seedRecoveryOnly("root", "user-a", ["child-a"]);
+    seed("child-a", "user-a");
+    seed("unrelated", "user-a");
+
+    // This is what the product would show for that record, so it is what
+    // deleting it has to account for.
+    await deleteFirebaseTimelineDocument("root", "user-a");
+
+    expect([...state.docs.keys()]).toEqual(["unrelated"]);
+  });
+
+  it("does NOT cascade into a stale recovery snapshot when live clips exist", async () => {
+    // The asymmetry that rules out simply unioning all three sources, the way
+    // the reference COUNTER deliberately does. `moved-away` was removed from
+    // this collection and lives elsewhere now; the snapshot still names it.
+    // Deleting the parent must not follow that stale edge and destroy it.
+    state.docs.set("root", {
+      id: "root",
+      title: "Doc root",
+      document: { id: "root", title: "Doc root", clips: [{ ...collectionClip("root-c0", "child-a"), index: 0 }] },
+      clips: [{ ...collectionClip("root-c0", "child-a"), index: 0 }],
+      lastNonEmptyDocument: {
+        id: "root",
+        title: "Doc root",
+        clips: [{ ...collectionClip("root-old", "moved-away"), index: 0 }],
+      },
+      ownerUid: "user-a",
+    });
+    seed("child-a", "user-a");
+    seed("moved-away", "user-a");
+
+    await deleteFirebaseTimelineDocument("root", "user-a");
+
+    expect([...state.docs.keys()]).toEqual(["moved-away"]);
   });
 
   // The regression: this recursed A -> B -> A until the stack gave out, because

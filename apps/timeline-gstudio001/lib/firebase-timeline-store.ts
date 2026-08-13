@@ -912,7 +912,32 @@ export async function deleteFirebaseTimelineDocument(id: string, requesterUid: s
 
       toDelete.push(currentId);
 
-      for (const clip of data.document?.clips ?? []) {
+      // THE SAME CLIPS THE PRODUCT SERVES, resolved by the same function.
+      //
+      // This read `data.document?.clips ?? []` and was the only single-source
+      // reader in the file. A record whose live clips resolve from the legacy
+      // top-level `clips`, or from the `lastNonEmptyDocument` recovery
+      // snapshot, has no `document.clips` — so the walk enqueued no children,
+      // deleted the root alone, and left every sub-collection beneath it
+      // unreachable but still owned. `collectOwnedTimelineClips` then goes on
+      // counting that orphan's clips as live references, so its media is never
+      // eligible for reclaim and nothing can reach the orphan to delete it: a
+      // silent, permanent storage leak.
+      //
+      // Calling `toTimelineDocument` rather than re-implementing the
+      // precedence is the point. That precedence is subtler than it looks —
+      // with no `document`, a recovery snapshot wins over top-level clips
+      // entirely — and a second copy of a rule like that is a second chance to
+      // disagree, which is the bug being fixed.
+      //
+      // NOT the superset `collectOwnedTimelineClips` uses. That one
+      // deliberately unions all three sources because over-counting a
+      // REFERENCE only leaks a file, while under-counting deletes one in use.
+      // Deleting has the opposite asymmetry: a child listed only in a stale
+      // recovery snapshot may have been moved elsewhere and be perfectly
+      // alive, and cascading into it would destroy live work. Delete what the
+      // product would show; count references from everything.
+      for (const clip of toTimelineDocument(currentId, data).clips) {
         if (clip.kind !== "collection" || !clip.childTimelineId) continue;
         // Already queued or already deleted — a cycle or a diamond.
         if (visited.has(clip.childTimelineId)) continue;
