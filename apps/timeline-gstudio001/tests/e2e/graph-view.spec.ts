@@ -3932,25 +3932,36 @@ test.describe("graph view E2E", () => {
     const trail = page.getByRole("navigation", { name: "Timeline focus path" });
     const overflow = trail.locator("[data-graph-crumb-overflow]");
 
-    // Three ancestors (d1, d2, d3) is past the threshold: the first two fold.
-    await expect(overflow).toBeVisible();
-    await expect(overflow).toHaveAttribute("aria-label", /2 hidden timelines/i);
-    await expect(trail.getByRole("link", { name: TITLES[0] })).toHaveCount(0);
-    await expect(trail.getByRole("link", { name: TITLES[1] })).toHaveCount(0);
-    // Kept: the root crumb, the immediate parent, and the focused crumb.
+    // WIDE: nothing folds. The fold used to be a fixed count — three ancestors
+    // collapsed two of them whatever the window was doing — so a wide screen
+    // hid levels behind a "…" with hundreds of empty pixels beside it. Space
+    // that exists gets used.
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await expect.poll(() => overflow.count()).toBe(0);
+    for (const title of TITLES.slice(0, 3)) {
+      await expect(trail.getByRole("link", { name: title })).toBeVisible();
+    }
     await expect(trail.getByRole("link", { name: "E2E Project" })).toBeVisible();
-    await expect(trail.getByRole("link", { name: TITLES[2] })).toBeVisible();
     await expect(trail).toContainText(TITLES[3]);
 
-    // The folded levels are reachable: open the menu and navigate to one.
+    // NARROW: now it must fold, earliest first, and what folds stays reachable.
+    await page.setViewportSize({ width: 720, height: 900 });
+    await expect(overflow).toBeVisible();
+    // The immediate parent and the focused crumb survive — the parent is the
+    // one the eye uses, and the focused crumb is where you are.
+    await expect(trail.getByRole("link", { name: TITLES[2] })).toBeVisible();
+    await expect(trail).toContainText(TITLES[3]);
+    await expect(trail.getByRole("link", { name: TITLES[0] })).toHaveCount(0);
+
+    // Reachable: open the menu and navigate to a folded level.
     await overflow.click();
     const hidden = page.getByRole("menuitem", { name: TITLES[1] });
     await expect(hidden).toBeVisible();
     await hidden.click();
     await page.waitForURL(`**${GRAPH_URL}/${DEPTH_IDS[0]}/${DEPTH_IDS[1]}`);
 
-    // Two ancestors left — under the threshold, so nothing folds now.
-    await expect(trail.locator("[data-graph-crumb-overflow]")).toHaveCount(0);
+    // One ancestor left — it fits even at this width, so the "…" withdraws.
+    await expect.poll(() => overflow.count()).toBe(0);
     await expect(trail.getByRole("link", { name: TITLES[0] })).toBeVisible();
   });
 
@@ -6945,6 +6956,117 @@ test.describe("graph view E2E", () => {
       "",
     );
     expect(await height()).toBe(browseHeight);
+  });
+
+  // ── DESTINATION MODE ──────────────────────────────────────────────────────
+  //
+  // Copy and Cut both end with the same question — WHERE does this land? — and
+  // select mode is the wrong shape for answering it: a plain click toggles
+  // selection, so a collection cannot be opened to reach the place you mean.
+  // Both verbs now hand the board back for navigation and keep only the header.
+
+  test("a copy drops the checkboxes and shows the breadcrumb, with Cancel as the way out", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+    const surface = strip(page, PROJECT_ID);
+
+    await selectCard(surface.locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    // Armed: every card is showing its checkbox pinned on.
+    await expect
+      .poll(() =>
+        surface.locator('[data-selection-indicator-reveal="armed"]').count(),
+      )
+      .toBeGreaterThan(0);
+
+    await selectionAction(page, /^Copy$/);
+
+    // The checkboxes go — the mode is over as far as the CARDS are concerned.
+    await expect
+      .poll(() => surface.locator('[data-selection-indicator-reveal="armed"]').count())
+      .toBe(0);
+    // The row does not: it still carries the count, the trail and the way out.
+    await expect(header).toHaveAttribute("data-header-mode", "select");
+    await expect(header.locator("[data-select-mode-breadcrumb]")).toBeVisible();
+    await expect(header.locator("[data-select-mode-verbs]")).toHaveCount(0);
+    await expect(page.locator("[data-select-mode-done]")).toHaveText("Cancel");
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
+  });
+
+  test("after a copy a plain click DRILLS IN, which is the whole point", async ({ page }) => {
+    // The case that was impossible before: in select mode a click toggles
+    // selection, so there was no way to reach a destination inside a
+    // collection without leaving the gesture behind.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    await selectionAction(page, /^Copy$/);
+
+    await drillButton(page, "Scene A").click();
+    await expect.poll(() => page.url().includes(CHILD_ID)).toBe(true);
+    // Still armed on the other side of the navigation.
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
+  });
+
+  test("cut, navigate into a collection, paste — the items land there", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="charlie"]'));
+    await toggleMultiSelect(page);
+    await selectionAction(page, "Cut");
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
+
+    await drillButton(page, "Scene A").click();
+    await expect.poll(() => page.url().includes(CHILD_ID)).toBe(true);
+
+    await page.getByRole("button", { name: /^Paste 1 item/ }).click();
+
+    // Landed in the child, and gone from the project — a MOVE, end to end,
+    // through a destination the user had to navigate to.
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toContain("charlie");
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).not.toContain("charlie");
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(0);
+  });
+
+  test("Cancel after a copy discards the clipboard", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    await selectionAction(page, /^Copy$/);
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
+
+    await page.locator("[data-select-mode-done]").click();
+
+    await expect(page.getByRole("button", { name: /^Paste/ })).toHaveCount(0);
+    await expect(page.locator("[data-graph-board-header]")).toHaveAttribute(
+      "data-header-mode",
+      "browse",
+    );
+  });
+
+  test("a copy made OUTSIDE select mode leaves the browse toolbar alone", async ({ page }) => {
+    // The row is kept by the gesture having STARTED in select mode, not merely
+    // by the clipboard being armed — otherwise an ordinary copy would replace
+    // the whole browse toolbar with a selection row nobody asked for.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await selectionAction(page, /^Copy$/);
+
+    await expect(page.locator("[data-graph-board-header]")).toHaveAttribute(
+      "data-header-mode",
+      "browse",
+    );
+    await expect(page.locator("[data-header-paste]")).toBeVisible();
   });
 
   test("the header row sits ABOVE the preview, in browse and in select mode", async ({
