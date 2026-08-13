@@ -1,6 +1,7 @@
 import {
   getChildren,
   isVideoMedia,
+  MIN_MEDIA_DURATION_SECONDS,
   parseNodeId,
   type CollectionsGraph,
   type NodeId,
@@ -189,8 +190,11 @@ export async function handleTrimClip(
         if (args.durationSeconds === undefined) {
           return { ok: false, message: "Give `durationSeconds` for an image clip." } as const;
         }
-        if (!(args.durationSeconds > 0)) {
-          return { ok: false, message: "`durationSeconds` must be greater than 0." } as const;
+        if (!(args.durationSeconds >= MIN_MEDIA_DURATION_SECONDS)) {
+          return {
+            ok: false,
+            message: `\`durationSeconds\` must be at least ${MIN_MEDIA_DURATION_SECONDS}s.`,
+          } as const;
         }
         return {
           ok: true,
@@ -215,10 +219,14 @@ export async function handleTrimClip(
       if (trimIn < 0 || trimOut < 0) {
         return { ok: false, message: "Trims cannot be negative — they are seconds removed from each end." } as const;
       }
-      if (!(trimIn + trimOut < node.fullDurationSeconds)) {
+      // Reported against the SHARED floor rather than a local "> 0", so this
+      // guard and the reducer's clamp cannot drift into disagreeing about the
+      // same edit — which is what #341 was.
+      const longestTrim = node.fullDurationSeconds - MIN_MEDIA_DURATION_SECONDS;
+      if (!(trimIn + trimOut <= longestTrim)) {
         return {
           ok: false,
-          message: `Trims remove the whole clip: this source is ${node.fullDurationSeconds}s long, so \`trimInSeconds\` + \`trimOutSeconds\` must be less than ${node.fullDurationSeconds}.`,
+          message: `Trims would leave less than ${MIN_MEDIA_DURATION_SECONDS}s showing: this source is ${node.fullDurationSeconds}s long, so \`trimInSeconds\` + \`trimOutSeconds\` must be at most ${longestTrim}.`,
         } as const;
       }
       return {

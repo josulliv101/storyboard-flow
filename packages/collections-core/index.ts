@@ -40,6 +40,7 @@ export {
 } from "./graph";
 export {
   applyCommand,
+  MIN_MEDIA_DURATION_SECONDS,
   type AddNodesCommand,
   type ApplyCommandSuccess,
   type CollectionsCommand,

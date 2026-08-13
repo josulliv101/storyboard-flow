@@ -1238,15 +1238,17 @@ export const TrimMediaWithHandles: Story = {
     await dragHandleBy(handle("vid", "left")!, 48);
     await waitFor(() => expect(width("vid")).toBe(120));
 
-    // Over-drag the end: effective duration clamps at 0 (slot width 0, so the
-    // card bottoms out at its ~18px chrome — never negative, never huge).
-    // The pill (now DefaultItemContent's readout) reports 0 showing of the
-    // full 10s source.
+    // Over-drag the end: the effective duration bottoms out at the reducer's
+    // MIN_MEDIA_DURATION_SECONDS, not at 0 (#341). It used to reach 0 — a clip
+    // showing nothing, which the agent path refused for the same edit. The
+    // card still bottoms out at its ~18px chrome because the slot floors at
+    // MIN_ITEM_WIDTH; that floor is why a zero-length clip was never actually
+    // unreachable, and it is unchanged here.
     await dragHandleBy(handle("vid", "right")!, -600);
     await waitFor(() => expect(width("vid")).toBeLessThanOrEqual(20));
     expect(
       nodeCard(canvasElement, "vid").querySelector("[data-trim-pill]")!.textContent
-    ).toBe("0.00s / 10.00s");
+    ).toBe("0.10s / 10.00s");
   },
 };
 
