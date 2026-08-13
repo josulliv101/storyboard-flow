@@ -9,7 +9,7 @@ import { TIMELINE_APP_HTML } from "@storyboard/timeline-widget";
 
 import { listFirebaseTimelineProjects } from "@/lib/firebase-timeline-store";
 import type { ToolResult } from "@/lib/webmcp/types";
-import { attachMedia, createUploadTicket } from "@/lib/mcp/upload";
+import { attachMedia, createUploadTickets } from "@/lib/mcp/upload";
 import { createCollection } from "@/lib/mcp/create-collection";
 import { handleReadTimeline } from "@/lib/mcp/read-timeline";
 import {
@@ -146,6 +146,11 @@ function uidFrom(extra: { authInfo?: { extra?: Record<string, unknown> } }): str
   const uid = extra.authInfo?.extra?.uid;
   return typeof uid === "string" && uid.length > 0 ? uid : null;
 }
+
+// One signed ticket per file is cheap, but an unbounded list is a way to ask
+// the server to mint arbitrarily many. 50 covers a generation round (24 was
+// the case that prompted #307) without becoming a lever.
+const MAX_UPLOAD_BATCH = 50;
 
 const NO_IDENTITY = "Could not determine the account for this token.";
 
@@ -325,19 +330,43 @@ const handler = createMcpHandler(
 
     server.tool(
       "create_upload",
-      "Start uploading a local media file (mp4, webm, mov, jpg, png, webp). Returns a short-lived signed ticket: POST the file to `uploadUrl` as multipart/form-data with every field from `fields` plus the file itself as `file`. Then call attach_media with the returned publicId. The file's bytes never pass through this tool.",
+      "Start uploading local media (mp4, webm, mov, jpg, png, webp, flac, wav, mp3, m4a, aac, ogg, opus). Returns a short-lived signed ticket per file: POST each file to its `uploadUrl` as multipart/form-data with every field from `fields` plus the file itself as `file`. Then call attach_media with the returned publicId(s). PASS `filenames` FOR A BATCH — filing 24 images one at a time costs 48 round trips. The bytes never pass through this tool.",
       {
         projectId: z.string().min(1).describe("Project the asset belongs to."),
-        filename: z.string().min(1).describe("Original filename, used to name the stored asset."),
+        filename: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("One file. Give this or `filenames`, not both."),
+        filenames: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(MAX_UPLOAD_BATCH)
+          .optional()
+          .describe(
+            "Several files in one call, returning one ticket each in the same order. " +
+              "Prefer this whenever you have more than one file.",
+          ),
       },
       async (args, extra) => {
         const uid = uidFrom(extra);
         if (!uid) return errorResult(NO_IDENTITY);
         try {
-          const ticket = await createUploadTicket(args, uid);
+          const tickets = await createUploadTickets(args, uid);
+          const [ticket] = tickets;
+          if (!ticket) return errorResult("Give `filename` or a non-empty `filenames`.");
+          // The SINGLE response shape is unchanged — the ticket's own fields at
+          // the top level — so an existing caller reads exactly what it did
+          // before. A batch answers with `tickets` instead.
+          if (args.filenames === undefined) {
+            return jsonResult(
+              `Upload ticket for "${ticket.publicId}" (${ticket.resourceType}). POST the file to ${ticket.uploadUrl} with the given fields, then call attach_media with publicId "${ticket.publicId}". Expires ${ticket.expiresAt}.`,
+              ticket,
+            );
+          }
           return jsonResult(
-            `Upload ticket for "${args.filename}" (${ticket.resourceType}). POST the file to ${ticket.uploadUrl} with the given fields, then call attach_media with publicId "${ticket.publicId}". Expires ${ticket.expiresAt}.`,
-            ticket,
+            `${tickets.length} upload tickets. POST each file to its own uploadUrl with that ticket's fields, then call attach_media ONCE with all the publicIds in \`items\`. They expire ${ticket.expiresAt}.`,
+            { tickets },
           );
         } catch (error) {
           if (error instanceof ProjectAssetScopeError) return errorResult(error.message);
@@ -348,12 +377,37 @@ const handler = createMcpHandler(
 
     server.tool(
       "attach_media",
-      "Add an already-uploaded file to a timeline as a clip. Verifies the upload landed, then places it — give at most one of `after`, `before` or `position`." +
+      "Add already-uploaded file(s) to a timeline as clips. Verifies each upload landed, then places them — give at most one of `after`, `before` or `position`. PASS `items` FOR A BATCH: it lands them in ONE write, in the order given, and verifies them with ONE asset listing instead of one per file." +
         NO_LIVE_PUSH_NOTE,
       {
         timelineId: z.string().min(1).describe("Timeline document to add the clip to."),
         projectId: z.string().min(1).describe("Project the asset was uploaded under."),
-        publicId: z.string().min(1).describe("`publicId` returned by create_upload."),
+        publicId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("One file. Give this or `items`, not both."),
+        items: z
+          .array(
+            z.object({
+              publicId: z.string().min(1).describe("`publicId` returned by create_upload."),
+              name: z.string().optional().describe("Name for this clip."),
+              durationSeconds: z
+                .number()
+                .positive()
+                .optional()
+                .describe("How long this clip plays."),
+              tags: z.array(z.string()).max(MAX_TAGS_PER_CLIP).optional(),
+            }),
+          )
+          .min(1)
+          .max(MAX_UPLOAD_BATCH)
+          .optional()
+          .describe(
+            "Several files landed in ONE write, in this order, from the resolved " +
+              "position. Prefer this whenever you have more than one — it is the " +
+              "difference between 1 timeline write and N.",
+          ),
         into: z
           .string()
           .optional()

@@ -77,16 +77,18 @@ vi.mock("@/lib/cloudinary-media-store", () => ({
   // Pure extension test, so the mock mirrors the real rule rather than
   // stubbing it — a stub here would let a wrong clip kind pass unnoticed.
   isAudioAsset: (value: string) => /\.(flac|wav|mp3|m4a|aac|ogg|oga|opus)$/i.test(value),
-  createCloudinaryUploadTicket: () => ({
+  createCloudinaryUploadTicket: (filename: string) => ({
     uploadUrl: "https://api.cloudinary.com/v1_1/demo/video/upload",
-    fields: { api_key: "k", folder: "f", public_id: "p", timestamp: "1", signature: "s" },
-    publicId: "f/p",
+    fields: { api_key: "k", folder: "f", public_id: filename, timestamp: "1", signature: "s" },
+    // Keyed on the filename so a batch's tickets are distinguishable — a fixed
+    // publicId would let a wrong-order or dropped-file bug pass unnoticed.
+    publicId: `f/${filename}`,
     resourceType: "video",
     expiresAt: new Date().toISOString(),
   }),
 }));
 
-import { attachMedia } from "./upload";
+import { attachMedia, createUploadTickets } from "./upload";
 
 const OWNER = "user-a";
 const PROJECT = "project-alpha";
@@ -398,5 +400,152 @@ describe("attachMedia", () => {
 
     expect(result.isError).toBe(true);
     expect(storedClips(PROJECT).map((c) => c.id)).toEqual(["a"]);
+  });
+});
+
+// #307. Filing 24 images took 48 sequential calls — a ticket and an attach per
+// image — so the timeline document was rewritten 24 times (24 chances to lose a
+// revision race) and the project's assets were re-listed 24 times to verify
+// them. Both halves of the pair take a list now.
+describe("batching (#307)", () => {
+  /** Three uploads sitting in the project, ready to attach. */
+  function seedThreeAssets() {
+    state.assets.length = 0;
+    for (const name of ["shot-a", "shot-b", "shot-c"]) {
+      state.assets.push({
+        id: name,
+        pathname: `media/user-a/project-alpha/${name}`,
+        url: `https://res.cloudinary.com/demo/image/upload/${name}.jpg`,
+        thumbnailUrl: `https://res.cloudinary.com/demo/image/upload/${name}.jpg`,
+        resourceType: "image",
+        relativePath: name,
+      });
+    }
+  }
+
+  it("mints one ticket per filename, in order", async () => {
+    seed(PROJECT, []);
+    const tickets = await createUploadTickets(
+      { projectId: PROJECT, filenames: ["a.jpg", "b.jpg", "c.jpg"] },
+      OWNER,
+    );
+
+    expect(tickets.map((ticket) => ticket.publicId)).toEqual(["f/a.jpg", "f/b.jpg", "f/c.jpg"]);
+  });
+
+  it("names EVERY unsupported file, not just the first", async () => {
+    seed(PROJECT, []);
+    // One bad name per round trip is the cost this change exists to remove.
+    await expect(
+      createUploadTickets({ projectId: PROJECT, filenames: ["a.jpg", "b.txt", "c.exe"] }, OWNER),
+    ).rejects.toThrow(/"b\.txt", "c\.exe"/);
+  });
+
+  it("lands a batch in ONE write, in the order given", async () => {
+    seed(PROJECT, [clip("existing")]);
+    seedThreeAssets();
+
+    const result = await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        items: [
+          { publicId: "media/user-a/project-alpha/shot-a" },
+          { publicId: "media/user-a/project-alpha/shot-b" },
+          { publicId: "media/user-a/project-alpha/shot-c" },
+        ],
+        position: "end",
+      },
+      OWNER,
+    );
+
+    expect(result.isError).toBeFalsy();
+    const stored = storedClips(PROJECT);
+    expect(stored).toHaveLength(4);
+    // Order preserved: `add-nodes` inserts the array at one index, so the batch
+    // must not arrive reversed or scattered.
+    expect(stored.slice(1).map((entry) => entry.alt)).toEqual(["shot-a", "shot-b", "shot-c"]);
+    // ONE write. The revision moved by exactly one, which is the whole point —
+    // three attaches would have bumped it three times.
+    expect((state.docs.get(PROJECT) as { revision: number }).revision).toBe(2);
+  });
+
+  it("reports every attached clip, and keeps the single-file shape intact", async () => {
+    seed(PROJECT, []);
+    seedThreeAssets();
+
+    const batch = await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        items: [
+          { publicId: "media/user-a/project-alpha/shot-a" },
+          { publicId: "media/user-a/project-alpha/shot-b" },
+        ],
+      },
+      OWNER,
+    );
+    const batchContent = (batch.structuredContent ?? {}) as {
+      attached?: { nodeId: string; toIndex: number }[];
+      nodeId?: string;
+    };
+    expect(batchContent.attached).toHaveLength(2);
+    expect(batchContent.attached!.map((entry) => entry.toIndex)).toEqual([0, 1]);
+
+    // A single attach answers exactly as it always did — no `attached`, the
+    // clip's own fields at the top level — so existing callers are untouched.
+    const single = await attachMedia(
+      { timelineId: PROJECT, projectId: PROJECT, publicId: "media/user-a/project-alpha/shot-c" },
+      OWNER,
+    );
+    const singleContent = (single.structuredContent ?? {}) as { attached?: unknown; nodeId?: string };
+    expect(singleContent.attached).toBeUndefined();
+    expect(typeof singleContent.nodeId).toBe("string");
+  });
+
+  it("carries per-item name and duration rather than one setting for all", async () => {
+    seed(PROJECT, []);
+    seedThreeAssets();
+
+    await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        items: [
+          { publicId: "media/user-a/project-alpha/shot-a", name: "Opening", durationSeconds: 2 },
+          { publicId: "media/user-a/project-alpha/shot-b", name: "Closing", durationSeconds: 7 },
+        ],
+      },
+      OWNER,
+    );
+
+    const stored = storedClips(PROJECT);
+    expect(stored.map((entry) => entry.title)).toEqual(["Opening", "Closing"]);
+    expect(stored.map((entry) => entry.duration)).toEqual([2, 7]);
+  });
+
+  it("refuses the WHOLE batch, naming every missing upload", async () => {
+    seed(PROJECT, [clip("existing")]);
+    seedThreeAssets();
+
+    const result = await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        items: [
+          { publicId: "media/user-a/project-alpha/shot-a" },
+          { publicId: "never-uploaded" },
+          { publicId: "also-missing" },
+        ],
+      },
+      OWNER,
+    );
+
+    expect(result.isError).toBe(true);
+    const text = result.content.map((part) => ("text" in part ? part.text : "")).join(" ");
+    expect(text).toContain("never-uploaded");
+    expect(text).toContain("also-missing");
+    // Nothing partially landed: one bad id must not leave the others attached.
+    expect(storedClips(PROJECT)).toHaveLength(1);
   });
 });
