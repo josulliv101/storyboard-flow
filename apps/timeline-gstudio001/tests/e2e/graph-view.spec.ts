@@ -6829,6 +6829,124 @@ test.describe("graph view E2E", () => {
     expect(await height()).toBe(browseHeight);
   });
 
+  // ── A pending cut hands the row to the breadcrumb ─────────────────────────
+  //
+  // Cutting CLEARS the selection, so every verb in the row is dimmed by
+  // `!hasSelection` and the count drops to zero. Five dead words is the wrong
+  // thing to show at the one moment the user has to go somewhere else: the
+  // whole point of a cut is that the destination is elsewhere.
+
+  /** Arm a cut on one card from inside select mode. */
+  async function cutInSelectMode(
+    page: Page,
+    nodeId: string,
+    collectionId: string = PROJECT_ID,
+  ): Promise<void> {
+    await selectCard(strip(page, collectionId).locator(`[data-node-id="${nodeId}"]`));
+    await toggleMultiSelect(page);
+    await selectionAction(page, "Cut");
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
+  }
+
+  test("a cut swaps the verb run for the breadcrumb, keeping the cut's own count", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+
+    // Before: the verbs are there and the breadcrumb is not.
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="charlie"]'));
+    await toggleMultiSelect(page);
+    await expect(header.locator("[data-select-mode-verbs]")).toBeVisible();
+    await expect(header.locator("[data-select-mode-breadcrumb]")).toHaveCount(0);
+
+    await selectionAction(page, "Cut");
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
+
+    // After: the run is GONE, not merely dimmed, and the breadcrumb has it.
+    await expect(header.locator("[data-select-mode-header]")).toHaveAttribute(
+      "data-select-mode-cut-pending",
+      "",
+    );
+    await expect(header.locator("[data-select-mode-verbs]")).toHaveCount(0);
+    await expect(header.locator("[data-select-mode-breadcrumb]")).toBeVisible();
+
+    // The count survives the cut clearing the selection: it now reports what
+    // is in flight, which is the only number that means anything here. Without
+    // `usePendingCutCount` this reads "0 selected".
+    await expect(page.locator("[data-select-mode-count]")).toHaveText("1 selected");
+    // Paste stays — it is the other half of finishing the gesture.
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
+  });
+
+  test("the breadcrumb navigates during a cut, and the count follows the cut items", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+
+    // Drill in first, so there is an ancestor crumb to travel back up through.
+    await drillButton(page, "Scene A").click();
+    await expect.poll(() => page.url().includes(CHILD_ID)).toBe(true);
+
+    // `c1` is a clip inside Scene A — cut it from DOWN here, so the paste
+    // destination is genuinely somewhere else.
+    await cutInSelectMode(page, "c1", CHILD_ID);
+
+    // The crumb is a real link inside the select row. Following it changes the
+    // focused collection, which is what gives the paste somewhere to land.
+    const crumb = header.locator("[data-select-mode-breadcrumb] a").first();
+    await expect(crumb).toBeVisible();
+    await crumb.click();
+    await expect.poll(() => page.url().includes(CHILD_ID)).toBe(false);
+
+    // Still one item in flight, on a screen where nothing is selected.
+    await expect(header.locator("[data-select-mode-header]")).toHaveAttribute(
+      "data-select-mode-cut-pending",
+      "",
+    );
+    await expect(page.locator("[data-select-mode-count]")).toHaveText("1 selected");
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
+  });
+
+  test("Done during a pending cut abandons it and un-dims the sources", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const before = await stripOrder(page, PROJECT_ID);
+
+    await cutInSelectMode(page, "charlie");
+    await page.locator("[data-select-mode-done]").click();
+
+    // Un-dimmed, still where they were, and the clipboard is empty — leaving
+    // without pasting is the user saying the move is off. The `✕` that cancels
+    // a cut lives only in the BROWSE header, so before this the items stayed
+    // dimmed with no control on screen to release them.
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Paste/ })).toHaveCount(0);
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toEqual(before);
+  });
+
+  test("the header keeps the browse row's height with a cut pending", async ({ page }) => {
+    // The breadcrumb is a taller-looking thing than a run of text verbs, and
+    // the row is sized by its tallest child. Anything that changes this moves
+    // the preview and the trim frame, both of which measure this element.
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+    const height = () =>
+      header.evaluate((element) => Math.round(element.getBoundingClientRect().height));
+
+    const browseHeight = await height();
+    await cutInSelectMode(page, "charlie");
+    await expect(header.locator("[data-select-mode-header]")).toHaveAttribute(
+      "data-select-mode-cut-pending",
+      "",
+    );
+    expect(await height()).toBe(browseHeight);
+  });
+
   test("the header row sits ABOVE the preview, in browse and in select mode", async ({
     page,
   }) => {

@@ -75,6 +75,7 @@ import { Slider } from "@/components/core/slider";
 import {
   useClipboardCount,
   useHasPendingCut,
+  usePendingCutCount,
   useSelectionActionState,
   useSelectionAnchorId,
 } from "./graph-selection-actions";
@@ -1016,11 +1017,16 @@ function SelectModeVerb({
   );
 }
 
-function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }>) {
-  const store = useCollectionsStore();
-  const state = useSelectionActionState();
-  const { selectionCount } = state;
-
+/**
+ * The fitted run of verbs, and the `⋮` holding whatever did not fit.
+ *
+ * ITS OWN COMPONENT so the row can leave it out entirely while a cut is
+ * pending, where the breadcrumb takes the space instead. Branching around
+ * `useFittedVerbCount` inside the header would be a conditional hook; lifting
+ * the whole run out is what makes the swap legal, and it also stops the
+ * measuring ResizeObserver from running for a row that is not drawn.
+ */
+function SelectModeVerbRun({ state }: Readonly<{ state: ItemActionState }>) {
   const { containerRef, rulerRef, visible } = useFittedVerbCount(state);
   // What the row could not draw — exactly the overflow menu's contents, taken
   // in DRAW order so the two halves of one list stay in one order.
@@ -1030,8 +1036,96 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
   );
 
   return (
+    /* The verb run, and the ruler it is measured against. `flex-1 min-w-0`
+       so the budget comes from the ROW rather than from the verbs — see
+       useFittedVerbCount for why that direction matters. */
+    <div
+      ref={containerRef}
+      data-select-mode-verbs={visible.size}
+      className="relative flex min-w-0 flex-1 items-center gap-x-5 overflow-hidden"
+    >
+      <div
+        ref={rulerRef}
+        aria-hidden="true"
+        inert
+        data-select-mode-verb-ruler=""
+        // Out of flow and invisible, but LAID OUT — `visibility: hidden`
+        // keeps the boxes measurable where `display: none` would report
+        // zero. Absolute so it cannot widen the container it is measured
+        // against, and `inert` so a hidden run of buttons is not a set of
+        // tab stops.
+        className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-x-5"
+      >
+        {SELECT_MODE_VERBS.map((action) => (
+          <SelectModeVerb key={action} action={action} state={state} />
+        ))}
+        {/* The `⋮`'s own width, MEASURED rather than assumed: it is 32px
+            under a mouse and 44px under a finger (HEADER_SELECTION_SIZE), so
+            a constant would reserve the wrong number on one of them and drop
+            a verb early. Kept LAST, past every verb index, so the per-verb
+            lookup by `indexOf` above is unaffected by its presence. */}
+        <span data-select-mode-overflow-ruler="" className={cn(HEADER_SELECTION_SIZE, "shrink-0")} />
+      </div>
+      {SELECT_MODE_VERBS.filter((action) => visible.has(action)).map((action) => (
+        <SelectModeVerb key={action} action={action} state={state} />
+      ))}
+      {/* ONLY what did not fit, and only WHEN something did not fit.
+
+          Inside the run, so it lands immediately after the last verb drawn
+          rather than at the far end of the row's leftover space — the run is
+          `flex-1`, so out here it floated an inch away from the verbs it
+          belongs to. And absent entirely when all six fit: a `⋮` that is
+          always there says the row is a summary of some longer list, which
+          is what made the row's own verbs look decorative. Appearing only on
+          overflow says the row IS the list and this is its remainder. */}
+      {hidden.size > 0 ? (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`${hidden.size} more selection ${hidden.size === 1 ? "action" : "actions"}`}
+              data-header-selection-overflow
+              data-select-mode-overflow-count={hidden.size}
+              className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE, "shrink-0")}
+            >
+              <EllipsisVertical aria-hidden className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="bottom" align="center" className={SELECTION_MENU_CONTENT_CLASS}>
+            <SelectionMenuOverflowItems
+              parts={DROPDOWN_MENU_PARTS}
+              state={state}
+              actions={hidden}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
+  );
+}
+
+function SelectModeHeader({
+  anchorName,
+  breadcrumb,
+}: Readonly<{ anchorName: string | null; breadcrumb: React.ReactNode }>) {
+  const store = useCollectionsStore();
+  const state = useSelectionActionState();
+  const { selectionCount } = state;
+
+  // A cut CLEARS the selection (see `cutSelection`), so from here on
+  // `selectionCount` is 0 and every verb is dimmed by `!hasSelection`. Rather
+  // than draw five dead words, the row hands the space to the breadcrumb: the
+  // one thing a half-finished cut actually needs is a way to reach the
+  // collection it is going to be pasted into.
+  const cutCount = usePendingCutCount();
+  const cutPending = cutCount > 0;
+
+  return (
     <div
       data-select-mode-header=""
+      data-select-mode-cut-pending={cutPending ? "" : undefined}
       // NOT `flex-wrap` any more. Wrapping was how this row coped with running
       // out of width, and it coped by growing taller — which is exactly what
       // the header must never do, now that both faces of it are pinned to the
@@ -1039,7 +1133,7 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
       className="flex min-w-0 flex-1 items-center gap-x-5"
     >
       <span
-        data-select-mode-count={selectionCount}
+        data-select-mode-count={cutPending ? cutCount : selectionCount}
         // Mono and tabular so the row does not twitch sideways as the count
         // crosses 9 — this number changes on every tap, which is precisely the
         // moment a reflowing toolbar is most annoying.
@@ -1051,75 +1145,26 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
         // that read as a third accent rather than the selection colour.
         className="shrink-0 font-mono text-[13px] tabular-nums text-blue-500"
       >
-        {selectionCount} selected
+        {cutPending ? cutCount : selectionCount} selected
       </span>
-      {/* The verb run, and the ruler it is measured against. `flex-1 min-w-0`
-          so the budget comes from the ROW rather than from the verbs — see
-          useFittedVerbCount for why that direction matters. */}
-      <div
-        ref={containerRef}
-        data-select-mode-verbs={visible.size}
-        className="relative flex min-w-0 flex-1 items-center gap-x-5 overflow-hidden"
-      >
-        <div
-          ref={rulerRef}
-          aria-hidden="true"
-          inert
-          data-select-mode-verb-ruler=""
-          // Out of flow and invisible, but LAID OUT — `visibility: hidden`
-          // keeps the boxes measurable where `display: none` would report
-          // zero. Absolute so it cannot widen the container it is measured
-          // against, and `inert` so a hidden run of buttons is not a set of
-          // tab stops.
-          className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-x-5"
-        >
-          {SELECT_MODE_VERBS.map((action) => (
-            <SelectModeVerb key={action} action={action} state={state} />
-          ))}
-          {/* The `⋮`'s own width, MEASURED rather than assumed: it is 32px
-              under a mouse and 44px under a finger (HEADER_SELECTION_SIZE), so
-              a constant would reserve the wrong number on one of them and drop
-              a verb early. Kept LAST, past every verb index, so the per-verb
-              lookup by `indexOf` above is unaffected by its presence. */}
-          <span data-select-mode-overflow-ruler="" className={cn(HEADER_SELECTION_SIZE, "shrink-0")} />
-        </div>
-        {SELECT_MODE_VERBS.filter((action) => visible.has(action)).map((action) => (
-          <SelectModeVerb key={action} action={action} state={state} />
-        ))}
-        {/* ONLY what did not fit, and only WHEN something did not fit.
+      {/* THE SWAP. Dimmed verbs are worse than absent ones here: after a cut
+          all five are unavailable for the same reason, and the row still has
+          to get the user somewhere. The breadcrumb takes the identical wing —
+          `flex-1 min-w-0` either way — so nothing on either side of it moves.
 
-            Inside the run, so it lands immediately after the last verb drawn
-            rather than at the far end of the row's leftover space — the run is
-            `flex-1`, so out here it floated an inch away from the verbs it
-            belongs to. And absent entirely when all six fit: a `⋮` that is
-            always there says the row is a summary of some longer list, which
-            is what made the row's own verbs look decorative. Appearing only on
-            overflow says the row IS the list and this is its remainder. */}
-        {hidden.size > 0 ? (
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`${hidden.size} more selection ${hidden.size === 1 ? "action" : "actions"}`}
-                data-header-selection-overflow
-                data-select-mode-overflow-count={hidden.size}
-                className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE, "shrink-0")}
-              >
-                <EllipsisVertical aria-hidden className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="bottom" align="center" className={SELECTION_MENU_CONTENT_CLASS}>
-              <SelectionMenuOverflowItems
-                parts={DROPDOWN_MENU_PARTS}
-                state={state}
-                actions={hidden}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
-      </div>
+          Its crumbs are also the up-a-level DROP targets, which is the other
+          half of "where am I pasting this": the same row now answers it by
+          click and by drag. */}
+      {cutPending ? (
+        <div
+          data-select-mode-breadcrumb=""
+          className="flex min-w-0 flex-1 items-center overflow-hidden"
+        >
+          {breadcrumb}
+        </div>
+      ) : (
+        <SelectModeVerbRun state={state} />
+      )}
       <HeaderPasteButton anchorName={anchorName} />
       {/* `ml-auto`: Done sits at the far end, away from Delete. Both end the
           gesture, only one of them destroys anything, and putting them
@@ -1132,13 +1177,22 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
         variant="ghost"
         size="sm"
         data-select-mode-done
-        title="Finish selecting"
+        title={cutPending ? "Finish selecting and cancel the cut" : "Finish selecting"}
         // Clear THEN disarm. The store keeps the mode armed through an empty
         // selection for this view (keepMultiSelectModeWhenEmpty), so the clear
         // cannot disarm it out from under this and the order is only about
         // ending in one notify rather than leaving the row briefly showing "0
         // selected" on its way out.
+        //
+        // Done also ABANDONS a pending cut. Leaving without pasting is the
+        // user saying the move is not happening, and the alternative is worse
+        // than untidy: the sources would stay dimmed on a board with no select
+        // row and — since the `✕` that cancels a cut lives only in the BROWSE
+        // header — no obvious way back to them. `clear()` drops the entries and
+        // the pending set in one notify, which un-dims the sources in place;
+        // they never moved, so there is nothing to put back.
         onClick={() => {
+          graphClipboard.clear();
           store.clearSelection();
           store.setMultiSelectMode(false);
         }}
@@ -1493,7 +1547,7 @@ export function GraphBoard({
                 shape. It stays outside DragChromeFade with the breadcrumb,
                 because a save landing mid-drag is still worth seeing. */}
             {selectModeRow ? (
-              <SelectModeHeader anchorName={anchorName} />
+              <SelectModeHeader anchorName={anchorName} breadcrumb={breadcrumb} />
             ) : (
               <>
             <div className="flex min-w-0 flex-1 items-center gap-3">

@@ -12,13 +12,24 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/
 
 type Stored = Record<string, unknown>;
 
+const DELETE_SENTINEL = "__delete__";
+
 const state = vi.hoisted(() => {
   const docs = new Map<string, Stored>();
   const current = { user: { uid: "user-a", email: null as string | null, name: null, picture: null } };
 
   const applySet = (id: string, data: Stored, opts?: { merge?: boolean }) => {
     const existing = docs.get(id);
-    docs.set(id, opts?.merge && existing ? { ...existing, ...data } : { ...data });
+    const merged = opts?.merge && existing ? { ...existing, ...data } : { ...data };
+    // Firestore's FieldValue.delete() REMOVES the field on a merge write. The
+    // store uses it to drop `lastNonEmptyDocument` on a deliberate empty, so a
+    // mock that stored the sentinel verbatim would leave the recovery snapshot
+    // in place and report an empty that silently re-hydrates as fine.
+    // Same sentinel as trash-empty.test.ts.
+    for (const [key, value] of Object.entries(merged)) {
+      if (value === DELETE_SENTINEL) delete merged[key];
+    }
+    docs.set(id, merged);
   };
   const snapshot = (id: string) => {
     const data = docs.get(id);
@@ -91,7 +102,10 @@ vi.mock("firebase-admin/firestore", () => {
       return new Date(0);
     }
   }
-  return { Timestamp, FieldValue: { serverTimestamp: () => new Timestamp() } };
+  return {
+    Timestamp,
+    FieldValue: { serverTimestamp: () => new Timestamp(), delete: () => "__delete__" },
+  };
 });
 vi.mock("@/lib/firebase-auth-session", () => ({
   requireAuthUser: async () => ({ user: state.current.user, response: null }),
@@ -139,7 +153,13 @@ function seedTimeline(id: string, ownerUid: string | undefined, revision?: numbe
   });
 }
 
-function batchRequest(writes: { document: TimelineDocument; expectedRevision?: number }[]) {
+function batchRequest(
+  writes: {
+    document: TimelineDocument;
+    expectedRevision?: number;
+    allowEmptying?: unknown;
+  }[],
+) {
   return new Request("http://test.local/api/timelines/batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -259,6 +279,94 @@ describe("timeline batch writes", () => {
     );
     expect(response.status).toBe(409);
     expect(state.docs.get("doc-1")).toEqual(before);
+  });
+
+  // The other half of that guard. Removing a collection's LAST clip is a legal
+  // edit, and until the flag reached this route the app could not do it at all
+  // — `allowEmptying` existed on the store and on the MCP path, but the batch
+  // body carried only `document` and `expectedRevision`, so the UI had no way
+  // to say the empty was deliberate.
+  it("allowEmptying lets a deliberate removal empty a document", async () => {
+    seedTimeline("doc-1", "user-a", 2);
+
+    const response = await batchWrite(
+      batchRequest([
+        {
+          document: { id: "doc-1", title: "Timeline doc-1", clips: [] },
+          expectedRevision: 2,
+          allowEmptying: true,
+        },
+      ]),
+    );
+    expect(response.status).toBe(200);
+    expect(state.docs.get("doc-1")?.clips).toEqual([]);
+    expect(state.docs.get("doc-1")?.revision).toBe(3);
+  });
+
+  // The empty must STICK. `toTimelineDocument` reads `lastNonEmptyDocument`
+  // back whenever a stored document has no clips, so permitting the write
+  // without dropping that snapshot would re-hydrate the very clip the user
+  // removed and the removal would silently undo itself on the next read.
+  it("a permitted empty drops the recovery snapshot, so it does not re-hydrate", async () => {
+    // Establish a REAL snapshot first: it is written by every non-empty save,
+    // and the seed does not carry one. Asserting it is absent without putting
+    // it there is a test that passes for the wrong reason.
+    seedTimeline("doc-1", "user-a", 1);
+    await batchWrite(batchRequest([{ document: docOf("doc-1", "keeper"), expectedRevision: 1 }]));
+    expect(state.docs.get("doc-1")?.lastNonEmptyDocument).toBeDefined();
+
+    const response = await batchWrite(
+      batchRequest([
+        {
+          document: { id: "doc-1", title: "Timeline doc-1", clips: [] },
+          expectedRevision: 2,
+          allowEmptying: true,
+        },
+      ]),
+    );
+    expect(response.status).toBe(200);
+    expect(state.docs.get("doc-1")?.clips).toEqual([]);
+    expect(state.docs.get("doc-1")?.lastNonEmptyDocument).toBeUndefined();
+  });
+
+  // Per-write, not per-batch. Stated as a CONTRAST, because a batch is
+  // all-or-nothing: flagging neither and flagging only one both end in 409, so
+  // only the flagged-both case can show the flag is what did it.
+  it("allowEmptying exempts ONLY the write that carries it", async () => {
+    const emptyDoc = (id: string) => ({ id, title: `Timeline ${id}`, clips: [] });
+
+    seedTimeline("doc-1", "user-a", 1);
+    seedTimeline("doc-2", "user-a", 1);
+    const unflagged = await batchWrite(
+      batchRequest([
+        { document: emptyDoc("doc-1"), expectedRevision: 1, allowEmptying: true },
+        { document: emptyDoc("doc-2"), expectedRevision: 1 },
+      ]),
+    );
+    expect(unflagged.status).toBe(409);
+    expect(state.docs.get("doc-1")?.clips).toHaveLength(1);
+    expect(state.docs.get("doc-2")?.clips).toHaveLength(1);
+
+    const bothFlagged = await batchWrite(
+      batchRequest([
+        { document: emptyDoc("doc-1"), expectedRevision: 1, allowEmptying: true },
+        { document: emptyDoc("doc-2"), expectedRevision: 1, allowEmptying: true },
+      ]),
+    );
+    expect(bothFlagged.status).toBe(200);
+    expect(state.docs.get("doc-1")?.clips).toEqual([]);
+    expect(state.docs.get("doc-2")?.clips).toEqual([]);
+  });
+
+  it("rejects a non-boolean allowEmptying as a 400", async () => {
+    seedTimeline("doc-1", "user-a", 1);
+    const response = await batchWrite(
+      batchRequest([
+        { document: docOf("doc-1", "x"), expectedRevision: 1, allowEmptying: "yes" },
+      ]),
+    );
+    expect(response.status).toBe(400);
+    expect(state.docs.get("doc-1")?.revision).toBe(1);
   });
 
   it("rejects a batch that repeats a timeline id", async () => {

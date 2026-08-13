@@ -57,6 +57,7 @@ export async function POST(request: Request) {
       const write = (typeof entry === "object" && entry !== null ? entry : {}) as {
         document?: unknown;
         expectedRevision?: unknown;
+        allowEmptying?: unknown;
       };
       // Full runtime validation (every clip, discriminated by kind): a
       // malformed client payload must never persist under a TimelineClip
@@ -93,11 +94,24 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
+      // Says the empty this write produces is DELIBERATE, exempting just this
+      // document from the empty-over-non-empty guard in the store. Per-write,
+      // like `expectedRevision` and unlike a batch-wide option: a cross-timeline
+      // move empties its source and fills its target in one batch, and only the
+      // source is asking. Without it on the wire the app could never remove a
+      // collection's last clip, however the client asked.
+      if (write.allowEmptying !== undefined && typeof write.allowEmptying !== "boolean") {
+        return NextResponse.json(
+          { error: "allowEmptying must be a boolean." },
+          { status: 400 },
+        );
+      }
       writes.push({
         document: write.document,
         ...(write.expectedRevision !== undefined
           ? { expectedRevision: write.expectedRevision }
           : {}),
+        ...(write.allowEmptying === true ? { allowEmptying: true } : {}),
       });
     }
 

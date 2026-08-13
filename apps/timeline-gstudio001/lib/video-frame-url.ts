@@ -73,6 +73,19 @@ export function collectionPreviewFrameUrl(
 const LAST_FRAME_BACKOFF_SECONDS = 0.05;
 
 /**
+ * How far PAST the range's exact start a single-frame thumbnail samples.
+ *
+ * The mirror of the back-off above, and for the same reason: the exact in-cut
+ * of an encode is frequently black or a fade-in remnant. At 24fps this is
+ * roughly one frame in — indistinguishable from "the first frame" to a viewer,
+ * and the difference between a thumbnail and a black square.
+ *
+ * It is NOT applied to a trimmed clip's in-point, which is a frame the user
+ * chose deliberately and is mid-source rather than at an encode boundary.
+ */
+const FIRST_FRAME_NUDGE_SECONDS = 0.05;
+
+/**
  * `count` frame URLs sampled at even times across the clip's VISIBLE range
  * — [trimInSeconds, trimInSeconds + effectiveSeconds]. Interior frames are
  * read at slot CENTERS ((i + 0.5) / count) so the first isn't the exact
@@ -80,6 +93,12 @@ const LAST_FRAME_BACKOFF_SECONDS = 0.05;
  * small back-off) so the strip always finishes on the clip's final frame
  * (R7 #3). Falls back to the base poster when there is no usable frame URL
  * to transform.
+ *
+ * A SINGLE slot is the exception at both ends: it is a thumbnail standing for
+ * the whole clip, not one cell of a strip, and the slot-centre rule put it at
+ * the clip's MIDPOINT — the owner's report, and wrong for a card whose job is
+ * to say "this is that shot". It samples the START instead. Pinning it to the
+ * end was already rejected for the same reason in reverse.
  */
 export function videoFrameUrls(
   posters: readonly string[],
@@ -93,12 +112,20 @@ export function videoFrameUrls(
   const effective = Math.max(0, range.effectiveSeconds);
   const urls: string[] = [];
   for (let index = 0; index < slots; index += 1) {
-    // Single-slot strips keep the center sample — pinning them to the end
-    // would represent a whole clip by its final frame.
+    // A lone slot is a THUMBNAIL for the whole clip: it opens on the clip's
+    // first frame rather than its midpoint. Nudged off an untrimmed encode's
+    // exact zero, where a black frame is common; a real trim in-point is taken
+    // as given, since the user picked it and it is not an encode boundary.
+    const singleFrameTime =
+      range.trimInSeconds > 0
+        ? range.trimInSeconds
+        : Math.min(FIRST_FRAME_NUDGE_SECONDS, effective / 2);
     const time =
-      index === slots - 1 && slots > 1
-        ? range.trimInSeconds + Math.max(effective / 2, effective - LAST_FRAME_BACKOFF_SECONDS)
-        : range.trimInSeconds + ((index + 0.5) / slots) * effective;
+      slots === 1
+        ? singleFrameTime
+        : index === slots - 1
+          ? range.trimInSeconds + Math.max(effective / 2, effective - LAST_FRAME_BACKOFF_SECONDS)
+          : range.trimInSeconds + ((index + 0.5) / slots) * effective;
     urls.push(build(base, time));
   }
   return urls;
