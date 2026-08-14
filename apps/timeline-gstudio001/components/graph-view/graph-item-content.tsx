@@ -66,6 +66,11 @@ import { formatDuration, formatSeconds } from "@/lib/format-duration";
 import { fittedTagCount } from "@/lib/caption-tag-fit";
 import { resolveCardProvenance } from "@/lib/card-provenance";
 import {
+  FRAME_COUNT_SETTLE_MS,
+  settleFrameCountStep,
+  visibleFrameCount,
+} from "@/lib/frame-count-settle";
+import {
   OVERVIEW_FRAME_SIZE,
   ghostPreviewFrames,
   mediaGhostSrc,
@@ -130,17 +135,6 @@ export function useElementSize(): [
 }
 
 /**
- * How long a CHANGED frame-count measurement must hold before the filmstrip
- * re-samples. A continuous px/s drag sweeps a card's width→count ratio
- * through several integers, and adopting each crossing re-times every frame
- * slot — swapping every `<img>` src on the card (a fresh CDN URL per slot)
- * several times per drag, per video card. Generous on purpose: the drag's
- * layout already tracks live (widths are CSS), only the frame REFINEMENT
- * waits for the size to hold still.
- */
-const FRAME_COUNT_SETTLE_MS = 400;
-
-/**
  * The measured frame count, SETTLED: the first real measurement is adopted
  * immediately — a freshly (re)mounted card, virtualization remounts included,
  * must not wait out the delay to show its filmstrip — while later changes
@@ -152,15 +146,16 @@ const FRAME_COUNT_SETTLE_MS = 400;
  */
 function useSettledFrameCount(measured: number): number {
   const [settled, setSettled] = useState(measured);
-  if (settled === 0 && measured !== 0) setSettled(measured);
+  // The render-time adoption (the repo's cascading-render-safe pattern; a
+  // synchronous setState in the effect would trip the lint). The DECISION is
+  // in lib/frame-count-settle, which is unit-tested; this owns the state.
+  if (settleFrameCountStep({ settled, measured }) === "adopt-now") setSettled(measured);
   useEffect(() => {
-    // settled === 0 means the render-time first adoption is already in
-    // flight — nothing to debounce yet.
-    if (measured === settled || settled === 0) return;
+    if (settleFrameCountStep({ settled, measured }) !== "debounce") return;
     const timer = setTimeout(() => setSettled(measured), FRAME_COUNT_SETTLE_MS);
     return () => clearTimeout(timer);
   }, [measured, settled]);
-  return settled === 0 ? measured : settled;
+  return visibleFrameCount({ settled, measured });
 }
 
 const NO_PREVIEWS: readonly CollectionPreviewFrame[] = [];
