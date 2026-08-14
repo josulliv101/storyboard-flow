@@ -26,7 +26,8 @@ import {
 import { collectionPreviewFrameUrl } from "@/lib/video-frame-url";
 import { hydrateTimeline } from "./graph-hydration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
-import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
+import { NativeDropGrid } from "./graph-native-drop-grid";
+import { NativeDropStrip } from "./graph-native-drop-strip";
 import {
   subTimelineRowStatus,
   subTimelineRowStatusLabel,
