@@ -63,6 +63,7 @@ import { createDerivedCache } from "@/lib/derived-cache";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import { formatDuration, formatSeconds } from "@/lib/format-duration";
+import { fittedTagCount } from "@/lib/caption-tag-fit";
 import { sortTagsStatusFirst } from "@/lib/tag-facets";
 import { TagAccentDot } from "./tag-accent-dot";
 import {
@@ -745,8 +746,6 @@ function ProvenanceLabel({
  * measuring the real row would be circular — hiding a chip changes the width
  * you are measuring from, so the answer would depend on the previous answer.
  */
-const CAPTION_TAG_GAP_PX = 4;
-
 /**
  * The caption's two rows, shared by BOTH card kinds.
  *
@@ -823,42 +822,21 @@ function CaptionTagRow({ tags }: Readonly<{ tags: readonly string[] }>) {
     const ruler = rulerRef.current;
     if (!container || !ruler) return;
 
+    // MEASURE here, DECIDE in lib/caption-tag-fit. The two-pass rule and the
+    // at-least-one-chip floor are the interesting part and they are now
+    // unit-tested; this side owns only the DOM reads.
     const measure = () => {
-      const budget = container.clientWidth;
-      // 0 while the caption is display:none (the strip is showing) — keep the
-      // last answer rather than folding everything for a frame.
-      if (budget === 0) return;
       const widths = Array.from(ruler.children).map((child) =>
         Math.ceil((child as HTMLElement).getBoundingClientRect().width),
       );
-      const counterWidth = counterRef.current?.getBoundingClientRect().width ?? 0;
-
-      // Pass 1 — do they ALL fit with no counter? Asked against the full
-      // budget, because with nothing folded there is no "+N" to leave room for.
-      const whole = widths.reduce(
-        (total, width, index) => total + width + (index > 0 ? CAPTION_TAG_GAP_PX : 0),
-        0,
-      );
-      if (whole <= budget) {
-        setFitted(ordered.length);
-        return;
-      }
-
-      // Pass 2 — something folds, so the counter is going to be drawn and costs
-      // width like a chip. Two passes keeps it one-way: the reserve depends on
-      // pass 1 and never on its own outcome, so it cannot oscillate.
-      const reduced = budget - Math.ceil(counterWidth) - CAPTION_TAG_GAP_PX;
-      let used = 0;
-      let count = 0;
-      for (const width of widths) {
-        const next = used + width + (count > 0 ? CAPTION_TAG_GAP_PX : 0);
-        if (next > reduced) break;
-        used = next;
-        count += 1;
-      }
-      // At least one chip. A row that is only "+4" says there are tags without
-      // showing a single one, which is strictly worse than one chip and "+3".
-      setFitted(Math.max(1, count));
+      const next = fittedTagCount({
+        widths,
+        budget: container.clientWidth,
+        counterWidth: counterRef.current?.getBoundingClientRect().width ?? 0,
+      });
+      // null = the row is not laid out yet; keep the previous answer rather
+      // than folding everything for a frame.
+      if (next !== null) setFitted(next);
     };
 
     measure();
