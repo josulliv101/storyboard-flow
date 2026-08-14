@@ -21,7 +21,7 @@ import {
   useCollectionPreviewFrames,
   useEnabledChildCount,
   useHydratedCollectionSeconds,
-} from "./graph-item-content";
+} from "./graph-card-derivations";
 import { GraphViewNavContext } from "./graph-navigation";
 import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
 

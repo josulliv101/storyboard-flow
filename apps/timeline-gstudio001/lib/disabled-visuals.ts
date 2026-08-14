@@ -51,9 +51,12 @@ export function disabledVisualState(
  * markup is right, and the pixels are simply unstyled. It cost a story failure
  * to find, and it would have shipped looking like the bug it was meant to fix.
  *
- * Both card kinds that need the mapping live in one component file anyway, so
- * a module-level constant there covers the "these two must not drift" concern
- * without putting presentation in a logic module.
+ * The two card kinds used to live in one component file, so a module-level
+ * constant there covered the "these two must not drift" concern. They are two
+ * files now (#281), which makes the classes a shared module of their own:
+ * `components/graph-view/graph-card-dimming`, still inside the scanned tree.
+ * The PRECEDENCE that picks between them is pure and unit-tested in
+ * `graph-card-model`.
  */
 
 /**
