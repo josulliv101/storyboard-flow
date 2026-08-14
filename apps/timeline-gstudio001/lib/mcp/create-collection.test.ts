@@ -73,6 +73,7 @@ vi.mock("firebase-admin/firestore", () => {
 import { parseNodeId } from "@storyboard/ui/dnd-collections";
 
 import { createCollection } from "./create-collection";
+import { at } from "../test-support/at";
 
 const OWNER = "user-a";
 
@@ -123,7 +124,7 @@ describe("createCollection", () => {
     seed("root", []);
     await createCollection({ timelineId: "root", name: "demo one" }, OWNER);
     const parent = state.docs.get("root") as { clips: TimelineClip[] };
-    const added = parent.clips[0];
+    const added = at(parent.clips, 0);
     if (added.kind !== "collection") throw new Error("expected a collection clip");
     expect(added.itemCount).toBe(0);
   });

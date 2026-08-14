@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PlaybackManifest } from "@storyboard/timeline-domain";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
+import { at } from "../../../lib/test-support/at";
 
 // Preview-manifest tests over the REAL route handler, closure loader, and
 // store against the in-memory fake Firestore: the nested closure flattens
@@ -166,8 +167,8 @@ describe("preview manifest route", () => {
     // applies, which is the point: both read models report one timeline.
     expect(body.manifest.durationSeconds).toBeCloseTo(8.12, 6);
     expect(body.manifest.leaves.map((leaf) => leaf.id)).toEqual(["intro", "a", "b"]);
-    expect(body.manifest.leaves[1].collectionPath).toEqual(["root-1", "scene"]);
-    expect(body.manifest.leaves[1].timelineStart).toBeCloseTo(4.12, 6);
+    expect(at(body.manifest.leaves, 1).collectionPath).toEqual(["root-1", "scene"]);
+    expect(at(body.manifest.leaves, 1).timelineStart).toBeCloseTo(4.12, 6);
   });
 
   it("reads the root exactly once", async () => {
@@ -241,7 +242,7 @@ describe("preview manifest route", () => {
 
     const served = await serveTimelineDocument("root-1", "user-a");
     const servedClips = served?.document.clips ?? [];
-    const last = servedClips[servedClips.length - 1];
+    const last = at(servedClips, servedClips.length - 1);
     const servedDuration = last.startTime + last.duration;
 
     const response = await getPreviewManifest(new Request("http://test.local"), params("root-1"));

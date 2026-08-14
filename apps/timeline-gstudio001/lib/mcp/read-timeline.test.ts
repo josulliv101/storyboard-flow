@@ -52,6 +52,7 @@ vi.mock("firebase-admin/firestore", () => {
 });
 
 import { handleReadTimeline } from "./read-timeline";
+import { at } from "../../lib/test-support/at";
 
 const OWNER = "user-a";
 
@@ -113,7 +114,7 @@ function servedCollection(
   result: Awaited<ReturnType<typeof handleReadTimeline>>,
   index = 0,
 ): CollectionTimelineClip {
-  const clip = payloadOf(result).clips[index];
+  const clip = at(payloadOf(result).clips, index);
   if (clip.kind !== "collection") throw new Error(`clip ${index} is ${clip.kind}, not a collection`);
   return clip;
 }
@@ -171,8 +172,8 @@ describe("handleReadTimeline", () => {
 
     const result = await handleReadTimeline({ timelineId: "root" }, { requesterUid: OWNER });
 
-    expect(result.content[0].text).toContain("2 clips");
-    expect(result.content[0].text).toContain("run-1 (collection)");
+    expect(at(result.content, 0).text).toContain("2 clips");
+    expect(at(result.content, 0).text).toContain("run-1 (collection)");
   });
 
   it("reports a missing document without throwing", async () => {

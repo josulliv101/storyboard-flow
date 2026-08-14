@@ -103,7 +103,9 @@ describe("planTagWrite", () => {
   it("refuses a node with no detail entry rather than writing a bare one", () => {
     // Writing `{tags}` alone would rebuild the clip without its alt, poster or
     // sourceAsset — the erasure this refusal exists to prevent.
-    const thin: DetailsById = { root: details.root };
+    const rootDetail = details.root;
+    if (rootDetail === undefined) throw new Error("the fixture has no root detail");
+    const thin: DetailsById = { root: rootDetail };
     const result = planTagWrite(graph, thin, parseNodeId("clip-a"), ["x"]);
     expect(isTagWriteRefusal(result)).toBe(true);
     if (!isTagWriteRefusal(result)) throw new Error("expected a refusal");

@@ -5,6 +5,7 @@ import { parseNodeId, type CollectionItemNode } from "@storyboard/ui/dnd-collect
 import type { ClipDetail } from "@storyboard/timeline-domain";
 
 import { cloneNodeForInsert, type CloneDeps } from "./graph-node-clone";
+import { at } from "./test-support/at";
 
 /** A deterministic minter so ids are predictable and collision-free in tests. */
 function counterMint(): CloneDeps["mintId"] {
@@ -134,7 +135,7 @@ describe("cloneNodeForInsert: collection deep clone", () => {
     // Media content is preserved through the clone.
     const rootImage = root.clips.find((clip) => clip.kind === "image");
     expect(rootImage && rootImage.kind === "image" ? rootImage.src : null).toBe("a.png");
-    const subImage = sub.clips[0];
+    const subImage = at(sub.clips, 0);
     expect(subImage.kind === "image" ? subImage.src : null).toBe("b.png");
 
     // NOTHING from the source survives as an id anywhere in the clone.
@@ -191,8 +192,8 @@ describe("cloneNodeForInsert: collection deep clone", () => {
     expect(result.newDocuments).toHaveLength(2);
     const cloneA = result.newDocuments.find((doc) => doc.id === result.node.id)!;
     const cloneB = result.newDocuments.find((doc) => doc.id !== result.node.id)!;
-    const aRef = cloneA.clips[0];
-    const bRef = cloneB.clips[0];
+    const aRef = at(cloneA.clips, 0);
+    const bRef = at(cloneB.clips, 0);
     if (aRef.kind !== "collection" || bRef.kind !== "collection") throw new Error("fixture");
     // A' → B' and B' → A' — the clone is a closed, independent cycle. A back
     // reference to the SOURCE "A" would wire the copy to the original.

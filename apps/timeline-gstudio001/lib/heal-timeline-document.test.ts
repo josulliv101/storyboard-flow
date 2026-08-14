@@ -5,6 +5,7 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/
 
 import type { CloudinaryAsset } from "./cloudinary-media-store";
 import { healTimelineDocument } from "./heal-timeline-document";
+import { at } from "../lib/test-support/at";
 
 const CLOUD = "https://res.cloudinary.com/demo/video/upload/v1";
 
@@ -84,7 +85,8 @@ describe("healTimelineDocument", () => {
     ]);
 
     expect(changed).toBe(true);
-    const [a, b] = document.clips;
+    const a = at(document.clips, 0);
+    const b = at(document.clips, 1);
     expect(a.duration).toBe(12.4);
     expect(a.sourceDuration).toBe(12.4);
     // Downstream clip repacked behind the longer first clip.
@@ -101,7 +103,7 @@ describe("healTimelineDocument", () => {
 
     expect(changed).toBe(false);
     expect(document).toBe(input); // same reference — caller skips the write
-    expect(document.clips[0].sourceDuration).toBe(8);
+    expect(at(document.clips, 0).sourceDuration).toBe(8);
   });
 
   it("leaves an already-correct untrimmed video alone (within epsilon)", () => {
@@ -120,10 +122,10 @@ describe("healTimelineDocument", () => {
     ]);
 
     expect(changed).toBe(true);
-    expect(srcOf(document.clips[0])).toBe(moved);
-    expect(posterOf(document.clips[0])).toBe(`${CLOUD}/v-a.jpg`);
+    expect(srcOf(at(document.clips, 0))).toBe(moved);
+    expect(posterOf(at(document.clips, 0))).toBe(`${CLOUD}/v-a.jpg`);
     // No duration moved → startTimes preserved, not repacked.
-    expect(document.clips[1].startTime).toBe(5.12);
+    expect(at(document.clips, 1).startTime).toBe(5.12);
   });
 
   it("does both heals at once and repacks from the duration change", () => {
@@ -133,9 +135,9 @@ describe("healTimelineDocument", () => {
     const { document, changed } = healTimelineDocument(input, [videoAsset("v-a", 3, moved)]);
 
     expect(changed).toBe(true);
-    expect(srcOf(document.clips[0])).toBe(moved);
-    expect(document.clips[0].duration).toBe(3);
-    expect(document.clips[1].startTime).toBeCloseTo(3 + CLIP_GAP_SECONDS, 5);
+    expect(srcOf(at(document.clips, 0))).toBe(moved);
+    expect(at(document.clips, 0).duration).toBe(3);
+    expect(at(document.clips, 1).startTime).toBeCloseTo(3 + CLIP_GAP_SECONDS, 5);
   });
 
   it("is a no-op with no assets", () => {
@@ -196,7 +198,7 @@ describe("asset resolution", () => {
     ]);
 
     expect(changed).toBe(true);
-    expect(srcOf(document.clips[0])).toBe(`${CLOUD}/a/alley.mp4`);
+    expect(srcOf(at(document.clips, 0))).toBe(`${CLOUD}/a/alley.mp4`);
   });
 
   it("resolves by sourceAsset provenance even when the leaf is ambiguous", () => {
@@ -210,8 +212,8 @@ describe("asset resolution", () => {
     ]);
 
     expect(changed).toBe(true);
-    expect(srcOf(document.clips[0])).toBe(`${CLOUD}/b/alley.mp4`);
-    expect(document.clips[0].duration).toBe(30);
+    expect(srcOf(at(document.clips, 0))).toBe(`${CLOUD}/b/alley.mp4`);
+    expect(at(document.clips, 0).duration).toBe(30);
   });
 
   it("does not fall back to a same-named asset when provenance names a missing one", () => {

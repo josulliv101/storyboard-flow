@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
+import { at } from "../../../lib/test-support/at";
 
 // Two-user authorization tests over the REAL route handlers and the REAL
 // firebase-timeline-store enforcement — only the process boundaries are
@@ -230,7 +231,7 @@ describe("timeline authorization", () => {
     };
     const patchResponse = await patchTimeline(patchRequest(updated), params("project-a1"));
     expect(patchResponse.status).toBe(200);
-    expect((state.docs.get("project-a1")?.document as TimelineDocument).clips[0].id).toBe("new");
+    expect(at((state.docs.get("project-a1")?.document as TimelineDocument).clips, 0).id).toBe("new");
     expect(state.docs.get("project-a1")?.ownerUid).toBe("user-a");
   });
 

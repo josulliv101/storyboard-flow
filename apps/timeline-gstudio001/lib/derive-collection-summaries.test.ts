@@ -11,6 +11,7 @@ import {
   deriveClosureSummaries,
   deriveCollectionSummaries,
 } from "./derive-collection-summaries";
+import { at } from "../lib/test-support/at";
 
 function mediaClip(
   id: string,
@@ -58,6 +59,18 @@ function collectionClip(
 
 function docOf(id: string, clips: TimelineClip[], title = `Timeline ${id}`): TimelineDocument {
   return { id, title, clips };
+}
+
+
+/** A closure document by key, asserted. These fixtures always contain the key
+ *  under test; naming the missing one beats reading `.clips` of undefined.
+ *  NOT `docOf` — that name is already the fixture BUILDER above. */
+function closureDoc(closure: Record<string, TimelineDocument>, key: string): TimelineDocument {
+  const document = closure[key];
+  if (document === undefined) {
+    throw new Error(`no "${key}" in the closure (${Object.keys(closure).join(", ")})`);
+  }
+  return document;
 }
 
 describe("deriveCollectionSummaries", () => {
@@ -164,10 +177,10 @@ describe("deriveCollectionSummaries", () => {
 
     const { document, changed } = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
     expect(changed).toBe(true);
-    expect(document.clips[0].duration).toBe(11);
-    expect(document.clips[0].startTime).toBe(0);
+    expect(at(document.clips, 0).duration).toBe(11);
+    expect(at(document.clips, 0).startTime).toBe(0);
     // duration + CLIP_GAP_SECONDS
-    expect(document.clips[1].startTime).toBeCloseTo(11.12, 10);
+    expect(at(document.clips, 1).startTime).toBeCloseTo(11.12, 10);
     expect(document.clips.map((entry) => entry.index)).toEqual([0, 1]);
   });
 });
@@ -188,8 +201,8 @@ describe("deriveClosureSummaries", () => {
 
     const closure = deriveClosureSummaries(closureOf(root, child, grandchild));
 
-    expect(closure.child.clips[0].duration).toBe(10);
-    expect(closure.root.clips[0].duration).toBe(10);
+    expect(at(closureDoc(closure, "child").clips, 0).duration).toBe(10);
+    expect(at(closureDoc(closure, "root").clips, 0).duration).toBe(10);
   });
 
   it("bubbles a nested media preview through collection-only ancestors", () => {
@@ -206,8 +219,8 @@ describe("deriveClosureSummaries", () => {
     const root = docOf("root", [collectionClip("middle-ref", "middle")]);
 
     const closure = deriveClosureSummaries(closureOf(root, middle, leaf));
-    const middlePreview = (closure.middle.clips[0] as CollectionTimelineClip).previewItems;
-    const rootPreview = (closure.root.clips[0] as CollectionTimelineClip).previewItems;
+    const middlePreview = (at(closureDoc(closure, "middle").clips, 0) as CollectionTimelineClip).previewItems;
+    const rootPreview = (at(closureDoc(closure, "root").clips, 0) as CollectionTimelineClip).previewItems;
 
     expect(middlePreview).toEqual([
       {
@@ -233,7 +246,7 @@ describe("deriveClosureSummaries", () => {
 
     const closure = deriveClosureSummaries(closureOf(root, ghost), new Set(["ghost"]));
 
-    const summary = closure.root.clips[0] as CollectionTimelineClip;
+    const summary = at(closureDoc(closure, "root").clips, 0) as CollectionTimelineClip;
     expect(summary.duration).toBe(18);
     expect(summary.itemCount).toBe(6);
     expect(closure.root).toBe(root);
@@ -319,7 +332,7 @@ describe("disabled clips split geometry from the readouts", () => {
 
     const derived = deriveClosureSummaries(documents);
 
-    const leafSummary = derived.mid.clips[0] as CollectionTimelineClip;
+    const leafSummary = at(closureDoc(derived, "mid").clips, 0) as CollectionTimelineClip;
     expect(leafSummary.itemCount).toBe(1);
     expect(leafSummary.duration).toBeCloseTo(8.12, 6);
     expect(leafSummary.playableDuration).toBeCloseTo(4, 6);
@@ -329,7 +342,7 @@ describe("disabled clips split geometry from the readouts", () => {
     // that pins the propagation THROUGH a collection child: mid's playable
     // time has to read leaf-ref's playableDuration (4), not its layout
     // duration (8.12), or a deep disable would stop one level up.
-    const midSummary = derived.root.clips[0] as CollectionTimelineClip;
+    const midSummary = at(closureDoc(derived, "root").clips, 0) as CollectionTimelineClip;
     expect(midSummary.itemCount).toBe(1);
     expect(midSummary.playableDuration).toBeCloseTo(4, 6);
     expect(midSummary.duration).toBeCloseTo(8.12, 6);
@@ -395,6 +408,6 @@ describe("disabled clips split geometry from the readouts", () => {
     const { document } = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
 
     expect(document.clips.map((clip) => clip.id)).toEqual(["off", "col"]);
-    expect(document.clips[0].disabled).toBe(true);
+    expect(at(document.clips, 0).disabled).toBe(true);
   });
 });

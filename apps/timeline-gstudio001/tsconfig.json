@@ -9,6 +9,12 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    // Types `arr[i]` and `record[key]` as `T | undefined`. #283 step 5, the
+    // last one — 366 sites at first measure. No `arr[i]!` anywhere: the two
+    // playhead interpolations read through one documented accessor apiece,
+    // and tests go through `lib/test-support/at`, which names the index and
+    // the actual length when a list is shorter than the test assumed.
+    "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
