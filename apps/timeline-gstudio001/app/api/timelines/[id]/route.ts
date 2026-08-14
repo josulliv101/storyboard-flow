@@ -4,6 +4,7 @@ import type { TimelineClip } from "@storyboard/timeline-model/types";
 import {
   saveFirebaseTimelineEntry,
   deleteFirebaseTimelineDocument,
+  TimelineDuplicateOwnerError,
   TimelineOrphanError,
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
@@ -153,6 +154,13 @@ export async function PATCH(
     if (error instanceof TimelineOrphanError) {
       return NextResponse.json(
         { error: error.message, orphans: error.orphans },
+        { status: 409 },
+      );
+    }
+    // Likewise the same shape as the batch endpoint's, for the same reason.
+    if (error instanceof TimelineDuplicateOwnerError) {
+      return NextResponse.json(
+        { error: error.message, duplicates: error.duplicates },
         { status: 409 },
       );
     }
