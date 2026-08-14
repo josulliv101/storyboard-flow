@@ -64,6 +64,12 @@ import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import { formatDuration, formatSeconds } from "@/lib/format-duration";
 import { fittedTagCount } from "@/lib/caption-tag-fit";
+import {
+  OVERVIEW_FRAME_SIZE,
+  ghostPreviewFrames,
+  mediaGhostSrc,
+  overviewFrameCount,
+} from "@/lib/card-ghost-frames";
 import { sortTagsStatusFirst } from "@/lib/tag-facets";
 import { TagAccentDot } from "./tag-accent-dot";
 import {
@@ -1422,9 +1428,6 @@ const GraphClipContent = memo(function GraphClipContent({
 
 /** Square overview frames — the strip is h-11 (44px), matching the package
  *  default so only the SAMPLING differs. */
-const OVERVIEW_FRAME_SIZE = 44;
-const OVERVIEW_FRAME_CAP = 40;
-
 /**
  * The trim overview's background (the "sequence above" a selected video),
  * replacing the package default via the `OverviewContent` registry slot. The
@@ -1447,10 +1450,7 @@ const GraphTrimOverviewContent = memo(
     // Enough square frames to cover the strip width (ceil so the row fills;
     // the container clips the overflow), capped so a long source stays
     // bounded.
-    const frameCount = Math.max(
-      1,
-      Math.min(OVERVIEW_FRAME_CAP, Math.ceil(fullWidth / OVERVIEW_FRAME_SIZE)),
-    );
+    const frameCount = overviewFrameCount(fullWidth);
     // The overview shows the FULL source (the amber window marks the visible
     // part), so the sample range is [0, fullDurationSeconds] — not the
     // trimmed range the card uses.
@@ -1512,15 +1512,6 @@ const GraphTrimHandle = memo(function GraphTrimHandle({
 
 /** A media clip's own frame: a video's poster, an image's source (null when
  *  it has neither — the ghost then falls back to a labelled tile). */
-function mediaGhostSrc(node: CollectionGhostContentProps["node"]): string | null {
-  if (node.kind !== "media") return null;
-  // Audio has no frame, and its `src` is a media file — returning it here put
-  // a .flac into an <img> and drew a broken-image ghost. Null makes the ghost
-  // fall back to its labelled name+duration tile, which is the right answer.
-  if (node.mediaKind === "audio") return null;
-  return node.mediaKind === "video" ? (node.posterSrcs?.[0] ?? null) : (node.src ?? null);
-}
-
 /**
  * The drag ghost: a SQUARE thumbnail of the item being moved (the provider
  * sizes the overlay box square via `dragGhostWidth`/`dragGhostHeight`), so the
@@ -1547,10 +1538,7 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
     : [];
   // FIRST and LAST only (or the single frame) — never three, exactly as the
   // card picks its two representative frames.
-  // Built by index PAIR rather than as a literal of two possibly-undefined
-  // reads — same two frames, and the ghost cannot end up rendering a hole.
-  const chosen =
-    all.length > 1 ? [0, all.length - 1].flatMap((i) => all[i] ?? []) : all;
+  const chosen = ghostPreviewFrames(all);
   const derivedFrames: string[] = isCollection
     ? chosen.map((preview) => collectionPreviewFrameUrl(preview)).filter(Boolean)
     : (() => {
