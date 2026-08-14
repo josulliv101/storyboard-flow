@@ -64,6 +64,7 @@ import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import { formatDuration, formatSeconds } from "@/lib/format-duration";
 import { fittedTagCount } from "@/lib/caption-tag-fit";
+import { resolveCardProvenance } from "@/lib/card-provenance";
 import {
   OVERVIEW_FRAME_SIZE,
   ghostPreviewFrames,
@@ -445,9 +446,15 @@ function useCardProvenance(
   // the collection card and the breadcrumb use, so a rename shows here too.
   const title = useTimelineTitle((parentId ?? "") as string);
 
-  if (parentId === null || focusedId === null) return null;
-  if ((parentId as string) === focusedId) return null;
-  return { parentId, name: title ?? nodeName ?? (parentId as string) };
+  // The DECISION lives in lib/card-provenance (unit-tested); this hook owns
+  // only the three subscriptions above.
+  const resolved = resolveCardProvenance({
+    parentId: (parentId as string | null) ?? null,
+    focusedId,
+    title: title ?? null,
+    nodeName,
+  });
+  return resolved === null ? null : { parentId: resolved.parentId as NodeId, name: resolved.name };
 }
 
 /**
