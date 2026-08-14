@@ -88,7 +88,7 @@ import {
   SelectionMenuOverflowItems,
 } from "./graph-selection-menu";
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
-import { VideoFrameLookAhead } from "./graph-item-content";
+import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";

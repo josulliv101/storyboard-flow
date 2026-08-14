@@ -18,11 +18,11 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { useCollectionHoverSource } from "./graph-collection-hover";
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
+import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import {
-  VideoFrameLookAhead,
   useCollectionPreviewFrames,
   useEnabledChildCount,
-} from "./graph-item-content";
+} from "./graph-card-derivations";
 import { collectionPreviewFrameUrl } from "@/lib/video-frame-url";
 import { hydrateTimeline } from "./graph-hydration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";

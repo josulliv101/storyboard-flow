@@ -16,10 +16,8 @@ import {
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
-import {
-  GRAPH_VIEW_COMPONENTS,
-  VideoFrameLookAhead,
-} from "./graph-item-content";
+import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
+import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { createGraphDetailsStore } from "@/lib/graph-details-store";
 
