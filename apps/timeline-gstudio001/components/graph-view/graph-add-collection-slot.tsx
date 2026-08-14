@@ -5,7 +5,8 @@ import { FolderPlus, Image as ImageIcon } from "lucide-react";
 
 import { getChildren, parseNodeId, useCollectionsSelector } from "@storyboard/ui/dnd-collections";
 
-import { useAppendCollection, useAppendFiles } from "./graph-native-drop";
+import { useAppendCollection } from "./graph-native-drop-insertion";
+import { useAppendFiles } from "./graph-native-drop-engine";
 
 /**
  * The trailing "add something here" slot, at the end of a strip or grid.
