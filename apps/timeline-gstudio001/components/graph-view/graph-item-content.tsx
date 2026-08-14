@@ -53,6 +53,11 @@ import {
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { useTagFilterMiss } from "./graph-tag-filter";
 import { isDisabledByAncestor } from "./graph-playhead-model";
+import {
+  disabledVisualState,
+  disabledVisualsAttr,
+  type DisabledVisualState,
+} from "@/lib/disabled-visuals";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useCollectionHoverTarget } from "./graph-collection-hover";
 import { GraphViewNavContext } from "./graph-navigation";
@@ -770,6 +775,35 @@ function ProvenanceLabel({
 const CAPTION_ROW_CLASS = "flex min-h-5 min-w-0 items-center gap-1.5";
 
 /**
+ * How hard each disabled state knocks a card back. The STATE is decided in
+ * `lib/disabled-visuals`; the classes are here because Tailwind's content scan
+ * covers `components` and not `lib` — a class name written over there is never
+ * generated, and fails silently as an unstyled card.
+ *
+ * SELF is heavy (45% + grayscale): that card sits among siblings that are on,
+ * and separating it from them is the whole job. INHERITED is light (75%, no
+ * grayscale): drill into a disabled collection and EVERY card is inherited-off,
+ * so heavy uniform dimming has nothing to contrast against and only costs the
+ * legibility of what you came in to look at.
+ *
+ * Split in two because they apply at different points in the class chain —
+ * opacity competes with the drag-source and filter-miss states, grayscale does
+ * not. Both card kinds below read the same two maps, which is what stops the
+ * media and collection cards drifting apart on this.
+ */
+const DISABLED_OPACITY_CLASS: Readonly<Record<DisabledVisualState, string>> = {
+  none: "",
+  inherited: "opacity-75",
+  self: "opacity-45",
+};
+
+const DISABLED_FILTER_CLASS: Readonly<Record<DisabledVisualState, string>> = {
+  none: "",
+  inherited: "",
+  self: "grayscale",
+};
+
+/**
  * Row two, and it is ALWAYS RENDERED — an untagged card keeps an empty one.
  *
  * That is the whole point of the `min-h`: with the row omitted, a tagged card
@@ -1135,6 +1169,13 @@ const GraphClipContent = memo(function GraphClipContent({
   const isVideo = node.mediaKind === "video";
   const isAudio = node.mediaKind === "audio";
   const muted = node.disabled === true || inheritedDisabled;
+  // `muted` stays the "will not play" predicate — it drives the chip, the
+  // hidden title, and the caption padding, none of which care WHY. Only the
+  // dimming distinguishes the two reasons.
+  const disabledVisuals = disabledVisualState({
+    selfDisabled: node.disabled === true,
+    inheritedDisabled,
+  });
   // In the GRID a video is ONE frame, full width — a thumbnail, the same shape
   // an image card has. The filmstrip below is a STRIP idea and stays there:
   // that surface makes a card as wide as its clip is long, so extra width is
@@ -1234,12 +1275,22 @@ const GraphClipContent = memo(function GraphClipContent({
           filtered board. */}
       <span className="relative flex h-full min-h-0 w-full overflow-hidden rounded-sm [[data-virtual-grid]_&]:flex-1">
       <span
-        data-disabled-visuals={muted ? "true" : undefined}
+        data-disabled-visuals={disabledVisualsAttr(disabledVisuals)}
         data-filter-miss={filterMiss ? "true" : undefined}
         className={[
           "flex h-full w-full overflow-hidden rounded-sm",
-          isDragSource ? "opacity-40" : muted ? "opacity-45" : filterMiss ? "opacity-30" : "",
-          muted ? "grayscale" : "",
+          // INHERITED is knocked back more lightly than SELF — see
+          // `disabled-visuals`. The precedence chain is unchanged: a drag
+          // source outranks both, and a filter miss only applies to a card
+          // that is otherwise on.
+          isDragSource
+            ? "opacity-40"
+            : disabledVisuals !== "none"
+              ? DISABLED_OPACITY_CLASS[disabledVisuals]
+              : filterMiss
+                ? "opacity-30"
+                : "",
+          DISABLED_FILTER_CLASS[disabledVisuals],
           "motion-safe:transition-opacity motion-safe:duration-150",
         ].join(" ")}
       >
@@ -1648,6 +1699,13 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const filterMiss = useTagFilterMiss(id as string);
   const selectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
   const muted = node.disabled === true || inheritedDisabled;
+  // `muted` stays the "will not play" predicate — it drives the chip, the
+  // hidden title, and the caption padding, none of which care WHY. Only the
+  // dimming distinguishes the two reasons.
+  const disabledVisuals = disabledVisualState({
+    selfDisabled: node.disabled === true,
+    inheritedDisabled,
+  });
   // Anchor state is not read here any more: `CardCornerSlot` subscribes to it
   // itself, narrowed to this node, so an anchor moving between two OTHER cards
   // no longer re-renders this whole card body.
@@ -1703,7 +1761,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             (further down), so the two card kinds still file tags in the same
             place as each other. */}
         <span
-          data-disabled-visuals={muted ? "true" : undefined}
+          data-disabled-visuals={disabledVisualsAttr(disabledVisuals)}
           data-filter-miss={filterMiss ? "true" : undefined}
           // `relative`, so the checkbox below anchors to the PREVIEW FRAMES
           // rather than to the whole card. Anchored to the card it landed on
@@ -1711,8 +1769,16 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           // it…"), because that row is inside the selection surface too.
           className={[
             "relative flex min-h-0 flex-1 gap-0.5 overflow-hidden",
-            isDragSource ? "opacity-40" : muted ? "opacity-45" : filterMiss ? "opacity-30" : "",
-            muted ? "grayscale" : "",
+            // Same mapping as the media card — shared so the two kinds cannot
+            // drift apart on the one thing this rule exists to distinguish.
+            isDragSource
+              ? "opacity-40"
+              : disabledVisuals !== "none"
+                ? DISABLED_OPACITY_CLASS[disabledVisuals]
+                : filterMiss
+                  ? "opacity-30"
+                  : "",
+            DISABLED_FILTER_CLASS[disabledVisuals],
             "motion-safe:transition-opacity motion-safe:duration-150",
           ].join(" ")}
         >

@@ -46,7 +46,17 @@ export function AddCollectionSlot({
   return (
     <div
       data-add-collection-slot={collectionId}
-      className="flex h-full w-full flex-col items-stretch justify-center gap-1 rounded-md border border-dashed border-zinc-700 bg-zinc-900/30 p-1.5 text-zinc-500"
+      // COMPACT. This used to be a full-bleed dashed panel with two labelled
+      // buttons and a hint line — a whole card's worth of chrome parked at the
+      // end of every strip and grid, permanently, to offer something you reach
+      // for occasionally. It is now a small icon pair, centred in whatever box
+      // the surface reserves.
+      //
+      // The BOX is still card-sized: the surface sets it (`width: itemWidth`
+      // in VirtualStrip, `fillCellWidth` in VirtualGrid) and this component
+      // only fills it. Shrinking the reservation itself is a package change,
+      // not one available here.
+      className="flex h-full w-full items-center justify-center gap-1.5 text-zinc-500"
     >
       <button
         type="button"
@@ -54,35 +64,37 @@ export function AddCollectionSlot({
         aria-label="Add a timeline to the end"
         title="Add a timeline here"
         onClick={() => append(childCount)}
-        className="flex min-h-0 flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded transition-colors hover:bg-sky-500/[0.06] hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70"
+        // Reads as a BUTTON that adds, not as an empty slot: a solid tile with
+        // a dashed edge (the dashes are what still say "nothing here yet"),
+        // and a hover that fills rather than just tinting text. The glyph is
+        // the same FolderPlus the controls row uses, so the two routes to the
+        // same action look like the same action.
+        className="grid size-10 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-zinc-700 bg-zinc-900/40 transition-colors hover:border-sky-500/60 hover:bg-sky-500/10 hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70"
       >
         <FolderPlus aria-hidden="true" className="h-4 w-4" />
-        <span className="text-[11px] font-medium leading-none">Add timeline</span>
       </button>
 
       {/* The media half. Only offered where files can actually land — outside a
           native-drop surface there is no timeline to append to, and a button
-          that cannot work is worse than none. */}
+          that cannot work is worse than none.
+
+          KEPT, though the label and the hint line are gone. This button is the
+          ONLY keyboard route to adding media (PL14-011): dragging from the OS
+          starts outside the page and has no keyboard equivalent, so dropping
+          it would leave keyboard and switch users with no way to add media at
+          all. Icon-only costs nothing here — it always had an `aria-label` and
+          a `title` doing the real explaining. */}
       {appendFiles !== null ? (
         <>
-          {/* The hint names the gesture that has no control: dragging from the
-              file system works anywhere on the timeline, not just here, and
-              nothing else on screen says so. `truncate` because a 100px strip
-              slot has no room to wrap — the full sentence stays in the
-              button's title. */}
-          <p className="truncate text-center text-[9px] leading-tight text-zinc-600">
-            or drop media anywhere
-          </p>
           <button
             type="button"
             data-add-media-button={collectionId}
             aria-label="Add media files to the end of this timeline"
             title="Browse for images and videos — or drop them anywhere on the timeline"
             onClick={() => fileInputRef.current?.click()}
-            className="flex shrink-0 cursor-pointer items-center justify-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium transition-colors hover:bg-sky-500/[0.06] hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70"
+            className="grid size-10 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-zinc-700 bg-zinc-900/40 transition-colors hover:border-sky-500/60 hover:bg-sky-500/10 hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70"
           >
-            <ImageIcon aria-hidden="true" className="h-3 w-3" />
-            Browse
+            <ImageIcon aria-hidden="true" className="h-4 w-4" />
           </button>
           {/* The input itself is never shown: it is the picker, not the
               affordance. `sr-only` rather than `display:none` so it stays a

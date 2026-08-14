@@ -299,9 +299,16 @@ function WorkbenchDividerTransport({
             editor uses. Putting them inside would have made the two arrow
             pairs read as one four-way stepper.
 
-            `translate-x-3` (against the steppers' `2`) closes the gap the extra
-            well opens up, so the five glyphs still read as one cluster rather
-            than as a control with two satellites. */}
+            `translate-x-4` against the steppers' `2` is what makes the row
+            EVENLY spaced, and the number is not free. Each button is a 44px
+            well, so a glyph's position is its well's centre plus its nudge:
+            22+16, 66+8, 110, 154−8, 198−16 → 38, 74, 110, 146, 182. Four gaps
+            of 36px.
+
+            It was `3`, which put the outer glyphs at 34 and 186 — gaps of
+            40, 36, 36, 40. Only 4px, and it read exactly as what it was: the
+            new pair pushed out too far, the cluster reading as a control with
+            two satellites rather than one row. */}
         <button
           type="button"
           onClick={onSeekStart}
@@ -310,7 +317,7 @@ function WorkbenchDividerTransport({
           aria-label="Jump to start of workbench preview"
           title="Jump to start"
         >
-          <span className="grid size-5 translate-x-3 place-items-center rounded-full transition-colors group-focus-visible/start:ring-2 group-focus-visible/start:ring-sky-400 group-focus-visible/start:ring-offset-2 group-focus-visible/start:ring-offset-zinc-950">
+          <span className="grid size-5 translate-x-4 place-items-center rounded-full transition-colors group-focus-visible/start:ring-2 group-focus-visible/start:ring-sky-400 group-focus-visible/start:ring-offset-2 group-focus-visible/start:ring-offset-zinc-950">
             <ChevronFirst className="size-3.5" />
           </span>
         </button>
@@ -377,7 +384,7 @@ function WorkbenchDividerTransport({
           aria-label="Jump to end of workbench preview"
           title="Jump to end"
         >
-          <span className="grid size-5 -translate-x-3 place-items-center rounded-full transition-colors group-focus-visible/end:ring-2 group-focus-visible/end:ring-sky-400 group-focus-visible/end:ring-offset-2 group-focus-visible/end:ring-offset-zinc-950">
+          <span className="grid size-5 -translate-x-4 place-items-center rounded-full transition-colors group-focus-visible/end:ring-2 group-focus-visible/end:ring-sky-400 group-focus-visible/end:ring-offset-2 group-focus-visible/end:ring-offset-zinc-950">
             <ChevronLast className="size-3.5" />
           </span>
         </button>

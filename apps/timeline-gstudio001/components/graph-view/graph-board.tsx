@@ -50,7 +50,9 @@ import {
   requestGraphItemAction,
   requestGraphToolInsert,
   type GraphItemAction,
+  type GraphSurface,
 } from "@/lib/graph-view-events";
+import { hydrationSkeletonCount } from "@/lib/hydration-skeletons";
 import {
   SIDEBAR_GLYPH,
   SIDEBAR_ICON_BASE,
@@ -109,6 +111,7 @@ import { CollectionHoverProvider } from "./graph-collection-hover";
 import { TagFilterProvider } from "./graph-tag-filter";
 import { ActiveTagFilters, TagFilterControl } from "./graph-tag-filter-control";
 import { ItemDetailsProvider } from "./graph-item-details-context";
+import { useGraphDetailsSnapshot } from "./graph-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
@@ -239,6 +242,71 @@ function BoardMenu({
  * purpose (the per-card badges show the same numbers), so hiding it on small
  * screens costs nothing.
  */
+/**
+ * The placeholder row shown while a focused collection hydrates.
+ *
+ * Shaped like the cards it stands in for — same width, height and gap as the
+ * real surface — because the point is that nothing MOVES when the clips land.
+ * A generic spinner would say "wait" without saying what for, and would let
+ * the surface jump to a different height on arrival.
+ *
+ * `aria-hidden` with a live-region label beside it rather than on it: a screen
+ * reader should hear "loading 4 clips" once, not read out four empty boxes.
+ * `role="status"` announces politely, which is right for something that
+ * resolves on its own.
+ */
+function SurfaceSkeleton({
+  count,
+  surface,
+  dims,
+  pixelsPerSecond,
+}: Readonly<{
+  count: number;
+  surface: GraphSurface;
+  dims: (typeof ITEM_SIZE_DIMENSIONS)[ItemSize];
+  pixelsPerSecond: number;
+}>) {
+  const isStrip = surface === "strip";
+  // The strip's card width is a function of DURATION, which is exactly what is
+  // not known yet — so the placeholder uses the width a zero-duration card
+  // would get, which is the same floor a real short clip lands on.
+  const width = isStrip ? collectionCardWidth(pixelsPerSecond, dims.strip) : dims.gridWidth;
+  const height = isStrip ? dims.strip : dims.gridHeight;
+
+  return (
+    <div
+      data-surface-skeleton={surface}
+      data-surface-skeleton-count={count}
+      role="status"
+      aria-label={`Loading ${count === 1 ? "1 clip" : `${count} clips`}`}
+      className={[
+        "flex",
+        // The strip is one scrolling line; the grid wraps. Matching each
+        // surface's own flow is what keeps the placeholder honest about the
+        // shape that is coming.
+        isStrip ? "flex-nowrap overflow-hidden" : "flex-wrap",
+      ].join(" ")}
+      style={{ gap: GRID_GAP }}
+    >
+      {Array.from({ length: count }, (_, index) => (
+        <div
+          key={index}
+          aria-hidden="true"
+          className="shrink-0 animate-pulse rounded-md bg-zinc-800/60 ring-1 ring-white/5"
+          style={{
+            width,
+            height,
+            // Staggered, so the row reads as a sequence filling in rather than
+            // one block flashing. Capped so a full row's last card is not a
+            // second behind its first.
+            animationDelay: `${Math.min(index, 6) * 90}ms`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 /**
  * How many items are selected — the subject the controls beside it act on.
  *
@@ -1366,7 +1434,12 @@ function GraphAddCollectionButton() {
       title="New collection — click to append, drag onto a strip to place"
       onDragStart={handleDragStart}
       onClick={() => requestGraphToolInsert("collection")}
-      className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/40 text-zinc-400 transition-colors hover:border-sky-500 hover:bg-sky-950/20 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      // NO BORDER at rest. It was the only bordered control in this row —
+      // every toggle beside it is a bare ghost square — so the box read as a
+      // different KIND of thing rather than as the same row's tool. The
+      // hover still fills and tints, which is what says it is pressable, and
+      // `cursor-grab` is what says it is also draggable.
+      className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-md bg-zinc-900/40 text-zinc-400 transition-colors hover:bg-sky-950/30 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
     >
       <FolderPlus aria-hidden="true" className="h-4 w-4" />
     </button>
@@ -1465,6 +1538,27 @@ export function GraphBoard({
     () => flatItems?.map((item) => item.nodeId),
     [flatItems],
   );
+
+  // PLACEHOLDERS FOR THE HYDRATION GAP. Drilling into a collection navigates
+  // at once, but its clips arrive on a fetch — so the surface is empty for a
+  // beat and the user is looking at nothing, with no signal that anything is
+  // on its way. The stored summary already knows how many are coming, so the
+  // placeholder row can be the right LENGTH and the surface does not jump when
+  // they land. All the edge cases (a stored zero, a corrupt count, a
+  // re-hydration with cards still mounted) live in the pure rule.
+  //
+  // Subscribed narrowly: only the child COUNT, so the ordinary case — a
+  // hydrated collection whose children change — re-renders this on a number,
+  // not on the children array's identity.
+  const focusedChildCount = useCollectionsSelector(
+    (s) => s.graph.childrenById.get(parseNodeId(focusedId))?.length ?? 0,
+  );
+  const focusedDetail = useGraphDetailsSnapshot()[focusedId];
+  const skeletonCount = hydrationSkeletonCount({
+    hydrated: focusedDetail?.hydrated,
+    itemCount: focusedDetail?.itemCount,
+    renderedChildren: focusedChildCount,
+  });
 
   // The pill renders itself, inside whichever card is the anchor. What the
   // board still needs the anchor for is the header's paste label, which names
@@ -1728,9 +1822,25 @@ export function GraphBoard({
                 only `className` and `children` — it is a behaviour wrapper, not
                 a div with extra steps, and widening it to pass arbitrary props
                 through would invite exactly that. */}
+            {/* ITS OWN ROW, visually. Untreated it was transparent on the
+                board panel — the same zinc-950 as everything behind it — so
+                the totals and the controls read as loose objects floating
+                over the board rather than as a strip belonging to it.
+
+                Darker, as asked, but the fill can only do part of the job:
+                the panel is already rgb(9,9,11), so even `black/40` moves it
+                about four values. The HAIRLINE is what actually draws the
+                edge. `white/5` rather than a zinc border because a solid
+                border at this contrast reads as a box around the controls;
+                a 5% wash reads as the lip of a recess, which is the shape
+                wanted — the row sitting slightly BELOW the board, not on it.
+
+                Rounded and inset by its own padding rather than full-bleed:
+                the surfaces below are edge-to-edge, so a band that ran to the
+                same edges would read as one of them. */}
             <div
               data-board-controls-row
-              className="flex min-h-7 items-center gap-3 px-1"
+              className="flex min-h-7 items-center gap-3 rounded-md bg-black/40 px-2.5 py-1 ring-1 ring-white/5"
             >
               <FocusedAggregate
                 focusedId={focusedId}
@@ -1779,7 +1889,26 @@ export function GraphBoard({
               added. */}
           <ActiveTagFilters />
 
-          {surface === "strip" ? (
+          {/* THE HYDRATION GAP, before either surface branch. It replaces the
+              surface rather than overlaying it: an empty VirtualStrip/Grid
+              underneath would still render its trailing "add" slot, so the
+              user would be offered a place to insert into a collection whose
+              contents have not arrived — and a drop there is refused until
+              hydration completes anyway.
+
+              Only ever true for a beat. `skeletonCount` returns 0 the moment
+              the children land, or immediately if the collection is stored as
+              empty (whose own empty state is the correct thing to show). */}
+          {skeletonCount > 0 ? (
+            <div data-focused-surface-shell={surface}>
+              <SurfaceSkeleton
+                count={skeletonCount}
+                surface={surface}
+                dims={dims}
+                pixelsPerSecond={deferredPixelsPerSecond}
+              />
+            </div>
+          ) : surface === "strip" ? (
             // The focused surface spans the card's FULL width (-mx-4 cancels
             // the card's p-4), so its edges line up with the full-bleed
             // breadcrumb bar above instead of sitting inset like a panel
