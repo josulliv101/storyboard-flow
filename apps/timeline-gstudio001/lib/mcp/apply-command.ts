@@ -18,6 +18,7 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
 import {
   saveFirebaseTimelineDocumentsAtomic,
+  TimelineDuplicateOwnerError,
   TimelineOrphanError,
   TimelineRevisionConflictError,
   type TimelineBatchWrite,
@@ -433,11 +434,30 @@ export async function applyCollectionsCommand(
     if (error instanceof TimelineAccessDeniedError) {
       return { ok: false, kind: "error", message: `Not authorized to edit timeline "${rootTimelineId}".` };
     }
-    // The store's two REFUSALS. Both are answers — the write was understood
-    // and declined — so they belong in the tool result, where the caller can
-    // read and act on them. Rethrown, they left the MCP surface with a raw
+    // The store's REFUSALS. Each is an answer — the write was understood and
+    // declined — so they belong in the tool result, where the caller can read
+    // and act on them. Rethrown, they left the MCP surface with a raw
     // exception and no explanation, which is how `move_clip` emptying its
     // source looked from the outside: not "refused because X" but a failure.
+    //
+    // This one matters most HERE. #304 was hit through these tools, and its
+    // whole character was silence: `move_clip` reported success and the damage
+    // surfaced later as a subtree that had stopped accepting edits. An agent
+    // reading this message knows immediately which child and which two parents,
+    // at the moment it happens.
+    if (error instanceof TimelineDuplicateOwnerError) {
+      const named = error.duplicates
+        .map((duplicate) => `${duplicate.childId} (claimed by ${duplicate.timelineIds.join(" and ")})`)
+        .join("; ");
+      return {
+        ok: false,
+        kind: "error",
+        message:
+          `That change would leave ${named} with two owning parents, so it was refused. ` +
+          `A collection belongs to exactly one parent — re-read the timeline and check ` +
+          `whether the move already applied before trying it again.`,
+      };
+    }
     if (error instanceof TimelineOrphanError) {
       const ids = error.orphans.map((orphan) => orphan.id).join(", ");
       return {

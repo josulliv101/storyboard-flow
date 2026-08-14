@@ -90,6 +90,72 @@ export class TimelineOrphanError extends Error {
   }
 }
 
+/** A child claimed as OWNED by more than one placement in a single write. */
+export type TimelineDuplicateOwner = Readonly<{
+  childId: string;
+  /** Every document in the write that claimed it, in write order. The same id
+   *  appears twice when one document owns the same child twice. */
+  timelineIds: readonly string[];
+}>;
+
+/**
+ * A write was refused because it would give one collection TWO owning
+ * placements.
+ *
+ * The other half of the invariant `TimelineOrphanError` protects. That one
+ * refuses a write that drops a child's LAST owner; this refuses one that gives
+ * it a SECOND. Only both together mean "exactly one owning placement", which is
+ * what the rest of the system assumes: two owning placements for one child make
+ * `buildGraph` fail with `{reason:"duplicate-id"}`, and every write goes
+ * through it — so once both parents are hydrated, create/rename/remove all
+ * start failing on that subtree (#304).
+ *
+ * It was missing entirely, which is why that corruption was SILENT. The store
+ * took the write without a word and the damage only surfaced later, somewhere
+ * else, as a subtree that had stopped accepting edits.
+ *
+ * SCOPE: one write. Two documents in the same batch (or one document twice) are
+ * caught, because they are both in hand and cost nothing to compare. A second
+ * owner introduced by a SEPARATE write is not — answering that needs either a
+ * reverse index or a parent pointer on the child document, and a read per
+ * claimed child on every save. Deliberately not done: a move writes both
+ * parents in one batch, so the shape #304 describes is inside this scope.
+ */
+export class TimelineDuplicateOwnerError extends Error {
+  readonly duplicates: readonly TimelineDuplicateOwner[];
+
+  constructor(duplicates: readonly TimelineDuplicateOwner[]) {
+    super(
+      `Refusing to give ${duplicates.map((duplicate) => duplicate.childId).join(", ")} ` +
+        `a second owning placement: ` +
+        duplicates
+          .map((duplicate) => `${duplicate.childId} claimed by ${duplicate.timelineIds.join(" and ")}`)
+          .join("; ") +
+        `. A collection belongs to exactly one parent; a second card pointing at it must be a ` +
+        `reference (its own clip id), not an owning placement.`,
+    );
+    this.name = "TimelineDuplicateOwnerError";
+    this.duplicates = duplicates;
+  }
+}
+
+/**
+ * The children claimed by more than one owning placement across a write.
+ *
+ * Returns one entry per over-claimed child, each listing its claimants in write
+ * order — so the error can name both parents rather than only the child, which
+ * is the difference between "something is wrong" and "here is where".
+ */
+function duplicateOwners(
+  claimantsByChild: ReadonlyMap<string, readonly string[]>,
+): TimelineDuplicateOwner[] {
+  const duplicates: TimelineDuplicateOwner[] = [];
+  for (const [childId, timelineIds] of claimantsByChild) {
+    if (timelineIds.length > 1) duplicates.push({ childId, timelineIds });
+  }
+  return duplicates;
+}
+
 export class TimelineRevisionConflictError extends Error {
   readonly conflicts: readonly TimelineRevisionConflict[];
 
@@ -599,8 +665,24 @@ export async function saveFirebaseTimelineEntry(
       // owning. That asymmetry is what makes this answerable without a reverse
       // index. With one document there is nothing else to claim what it drops,
       // so any owning child it releases is released for good.
+      // THE DUPLICATE-OWNER GUARD, applied to a batch of one — where "the
+      // batch" is this single document, so what it can catch is one document
+      // owning the same child twice. Unconditional (not inside the
+      // `existingDocument` check below): a brand-new document can arrive
+      // double-claiming just as easily as an edited one.
+      const ownedHere = owningCollectionChildIds(normalizedDocument);
+      const claimantsHere = new Map<string, readonly string[]>();
+      for (const childId of ownedHere) {
+        claimantsHere.set(childId, [
+          ...(claimantsHere.get(childId) ?? []),
+          normalizedDocument.id,
+        ]);
+      }
+      const duplicatesHere = duplicateOwners(claimantsHere);
+      if (duplicatesHere.length > 0) throw new TimelineDuplicateOwnerError(duplicatesHere);
+
       if (existingDocument) {
-        const claimed = new Set(owningCollectionChildIds(normalizedDocument));
+        const claimed = new Set(ownedHere);
         const released = owningCollectionChildIds(existingDocument).filter(
           (childId) => !claimed.has(childId),
         );
@@ -696,6 +778,11 @@ export async function saveFirebaseTimelineDocumentsAtomic(
       // sides of every document, so the guard costs no extra reads here.
       const releasedChildren = new Map<string, string>();
       const claimedChildren = new Set<string>();
+      /** Every owning claim, keyed by child — the duplicate-owner guard's
+       *  input. Separate from `claimedChildren` because that one must stay a
+       *  Set: the orphan guard asks "did anything take this up", where a
+       *  repeat is not interesting. Here the repeat IS the finding. */
+      const claimantsByChild = new Map<string, readonly string[]>();
 
       // entries() pairs each write with its own snapshot instead of indexing
       // two arrays separately — they are produced together by the Promise.all
@@ -733,6 +820,13 @@ export async function saveFirebaseTimelineDocumentsAtomic(
         // is what makes it safe to reason about from inside one batch.
         for (const childId of owningCollectionChildIds(normalizedDocument)) {
           claimedChildren.add(childId);
+          // The DUPLICATE-OWNER half of the invariant. `claimedChildren` is a
+          // Set, so two documents claiming the same child collapse into one
+          // entry there and the orphan guard is satisfied — which is exactly
+          // how a double-parented collection used to commit in silence (#304).
+          // This keeps every claimant so the write can be refused and both
+          // parents named.
+          claimantsByChild.set(childId, [...(claimantsByChild.get(childId) ?? []), normalizedDocument.id]);
         }
         if (existingDocument) {
           for (const childId of owningCollectionChildIds(existingDocument)) {
@@ -776,6 +870,19 @@ export async function saveFirebaseTimelineDocumentsAtomic(
       }
 
       if (conflicts.length > 0) throw new TimelineRevisionConflictError(conflicts);
+
+      // THE DUPLICATE-OWNER GUARD, the twin of the orphan guard below.
+      //
+      // Before the conflict check would be wrong: a stale write that happens to
+      // double-claim should come back as the conflict it is, so the client
+      // reloads and retries rather than treating a routine race as corruption.
+      // Before the ORPHAN guard is deliberate the other way — a batch that
+      // double-claims is malformed whatever else it strands, and naming the two
+      // parents is the more useful failure.
+      //
+      // Needs no reads: every claim came from a document already in this write.
+      const duplicates = duplicateOwners(claimantsByChild);
+      if (duplicates.length > 0) throw new TimelineDuplicateOwnerError(duplicates);
 
       // THE ORPHAN GUARD.
       //

@@ -514,6 +514,145 @@ describe("timeline batch writes", () => {
     expect(response.status).toBe(200);
   });
 
+  // ── THE OTHER HALF OF THE INVARIANT: NO CHILD GETS TWO OWNERS ─────────────
+  //
+  // "A collection child has exactly one owning placement" was enforced in ONE
+  // direction only — the orphan guard above refuses a write that drops a
+  // child's LAST owner, and nothing refused a write that gave it a SECOND.
+  // `claimedChildren` is a Set, so two documents in one batch claiming the same
+  // child collapsed into one entry and committed silently.
+  //
+  // That is #304's failure mode at the write boundary: whatever minted the
+  // second owning placement, the store took it without a word, which is why the
+  // corruption was silent and only visible later as `buildGraph` failing with
+  // `{reason:"duplicate-id"}` — by which point every write to that subtree was
+  // blocked.
+  //
+  // BOTH DOCUMENTS KEEP A MEDIA CLIP in these, for the same reason the PATCH
+  // tests below do: an empty document would trip "Refusing to save an empty
+  // timeline" first and the test would go green on the wrong refusal.
+  function seedOwner(parentId: string, childId: string | null, revision = 1) {
+    const clips = childId === null ? [clip("keeper")] : [collectionClip(childId), clip("keeper")];
+    const document: TimelineDocument = { id: parentId, title: `Timeline ${parentId}`, clips };
+    state.docs.set(parentId, {
+      id: parentId, title: document.title, document, clips,
+      isProject: true, ownerUid: "user-a", revision,
+    });
+  }
+
+  const docWith = (id: string, clips: TimelineClip[]): TimelineDocument => ({
+    id, title: `Timeline ${id}`, clips,
+  });
+
+  it("REFUSES a batch in which two documents both OWN the same child", async () => {
+    seedOwner("parent-a", "child-1");
+    seedOwner("parent-b", null);
+    state.docs.set("child-1", {
+      id: "child-1", title: "Timeline child-1",
+      document: docWith("child-1", [clip("c0")]), clips: [clip("c0")],
+      isProject: false, ownerUid: "user-a", revision: 1,
+    });
+
+    // The move that failed to detach: parent-a still lists child-1 and
+    // parent-b has gained it.
+    const response = await batchWrite(
+      batchRequest([
+        {
+          document: docWith("parent-a", [collectionClip("child-1"), clip("keeper")]),
+          expectedRevision: 1,
+        },
+        {
+          document: docWith("parent-b", [collectionClip("child-1"), clip("keeper")]),
+          expectedRevision: 1,
+        },
+      ]),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      error: string;
+      duplicates?: { childId: string; timelineIds: string[] }[];
+    };
+    expect(body.error).toContain("child-1");
+    expect(body.duplicates).toEqual([
+      { childId: "child-1", timelineIds: ["parent-a", "parent-b"] },
+    ]);
+    // NOTHING committed — the whole batch is refused, so parent-b did not gain
+    // the child either.
+    expect(state.docs.get("parent-b")?.revision).toBe(1);
+    expect((state.docs.get("parent-b")?.clips as TimelineClip[]).length).toBe(1);
+  });
+
+  it("ALLOWS the same move when it DOES detach — one owner throughout", async () => {
+    seedOwner("parent-a", "child-1");
+    seedOwner("parent-b", null);
+
+    const response = await batchWrite(
+      batchRequest([
+        { document: docWith("parent-a", [clip("keeper")]), expectedRevision: 1 },
+        {
+          document: docWith("parent-b", [collectionClip("child-1"), clip("keeper")]),
+          expectedRevision: 1,
+        },
+      ]),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  // The asymmetry the whole guard rests on: multi-parent IS legal in this
+  // model, expressed as a duplicate REFERENCE card whose clip id differs from
+  // its childTimelineId. Counting those as owners would refuse the legitimate
+  // edit this test makes.
+  it("ALLOWS a second document holding a duplicate REFERENCE to the same child", async () => {
+    seedOwner("parent-a", "child-1");
+    seedOwner("parent-b", null);
+
+    const response = await batchWrite(
+      batchRequest([
+        {
+          document: docWith("parent-a", [collectionClip("child-1"), clip("keeper")]),
+          expectedRevision: 1,
+        },
+        {
+          document: docWith("parent-b", [
+            // clip id ≠ childTimelineId → a reference, owning nothing.
+            collectionClip("child-1", "ref-clip-1"),
+            clip("keeper"),
+          ]),
+          expectedRevision: 1,
+        },
+      ]),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("REFUSES one document that owns the same child TWICE", async () => {
+    seedOwner("parent-a", "child-1");
+
+    const response = await batchWrite(
+      batchRequest([
+        {
+          document: docWith("parent-a", [
+            collectionClip("child-1"),
+            collectionClip("child-1"),
+            clip("keeper"),
+          ]),
+          expectedRevision: 1,
+        },
+      ]),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      duplicates?: { childId: string; timelineIds: string[] }[];
+    };
+    expect(body.duplicates).toEqual([
+      { childId: "child-1", timelineIds: ["parent-a", "parent-a"] },
+    ]);
+  });
+
   // ── THE SAME GUARD ON THE SINGLE-DOCUMENT PATH ────────────────────────────
   //
   // PATCH /api/timelines/[id] goes through saveFirebaseTimelineEntry, NOT the
@@ -548,6 +687,37 @@ describe("timeline batch writes", () => {
       }),
       params(id),
     );
+
+  it("PATCH REFUSES a document that owns the same child twice", async () => {
+    seedParentWithChildAndMedia("parent-1", "child-1");
+
+    const response = await patchWith("parent-1", {
+      id: "parent-1",
+      title: "Timeline parent-1",
+      clips: [collectionClip("child-1"), collectionClip("child-1"), clip("keeper")],
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      duplicates?: { childId: string; timelineIds: string[] }[];
+    };
+    expect(body.duplicates).toEqual([
+      { childId: "child-1", timelineIds: ["parent-1", "parent-1"] },
+    ]);
+    expect(state.docs.get("parent-1")?.revision).toBe(1);
+  });
+
+  it("PATCH ALLOWS a document holding one owner and one REFERENCE to the same child", async () => {
+    seedParentWithChildAndMedia("parent-1", "child-1");
+
+    const response = await patchWith("parent-1", {
+      id: "parent-1",
+      title: "Timeline parent-1",
+      clips: [collectionClip("child-1"), collectionClip("child-1", "ref-1"), clip("keeper")],
+    });
+
+    expect(response.status).toBe(200);
+  });
 
   it("PATCH REFUSES a write that removes a collection nothing else takes up", async () => {
     seedParentWithChildAndMedia("parent-1", "child-1");

@@ -5,6 +5,7 @@ import { requireAuthUser } from "@/lib/firebase-auth-session";
 import { readJsonObject } from "@/lib/read-json-body";
 import {
   saveFirebaseTimelineDocumentsAtomic,
+  TimelineDuplicateOwnerError,
   TimelineOrphanError,
   TimelineRevisionConflictError,
   type TimelineBatchWrite,
@@ -143,6 +144,16 @@ export async function POST(request: Request) {
     if (error instanceof TimelineOrphanError) {
       return NextResponse.json(
         { error: error.message, orphans: error.orphans },
+        { status: 409 },
+      );
+    }
+    // A write that would give a collection a second owning placement. 409 for
+    // the same reason as the orphan refusal beside it, and with its own array
+    // rather than `conflicts` — there is nothing to reload and retry here; the
+    // write is malformed, not stale.
+    if (error instanceof TimelineDuplicateOwnerError) {
+      return NextResponse.json(
+        { error: error.message, duplicates: error.duplicates },
         { status: 409 },
       );
     }
