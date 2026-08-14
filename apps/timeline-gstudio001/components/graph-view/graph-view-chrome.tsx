@@ -497,15 +497,21 @@ export function GraphBreadcrumb({
         >
           {ancestors.map((ancestor) => (
             <span key={ancestor.id} className="flex shrink-0 items-center gap-2">
-              {/* Must mirror `AncestorCrumb`'s Link EXACTLY — same ceiling AND
-                  the same `px-1.5`. The ceiling moved to 200px with the type
-                  bump; the padding was never here, so every crumb measured
-                  12px narrower than it draws and the trail folded a crumb too
-                  LATE, overflowing its wing instead of collapsing into the
-                  "…". Invisible at 12px with short names, and progressively
-                  less so as the text grows, which is why it is fixed here
-                  rather than left for the resize to expose. */}
-              <span className="max-w-[200px] truncate px-1.5">{ancestor.label}</span>
+              {/* Mirrors `AncestorCrumb`'s CEILING (200px with the type bump)
+                  but deliberately NOT its `px-1.5`.
+
+                  I added that padding on the reasoning that the ruler must
+                  match the real crumb exactly or it under-measures. The
+                  reasoning was never demonstrated — no test failed without it
+                  — and it broke CI: 12px × every ancestor made the fit
+                  arithmetic eager enough that a 1600px viewport folded a crumb
+                  it has room for, in CI's font environment. Reverted.
+
+                  If the under-measurement is ever shown to be real, the fix
+                  belongs in the BUDGET, not here: the padding is a constant
+                  per crumb and the fold is already tuned against a ruler that
+                  omits it. Do not re-add this without a failing test. */}
+              <span className="max-w-[200px] truncate">{ancestor.label}</span>
               <span>/</span>
             </span>
           ))}
