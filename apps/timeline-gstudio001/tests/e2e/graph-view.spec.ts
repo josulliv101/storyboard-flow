@@ -1164,33 +1164,39 @@ test.describe("graph view E2E", () => {
     await expect(bravo.locator('[data-disabled="true"]')).toBeVisible();
   });
 
-  test("board options live in the icon rail, below the trash", async ({ page }) => {
-    // PL14-005. The menu is rendered by the BOARD and portalled into a slot the
-    // rail publishes, so it keeps its real props while its trigger sits with
-    // the rail's other tiles. A null slot would fail silently — no menu, no
-    // error — which is what these assertions exist to catch.
+  test("board options are the last control in the board's controls row", async ({ page }) => {
+    // It spent a while in the icon rail below the trash (PL14-005), portalled
+    // into a slot the rail published. It is back in the board's own controls
+    // row — the row under the divider — as the RIGHTMOST control, and the
+    // portal, the slot and the published id are all gone with it.
     await installGraphApi(page);
     await openGraph(page);
 
     const trigger = page.getByRole("button", { name: "Board options" });
     await expect(trigger).toHaveCount(1);
 
-    // In the rail's slot, and no longer in the board header.
-    expect(
-      await trigger.evaluate((el) => !!el.closest("#graph-board-menu-slot")),
-    ).toBe(true);
-    await expect(
-      page.locator("header").getByRole("button", { name: "Board options" }),
-    ).toHaveCount(0);
+    // Rendered inline in the controls row — no portal, no rail.
+    const row = page.locator("[data-board-controls-row]");
+    await expect(row).toHaveCount(1);
+    expect(await trigger.evaluate((el) => !!el.closest("[data-board-controls-row]"))).toBe(true);
+    // The rail's publishing div is deleted, not merely unused. Asserted
+    // because an empty `className="contents"` div is invisible on screen and
+    // in a screenshot — the DOM is the only place its survival would show.
+    await expect(page.locator("#graph-board-menu-slot")).toHaveCount(0);
 
-    // Below the trash tile and above the account one — the position asked for.
-    const top = async (name: string) =>
-      (await page.getByRole("button", { name }).boundingBox())!.y;
-    expect(await top("Board options")).toBeGreaterThan(await top("Trash"));
-    expect(await top("Board options")).toBeLessThan(await top("Account"));
+    // RIGHTMOST: past every other control in the row, including the zoom
+    // slider, which is the one that only exists in strip mode.
+    const triggerBox = (await trigger.boundingBox())!;
+    const others = await row.locator("button, [data-header-zoom]").all();
+    for (const other of others) {
+      if (await other.evaluate((el, t) => el.contains(t), await trigger.elementHandle())) continue;
+      const box = await other.boundingBox();
+      if (box) expect(triggerBox.x).toBeGreaterThanOrEqual(box.x);
+    }
 
-    // And it still opens, with its contents intact. `side="right"` matters
-    // here: an end-aligned menu on a 72px rail would open off-screen.
+    // And it still opens, on screen. `side="bottom" align="end"` replaced the
+    // rail's `side="right"`: anchored to the right edge of a full-width row,
+    // an end-aligned drop is what keeps it inside the viewport.
     await trigger.click();
     const menu = page.getByRole("menu");
     await expect(menu).toBeVisible();
@@ -1844,10 +1850,17 @@ test.describe("graph view E2E", () => {
     await page.mouse.down();
     await page.waitForTimeout(400);
 
-    // The middle summary + right toolbar fade out under the drag readout (both
-    // DragChromeFade wrappers); the breadcrumb, the drop target, stays.
+    // THREE fades now: the header's middle cluster (selection count + verbs),
+    // the header's right toolbar, and the board controls row under the divider
+    // — every DragChromeFade wrapper. The breadcrumb is deliberately not one
+    // of them: it IS the drop target, so it has to stay legible mid-drag.
+    //
+    // Counted rather than named because the count is the invariant worth
+    // holding: a new cluster of chrome added to this view without a fade would
+    // sit there at full opacity under the drag readout, and nothing else in
+    // this suite would notice.
     const chromeFades = page.locator("[data-drag-chrome-fade]");
-    await expect(chromeFades).toHaveCount(2);
+    await expect(chromeFades).toHaveCount(3);
     for (const fade of await chromeFades.all()) {
       await expect(fade).toHaveAttribute("data-faded", "true");
     }
@@ -2302,7 +2315,9 @@ test.describe("graph view E2E", () => {
     // it — the transport overhangs far enough to crowd the preview more than
     // the timeline, and an even split read bottom-heavy.
     expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(dividerBox!.y + 24, 0);
-    expect(groupBox!.width).toBe(132);
+    // 5 × the 44px button well — jump-to-start, previous, play, next,
+    // jump-to-end. It was 132 (three wells) before the two edge buttons.
+    expect(groupBox!.width).toBe(220);
     expect(groupBox!.height).toBe(44);
     // Centered on the BAND, not on the box.
     expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(
@@ -2540,9 +2555,19 @@ test.describe("graph view E2E", () => {
       .poll(() =>
         buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
       )
-      .toBe(132);
+      // 5 × 44px wells, up from 3 — see the static-transport test above.
+      .toBe(220);
     await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
+    // The whole point of this test is TOUCH reach, so the two new edge buttons
+    // have to clear the same bar as the rest — they are the outermost controls
+    // now, which is exactly where a too-tight row would clip first.
+    await expect(
+      page.getByRole("button", { name: "Jump to start of workbench preview" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Jump to end of workbench preview" }),
+    ).toBeVisible();
     await expect(page.getByTestId("workbench-preview-time")).toBeVisible();
 
     const canvas = page.getByTestId("workbench-display-canvas");
@@ -2566,13 +2591,22 @@ test.describe("graph view E2E", () => {
     );
 
     await page.getByRole("button", { name: "Play workbench preview" }).click();
+    // The SAME width while playing — this is the "stays static" half of the
+    // test: the transport must not resize or re-lay-out when playback starts.
+    // 5 × 44px wells, up from 3 with the two edge buttons.
     await expect
       .poll(() =>
         buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
       )
-      .toBe(132);
+      .toBe(220);
     await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Jump to start of workbench preview" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Jump to end of workbench preview" }),
+    ).toBeVisible();
 
     await page.getByTestId("workbench-display-canvas").click({
       position: playbackCenter,
@@ -2629,7 +2663,21 @@ test.describe("graph view E2E", () => {
   }) => {
     // Narrow viewport → few responsive columns, so the 4 project clips wrap
     // onto at least two rows (needed to see the line change rows on seek).
-    await page.setViewportSize({ width: 420, height: 900 });
+    //
+    // Only the WIDTH carries that premise. The height is slack, and it used to
+    // be thinner than it looked: at 900 the hold-drag below put its drop point
+    // ~128px above the viewport bottom, which is close enough to dnd-kit's
+    // auto-scroll band that 40px of new chrome above the grid (the board
+    // controls row under the divider) took it to ~88px and the drag started
+    // landing a slot too far — 5 failures in 6 under parallel load, none with
+    // a single worker.
+    //
+    // Raised rather than worked around. Scrolling the cards away from the edge
+    // was tried first and was WORSE: centring the target pushed the source
+    // into the top band and the drag stopped resolving at all (6 in 6). Both
+    // edges auto-scroll, so a two-row drag in a short viewport has no safe
+    // scroll offset — it needs the room.
+    await page.setViewportSize({ width: 420, height: 1040 });
     await installGraphApi(page);
     await openGraph(page);
     // Switch the surface to grid, then turn Preview on.
@@ -6403,7 +6451,18 @@ test.describe("graph view E2E", () => {
     expect(order[2]).toBe("bravo");
   });
 
-  test("pasted items end up selected and briefly highlighted", async ({ page }) => {
+  test("a paste ends the gesture: arrivals are highlighted, and NOTHING stays selected", async ({
+    page,
+  }) => {
+    // The paste is the last step of copy → pick a destination → paste, so the
+    // selection UI has to go with it. It used to do the opposite and select the
+    // arrivals, which left the header sitting over the breadcrumb row saying
+    // "1 selected" after the user had already finished — the selection UI
+    // advertising an operation that was over.
+    //
+    // The arrivals still have to be FINDABLE, which is what that rule was
+    // really for, so the flash is asserted here alongside the absence: losing
+    // the selection must not cost the "here is what landed" cue.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
@@ -6432,8 +6491,28 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => page.evaluate(() => (window as unknown as { __flash?: number }).__flash ?? 0))
       .toBeGreaterThan(0);
-    // Selected, so the next action chains onto what was just pasted.
-    await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
+
+    // No ring on any card — not the arrivals, and not the source that was
+    // selected when Copy was pressed.
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
+    // And no remnant in the header either. Both halves are checked because
+    // they fail independently: the count comes from the selection, while the
+    // row it sits in also survives on an armed clipboard, so a paste that
+    // cleared the selection but left the clipboard armed would still leave
+    // this cluster on screen.
+    await expect(page.locator("[data-selection-summary]")).toHaveCount(0);
+    await expect(page.locator("[data-selection-centre-controls]")).toHaveCount(0);
+    // Select mode is not merely empty, it is OFF — this view keeps the mode
+    // armed through an empty selection (`keepMultiSelectModeWhenEmpty`), so
+    // clearing alone would leave checkboxes on every card and the select-mode
+    // row in the header.
+    //
+    // Asserted POSITIVELY, on the browse value. The obvious spelling —
+    // `[data-select-mode="true"]` — is a locator that matches nothing in this
+    // app whatever the behaviour, so it would have passed against the very
+    // code this test exists to reject.
+    await expect(page.locator('[data-header-mode="browse"]')).toHaveCount(1);
+    await expect(page.locator("[data-select-mode-header]")).toHaveCount(0);
   });
 
   test("the menu is reachable and operable from the keyboard alone", async ({ page }) => {

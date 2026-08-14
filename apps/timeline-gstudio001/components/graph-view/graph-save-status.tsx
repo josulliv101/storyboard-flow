@@ -48,7 +48,10 @@ function useSaveState() {
 }
 
 /** One shape for all three states — only the words and the colour differ. */
-const STATUS_CLASS = "shrink-0 whitespace-nowrap font-mono text-[11px]";
+// 12px, up from 11px. It trails the breadcrumb and went up with it, but only
+// one step: this is a status that is usually absent and never acted on, so it
+// stays a rung BELOW the 14px trail it follows rather than competing with it.
+const STATUS_CLASS = "shrink-0 whitespace-nowrap font-mono text-xs";
 
 export function GraphSaveStatus() {
   const { pending, inFlight, lastSavedAt, error } = useSaveState();

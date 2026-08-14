@@ -1,6 +1,17 @@
 "use client";
 
-import { GripHorizontal, Pause, Play, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
+import {
+  ChevronFirst,
+  ChevronLast,
+  GripHorizontal,
+  Pause,
+  Play,
+  SkipBack,
+  SkipForward,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -165,10 +176,16 @@ type WorkbenchDividerTransportProps = {
   canPlay: boolean;
   canSeekPrevious: boolean;
   canSeekNext: boolean;
+  /** Whether the playhead has anywhere to go at each END of the timeline —
+   *  distinct from the clip-to-clip pair above, which step between clips. */
+  canSeekStart: boolean;
+  canSeekEnd: boolean;
   previewHovered: boolean;
   onTogglePlaying: () => void;
   onSeekPrevious: () => void;
   onSeekNext: () => void;
+  onSeekStart: () => void;
+  onSeekEnd: () => void;
 };
 
 type WorkbenchAudioControlsProps = {
@@ -246,10 +263,14 @@ function WorkbenchDividerTransport({
   canPlay,
   canSeekPrevious,
   canSeekNext,
+  canSeekStart,
+  canSeekEnd,
   previewHovered,
   onTogglePlaying,
   onSeekPrevious,
   onSeekNext,
+  onSeekStart,
+  onSeekEnd,
 }: WorkbenchDividerTransportProps) {
   return (
     <div
@@ -259,8 +280,11 @@ function WorkbenchDividerTransport({
       data-testid="workbench-preview-controls"
       data-transport-layout="static"
     >
+      {/* FIVE controls now, so 13.75rem — the width is 5 × the 44px button
+          well (size-11) and has to be kept in step with the count, since the
+          time readout to the right budgets its own width against half of it. */}
       <div
-        className="pointer-events-auto absolute left-1/2 flex h-11 w-[8.25rem] items-center justify-center"
+        className="pointer-events-auto absolute left-1/2 flex h-11 w-[13.75rem] items-center justify-center"
         data-transport-button-group
         style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translate(-50%, -50%)" }}
         onPointerDown={(event) => {
@@ -269,6 +293,28 @@ function WorkbenchDividerTransport({
           event.stopPropagation();
         }}
       >
+        {/* THE ENDS, outside the clip-steppers. The pairing is deliberate:
+            reading outwards from the play button you get "one clip back" then
+            "all the way back", which is the order every transport in every
+            editor uses. Putting them inside would have made the two arrow
+            pairs read as one four-way stepper.
+
+            `translate-x-3` (against the steppers' `2`) closes the gap the extra
+            well opens up, so the five glyphs still read as one cluster rather
+            than as a control with two satellites. */}
+        <button
+          type="button"
+          onClick={onSeekStart}
+          disabled={!canSeekStart}
+          className="group/start relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          aria-label="Jump to start of workbench preview"
+          title="Jump to start"
+        >
+          <span className="grid size-5 translate-x-3 place-items-center rounded-full transition-colors group-focus-visible/start:ring-2 group-focus-visible/start:ring-sky-400 group-focus-visible/start:ring-offset-2 group-focus-visible/start:ring-offset-zinc-950">
+            <ChevronFirst className="size-3.5" />
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={onSeekPrevious}
@@ -322,10 +368,27 @@ function WorkbenchDividerTransport({
             <SkipForward className="size-3.5 fill-current" />
           </span>
         </button>
+
+        <button
+          type="button"
+          onClick={onSeekEnd}
+          disabled={!canSeekEnd}
+          className="group/end relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          aria-label="Jump to end of workbench preview"
+          title="Jump to end"
+        >
+          <span className="grid size-5 -translate-x-3 place-items-center rounded-full transition-colors group-focus-visible/end:ring-2 group-focus-visible/end:ring-sky-400 group-focus-visible/end:ring-offset-2 group-focus-visible/end:ring-offset-zinc-950">
+            <ChevronLast className="size-3.5" />
+          </span>
+        </button>
       </div>
 
       <span
-        className="absolute right-3 max-w-[calc(50%_-_5rem)] overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-zinc-900/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400 shadow-sm"
+        // Budgeted against HALF the button group (now 13.75rem ⇒ 6.875rem)
+        // plus a gap, so the readout cannot slide under the outermost button.
+        // This number is not free-standing — it moves whenever the group's
+        // width does.
+        className="absolute right-3 max-w-[calc(50%_-_7.75rem)] overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-zinc-900/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400 shadow-sm"
         aria-label={`Preview time ${formatSeconds(currentTime)} of ${formatSeconds(duration)}`}
         data-testid="workbench-preview-time"
         style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
@@ -1216,6 +1279,34 @@ export function WorkbenchDisplaySurface({
     [activeClip, activeClipIndex, currentTime, onCurrentTimeChange, renderFrameAtTime, sortedClips],
   );
 
+  /**
+   * Jump to either END of the timeline, ignoring clip boundaries.
+   *
+   * Deliberately NOT expressed as "step until you run out of clips": that
+   * lands on the last clip's START, which is not the end of the timeline, and
+   * for a long final clip is nowhere near it.
+   *
+   * `duration` is a position the renderer already produces — reaching the end
+   * during playback publishes exactly `durationRef.current` and draws that
+   * frame (see the tick loop) — so seeking there is the same state the user
+   * gets by letting it play out, not a new edge case.
+   *
+   * Same three lines as `seekToClip`, in the same order and for the same
+   * reasons: drop the playback anchor so a running preview re-times from the
+   * new position rather than snapping back, draw immediately, then publish.
+   */
+  const seekToEdge = useCallback(
+    (edge: "start" | "end") => {
+      if (sortedClips.length === 0) return;
+      const target = edge === "start" ? 0 : duration;
+      currentTimeRef.current = target;
+      playbackAnchorRef.current = null;
+      renderFrameAtTime(target, false, true);
+      onCurrentTimeChange(target);
+    },
+    [duration, onCurrentTimeChange, renderFrameAtTime, sortedClips],
+  );
+
   useEffect(() => {
     const cancelQueuedFrame = () => {
       if (animationFrameRef.current !== null) {
@@ -1342,6 +1433,12 @@ export function WorkbenchDisplaySurface({
   const canPlay = duration > 0 && sortedClips.length > 0;
   const canSeekPrevious = sortedClips.length > 0 && currentTime > 0;
   const canSeekNext = sortedClips.length > 0 && activeClipIndex < sortedClips.length - 1;
+  // The EDGE pair asks a different question from the stepper pair above:
+  // "is there anywhere left in that direction", not "is there another clip".
+  // At the last clip's start `canSeekNext` is already false while the end of
+  // the timeline is still seconds away, which is the gap these two close.
+  const canSeekStart = sortedClips.length > 0 && currentTime > 0;
+  const canSeekEnd = sortedClips.length > 0 && currentTime < duration;
 
   const isPointerOverPlaybackSurface = useCallback(
     (event: CanvasPointEvent) => {
@@ -1470,6 +1567,8 @@ export function WorkbenchDisplaySurface({
         canPlay={canPlay}
         canSeekPrevious={canSeekPrevious}
         canSeekNext={canSeekNext}
+        canSeekStart={canSeekStart}
+        canSeekEnd={canSeekEnd}
         previewHovered={canPlay && previewHovered}
         onTogglePlaying={() => {
           // This click IS the user gesture the AudioContext has been waiting
@@ -1479,6 +1578,8 @@ export function WorkbenchDisplaySurface({
         }}
         onSeekPrevious={() => seekToClip(-1)}
         onSeekNext={() => seekToClip(1)}
+        onSeekStart={() => seekToEdge("start")}
+        onSeekEnd={() => seekToEdge("end")}
       />
     </section>
   );

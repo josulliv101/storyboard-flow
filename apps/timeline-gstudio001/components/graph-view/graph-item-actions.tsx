@@ -276,11 +276,31 @@ function pasteFromClipboard(store: CollectionsStore, focusedId: string): PasteOu
 }
 
 /**
- * What happens AFTER a paste lands: select, reveal, highlight, announce.
+ * What happens AFTER a paste lands: reveal, highlight, announce — and END the
+ * gesture.
  *
- * Selecting the arrivals (R9.6) is what makes chained work natural — paste,
- * then immediately move or delete what you just pasted — and it puts the anchor
- * on the last of them, since selection order is insertion order.
+ * The paste is the LAST step of copy/cut → pick a destination → paste. Once it
+ * lands the operation is over, so nothing about the selected state may survive
+ * it: no count in the header, no ring on a card, no armed select mode. This is
+ * the one place that can say so, because it is the only step that knows the
+ * paste actually committed.
+ *
+ * This used to `setSelection(ids)` instead (R9.6), on the reasoning that
+ * selecting the arrivals makes chained work natural — paste, then immediately
+ * move or delete what you just pasted. In practice it read as a paste that had
+ * not finished: the header stayed up saying "1 selected" over the breadcrumb
+ * row, which is the selection UI advertising an operation the user had already
+ * completed. The arrivals are still made findable — the flash marks them and
+ * focus scrolls the last one into view — which is what that rule actually
+ * wanted; it does not need the selection to do it.
+ *
+ * `clearSelection` alone is not enough. This view runs the store with
+ * `keepMultiSelectModeWhenEmpty`, so clearing empties the selection and LEAVES
+ * select mode armed — checkboxes on the cards, and a "0 selected" row still
+ * sitting in the breadcrumb. Copy and Cut normally drop the mode on their way
+ * out (`handOverToDestinationPicking`), but a user who re-enters select mode
+ * before pasting would otherwise keep it, so the mode is dropped explicitly
+ * here rather than relying on how the destination was reached.
  */
 function revealPasted(
   store: CollectionsStore,
@@ -289,7 +309,8 @@ function revealPasted(
 ): void {
   const { ids, skipped, afterId } = outcome;
   if (ids.length === 0) return;
-  store.setSelection(ids);
+  store.clearSelection();
+  store.setMultiSelectMode(false);
   graphPasteFlash.flash(ids);
   // Focusing scrolls it into view, and retries until virtualization has
   // actually mounted the card — which is the case that matters, since a paste

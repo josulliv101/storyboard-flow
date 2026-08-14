@@ -128,7 +128,12 @@ export const StickyPreview: Story = {
     const dividerBox = divider.getBoundingClientRect();
     const dividerLineBox = dividerLine!.getBoundingClientRect();
     expect(getComputedStyle(dividerLine!).backgroundImage).toContain("linear-gradient");
-    expect(buttonGroupBox.width).toBe(132);
+    // 5 × the 44px button well: jump-to-start, previous, play, next,
+    // jump-to-end. It was 132 (three wells) before the two edge buttons were
+    // added, and the number is pinned rather than derived because the time
+    // readout budgets its own max-width against half of it — the two have to
+    // be changed together, and a hard number is what makes that fail loudly.
+    expect(buttonGroupBox.width).toBe(220);
     expect(buttonGroupBox.height).toBe(44);
     expect(controls.querySelector("[data-transport-capsule]")).toBeNull();
     // The grip is the coarse-pointer affordance — always in the DOM, painted
@@ -159,6 +164,23 @@ export const StickyPreview: Story = {
       canvas.getByRole("button", { name: "Previous workbench clip" }),
     ).toBeVisible();
     expect(canvas.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
+
+    // THE EDGE PAIR, outside the clip steppers. Order is asserted by x rather
+    // than by DOM position: what matters is that reading outward from play you
+    // get "one clip" then "all the way", and a DOM-order check would pass on a
+    // layout that visually interleaved them.
+    const jumpStart = canvas.getByRole("button", {
+      name: "Jump to start of workbench preview",
+    });
+    const jumpEnd = canvas.getByRole("button", { name: "Jump to end of workbench preview" });
+    const x = (el: HTMLElement) => el.getBoundingClientRect().x;
+    expect(x(jumpStart)).toBeLessThan(x(canvas.getByRole("button", { name: "Previous workbench clip" })));
+    expect(x(jumpEnd)).toBeGreaterThan(x(canvas.getByRole("button", { name: "Next workbench clip" })));
+    // Both live inside the button group, so the divider-drag guard on it (a
+    // transport press must never begin a resize) covers them too.
+    expect(buttonGroup!.contains(jumpStart)).toBe(true);
+    expect(buttonGroup!.contains(jumpEnd)).toBe(true);
+
     expect(canvas.getByTestId("workbench-preview-time")).toHaveTextContent("0s / 0s");
     expect(previewCanvas.getBoundingClientRect().bottom).toBeCloseTo(dividerBox.y, 0);
     expect(getComputedStyle(lowerPane).zIndex).toBe("0");
