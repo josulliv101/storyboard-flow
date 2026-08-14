@@ -171,6 +171,49 @@ describe("preview manifest route", () => {
     expect(at(body.manifest.leaves, 1).timelineStart).toBeCloseTo(4.12, 6);
   });
 
+
+  // #284 asked whether this route needs a server-side cache, and said to
+  // measure first. It does not, and this is the measurement kept as a guard.
+  //
+  // A 7-document closure costs exactly 7 reads — one per document, no repeats
+  // — because `createTimelineEntryReader` dedupes within a request. And the
+  // client fetches this on focus change and 2500ms after a commit settles
+  // (MANIFEST_REFRESH_DELAY_MS), not on a poll, so requests are per edit
+  // BURST rather than per second.
+  //
+  // What this test protects is the "one read per document" part. An N+1 —
+  // re-reading a child while walking, say — would not fail any existing test;
+  // it would just quietly multiply the cost of every preview, which is the
+  // thing that would eventually make a cache necessary.
+  it("costs one read per document in the closure, and no more", async () => {
+    const sceneIds: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const id = `scene-${index}`;
+      sceneIds.push(id);
+      seed(id, "user-a", [
+        image(`${id}-a`, 0, 2),
+        image(`${id}-b`, 2, 2),
+        image(`${id}-c`, 4, 2),
+        image(`${id}-d`, 6, 2),
+      ]);
+    }
+    seed(
+      "root-1",
+      "user-a",
+      sceneIds.map((id, index) => collectionClip(`${id}-ref`, id, index * 8, 8)),
+    );
+
+    state.reads.clear();
+    await getPreviewManifest(new Request("http://test.local"), params("root-1"));
+
+    const documents = sceneIds.length + 1;
+    const total = [...state.reads.values()].reduce((sum, count) => sum + count, 0);
+    expect(state.reads.size).toBe(documents);
+    expect(total).toBe(documents);
+    // Every document read exactly once — not "mostly once".
+    expect([...state.reads.values()].every((count) => count === 1)).toBe(true);
+  });
+
   it("reads the root exactly once", async () => {
     seed("scene", "user-a", [image("a", 0, 2)]);
     seed("root-1", "user-a", [collectionClip("scene-ref", "scene", 0, 2)]);
