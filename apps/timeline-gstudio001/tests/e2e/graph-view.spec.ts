@@ -4183,9 +4183,14 @@ test.describe("graph view E2E", () => {
 
     // Append into the CHILD's strip: it lands last there, and the project is
     // untouched.
-    await page
-      .locator(`[data-add-collection-slot="${CHILD_ID}"]`)
-      .click();
+    //
+    // The BUTTON, not the slot around it. This used to click the slot and work
+    // by accident: the add button filled the whole container, so a centre
+    // click landed on it. The slot is a compact icon PAIR now (add-timeline
+    // and add-media), centred in the card-sized box the surface reserves — so
+    // its centre is the gap between them, and a container click is genuinely
+    // ambiguous about which control it means.
+    await page.locator(`[data-add-collection-button="${CHILD_ID}"]`).click();
     await expect
       .poll(() => stripOrder(page, CHILD_ID), { timeout: 10000 })
       .toEqual(["c1", "c2", expect.stringMatching(/^timeline-/)]);

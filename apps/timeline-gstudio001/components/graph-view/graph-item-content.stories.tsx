@@ -550,9 +550,12 @@ const graphWithParentDisabled = (() => {
 })();
 
 /**
- * A card disabled on ITSELF: muted, and badged with the word that names why.
- * The badge is what distinguishes it from the inherited case below — the two
- * look identical otherwise, on purpose, because a viewer sees neither.
+ * A card disabled on ITSELF: badged with the word that names why, and knocked
+ * back HARD — 45% and grayscale.
+ *
+ * The heavy treatment earns its place here specifically: this card sits among
+ * siblings that are ON, and separating it from them is the entire job. The
+ * inherited case below is deliberately lighter — see its note.
  */
 export const DisabledCard: Story = {
   args: baseArgs,
@@ -572,13 +575,26 @@ export const DisabledCard: Story = {
     await expect(getComputedStyle(surface).filter).toBe("none");
     await expect(getComputedStyle(chip).opacity).toBe("1");
     await expect(getComputedStyle(chip).filter).toBe("none");
+
+    // The dimming lives on the inner span, not the surface — which is what
+    // keeps the checkbox and the chip readable while the artwork fades.
+    const visuals = canvasElement.querySelector<HTMLElement>("[data-disabled-visuals]")!;
+    await expect(visuals.dataset.disabledVisuals).toBe("true");
+    await expect(getComputedStyle(visuals).opacity).toBe("0.45");
+    await expect(getComputedStyle(visuals).filter).toBe("grayscale(1)");
   },
 };
 
 /**
- * A card that is off only because a collection ABOVE it is. It carries the
- * same muted treatment but its own flag is clear, so re-enabling it here would
- * do nothing — the chip says where to go instead.
+ * A card that is off only because a collection ABOVE it is — and it is
+ * knocked back LESS than the self-disabled card, on purpose.
+ *
+ * These two used to render identically, on the reasoning that a viewer sees
+ * neither. That reasoning breaks in the case that matters most: drill INTO a
+ * disabled collection and every card on screen is inherited-off, so uniform
+ * heavy dimming has nothing to contrast against and only costs you the
+ * legibility of the content you came in to look at. Nothing was decided about
+ * this item, so it stays readable and the chip carries the message.
  */
 export const DisabledByParentCard: Story = {
   args: baseArgs,
@@ -595,6 +611,14 @@ export const DisabledByParentCard: Story = {
     await expect(getComputedStyle(surface).filter).toBe("none");
     await expect(getComputedStyle(chip).opacity).toBe("1");
     await expect(getComputedStyle(chip).filter).toBe("none");
+
+    // LIGHTER than DisabledCard, and NOT grayscale. Both halves are asserted:
+    // dropping either one is what would quietly collapse this back into the
+    // self-disabled treatment.
+    const visuals = canvasElement.querySelector<HTMLElement>("[data-disabled-visuals]")!;
+    await expect(visuals.dataset.disabledVisuals).toBe("inherited");
+    await expect(getComputedStyle(visuals).opacity).toBe("0.75");
+    await expect(getComputedStyle(visuals).filter).toBe("none");
   },
 };
 
