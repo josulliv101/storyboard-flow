@@ -1,13 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { compilePlaybackManifest } from "@storyboard/timeline-domain";
-import { deriveClosureSummaries } from "@/lib/derive-collection-summaries";
+import { compileTimelineManifest } from "@/lib/compile-timeline-manifest";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
-import { readStoredTimelineEntry } from "@/lib/firebase-timeline-store";
-import {
-  loadTimelineClosure,
-  TimelineClosureTooLargeError,
-} from "@/lib/load-timeline-closure";
+import { TimelineClosureTooLargeError } from "@/lib/load-timeline-closure";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 export const runtime = "nodejs";
@@ -41,35 +36,15 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const entry = await readStoredTimelineEntry(id, user.uid);
-    if (!entry) {
+    // Shared with the render-submit route — see compileTimelineManifest for
+    // why the stale-summary repair inside it must not be reimplemented by a
+    // second caller. Null means the timeline is not there (this read IS this
+    // route's 404 check).
+    const compiled = await compileTimelineManifest(id, user.uid);
+    if (!compiled) {
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
-
-    // The root was just read above (that read IS this route's 404 check), so
-    // hand it straight to the walker rather than making it fetch the same
-    // document again and then overwriting the result.
-    const { documents, missing, revisions } = await loadTimelineClosure(id, user.uid, {
-      rootEntry: entry,
-    });
-
-    // Stored collection summaries go stale by design: the graph view's
-    // writes are patch-scoped, so editing a child never rewrites the
-    // parents that reference it. Every other read path repairs that at read
-    // time (serveTimelineDocument); compiling from the raw closure made this
-    // route the one reader that did not, so the preview both reported a
-    // different total than the board and windowed a grown child's newest
-    // clips out of playback entirely.
-    const summarized = deriveClosureSummaries(documents, new Set(missing));
-
-    const manifest = compilePlaybackManifest(
-      summarized,
-      id,
-      entry.revision,
-      new Date().toISOString(),
-      revisions,
-    );
-    return NextResponse.json({ manifest, missing });
+    return NextResponse.json({ manifest: compiled.manifest, missing: compiled.missing });
   } catch (error) {
     // Someone else's document: a plain not-found, so timeline ids can't be
     // probed for existence.

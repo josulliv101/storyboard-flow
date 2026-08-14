@@ -1,0 +1,47 @@
+import "server-only";
+
+import { compilePlaybackManifest, type PlaybackManifest } from "@storyboard/timeline-domain";
+
+import { deriveClosureSummaries } from "./derive-collection-summaries";
+import { readStoredTimelineEntry } from "./firebase-timeline-store";
+import { loadTimelineClosure } from "./load-timeline-closure";
+
+/**
+ * Compile a timeline's playback manifest from STORED documents.
+ *
+ * Extracted when export became the second caller. The preview route had this
+ * as four steps in sequence, and the third one is the trap: stored collection
+ * summaries go stale BY DESIGN, because the graph view's writes are
+ * patch-scoped and editing a child never rewrites the parents referencing it.
+ * Every read path repairs that at read time; the preview route once did not,
+ * and reported a different total than the board while windowing a grown
+ * child's newest clips out of playback entirely.
+ *
+ * A second caller copying three of the four steps would have reproduced
+ * exactly that bug in export — where it would have been worse, because a wrong
+ * manifest there is a wrong FILE rather than a wrong preview.
+ */
+export async function compileTimelineManifest(
+  timelineId: string,
+  uid: string,
+): Promise<Readonly<{ manifest: PlaybackManifest; missing: readonly string[] }> | null> {
+  const entry = await readStoredTimelineEntry(timelineId, uid);
+  if (!entry) return null;
+
+  // The root was just read, so hand it to the walker rather than making it
+  // fetch the same document again.
+  const { documents, missing, revisions } = await loadTimelineClosure(timelineId, uid, {
+    rootEntry: entry,
+  });
+
+  const summarized = deriveClosureSummaries(documents, new Set(missing));
+
+  const manifest = compilePlaybackManifest(
+    summarized,
+    timelineId,
+    entry.revision,
+    new Date().toISOString(),
+    revisions,
+  );
+  return { manifest, missing };
+}
