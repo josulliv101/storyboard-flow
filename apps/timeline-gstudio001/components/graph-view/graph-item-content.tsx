@@ -1746,10 +1746,24 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
               aria-hidden="true"
               className="pointer-events-none absolute inset-0 z-10 grid place-items-center"
             >
-              <Layers
-                className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
-                strokeWidth={1.5}
-              />
+              {/* A disc behind the glyph, so the mark reads on ANY frame.
+                  The glyph alone is white-on-whatever-the-children-are: over a
+                  pale or busy frame the strokes break up, and the drop-shadow
+                  under it only outlines them rather than giving them a ground.
+                  The disc is that ground.
+
+                  Deliberately faint — `bg-black/25`. This sits over the frame
+                  that tells you WHICH collection this is, so it has to darken
+                  the picture without hiding it; anything heavier reads as a
+                  scrim over the card. It is a background-colour alpha, NOT
+                  `opacity` on the wrapper, which would take the glyph down to
+                  an eighth (0.25 × its own 0.5) along with it. */}
+              <span className="rounded-full bg-black/25 p-2">
+                <Layers
+                  className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
+                  strokeWidth={1.5}
+                />
+              </span>
             </span>
           ) : null}
           {previews.length === 0 ? (

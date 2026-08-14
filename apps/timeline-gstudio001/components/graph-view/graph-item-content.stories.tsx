@@ -269,6 +269,72 @@ export const PlaceholderAriaCountMatchesBadge: Story = {
   },
 };
 
+/**
+ * The collection mark — the Layers glyph dead centre over the frames — sits on
+ * a translucent disc.
+ *
+ * The glyph alone is white-on-whatever-the-children-happen-to-be: over a pale
+ * or busy frame its strokes break up, and the drop-shadow under it outlines
+ * them rather than giving them a ground. The disc is that ground.
+ *
+ * Asserted on COMPUTED style, not the class string. `bg-black/25` is a
+ * spelling; `rgba(0, 0, 0, 0.25)` is what the user actually sees, and the two
+ * stop agreeing the moment the utility is renamed or the token is re-themed.
+ *
+ * The alpha lives on the BACKGROUND rather than on the wrapper's `opacity`,
+ * which is why the wrapper's own opacity is pinned at 1: `opacity` there would
+ * multiply with the glyph's 0.5 and take it to an eighth, and the resulting
+ * card would look like a rendering bug rather than a mark.
+ */
+export const CollectionMarkSitsOnATranslucentDisc: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([ASSET_A, ASSET_B])],
+  play: async ({ canvasElement }) => {
+    const mark = canvasElement.querySelector<HTMLElement>("[data-collection-mark]");
+    await expect(mark).not.toBeNull();
+
+    const disc = mark!.firstElementChild as HTMLElement | null;
+    await expect(disc).not.toBeNull();
+    await expect(disc!.querySelector("svg")).not.toBeNull();
+
+    const style = getComputedStyle(disc!);
+    // The ALPHA, parsed out of whatever colour space the toolchain serialises
+    // in — Tailwind v4 resolves this to `oklab(0 0 0 / 0.25)`, not the
+    // `rgba(0, 0, 0, 0.25)` the utility name suggests, and pinning either
+    // literal makes this story a test of the build rather than of the design.
+    // Both spellings put the alpha last, which is the part worth pinning.
+    const alpha = Number.parseFloat(/([\d.]+)\s*\)\s*$/.exec(style.backgroundColor)?.[1] ?? "1");
+    await expect(alpha).toBeCloseTo(0.25, 2);
+    await expect(style.opacity).toBe("1");
+
+    // A CIRCLE, which is a square box plus a radius — checking the radius
+    // alone would pass on a pill, and checking the box alone on a square.
+    const box = disc!.getBoundingClientRect();
+    await expect(Math.round(box.width)).toBe(Math.round(box.height));
+    await expect(style.borderRadius).not.toBe("0px");
+
+    // It has to sit OVER the frame, not beside it: the mark is positioned by
+    // the wrapper, and a disc that shrank the glyph out of the artwork would
+    // still satisfy every assertion above.
+    const frame = previewImages(canvasElement)[0]!.getBoundingClientRect();
+    await expect(box.left).toBeGreaterThanOrEqual(frame.left);
+    await expect(box.right).toBeLessThanOrEqual(frame.right);
+  },
+};
+
+/**
+ * …and NOT over the empty state, which draws its own placeholder glyph. Two
+ * glyphs stacked in the middle of one card just reads as a bug.
+ */
+export const EmptyCollectionHasNoCollectionMark: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([])],
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-empty-collection-preview]")).not.toBeNull();
+    await expect(canvasElement.querySelector("[data-collection-mark]")).toBeNull();
+  },
+};
+
 /** An empty or unresolved collection shows only the collection affordance;
  * no fallback copy is allowed to bleed through behind the folder glyph. */
 export const EmptyCardUsesCleanIconFallback: Story = {

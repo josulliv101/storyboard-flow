@@ -47,7 +47,6 @@ import {
   type ItemActionState,
 } from "@/lib/graph-item-action-specs";
 import {
-  GRAPH_BOARD_MENU_SLOT_ID,
   requestGraphItemAction,
   requestGraphToolInsert,
   type GraphItemAction,
@@ -148,20 +147,28 @@ function BoardMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        {/* Wears the icon RAIL's tile treatment, not the header's ghost
-            button: it sits with the trash and account tiles now (PL14-005) and
-            has to read as one of them. `side="right"` for the same reason —
-            a menu aligned to the end of a 72px rail would open off-screen. */}
-        <button
+        {/* Back to the header ghost-button treatment. It wore the icon RAIL's
+            tile styling while it lived down there with the trash and account
+            tiles (PL14-005); it is the last control in the board's own
+            controls row now, so it has to read as one of THOSE — same 32px
+            ghost square as the toggles beside it, via HeaderToggle's classes.
+
+            `side="bottom" align="end"` follows it back. `side="right"` existed
+            only because a menu aligned to the end of a 72px rail would have
+            opened off-screen; anchored to the row's right edge, dropping down
+            and end-aligned is what keeps it on screen. */}
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           aria-label="Board options"
           title="Board options"
-          className={[SIDEBAR_ICON_BASE, SIDEBAR_ICON_IDLE].join(" ")}
+          className={cn("h-8 w-8", HEADER_TOGGLE_IDLE)}
         >
-          <Settings aria-hidden="true" className={SIDEBAR_GLYPH} />
-        </button>
+          <Settings aria-hidden className="h-4 w-4" />
+        </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="right" align="end" className="w-60 p-2">
+      <DropdownMenuContent side="bottom" align="end" className="w-60 p-2">
         <DropdownMenuGroup>
           <DropdownMenuLabel className="px-0.5 pb-2 pt-0.5">Thumbnail size</DropdownMenuLabel>
           {/* BADGES in a wrapping row, not a stack of rows: five sizes as
@@ -205,38 +212,18 @@ function BoardMenu({
   );
 }
 
-/**
- * Mounts `BoardMenu` into the icon sidebar's slot (PL14-005).
+/*
+ * `BoardMenuSlot` is gone with the trip to the icon rail.
  *
- * The node is looked up ONCE, in a lazy initializer, and that is safe here for
- * a specific reason: the whole graph tree mounts `ssr: false` (see
- * client-graph-view), so the app layout — rail included — is already committed
- * to the DOM before this component first renders. There is no frame in which
- * the slot is missing and we would need to retry.
- *
- * Which is why it is not an effect. Resolving it with `setState` inside one
- * re-renders the board on every mount to change nothing, and the repo's lint
- * rejects synchronous set-state in an effect for exactly that reason. If the
- * graph ever mounts with SSR, this has to become a subscription — not an
- * effect that sets state.
- *
- * Rendering it from HERE, inside the board, is the whole point: the menu keeps
- * the real `itemSize`/`pixelsPerSecond` props and stays inside the graph's
- * providers. Only its DOM address is in the sidebar. `graph-view.spec.ts`
- * asserts it actually lands there, because a null slot would fail silently.
+ * It portalled `BoardMenu` into a slot the rail published
+ * (`GRAPH_BOARD_MENU_SLOT_ID`), so the menu could keep its real
+ * `itemSize`/`onItemSizeChange` props and stay inside the graph's providers
+ * while its trigger sat with the trash and account tiles (PL14-005). The
+ * trigger is back in the board's own controls row, which is inside those
+ * providers already — so the portal, the slot lookup, and the rail's empty
+ * publishing div all had nothing left to do and are deleted rather than left
+ * behind pointing at each other.
  */
-function BoardMenuSlot(props: Readonly<{
-  itemSize: ItemSize;
-  onItemSizeChange: (size: ItemSize) => void;
-}>) {
-  const [slot] = useState<HTMLElement | null>(() =>
-    typeof document === "undefined"
-      ? null
-      : document.getElementById(GRAPH_BOARD_MENU_SLOT_ID),
-  );
-  if (!slot) return null;
-  return createPortal(<BoardMenu {...props} />, slot);
-}
 
 /**
  * The centre readout of the header row: normally the focused timeline's
@@ -252,37 +239,61 @@ function BoardMenuSlot(props: Readonly<{
  * purpose (the per-card badges show the same numbers), so hiding it on small
  * screens costs nothing.
  */
+/**
+ * How many items are selected — the subject the controls beside it act on.
+ *
+ * Lives in the HEADER, next to those controls: a group of verbs whose count has
+ * been moved away reads as chrome with no object. Visible at every breakpoint
+ * for the same reason.
+ *
+ * This and `FocusedAggregate` below were ONE component sharing one slot, which
+ * is why they were mutually exclusive — two numbers competing for the centre of
+ * the breadcrumb row, so the selection won whenever there was one. They are in
+ * different rows now, so the competition is gone and with it the reason to
+ * suppress either: the header says what you have picked, the controls row says
+ * what is in front of you, and both are true at once.
+ */
+function SelectionSummary() {
+  const selectedCount = useSelectionCount();
+  if (selectedCount === 0) return null;
+  return (
+    <span
+      data-selection-summary
+      className="block shrink-0 pl-3 text-center font-mono text-[11px] tabular-nums text-blue-400/90"
+      title="Selected items"
+    >
+      {/* COUNT ONLY. The selection's total duration was here and is not a
+          fact anyone acts on — nothing in the row does anything with it, and
+          it competed for the eye with the number that actually scopes the
+          verbs beside it. The timeline's own total still shows below, which is
+          where a duration means something. */}
+      {selectedCount} selected
+    </span>
+  );
+}
+
+/**
+ * What is in the focused timeline: "12 clips · 1:04".
+ *
+ * It describes the board rather than the selection, so it sits at the left of
+ * the controls row under the divider — beside the controls that qualify what
+ * that board shows — rather than in the breadcrumb trail above.
+ *
+ * No longer hidden below `sm`. It was competing for the breadcrumb row's centre
+ * slot with the selection count and with the clipboard verbs, and on a narrow
+ * viewport the total was the one worth dropping. In a row of its own there is
+ * nothing to lose it to.
+ */
 function FocusedAggregate({
   focusedId,
   pixelsPerSecond,
 }: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
-  const selectedCount = useSelectionCount();
   const { count, seconds } = useFocusedTimelineAggregate(focusedId, pixelsPerSecond);
-
-  if (selectedCount > 0) {
-    return (
-      <span
-        data-selection-summary
-        // Visible at EVERY breakpoint, unlike the idle total below. This is the
-        // subject the controls beside it act on, and a group of controls whose
-        // count has been hidden away reads as chrome with no object.
-        className="block shrink-0 pl-3 text-center font-mono text-[11px] tabular-nums text-blue-400/90"
-        title="Selected items"
-      >
-        {/* COUNT ONLY. The selection's total duration was here and is not a
-            fact anyone acts on — nothing in the row does anything with it, and
-            it competed for the eye with the number that actually scopes the
-            verbs beside it. The timeline's own total still shows when nothing
-            is selected, which is where a duration means something. */}
-        {selectedCount} selected
-      </span>
-    );
-  }
   if (count === 0) return null;
   return (
     <span
       data-focused-aggregate
-      className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-zinc-400 sm:block"
+      className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400"
       title="Focused timeline total"
     >
       {count} {count === 1 ? "clip" : "clips"} · {formatDuration(seconds)}
@@ -1152,7 +1163,12 @@ function SelectModeHeader({
         // count of exactly those ringed cards, so matching the ring is what
         // ties the number to the thing it counts; blue-400 was a near-miss
         // that read as a third accent rather than the selection colour.
-        className="shrink-0 font-mono text-[13px] tabular-nums text-blue-500"
+        // `text-sm` (14px), matching the breadcrumb trail this row swaps
+        // places with. The two faces of the header have to read as the same
+        // row wearing a different hat — a count a pixel smaller than the trail
+        // it replaces is exactly the kind of drift that makes the swap feel
+        // like a different toolbar appearing.
+        className="shrink-0 font-mono text-sm tabular-nums text-blue-500"
       >
         {armed ? armedCount : selectionCount} selected
       </span>
@@ -1221,7 +1237,7 @@ function SelectModeHeader({
         // nudged the board down: this is the tallest thing in the row, so it
         // alone set the header's height — 61px against the browse row's 57.
         className={cn(
-          "ml-auto h-8 shrink-0 rounded-lg border border-zinc-700 px-3.5 text-[13px] font-medium",
+          "ml-auto h-8 shrink-0 rounded-lg border border-zinc-700 px-3.5 text-sm font-medium",
           "[@media(pointer:coarse)]:h-11",
           "text-zinc-100 hover:border-zinc-500 hover:bg-transparent hover:text-white",
         )}
@@ -1590,91 +1606,69 @@ export function GraphBoard({
                 drag readout that overlays this row, and fade back on drop. The
                 breadcrumb stays — it IS the drop target. */}
             <DragChromeFade className="flex items-center">
-              <FocusedAggregate
-                focusedId={focusedId}
-                pixelsPerSecond={deferredPixelsPerSecond}
-              />
+              <SelectionSummary />
               <SelectionCentreControls anchorName={anchorName} />
             </DragChromeFade>
-            {/* flex-wrap + wrap-capable controls so a narrow viewport folds the
-                toolbar onto a second line instead of pushing controls
-                off-screen. No effect when it fits. */}
+            {/* NO `flex-wrap`, despite what this comment used to claim: the
+                header's two faces are pinned to one height, so a cluster that
+                folded onto a second line would take the whole row — and the
+                board pinned beneath it — with it. Narrow viewports are
+                answered by moving controls OUT (the row under the divider now
+                carries four of them) rather than by wrapping. */}
             <DragChromeFade className="flex min-w-0 items-center justify-end gap-2">
-              {/* FILTER and SELECT lead the cluster, together, as the design
-                  has them. They are the two controls that change how you WORK
-                  with the board rather than what it contains or how it is
-                  drawn: one narrows the field to what you are hunting for, the
-                  other is how you then pick out of it. Reaching for them in
-                  sequence is the common path, so they sit as one pair.
+              {/* SELECT leads what is left of this cluster. It used to lead as
+                  a PAIR with the tag filter — the two controls that change how
+                  you WORK with the board rather than what it contains — and
+                  that pairing is gone deliberately: the filter moved down to
+                  the controls row under the divider, with the rest of the
+                  controls that qualify what the board shows. Select stays here
+                  because it is the one that arms an ACTION, and the verbs it
+                  arms (the centre cluster) are in this row.
 
-                  The filter used to live in the view group below, on the
-                  reasoning that it qualifies what the board shows — true, but
-                  it is also the control this row most needed to make findable,
-                  and buried among the ruler and waveform toggles it read as one
-                  more display switch. */}
-              <TagFilterControl />
+                  The Collection tool, the children-timelines toggle and the
+                  zoom slider all went down with the filter. What remains up
+                  here is the row's original job: where you are, what you have
+                  picked, and what you can do to it. */}
               <SelectModeButton />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
-              {/* The Collection tool (moved here from the icon sidebar): the
-                  view's one "add structure" action, fenced off from the
-                  surface/history controls to its right. */}
-              <GraphAddCollectionButton />
-              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
-              {/* The VIEW group: what the board shows. Fenced on both sides so
-                  the cluster reads as work | create | view | history | settings,
-                  and the fences stay put as its contents come and go — the ruler
-                  exists only in flat mode.
+              {/* Ruler and waveform stay: they draw ONTO the strip rather than
+                  changing what is on it, they are flat-mode only, and pairing
+                  them with the surface controls to the right is what keeps
+                  them out of the way in grid mode. The fence travels with them
+                  — an empty group between two fences is just a doubled line.
 
                   PREVIEW is deliberately not here. It lives in the icon rail
                   (see timeline-sidebar) because it is one of the two controls
-                  worth promoting to rail scale; this row keeps the ones that
-                  only qualify the board in front of you. */}
+                  worth promoting to rail scale. */}
               {flatOn ? (
-                <HeaderToggle
-                  active={rulerOn}
-                  onToggle={onRulerToggle}
-                  icon={Ruler}
-                  label={rulerOn ? "Hide time ruler" : "Show time ruler"}
-                  title="Time ruler — tick marks over every strip"
-                />
+                <>
+                  <HeaderToggle
+                    active={rulerOn}
+                    onToggle={onRulerToggle}
+                    icon={Ruler}
+                    label={rulerOn ? "Hide time ruler" : "Show time ruler"}
+                    title="Time ruler — tick marks over every strip"
+                  />
+                  <HeaderToggle
+                    active={waveformOn}
+                    onToggle={onWaveformToggle}
+                    icon={AudioLines}
+                    label={waveformOn ? "Hide audio waveform" : "Show audio waveform"}
+                    title="Audio waveform — peaks and pauses under the ruler"
+                  />
+                  <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
+                </>
               ) : null}
-              {flatOn ? (
-                <HeaderToggle
-                  active={waveformOn}
-                  onToggle={onWaveformToggle}
-                  icon={AudioLines}
-                  label={waveformOn ? "Hide audio waveform" : "Show audio waveform"}
-                  title="Audio waveform — peaks and pauses under the ruler"
-                />
-              ) : null}
-              <HeaderToggle
-                active={childrenShown}
-                onToggle={onChildrenToggle}
-                icon={FolderTree}
-                label={childrenShown ? "Hide children timelines" : "Show children timelines"}
-                title="Children timelines — show the nested timeline tree"
-              />
-              {/* Zoom belongs in the VIEW group: like the two toggles beside
-                  it, it qualifies what the board shows rather than changing
-                  what is in it. Strip only — see HeaderZoomControl. */}
-              {surface === "strip" ? (
-                <HeaderZoomControl
-                  pixelsPerSecond={pixelsPerSecond}
-                  onChange={onPixelsPerSecondChange}
-                />
-              ) : null}
-              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* Paste used to sit here, fenced between the view group and
                   history. It is in the CENTRE now, with copy and cut — the
                   three clipboard verbs read as one group, which is worth more
                   than the container-scoped grouping it had here. This cluster
                   keeps only what qualifies the board itself. */}
               <GraphUndoRedo />
-              {/* Board options are no longer here — they render in the icon
-                  sidebar below the trash (PL14-005). Still mounted from this
-                  component so they keep these props; only the DOM address
-                  changed. */}
-              <BoardMenuSlot itemSize={itemSize} onItemSizeChange={onItemSizeChange} />
+              {/* Board options are not here — they are the last control in the
+                  board's own controls row under the divider, with the rest of
+                  the chrome that qualifies the board rather than navigates
+                  it. */}
             </DragChromeFade>
               </>
             )}
@@ -1707,6 +1701,75 @@ export function GraphBoard({
             The divider owns the clearance on BOTH of its sides now, which is
             the only way the two can be equal by construction. */}
         <div className="flex flex-col gap-2">
+          {/* THE BOARD CONTROLS ROW: what is in front of you, and the controls
+              that qualify it. Under the divider, directly above the surface it
+              describes.
+
+              Everything here came down out of the breadcrumb row, which was
+              carrying two unrelated jobs at once — WHERE AM I (the trail, the
+              save state, the selection and its verbs) and WHAT AM I LOOKING AT
+              (the totals, the filter, the tree toggle, the zoom). The second
+              job belongs next to the board, not in the navigation bar above
+              it, and splitting them is also what buys the trail the room to
+              grow: the breadcrumb row had run out of width for anything to be
+              bigger than 11px.
+
+              Deliberately NOT sticky, unlike the header. These qualify the
+              surface you are scrolled to, and the header already owns the
+              sticky budget the preview pane measures itself against.
+
+              `DragChromeFade` for the same reason the header's clusters have
+              it: while a card is in the air this is chrome in the way, and the
+              surface below is the thing that matters. It is a plain opacity
+              wrapper keyed on `isDragging`, so it carries no positioning of
+              its own and works as well here as in the header. */}
+          <DragChromeFade>
+            {/* The marker sits here rather than on DragChromeFade, which takes
+                only `className` and `children` — it is a behaviour wrapper, not
+                a div with extra steps, and widening it to pass arbitrary props
+                through would invite exactly that. */}
+            <div
+              data-board-controls-row
+              className="flex min-h-7 items-center gap-3 px-1"
+            >
+              <FocusedAggregate
+                focusedId={focusedId}
+                pixelsPerSecond={deferredPixelsPerSecond}
+              />
+              {/* Order preserved from the header cluster they came out of —
+                  filter (narrows the field) | collection (adds structure) |
+                  tree and zoom (draw what is left). Reshuffling them on the way
+                  down would have made this a second change wearing the first
+                  one's clothes. `ml-auto` rather than `justify-between` so the
+                  group still sits right when the aggregate renders nothing —
+                  an empty timeline would otherwise let it slide to the left. */}
+              <div className="ml-auto flex min-w-0 items-center gap-2">
+                <TagFilterControl />
+                <GraphAddCollectionButton />
+                <HeaderToggle
+                  active={childrenShown}
+                  onToggle={onChildrenToggle}
+                  icon={FolderTree}
+                  label={childrenShown ? "Hide children timelines" : "Show children timelines"}
+                  title="Children timelines — show the nested timeline tree"
+                />
+                {/* Strip only — there is no horizontal time axis to zoom in a
+                    grid. See HeaderZoomControl. */}
+                {surface === "strip" ? (
+                  <HeaderZoomControl
+                    pixelsPerSecond={pixelsPerSecond}
+                    onChange={onPixelsPerSecondChange}
+                  />
+                ) : null}
+                {/* LAST, at the far right of the row — the settings that
+                    outlive the session, after the controls you actually ride
+                    while working. Back from the icon rail (PL14-005); see the
+                    note where BoardMenuSlot used to be. */}
+                <BoardMenu itemSize={itemSize} onItemSizeChange={onItemSizeChange} />
+              </div>
+            </div>
+          </DragChromeFade>
+
           {/* OUTSIDE the sticky header, deliberately. It belongs to the board
               rather than the toolbar — it describes what you are looking at,
               and it is the one piece of chrome whose height varies (chips wrap

@@ -17,7 +17,6 @@ import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_TRASH_ARRIVAL_EVENT,
-  GRAPH_BOARD_MENU_SLOT_ID,
   GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
@@ -585,21 +584,12 @@ export function TimelineSidebar() {
           );
         })}
 
-        {/* Board options land HERE, below the trash (PL14-005), but the graph
-            renders them itself — this is only the address.
-
-            A slot rather than a control the sidebar owns, because the menu is
-            a radio group over thumbnail size plus a zoom slider: state that
-            lives in the graph's own tree. Publishing it through the window-event
-            bridge would mean mirroring two values and adding two commands, and
-            that bridge is explicitly for controls the SIDEBAR renders. A portal
-            keeps the menu inside the graph provider (real props, real Radix
-            context) while placing its trigger in the rail.
-
-            It also self-scopes: nothing portals in when the graph is not
-            mounted, so no route guard is needed and the empty div collapses to
-            nothing. */}
-        <div id={GRAPH_BOARD_MENU_SLOT_ID} className="contents" />
+        {/* The board-options slot used to sit here, below the trash
+            (PL14-005): an address the rail published for the graph to portal
+            its settings menu into. That menu is back in the board's own
+            controls row, under the divider, so the slot had nothing left to
+            receive — an empty publishing div is worse than no seam at all,
+            because the next reader has to prove nothing fills it. */}
 
         <button
           ref={buttonRef}

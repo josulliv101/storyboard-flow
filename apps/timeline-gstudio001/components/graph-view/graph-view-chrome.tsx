@@ -102,7 +102,11 @@ function EditableCrumbName({
         onInput={rename.setDraft}
         onCommit={rename.commit}
         onCancel={rename.cancel}
-        className="h-7 min-w-0 w-full max-w-[250px] truncate rounded-md bg-zinc-800 px-1.5 font-semibold text-zinc-100 outline-none ring-1 ring-sky-500/60"
+        // h-8 to match the crumb's new line height, and the width ceilings
+        // below go up with the type: 14px text in a 250px box truncates a name
+        // that fitted at 12px, so holding the old ceiling would have traded
+        // legibility for ellipses on exactly the crumb you are reading.
+        className="h-8 min-w-0 w-full max-w-[280px] truncate rounded-md bg-zinc-800 px-1.5 font-semibold text-zinc-100 outline-none ring-1 ring-sky-500/60"
       />
     );
   }
@@ -115,7 +119,7 @@ function EditableCrumbName({
       title={`Rename ${displayName}`}
       onClick={rename.begin}
       className={cn(
-        "min-w-0 max-w-[250px] shrink cursor-text truncate rounded-md px-1.5 py-1 text-left transition-colors",
+        "min-w-0 max-w-[280px] shrink cursor-text truncate rounded-md px-1.5 py-1 text-left transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
         "font-semibold text-zinc-100 hover:bg-zinc-800/70",
       )}
@@ -171,7 +175,7 @@ function AncestorCrumb({
         href={href}
         onClick={navigate}
         className={cn(
-          "block min-w-0 max-w-[180px] truncate rounded-md px-1.5 py-1 transition-colors",
+          "block min-w-0 max-w-[200px] truncate rounded-md px-1.5 py-1 transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
           state === "hovered"
             ? "bg-sky-500/15 text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
@@ -370,10 +374,15 @@ function ParentLink({
     <Link
       href={href}
       onClick={parentId === null ? undefined : navigate}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950/50 text-zinc-400 transition-all hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100"
+      // h-8/w-8 with a 16px glyph, up from 28px/14px — the same square as
+      // every other control in this row (HeaderToggle, HEADER_SELECTION_SIZE).
+      // It was the one 28px control among 32px ones, which is why it read as
+      // slightly sunk; matching them also means the enlarged trail does NOT
+      // make the row taller, since h-8 was already setting the height.
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950/50 text-zinc-400 transition-all hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100"
       title={title}
     >
-      <ArrowLeft className="h-3.5 w-3.5" />
+      <ArrowLeft className="h-4 w-4" />
     </Link>
   );
 }
@@ -460,7 +469,17 @@ export function GraphBreadcrumb({
         // Still CONTENT-WIDTH, deliberately — see the root's note. `relative`
         // is new, so the measuring ruler below positions against this box
         // instead of some ancestor.
-        className="relative flex min-w-0 items-center gap-2 overflow-hidden text-xs text-zinc-400 select-none"
+        // `text-sm` (14px), up from `text-xs`. This is the trail you read to
+        // know where you are, and at 12px in a row full of 32px icons it was
+        // the smallest thing on screen carrying the most important sentence.
+        //
+        // Set HERE, on the nav, which is what keeps the fit honest: the
+        // measuring ruler below is a child of this element, so it inherits the
+        // same size and `useFittedAncestorCount` still measures the crumbs at
+        // the width they actually render. Sizing the visible crumbs instead
+        // would have left the ruler measuring 12px text and folding a crumb
+        // too late.
+        className="relative flex min-w-0 items-center gap-2 overflow-hidden text-sm text-zinc-400 select-none"
       >
         {/* THE RULER — every crumb at its natural width, laid out but not
             painted, in the order the measure reads them:
@@ -478,7 +497,15 @@ export function GraphBreadcrumb({
         >
           {ancestors.map((ancestor) => (
             <span key={ancestor.id} className="flex shrink-0 items-center gap-2">
-              <span className="max-w-[180px] truncate">{ancestor.label}</span>
+              {/* Must mirror `AncestorCrumb`'s Link EXACTLY — same ceiling AND
+                  the same `px-1.5`. The ceiling moved to 200px with the type
+                  bump; the padding was never here, so every crumb measured
+                  12px narrower than it draws and the trail folded a crumb too
+                  LATE, overflowing its wing instead of collapsing into the
+                  "…". Invisible at 12px with short names, and progressively
+                  less so as the text grows, which is why it is fixed here
+                  rather than left for the resize to expose. */}
+              <span className="max-w-[200px] truncate px-1.5">{ancestor.label}</span>
               <span>/</span>
             </span>
           ))}
