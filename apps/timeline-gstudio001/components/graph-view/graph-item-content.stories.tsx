@@ -147,15 +147,29 @@ function renderWithDetail(previewItems: PreviewItem[], trackIndex = 0) {
   const detail: ClipDetail = {
     alt: "A timeline",
     aspect: 16 / 9,
-    trackIndex,
     hydrated: false,
     itemCount: previewItems.length,
     duration: previewItems.length * 4,
     previewItems,
   };
   const store = createGraphDetailsStore({ [COLLECTION_ID]: detail });
+  // The LANE lives on the node, so it is built into the graph rather than
+  // merged into the detail — see the note on `set-node-placement`.
+  const graph = (() => {
+    const result = buildGraph([
+      {
+        kind: "collection",
+        id: COLLECTION_ID,
+        name: "A timeline",
+        children: [],
+        ...(trackIndex === 0 ? {} : { trackIndex }),
+      },
+    ]);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    return result.value;
+  })();
   const decorator: Decorator = (Story) => (
-    <DndCollections initialGraph={providerGraph}>
+    <DndCollections initialGraph={graph}>
       <GraphDetailsProvider store={store}>
         <div className="h-32 w-40 bg-zinc-950 p-2">
           <Story />
@@ -385,7 +399,6 @@ export const AudioLedCollectionShowsMusicGlyph: Story = {
         [AUDIO_COLLECTION_ID]: {
           alt: "Voice takes",
           aspect: 16 / 9,
-          trackIndex: 0,
           hydrated: true,
           itemCount: 1,
           duration: 8,
@@ -434,7 +447,6 @@ export const AudioClipCardDoesNotRenderItsFlacAsAnImage: Story = {
         [AUDIO_CLIP_ID]: {
           alt: "Pat VO",
           aspect: 16 / 9,
-          trackIndex: 0,
           duration: 8,
         } satisfies ClipDetail,
       });
@@ -507,7 +519,6 @@ function renderWithGraph(graph: CollectionsGraph) {
   const detail: ClipDetail = {
     alt: "A timeline",
     aspect: 16 / 9,
-    trackIndex: 0,
     hydrated: false,
     itemCount: 2,
     previewItems: [ASSET_A, ASSET_B],
@@ -903,7 +914,6 @@ export const DisabledCollection: Story = {
         [COLLECTION_ID]: {
           alt: "A timeline",
           aspect: 16 / 9,
-          trackIndex: 0,
           hydrated: false,
           itemCount: 2,
           duration: 8,
@@ -1128,7 +1138,6 @@ function renderWithTags(tags: string[], surface: "grid" | "strip" = "strip") {
   const detail: ClipDetail = {
     alt: "A timeline",
     aspect: 16 / 9,
-    trackIndex: 0,
     hydrated: false,
     itemCount: 2,
     previewItems: [ASSET_A, ASSET_B],
@@ -1303,7 +1312,6 @@ function renderMediaCard(
       [VIDEO_ID as string]: {
         alt: "A video",
         aspect: 16 / 9,
-        trackIndex: 0,
         hydrated: false,
         tags,
       },
@@ -1349,7 +1357,6 @@ function renderCollectionInSelectMode(): Decorator {
       [COLLECTION_ID]: {
         alt: "A timeline",
         aspect: 16 / 9,
-        trackIndex: 0,
         hydrated: false,
         itemCount: 2,
         duration: 51.8,

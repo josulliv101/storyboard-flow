@@ -23,6 +23,19 @@ function describeCommand(command: CollectionsCommand): string {
       return `rename ${command.nodeId} → "${command.name}"`;
     case "set-node-disabled":
       return `${command.disabled ? "disable" : "enable"} [${command.nodeIds.join(", ")}]`;
+    case "set-node-placement": {
+      // Only the fields the command actually names — `undefined` means "leave
+      // it alone", so listing it would describe a change that did not happen.
+      const parts: string[] = [];
+      const { trackIndex, placedStart } = command.placement;
+      if (trackIndex !== undefined) {
+        parts.push(trackIndex === null ? "lane cleared" : `lane ${trackIndex}`);
+      }
+      if (placedStart !== undefined) {
+        parts.push(placedStart === null ? "unplaced" : `at ${placedStart}s`);
+      }
+      return `place [${command.nodeIds.join(", ")}] ${parts.join(", ")}`;
+    }
   }
 }
 

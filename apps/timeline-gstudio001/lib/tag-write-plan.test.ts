@@ -32,16 +32,15 @@ const graph = (() => {
 })();
 
 const details: DetailsById = {
-  root: { alt: "Root", aspect: 16 / 9, trackIndex: 0, hydrated: true },
+  root: { alt: "Root", aspect: 16 / 9, hydrated: true },
   "clip-a": {
     alt: "A",
     aspect: 16 / 9,
-    trackIndex: 0,
     poster: "https://example.test/a.jpg",
     sourceAsset: { providerId: "cloudinary", assetId: "x/a" },
   },
-  inner: { alt: "Inner", aspect: 16 / 9, trackIndex: 0, hydrated: true },
-  "clip-b": { alt: "B", aspect: 16 / 9, trackIndex: 0, tags: ["old"] },
+  inner: { alt: "Inner", aspect: 16 / 9, hydrated: true },
+  "clip-b": { alt: "B", aspect: 16 / 9, tags: ["old"] },
 };
 
 function plan(nodeId: string, tags: string[]): TagWritePlan {

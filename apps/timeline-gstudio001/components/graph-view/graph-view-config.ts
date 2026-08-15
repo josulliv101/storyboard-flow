@@ -164,7 +164,6 @@ export const MAX_SUBTREE_DEPTH = 12;
 export const FALLBACK_DETAIL: ClipDetail = {
   alt: "",
   aspect: 16 / 9,
-  trackIndex: 0,
 };
 
 /**

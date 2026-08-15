@@ -1082,11 +1082,13 @@ pointer over one. `aria-rowcount` is `1 + layers.length` and an empty layer
 emits no row element (a row with no cells is an invalid grid tree) while
 keeping its index reserved.
 
-Cross-lane DRAG is deliberately not modelled: a lane is consumer data, not
-something this package's engine knows about. Layer cards drag like any other
-card and their drops resolve through the same container droppable, so a drop
-reorders within the collection and leaves the lane alone. Note that a strip
-handed a FILTERED `itemIds` (which is what a lane split produces) publishes
+Cross-lane DRAG is deliberately not modelled by the strip: layer cards drag
+like any other card and their drops resolve through the same container
+droppable, so a drop reorders within the collection and leaves the placement
+alone. The VALUES themselves are engine state — `trackIndex` and
+`placedStart` are node fields changed by `set-node-placement`, so a lane or
+placement change is undoable like any other command. Note that a strip handed
+a FILTERED `itemIds` (which is what a lane split produces) publishes
 boundaries into that filtered list — so the same `mapDropCommand` translation
 `itemIds` already documents applies, or drops land at the wrong position.
 

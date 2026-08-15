@@ -8,7 +8,7 @@ import {
   parseNodeId,
   type GraphNodeSpec,
 } from "./core/graph";
-import { useCollectionsStore } from "./react/collections-store";
+import { useCollectionsSelector, useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { UndoRedoControls } from "./react/history-views";
 import {
@@ -2527,6 +2527,79 @@ export const LaneRowOutlastsThePicture: Story = {
     expect(scroller.scrollWidth).toBeGreaterThan(
       shot3.getBoundingClientRect().right - scroller.getBoundingClientRect().left,
     );
+  },
+};
+
+/** Reads the lane/placement off the node, so the assertions below watch the
+ *  GRAPH rather than the rendered rows — the strip is handed `layers` as a
+ *  prop and does not derive them. */
+function PlacementReadout({ id }: { id: string }) {
+  const lane = useCollectionsSelector(
+    (s) => s.graph.nodesById.get(parseNodeId(id))?.trackIndex ?? -1,
+  );
+  const start = useCollectionsSelector(
+    (s) => s.graph.nodesById.get(parseNodeId(id))?.placedStart ?? -1,
+  );
+  return <output data-placement={`${lane}@${start}`}>{`${lane}@${start}`}</output>;
+}
+
+function PlaceBedButton() {
+  const store = useCollectionsStore();
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        store.dispatch({
+          type: "set-node-placement",
+          nodeIds: [parseNodeId("bed")],
+          placement: { trackIndex: 2, placedStart: 7.5 },
+        })
+      }
+    >
+      place bed
+    </button>
+  );
+}
+
+export const PlacementIsUndoable: Story = {
+  // THE reason lane and placement moved from a consumer side-table onto the
+  // node. A side-table write emits no patch, so it never entered history and
+  // could not be undone; as a command it rides the same path every other
+  // change does.
+  render: () => (
+    <DndCollections initialGraph={laneGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-2">
+        <UndoRedoControls />
+        <PlaceBedButton />
+        <PlacementReadout id="bed" />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const canvas = within(canvasElement);
+    // By attribute, not by role: `<output>` is implicitly role="status" and so
+    // is the provider's own drag live region, so the role query is ambiguous.
+    const readout = () =>
+      canvasElement.querySelector("[data-placement]")?.getAttribute("data-placement");
+    const undo = () => canvas.getByRole("button", { name: /undo/i });
+    const redo = () => canvas.getByRole("button", { name: /redo/i });
+
+    // Nothing placed, and nothing to undo.
+    expect(readout()).toBe("-1@-1");
+    expect(undo()).toBeDisabled();
+
+    await user.click(canvas.getByRole("button", { name: "place bed" }));
+    await waitFor(() => expect(readout()).toBe("2@7.5"));
+    // It entered history — the whole claim.
+    await waitFor(() => expect(undo()).toBeEnabled());
+
+    await user.click(undo());
+    // Back to ABSENT, not to a zero: absence is the default for both fields.
+    await waitFor(() => expect(readout()).toBe("-1@-1"));
+
+    await user.click(redo());
+    await waitFor(() => expect(readout()).toBe("2@7.5"));
   },
 };
 

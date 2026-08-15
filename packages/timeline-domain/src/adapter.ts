@@ -64,13 +64,10 @@ export type ClipDetail = Readonly<{
    *  at all, so "" and undefined are not interchangeable here. */
   title?: string;
   aspect: number;
-  trackIndex: number;
-  /** Where the author placed this clip on its lane, when they placed it —
-   *  see `TimelineItemBase.placedStart`. Rides the side table for the same
-   *  reason `trackIndex` does: the collections engine models neither lanes
-   *  nor time, so there is no graph command that could carry it. Absent
-   *  means queued; ignored on lane 0. */
-  placedStart?: number;
+  // NO trackIndex / placedStart. They live on the NODE now — see
+  // `placementSpec`. The engine mutates them through `set-node-placement`,
+  // which is what makes a lane change undoable, and the side-table is for
+  // fields the engine never touches.
   poster?: string;
   playbackStartTime?: number;
   playbackDuration?: number;
@@ -130,6 +127,27 @@ type BuildContext = {
   used: Set<string>;
 };
 
+/**
+ * Lane and placement, for the NODE spec.
+ *
+ * These moved off the detail side-table and onto the node when they became a
+ * command (`set-node-placement`), which is what makes them undoable. The rule
+ * the side-table follows is "does the ENGINE MUTATE it" — not "does the engine
+ * understand it" — and the engine now mutates these, so they belong here
+ * beside `disabled`, which is the same kind of fact for the same reason.
+ *
+ * The STORED clip is unchanged: both fields were already clip fields, so this
+ * only reroutes which side of the seam carries them. No data migration.
+ */
+function placementSpec(
+  clip: Pick<TimelineClip, "trackIndex" | "placedStart">,
+): Readonly<{ trackIndex?: number; placedStart?: number }> {
+  return {
+    ...(clip.trackIndex === undefined ? {} : { trackIndex: clip.trackIndex }),
+    ...(clip.placedStart === undefined ? {} : { placedStart: clip.placedStart }),
+  };
+}
+
 function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNodeSpec {
   if (clip.kind === "video") {
     return {
@@ -143,6 +161,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
       trimInSeconds: clip.trimIn,
       trimOutSeconds: clip.trimOut,
       ...(clip.disabled ? { disabled: true } : {}),
+      ...placementSpec(clip),
     };
   }
   if (clip.kind === "audio") {
@@ -160,6 +179,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
       trimInSeconds: clip.trimIn,
       trimOutSeconds: clip.trimOut,
       ...(clip.disabled ? { disabled: true } : {}),
+      ...placementSpec(clip),
     };
   }
   return {
@@ -169,6 +189,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
     src: clip.src,
     durationSeconds: clip.duration,
     ...(clip.disabled ? { disabled: true } : {}),
+    ...placementSpec(clip),
   };
 }
 
@@ -177,11 +198,6 @@ function mediaDetail(clip: Exclude<TimelineClip, CollectionTimelineClip>): ClipD
     alt: clip.alt,
     ...(clip.title === undefined ? {} : { title: clip.title }),
     aspect: clip.aspect,
-    trackIndex: clip.trackIndex,
-    // Captured INBOUND as well as written back out: without this a stored
-    // placement is lost the moment the document is hydrated into a graph, and
-    // the clip silently rejoins its lane's queue on the next save.
-    ...(clip.placedStart === undefined ? {} : { placedStart: clip.placedStart }),
     ...(clip.poster === undefined ? {} : { poster: clip.poster }),
     ...(clip.sourceAsset === undefined ? {} : { sourceAsset: clip.sourceAsset }),
     ...tagsField(clip.tags),
@@ -199,8 +215,6 @@ function collectionDetail(clip: CollectionTimelineClip, hydrated: boolean): Clip
   return {
     alt: clip.alt,
     aspect: clip.aspect,
-    trackIndex: clip.trackIndex,
-    ...(clip.placedStart === undefined ? {} : { placedStart: clip.placedStart }),
     ...tagsField(clip.tags),
     ...(clip.trashedAt === undefined ? {} : { trashedAt: clip.trashedAt }),
     ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
@@ -693,11 +707,12 @@ export function graphChildrenToClips(
     const node = graph.nodesById.get(childId);
     if (!node) throw new Error(`Graph child "${childId}" missing from nodesById.`);
     const detail = details[childId];
-    const trackIndex = trackIndexOf({ trackIndex: detail?.trackIndex ?? 0 });
+    // From the NODE, not the detail: these are engine-carried now.
+    const trackIndex = trackIndexOf({ trackIndex: node.trackIndex ?? 0 });
     // PLACED or queued — the same resolution the model packer uses, imported
     // rather than re-implemented so the twins cannot drift on the one field
     // whose whole purpose is to override the cursor.
-    const placedStart = placedStartOf({ placedStart: detail?.placedStart }, trackIndex);
+    const placedStart = placedStartOf({ placedStart: node.placedStart }, trackIndex);
     const startTime = placedStart ?? startFor(trackIndex);
 
     if (node.kind === "media") {

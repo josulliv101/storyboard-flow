@@ -74,7 +74,6 @@ export function useToolInsertion(collectionId: string) {
       parkPendingDetail(childId, {
         alt: "New Timeline collection",
         aspect: 16 / 9,
-        trackIndex: 0,
         itemCount: 0,
         duration: 3,
         sourceDuration: 3,

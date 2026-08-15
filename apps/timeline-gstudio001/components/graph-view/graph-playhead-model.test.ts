@@ -28,12 +28,18 @@ import {
 } from "./graph-playhead-model";
 import { at } from "../../lib/test-support/at";
 
-const media = (id: string, durationSeconds: number): GraphNodeSpec => ({
-  kind: "media",
-  id,
-  name: id,
-  durationSeconds,
-});
+const media = (
+  id: string,
+  durationSeconds: number,
+  over: Partial<GraphNodeSpec> = {},
+): GraphNodeSpec =>
+  ({
+    kind: "media",
+    id,
+    name: id,
+    durationSeconds,
+    ...over,
+  }) as GraphNodeSpec;
 
 const collection = (
   id: string,
@@ -45,13 +51,6 @@ function graphOf(roots: readonly GraphNodeSpec[]) {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 }
-
-/** A side-table entry that puts a clip on a lane above the picture. */
-const laneDetail = (trackIndex: number): ClipDetail => ({
-  alt: "",
-  aspect: 16 / 9,
-  trackIndex,
-});
 
 /** Packing sums 0.12s gaps, so exact equality trips on binary float error. */
 const round = (value: number) => Math.round(value * 100) / 100;
@@ -131,11 +130,14 @@ describe("childSpans", () => {
     // a sub-timeline row, the header readout) must keep every clip or its
     // index pairing shifts, and that failure is silent.
     const graph = graphOf([
-      collection("root", [media("shot1", 4), media("bed", 12), media("shot2", 4)]),
+      collection("root", [
+        media("shot1", 4),
+        media("bed", 12, { trackIndex: 1 }),
+        media("shot2", 4),
+      ]),
     ]);
-    const details = { bed: laneDetail(1) };
 
-    const cards = childSpans(graph, details, "root", null, flatWidth, "picture");
+    const cards = childSpans(graph, {}, "root", null, flatWidth, "picture");
 
     expect(cards.map((card) => [round(card.startTime), round(card.endTime)])).toEqual([
       [0, 4],
@@ -147,11 +149,14 @@ describe("childSpans", () => {
     // One card per child is the default precisely because the grid and the
     // sub-timeline rows pair cards to cells by INDEX.
     const graph = graphOf([
-      collection("root", [media("shot1", 4), media("bed", 12), media("shot2", 4)]),
+      collection("root", [
+        media("shot1", 4),
+        media("bed", 12, { trackIndex: 1 }),
+        media("shot2", 4),
+      ]),
     ]);
-    const details = { bed: laneDetail(1) };
 
-    const cards = childSpans(graph, details, "root", null, flatWidth);
+    const cards = childSpans(graph, {}, "root", null, flatWidth);
 
     // The bed starts at ZERO — alongside the picture, not after it. The clamp
     // is per lane now, so lane 0's running end cannot reach across and move it.

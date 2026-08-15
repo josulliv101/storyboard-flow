@@ -57,6 +57,28 @@ export type ImageMediaNode = Readonly<{
    * re-enabling removes the key rather than writing `false`.
    */
   disabled?: boolean;
+  /**
+   * WHICH LANE this plays on, and WHERE on it — the same kind of fact as
+   * `disabled`, carried here for the same reason.
+   *
+   * Lane 0 is the picture; anything above runs underneath it at the same
+   * time. `placedStart` is an explicit start on that lane, in seconds;
+   * absent means "queue behind the clip before it", which is what every
+   * document did before placement existed.
+   *
+   * THE ENGINE NEVER INTERPRETS EITHER. It does not pack, it does not know
+   * what a second is, and a node with a lane moves, trims and reorders
+   * exactly like one without. They live on the node rather than in a
+   * consumer's side-table for one reason: they are changed by a COMMAND
+   * (`set-node-placement`), so they ride the patch path and undo/redo work
+   * on them. The rule is "does the engine mutate it", not "does the engine
+   * understand it".
+   *
+   * Absent means the default in both cases; clearing removes the key rather
+   * than writing 0, so documents that never use lanes never grow the fields.
+   */
+  trackIndex?: number;
+  placedStart?: number;
 }>;
 
 export type VideoMediaNode = Readonly<{
@@ -88,6 +110,9 @@ export type VideoMediaNode = Readonly<{
    * re-enabling removes the key rather than writing `false`.
    */
   disabled?: boolean;
+  /** See ImageMediaNode — lane and placement, carried not interpreted. */
+  trackIndex?: number;
+  placedStart?: number;
 }>;
 
 /**
@@ -122,6 +147,9 @@ export type AudioMediaNode = Readonly<{
   /** Seconds trimmed off the END. 0 = untrimmed. */
   trimOutSeconds: number;
   disabled?: boolean;
+  /** See ImageMediaNode — lane and placement, carried not interpreted. */
+  trackIndex?: number;
+  placedStart?: number;
 }>;
 
 export type MediaNode = ImageMediaNode | VideoMediaNode | AudioMediaNode;
@@ -139,6 +167,11 @@ export type CollectionNode = Readonly<{
    * re-enabling removes the key rather than writing `false`.
    */
   disabled?: boolean;
+  /** See ImageMediaNode — lane and placement, carried not interpreted. A
+   *  COLLECTION can sit on a lane too: a whole nested scene under the
+   *  picture is a legitimate layer. */
+  trackIndex?: number;
+  placedStart?: number;
 }>;
 
 export type CollectionItemNode = MediaNode | CollectionNode;
@@ -228,6 +261,8 @@ export type GraphNodeSpec =
       src?: string;
       durationSeconds?: number; // default 4
       disabled?: boolean;
+      trackIndex?: number;
+      placedStart?: number;
     }>
   | Readonly<{
       kind: "media";
@@ -240,6 +275,8 @@ export type GraphNodeSpec =
       trimInSeconds?: number; // default 0
       trimOutSeconds?: number; // default 0
       disabled?: boolean;
+      trackIndex?: number;
+      placedStart?: number;
     }>
   | Readonly<{
       kind: "media";
@@ -251,6 +288,8 @@ export type GraphNodeSpec =
       trimInSeconds?: number; // default 0
       trimOutSeconds?: number; // default 0
       disabled?: boolean;
+      trackIndex?: number;
+      placedStart?: number;
     }>
   | Readonly<{
       kind: "collection";
@@ -258,6 +297,8 @@ export type GraphNodeSpec =
       name: string;
       children?: readonly GraphNodeSpec[];
       disabled?: boolean;
+      trackIndex?: number;
+      placedStart?: number;
     }>;
 
 /** A media spec, i.e. every member of GraphNodeSpec that is not a collection. */
@@ -274,8 +315,32 @@ type MediaNodeSpec = Extract<GraphNodeSpec, { kind: "media" }>;
  * hold, and adding a fourth kind is a compile error rather than a silent
  * coercion.
  */
+/**
+ * The lane/placement fields, kept only when they are real numbers.
+ *
+ * DROPS rather than rejects. A stored document may legitimately carry a
+ * fractional lane — the timeline model's own validator admits any finite
+ * number there and normalises at read time — so rejecting the node would fail
+ * to hydrate a document that works today. Absent is the default for both, and
+ * the engine never reads either value, so dropping is lossless as far as the
+ * graph is concerned.
+ */
+function placementOf(
+  spec: Readonly<{ trackIndex?: unknown; placedStart?: unknown }>,
+): Readonly<{ trackIndex?: number; placedStart?: number }> {
+  const lane = spec.trackIndex;
+  const start = spec.placedStart;
+  return {
+    ...(typeof lane === "number" && Number.isFinite(lane) ? { trackIndex: lane } : {}),
+    ...(typeof start === "number" && Number.isFinite(start) && start >= 0
+      ? { placedStart: start }
+      : {}),
+  };
+}
+
 function mediaNodeFromSpec(id: NodeId, spec: MediaNodeSpec): MediaNode {
   const disabled = spec.disabled ? { disabled: true as const } : {};
+  const placement = placementOf(spec);
   switch (spec.mediaKind) {
     case "video":
       return {
@@ -291,6 +356,7 @@ function mediaNodeFromSpec(id: NodeId, spec: MediaNodeSpec): MediaNode {
         trimInSeconds: spec.trimInSeconds ?? 0,
         trimOutSeconds: spec.trimOutSeconds ?? 0,
         ...disabled,
+        ...placement,
       };
     case "audio":
       return {
@@ -303,6 +369,7 @@ function mediaNodeFromSpec(id: NodeId, spec: MediaNodeSpec): MediaNode {
         trimInSeconds: spec.trimInSeconds ?? 0,
         trimOutSeconds: spec.trimOutSeconds ?? 0,
         ...disabled,
+        ...placement,
       };
     case "image":
     case undefined:
@@ -314,6 +381,7 @@ function mediaNodeFromSpec(id: NodeId, spec: MediaNodeSpec): MediaNode {
         src: spec.src,
         durationSeconds: spec.durationSeconds ?? 4,
         ...disabled,
+        ...placement,
       };
     default: {
       // A new media kind reaches here as a build error, not as an image.
@@ -383,6 +451,7 @@ export function buildGraph(
         kind: "collection",
         name: spec.name,
         ...(spec.disabled ? { disabled: true } : {}),
+        ...placementOf(spec),
       });
       const children = spec.children ?? [];
       childrenById.set(id, children.map((child) => child.id as NodeId));
@@ -728,7 +797,13 @@ export function parseCollectionItemNode(
   if (value.kind === "collection") {
     return {
       ok: true,
-      value: { id, kind: "collection", name, ...(value.disabled ? { disabled: true } : {}) },
+      value: {
+        id,
+        kind: "collection",
+        name,
+        ...(value.disabled ? { disabled: true } : {}),
+        ...placementOf(value),
+      },
     };
   }
 
@@ -745,6 +820,7 @@ export function parseCollectionItemNode(
     name,
     src: value.src as string | undefined,
     ...(value.disabled ? { disabled: true } : {}),
+    ...placementOf(value),
   } as const;
   const spec: MediaNodeSpec =
     value.mediaKind === "video"
