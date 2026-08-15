@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { readJsonObject } from "@/lib/read-json-body";
 import { reportRenderProgress } from "@/lib/render/job-store";
+import { attachRenderOutput } from "@/lib/render/attach-output";
 import { authenticateWorker } from "@/lib/render/worker-request";
 import type { RenderEvent } from "@/lib/render/job-state";
 
@@ -81,6 +82,33 @@ export async function POST(
         { status: STATUS_BY_REASON[result.reason] ?? 409 },
       );
     }
+
+    // FILE THE RESULT, after the job is already marked succeeded.
+    //
+    // The order is the whole point: a failure here loses the FILING, never the
+    // render. The output URL is on the job either way, so a project that was
+    // renamed or restructured mid-encode costs a card in a collection rather
+    // than a finished file. Attaching first — or letting this fail the report
+    // — would turn a completed render into a lost one.
+    //
+    // Idempotency comes from the state machine above: a retried `succeed` on
+    // an already-succeeded job returns early as a no-op transition, so this
+    // does not run twice and cannot file the same render twice.
+    const outputUrl = result.job.progress.outputUrl;
+    if (event.type === "succeed" && outputUrl !== undefined && result.changed) {
+      const attached = await attachRenderOutput(result.job, outputUrl);
+      if (!attached.ok) {
+        console.warn("[GSTUDIO_RENDER_ATTACH_FAILED]", id, attached.reason);
+      }
+      return NextResponse.json({
+        id,
+        state: result.job.progress.state,
+        ...(attached.ok
+          ? { attachedTo: attached.collectionId, nodeId: attached.nodeId }
+          : { attachWarning: attached.reason }),
+      });
+    }
+
     return NextResponse.json({ id, state: result.job.progress.state });
   } catch (error) {
     console.error("[GSTUDIO_RENDER_REPORT_ERROR]", error);

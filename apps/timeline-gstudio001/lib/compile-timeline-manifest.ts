@@ -3,7 +3,10 @@ import "server-only";
 import { compilePlaybackManifest, type PlaybackManifest } from "@storyboard/timeline-domain";
 
 import { deriveClosureSummaries } from "./derive-collection-summaries";
-import { readStoredTimelineEntry } from "./firebase-timeline-store";
+// Aliased deliberately, not relative: the no-restricted-imports guard on this
+// function only matches the alias, so a relative import silently escapes it.
+// This file is allowlisted in eslint.config.mjs with its reason instead.
+import { readStoredTimelineEntry } from "@/lib/firebase-timeline-store";
 import { loadTimelineClosure } from "./load-timeline-closure";
 
 /**
