@@ -63,8 +63,21 @@ import {
   resolveBoundaryIndex,
   slotSizeFor,
 } from "./virtual-strip-geometry";
+import {
+  createLaneTimeMap,
+  laneFlatIndex,
+  laneItemPlacement,
+  laneRowPosition,
+  laneRowTop,
+  laneStackHeight,
+  resolveLaneStripIndex,
+  type LanePictureSlot,
+  type LaneRowLayout,
+} from "./virtual-strip-lanes";
 
 // 1D roving navigation: Left/Right step one item, Home/End jump to the ends.
+// Used when the strip has no lane rows; `resolveLaneStripIndex` takes over
+// when it does, and reduces to exactly this for a single row.
 function resolveStripIndex(key: string, current: number, count: number): number | null {
   switch (key) {
     case "ArrowRight":
@@ -112,10 +125,41 @@ const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 // Gap between the floating overview tooltip and the top of the strip.
 const OVERVIEW_GAP = 8;
 
+// A lane row draws as a slim band under the picture — the editor idiom, where
+// a bed or a voiceover must not compete with the shots for height. A fraction
+// rather than a fixed size so every item size gets a proportionate row, with a
+// floor so the smallest board still has something clickable.
+const LANE_ROW_HEIGHT_FRACTION = 1 / 3;
+const MIN_LANE_ROW_HEIGHT = 16;
+const DEFAULT_LANE_ROW_GAP = 6;
+
 // Layering inside the strip content: drop indicator and trim-handle hit
 // zones sit at z-20, the default trim-preview bubble at z-30; the consumer
 // overlay shares the bubble tier — above cards and handles, below nothing.
 const OVERLAY_Z_INDEX = 30;
+
+/** A slot on the consumer's clock. Times are the CONSUMER'S, not the strip's
+ *  — see `itemTimes`. */
+export type StripTimedSlot = Readonly<{
+  startSeconds: number;
+  durationSeconds: number;
+}>;
+
+/** One card on a lane row. */
+export type StripLayerItem = StripTimedSlot & Readonly<{ id: NodeId }>;
+
+/**
+ * A LANE ROW — content that plays *alongside* the picture rather than after
+ * it: a music bed, a voiceover. Drawn as its own row under the picture,
+ * time-aligned to it, so a bed under shots 1-3 visibly spans those cards.
+ *
+ * Layer cards are NOT virtualized. They are few and long where shots are many
+ * and short, so the case virtualization exists for does not apply, and leaving
+ * them out keeps the picture virtualizer's index space intact.
+ */
+export type StripLayer = Readonly<{
+  items: readonly StripLayerItem[];
+}>;
 
 export type VirtualStripProps = Readonly<{
   collectionId: NodeId;
@@ -225,6 +269,42 @@ export type VirtualStripProps = Readonly<{
    * belongs in your own positioned layer OUTSIDE the strip.
    */
   overlay?: ReactNode;
+  /**
+   * THE CONSUMER'S CLOCK for the rendered items, aligned 1:1 by index with
+   * `itemIds` (or the collection's own children). Required by `layers`, and
+   * ignored without them.
+   *
+   * The strip cannot derive this. Its own notion of duration knows nothing
+   * about the inter-clip gap a document packs with, nor about the span a
+   * collection card stands for, so a clock derived from widths would drift by
+   * one gap per gutter — a few pixels per card, and a lane row visibly sliding
+   * off the shots it covers by the tenth one. The consumer already knows the
+   * real times; it hands them over and the strip pairs them with the widths it
+   * measured.
+   *
+   * Caller owns reference stability, as with `itemIds`.
+   */
+  itemTimes?: readonly StripTimedSlot[];
+  /**
+   * Rows drawn UNDER the picture, time-aligned to it — see `StripLayer`.
+   * Requires `itemTimes`; without it there is no clock to align against and
+   * layers are ignored.
+   *
+   * A strip with no layers renders exactly as it did before they existed:
+   * every path below is gated, down to the DOM.
+   *
+   * NOTE cross-lane DRAG is not modelled here. Layer cards drag like any
+   * other card and their drops resolve through the same container droppable,
+   * so a drop reorders within the collection and leaves the lane alone.
+   * Moving a card BETWEEN lanes is the consumer's own write (the lane is
+   * consumer data — this package's engine does not model it).
+   */
+  layers?: readonly StripLayer[];
+  /** Height of each lane row. Shorter than `itemHeight` by default — a bed
+   *  reads as a slim band under full-height shots. */
+  layerHeight?: number;
+  /** Vertical gap above each lane row. */
+  layerGap?: number;
   className?: string;
 }>;
 
@@ -256,6 +336,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       itemContent,
       itemShell,
       overlay,
+      itemTimes,
+      layers,
+      layerHeight: layerHeightOption,
+      layerGap: layerGapOption,
       className,
     },
     ref
@@ -264,6 +348,17 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const itemWidth = finitePositiveOr(itemWidthOption, 128);
     const itemHeight = finitePositiveOr(itemHeightOption, 96);
     const gap = finiteNonNegativeOr(gapOption, 8);
+    // Lane rows need a clock to align against; without one they cannot be
+    // placed, so they are ignored rather than guessed at. This single flag
+    // gates every lane path, including the DOM shape.
+    const laneRows = layers !== undefined && layers.length > 0 && itemTimes !== undefined
+      ? layers
+      : null;
+    const layerHeight = finitePositiveOr(
+      layerHeightOption,
+      Math.max(MIN_LANE_ROW_HEIGHT, itemHeight * LANE_ROW_HEIGHT_FRACTION),
+    );
+    const layerGap = finiteNonNegativeOr(layerGapOption, DEFAULT_LANE_ROW_GAP);
     const overscan = nonNegativeIntegerOr(overscanOption, 4);
     // One scale for widths AND trims by default: the handles inherit
     // pixelsPerSecond unless explicitly overridden.
@@ -622,6 +717,106 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps -- liveTrim intentionally omitted (see comment)
     }, [dataVersion, graphGeneration, store, scrollRef]);
 
+    // --- lane rows ---------------------------------------------------------
+
+    // The picture row's time -> content-x map, paired from what the strip
+    // MEASURED (x, so an itemWidthFor override and a live trim are included)
+    // and what the consumer's clock says (t). Only walked when there are
+    // lanes to place: a strip without them never runs any of this.
+    //
+    // Mid-trim it follows the LIVE x's, so a bed stays attached to the shots
+    // it covers while one of them is being trimmed, and the trimmed slot takes
+    // the gesture's live duration so its interior stays self-consistent. Slots
+    // AFTER it keep their committed start times — only the consumer knows how
+    // it repacks — so a layer card downstream of a live trim lags by the trim
+    // delta until the commit lands. Sub-second, and exact from then on.
+    const laneTimeMap = useMemo(() => {
+      if (!laneRows || !itemTimes) return null;
+      const slots: LanePictureSlot[] = [];
+      let x = firstItemGutter;
+      for (let index = 0; index < childIds.length; index += 1) {
+        const childId = childIds[index];
+        const time = itemTimes[index];
+        const live =
+          childId !== undefined && liveTrim?.nodeId === childId ? liveTrim.trim : null;
+        // Mirrors estimateSize exactly (with resizeItem's override applied for
+        // the trimmed slot), which IS the virtualizer's layout — the strip
+        // never dynamically measures a card.
+        const size =
+          live && childId !== undefined
+            ? previewSlotSize(childId, live)
+            : widthForIndex(index) + gap;
+        if (time) {
+          slots.push({
+            left: x,
+            width: size - gap,
+            startSeconds: time.startSeconds,
+            durationSeconds: live ? live.effectiveSeconds : time.durationSeconds,
+          });
+        }
+        x += size;
+      }
+      return createLaneTimeMap(slots);
+      // widthForIndex/previewSlotSize are re-created every render by design;
+      // the graph data they read is covered by dataVersion/graphGeneration,
+      // and the layout inputs are listed explicitly. When this memo does re-run
+      // it closes over the current render's functions, so it cannot go stale.
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+    }, [
+      laneRows,
+      itemTimes,
+      childIds,
+      firstItemGutter,
+      gap,
+      liveTrim,
+      dataVersion,
+      graphGeneration,
+      pixelsPerSecond,
+      itemWidth,
+      itemWidthFor,
+    ]);
+
+    // Every layer card's box, plus the furthest right edge any of them reach —
+    // the spacer has to cover a bed that outlasts the picture.
+    const layerPlacements = useMemo(() => {
+      const byId = new Map<NodeId, Readonly<{ left: number; width: number }>>();
+      let right = 0;
+      if (laneRows && laneTimeMap) {
+        for (const layer of laneRows) {
+          for (const item of layer.items) {
+            const placement = laneItemPlacement(laneTimeMap, item);
+            byId.set(item.id, placement);
+            right = Math.max(right, placement.left + placement.width);
+          }
+        }
+      }
+      return { byId, right };
+    }, [laneRows, laneTimeMap]);
+
+    // Row 0 is the picture, then each layer in order — the shape the roving
+    // resolver navigates. Empty without lanes, which is what keeps the plain
+    // strip on its original 1D path.
+    const rowLayout: LaneRowLayout = useMemo(
+      () => (laneRows && itemTimes ? [itemTimes, ...laneRows.map((layer) => layer.items)] : []),
+      [laneRows, itemTimes],
+    );
+    // Roving focus navigates ONE list spanning every row, so the grid keeps a
+    // single tab stop. Deliberately separate from `indexById`, which stays the
+    // PICTURE's index space — the virtualizer's resizeItem, the reorder no-op
+    // test and scrollToIndex all address it and would be corrupted by layer
+    // entries.
+    const rovingIds = useMemo(
+      () =>
+        laneRows
+          ? [...childIds, ...laneRows.flatMap((layer) => layer.items.map((item) => item.id))]
+          : childIds,
+      [laneRows, childIds],
+    );
+    const rovingIndexById = useMemo(
+      () => (laneRows ? new Map(rovingIds.map((id, index) => [id, index])) : indexById),
+      [laneRows, rovingIds, indexById],
+    );
+
     // Pointer -> visible boundary index from the virtualizer's measurements
     // (O(log n), variable widths included) — never from card rects, since
     // most cards aren't mounted. The spacer's rect shifts with scroll, so
@@ -664,11 +859,26 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const scrollToNode = useCallback(
       (id: NodeId): boolean => {
         const index = indexById.get(id);
-        if (index === undefined) return false;
-        virtualizer.scrollToIndex(index);
+        if (index !== undefined) {
+          virtualizer.scrollToIndex(index);
+          return true;
+        }
+        // A layer card. It is always mounted (lanes are not virtualized) but
+        // can still be scrolled out of view, so bring its box inside by the
+        // smallest move that does it — the virtualizer knows nothing about it.
+        const placement = layerPlacements.byId.get(id);
+        const scroller = scrollRef.current;
+        if (!placement || !scroller) return false;
+        const viewLeft = scroller.scrollLeft;
+        const viewRight = viewLeft + scroller.clientWidth;
+        if (placement.left < viewLeft) {
+          scroller.scrollLeft = placement.left;
+        } else if (placement.left + placement.width > viewRight) {
+          scroller.scrollLeft = placement.left + placement.width - scroller.clientWidth;
+        }
         return true;
       },
-      [indexById, virtualizer]
+      [indexById, virtualizer, layerPlacements, scrollRef]
     );
     const focusNode = useFocusNode(scrollRef, scrollToNode);
 
@@ -681,17 +891,27 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       (index: number) => {
         // The roving index can outlive the list it points into for a render
         // after a removal; focusing nothing is the right answer there.
-        const childId = childIds[index];
-        if (childId !== undefined) focusNode(childId);
+        const id = rovingIds[index];
+        if (id !== undefined) focusNode(id);
       },
-      [focusNode, childIds]
+      [focusNode, rovingIds]
+    );
+    // 2D once there are lanes, and `resolveLaneStripIndex` reduces to exactly
+    // the 1D behaviour for a single row — including leaving vertical arrows
+    // alone, which is how the page scrolls with the pointer over a strip.
+    const resolveNextIndex = useCallback(
+      (key: string, current: number, count: number) =>
+        rowLayout.length > 0
+          ? resolveLaneStripIndex(key, current, rowLayout)
+          : resolveStripIndex(key, current, count),
+      [rowLayout]
     );
     const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
-      itemIds: childIds,
-      indexById,
+      itemIds: rovingIds,
+      indexById: rovingIndexById,
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
-      resolveNextIndex: resolveStripIndex,
+      resolveNextIndex,
       // Arrows carry the selection with them (the file-manager convention),
       // so a keyboard user acts on what they navigated to instead of having to
       // press Space at every stop. Shift extends from the pivot.
@@ -706,10 +926,29 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // Keep the roving tab stop on a MOUNTED card: if the focused index scrolled
     // out of view (mouse/pan), fall back to the first mounted item so the strip
     // stays tabbable.
+    //
+    // With lanes the focused index is FLAT across rows, so it has to be
+    // resolved to a row first: a focused LAYER card means no picture card is
+    // the tab stop (-1 matches no index), and the layer cell claims it
+    // instead. An index that resolves to no row at all (a render behind a
+    // removal) falls back to the picture, so the grid never ends up with no
+    // tab stop.
     const mountedItems = virtualizer.getVirtualItems();
-    const rovingIndex = mountedItems.some((v) => v.index === focusedIndex)
-      ? focusedIndex
-      : mountedItems[0]?.index ?? 0;
+    const focusedPosition = rowLayout.length > 0 ? laneRowPosition(focusedIndex, rowLayout) : null;
+    const pictureFocusIndex =
+      rowLayout.length === 0
+        ? focusedIndex
+        : focusedPosition === null
+          ? 0
+          : focusedPosition.row === 0
+            ? focusedPosition.column
+            : -1;
+    const rovingIndex =
+      pictureFocusIndex === -1
+        ? -1
+        : mountedItems.some((v) => v.index === pictureFocusIndex)
+          ? pictureFocusIndex
+          : mountedItems[0]?.index ?? 0;
 
     // The overview is a floating TOOLTIP above the selected clip — it does NOT
     // reserve a band in the row, so showing it never displaces the clips. To
@@ -849,6 +1088,113 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     };
     const indicatorLeft = indicatorIndex !== null ? boundaryLeft(indicatorIndex) : null;
 
+    // The picture row's cells. Hoisted out of the tree because they render in
+    // one of two places: directly in the spacer (no lanes — the spacer IS the
+    // row, exactly as before lanes existed), or inside their own row element
+    // when lane rows are siblings, since a row may not contain a row.
+    const pictureCells = virtualizer.getVirtualItems().map((item) => {
+      // Resolved ONCE per item. The virtualizer's window can lag a
+      // removal by a render, so an index here is not guaranteed to
+      // still name a child; skipping is the only correct answer, and
+      // it keeps both reads below honest about it.
+      const childId = childIds[item.index];
+      if (childId === undefined) return null;
+      return (
+        <div
+          key={item.key}
+          data-virtual-index={item.index}
+          role="gridcell"
+          aria-colindex={item.index + 1}
+          // Sync the roving index to whatever card actually gains focus
+          // (click, programmatic focus), not just keyboard navigation.
+          onFocus={() => onItemFocus(childId)}
+          style={
+            {
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: item.size - gap,
+              height: itemHeight,
+              transform: `translateX(${item.start}px)`,
+              // Only the FIRST card's leading side is special: there
+              // is no gap before it, and the scroll box clips anything
+              // pulled out into the container's padding. Its trailing
+              // side has an ordinary gap and gets the ordinary offset.
+              "--dnd-drop-indicator-half-gap-before":
+                item.index === 0 ? "0px" : `${gap / 2}px`,
+              "--dnd-drop-indicator-half-gap-after": `${gap / 2}px`,
+            } as CSSProperties
+          }
+        >
+          {/* Explicit sizing: the item fills its (possibly variable) slot.
+              With panToScroll, item drags move to the grip bar or behind
+              a press-and-hold so the body is free to pan the strip. */}
+          <ItemShell
+            id={childId}
+            className="h-full w-full"
+            dragActivation={cardActivation}
+            rovingTabIndex={item.index === rovingIndex ? 0 : -1}
+            trimPixelsPerSecond={trimPixelsPerSecond}
+            itemContent={itemContent}
+          />
+        </div>
+      );
+    });
+
+    // Lane rows: real, focusable cards positioned by TIME rather than by the
+    // virtualizer's sequence, so each one spans the picture it actually plays
+    // under. They ride inside the content spacer, so scroll, auto-scroll and
+    // the live-trim anchor transform all apply to them for free.
+    const laneRowElements = laneRows?.map((layer, layerIndex) => {
+      if (layer.items.length === 0) return null;
+      return (
+        <div
+          key={`lane-${layerIndex}`}
+          role="row"
+          aria-rowindex={layerIndex + 2}
+          data-strip-lane={layerIndex + 1}
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: laneRowTop(layerIndex + 1, itemHeight, layerHeight, layerGap),
+            height: layerHeight,
+          }}
+        >
+          {layer.items.map((item, column) => {
+            const placement = layerPlacements.byId.get(item.id);
+            if (!placement) return null;
+            const flatIndex = laneFlatIndex(layerIndex + 1, column, rowLayout);
+            return (
+              <div
+                key={item.id}
+                role="gridcell"
+                aria-colindex={column + 1}
+                onFocus={() => onItemFocus(item.id)}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: placement.width,
+                  height: layerHeight,
+                  transform: `translateX(${placement.left}px)`,
+                }}
+              >
+                <ItemShell
+                  id={item.id}
+                  className="h-full w-full"
+                  dragActivation={cardActivation}
+                  rovingTabIndex={flatIndex !== null && flatIndex === focusedIndex ? 0 : -1}
+                  trimPixelsPerSecond={trimPixelsPerSecond}
+                  itemContent={itemContent}
+                />
+              </div>
+            );
+          })}
+        </div>
+      );
+    });
+
     return (
       <TrimPreviewContext.Provider value={trimPreview}>
         {/* Wrapper so the overview tooltip can float ABOVE the strip without
@@ -882,11 +1228,20 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             // aria-colindex expose the true position ("column 500 of 1000") even
             // though only a handful of cells are mounted.
             role="grid"
-            aria-label={`${name}, ${childIds.length} items`}
+            aria-label={`${name}, ${rovingIds.length} items`}
             // An empty strip has no rows (the spacer drops its row role too);
             // claiming rowcount 1 over an empty row is an invalid grid tree.
-            aria-rowcount={childIds.length === 0 ? 0 : 1}
-            aria-colcount={childIds.length}
+            // With lanes the picture is row 1 and each layer adds one under
+            // it; a layer with nothing in it emits no row element, the same
+            // way virtualization omits columns, so the indices stay stable.
+            aria-rowcount={
+              laneRows ? 1 + laneRows.length : childIds.length === 0 ? 0 : 1
+            }
+            aria-colcount={
+              laneRows
+                ? Math.max(childIds.length, ...laneRows.map((layer) => layer.items.length))
+                : childIds.length
+            }
             onKeyDown={onKeyDown}
             // Empty space is the "deselect" target. The pointerdown half only
             // records where the press started, so a PAN (which also ends in a
@@ -907,14 +1262,29 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             <VirtualEmptyHint visible={childIds.length === 0} />
             <div
               ref={contentRef}
-              {...(childIds.length > 0 ? { role: "row", "aria-rowindex": 1 } : {})}
+              // Without lanes the spacer IS the one row. With them it becomes
+              // the rows' container instead — a row may not contain a row —
+              // and the picture gets its own row element below.
+              {...(childIds.length > 0 && !laneRows
+                ? { role: "row", "aria-rowindex": 1 }
+                : {})}
               style={{
                 // The slot's width is ADDED here and nowhere else: every
                 // boundary and model reads `getTotalSize()`, which stays the
                 // cards' own extent, so the slot cannot shift an index.
-                width:
+                //
+                // A lane row can reach PAST the picture (a bed that outlasts
+                // the last shot), so the spacer covers the furthest of the
+                // two. Widening it does not move a boundary for the same
+                // reason the trailing slot doesn't — boundaries read
+                // getTotalSize(), not this.
+                width: Math.max(
                   virtualizer.getTotalSize() + (trailingSlot ? itemWidth + gap : 0),
-                height: itemHeight,
+                  layerPlacements.right,
+                ),
+                height: laneRows
+                  ? laneStackHeight(itemHeight, layerHeight, layerGap, laneRows.length)
+                  : itemHeight,
                 position: "relative",
                 // The left-handle "grows left" anchor (0 unless a left trim is
                 // in flight). Shifts the whole content layer so clips move
@@ -931,58 +1301,25 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   style={{ left: indicatorLeft }}
                 />
               )}
-              {virtualizer.getVirtualItems().map((item) => {
-                // Resolved ONCE per item. The virtualizer's window can lag a
-                // removal by a render, so an index here is not guaranteed to
-                // still name a child; skipping is the only correct answer, and
-                // it keeps both reads below honest about it.
-                const childId = childIds[item.index];
-                if (childId === undefined) return null;
-                return (
+              {laneRows && childIds.length > 0 ? (
                 <div
-                  key={item.key}
-                  data-virtual-index={item.index}
-                  role="gridcell"
-                  aria-colindex={item.index + 1}
-                  // Sync the roving index to whatever card actually gains focus
-                  // (click, programmatic focus), not just keyboard navigation.
-                  onFocus={() => onItemFocus(childId)}
-                  style={
-                    {
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: item.size - gap,
-                      height: itemHeight,
-                      transform: `translateX(${item.start}px)`,
-                      // Only the FIRST card's leading side is special: there
-                      // is no gap before it, and the scroll box clips anything
-                      // pulled out into the container's padding. Its trailing
-                      // side has an ordinary gap and gets the ordinary offset.
-                      // Only the FIRST card's leading side is special: there
-                      // is no gap before it, and the scroll box clips anything
-                      // pulled out into the container's padding. Its trailing
-                      // side has an ordinary gap and gets the ordinary offset.
-                      "--dnd-drop-indicator-half-gap-before":
-                        item.index === 0 ? "0px" : `${gap / 2}px`,
-                      "--dnd-drop-indicator-half-gap-after": `${gap / 2}px`,
-                    } as CSSProperties
-                  }
+                  role="row"
+                  aria-rowindex={1}
+                  data-strip-lane={0}
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    height: itemHeight,
+                  }}
                 >
-                  {/* Explicit sizing: the item fills its (possibly variable) slot.
-                      With panToScroll, item drags move to the grip bar or behind
-                      a press-and-hold so the body is free to pan the strip. */}
-                  <ItemShell
-                    id={childId}
-                    className="h-full w-full"
-                    dragActivation={cardActivation}
-                    rovingTabIndex={item.index === rovingIndex ? 0 : -1}
-                    trimPixelsPerSecond={trimPixelsPerSecond}
-                    itemContent={itemContent}
-                  />
+                  {pictureCells}
                 </div>
-                );
-              })}
+              ) : (
+                pictureCells
+              )}
+              {laneRowElements}
               {trailingSlot && (
                 <div
                   data-virtual-trailing-slot

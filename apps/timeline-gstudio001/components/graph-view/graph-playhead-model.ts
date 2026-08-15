@@ -14,6 +14,7 @@ import {
   CLIP_GAP_SECONDS,
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "@storyboard/timeline-model/constants";
+import { trackIndexOf } from "@storyboard/timeline-model/documents";
 import type { TimelineClip } from "@storyboard/timeline-model/types";
 import { formatTick } from "@/lib/format-duration";
 
@@ -175,10 +176,21 @@ export function shouldRetryManifestFetch(
   return consecutiveFailures > 0 && consecutiveFailures <= maxRetries;
 }
 
+/**
+ * Which lanes a card set covers. Geometry wants "picture": the strip draws
+ * lane 0 in its row and every higher lane in its own, so an overlay measured
+ * against all of them would be measuring a layout that is not there. Readouts
+ * want "all" — a bed is a clip the user put on this timeline whatever row it
+ * ended up on.
+ */
+export type LaneScope = "picture" | "all";
+
 export type ChildSpan = Readonly<{
   startTime: number;
   endTime: number;
   width: number;
+  /** Which lane the card plays on; absent means the picture. */
+  lane?: number;
   /** Won't play — the seek rail dims this stretch and the player jumps it.
    *  True for a clip disabled outright AND for one whose collection ancestor
    *  is (see `isDisabledByAncestor`); the rail draws no distinction, because
@@ -239,6 +251,18 @@ export function childSpans(
   collectionId: string,
   spans: PreviewCardSpans | null,
   widthForClip: (clip: TimelineClip) => number,
+  /**
+   * Defaults to EVERY lane, which is what a surface drawing one card per child
+   * needs — the grid, a sub-timeline row, the header readout. Only a surface
+   * that draws lanes as separate ROWS asks for "picture", because there a
+   * layered card is not in the row being measured.
+   *
+   * The default is deliberately the pre-lanes behaviour: a caller that is
+   * never updated keeps pairing one card to one child, which is the failure
+   * that would be silent. Asking for "picture" by mistake shifts a marker
+   * visibly.
+   */
+  laneScope: LaneScope = "all",
 ): ChildSpan[] {
   const childIds = getChildren(graph, parseNodeId(collectionId));
   // Drilled INTO a disabled collection: none of these children carry the flag
@@ -248,23 +272,36 @@ export function childSpans(
   const focusDisabled =
     graph.nodesById.get(parseNodeId(collectionId))?.disabled === true ||
     isDisabledByAncestor(graph, collectionId);
-  let previousEnd = 0;
-  return graphChildrenToClips(graph, details, collectionId).map((clip, index) => {
+  // PER LANE, not one running total. The clamp exists to keep ONE row's times
+  // sorted, because the playhead map binary-searches them. Applied across
+  // lanes it does the opposite: lanes all start at zero, so a bed on lane 1
+  // would be dragged forward to wherever the picture had reached — reported as
+  // starting at 12s when it starts at 0 — and every later card pushed along
+  // with it. Harmless while every document was one sequence; wrong the moment
+  // one is not.
+  const previousEndByLane = new Map<number, number>();
+  return graphChildrenToClips(graph, details, collectionId).flatMap((clip, index) => {
+    const lane = trackIndexOf(clip);
+    if (laneScope === "picture" && lane !== 0) return [];
     const childId = childIds[index] as string;
     // Media first (parent-qualified — see mediaSpanKey), then the bare id a
     // collection child is keyed under. A demoted duplicate's `dup:`-prefixed
     // node id matches neither and falls through to projection times, which
     // is the honest degradation for a card the manifest can't name.
     const span = spans?.get(mediaSpanKey(collectionId, childId)) ?? spans?.get(childId);
+    const previousEnd = previousEndByLane.get(lane) ?? 0;
     const startTime = Math.max(span ? span.start : clip.startTime, previousEnd);
     const endTime = Math.max(span ? span.end : clip.startTime + clip.duration, startTime);
-    previousEnd = endTime;
-    return {
-      width: widthForClip(clip),
-      startTime,
-      endTime,
-      ...(focusDisabled || clip.disabled === true ? { disabled: true } : {}),
-    };
+    previousEndByLane.set(lane, endTime);
+    return [
+      {
+        width: widthForClip(clip),
+        startTime,
+        endTime,
+        lane,
+        ...(focusDisabled || clip.disabled === true ? { disabled: true } : {}),
+      },
+    ];
   });
 }
 
@@ -399,10 +436,27 @@ export function buildStripOverlay(
 export function playableSpanSeconds(cards: readonly ChildSpan[]): number {
   const enabled = cards.filter((card) => card.disabled !== true);
   if (enabled.length === 0) return 0;
-  const content = enabled.reduce((total, card) => total + (card.endTime - card.startTime), 0);
-  return (
-    TIMELINE_LEADING_PADDING_SECONDS + content + CLIP_GAP_SECONDS * (enabled.length - 1)
-  );
+  // PER LANE, then the LONGEST of them — lanes play together, so the span is
+  // the one that finishes last, not the sum. Summing would claim a 4s bed
+  // under a 4s shot makes an 8s timeline, and the board now plainly shows
+  // otherwise. Reduces to exactly the old single-total formula whenever
+  // everything is on the picture, which is every document without lanes.
+  const byLane = new Map<number, ChildSpan[]>();
+  for (const card of enabled) {
+    const lane = card.lane ?? 0;
+    const row = byLane.get(lane);
+    if (row) row.push(card);
+    else byLane.set(lane, [card]);
+  }
+  let longest = 0;
+  for (const row of byLane.values()) {
+    const content = row.reduce((total, card) => total + (card.endTime - card.startTime), 0);
+    longest = Math.max(
+      longest,
+      TIMELINE_LEADING_PADDING_SECONDS + content + CLIP_GAP_SECONDS * (row.length - 1),
+    );
+  }
+  return longest;
 }
 
 export type PlayheadMap = Readonly<{

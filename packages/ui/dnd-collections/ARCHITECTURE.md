@@ -86,7 +86,10 @@ react/
                             views over historyEntries.
 virtual/
   VirtualStrip.tsx          Horizontal virtualized strip (TanStack Virtual):
-                            fixed or metadata-driven variable widths.
+                            fixed or metadata-driven variable widths, plus
+                            optional LANE ROWS under the picture.
+  virtual-strip-lanes.ts    Pure lane geometry: the picture's time -> x map,
+                            layer placement, row offsets, 2D roving.
   VirtualGrid.tsx           Vertical fixed-cell grid: fixed or responsive
                             column count, row-based virtualizer.
 DndCollections.stories.tsx  Storybook stories; their play functions are the
@@ -500,6 +503,51 @@ offscreen items in and focusing them (only the roving card is `tabIndex=0`),
 with `aria-row/colcount` + per-cell indexes exposing the real position under
 virtualization. It stands down while a drag is live (`isDragging`) or Alt/
 Ctrl/Meta are held, so it never collides with the other two.
+
+With LANE ROWS the strip becomes a stack of rows, and navigation goes 2D
+over one flat list spanning them — so the grid still has a single tab stop.
+The resolver (`resolveLaneStripIndex`) clamps WITHIN a row, because the hook
+clamps globally and an unclamped step off the last shot would silently land
+on the first layer card. Up/Down cross rows at the nearest time, preferring
+the window that CONTAINS the current card's start. On a single-row strip
+vertical arrows return null rather than the current index: returning it
+would have the hook `preventDefault` a key it did nothing with, and vertical
+arrows are how the page scrolls with the pointer over a strip.
+
+## Lane rows: why the consumer owns the clock
+
+Layers are positioned by TIME, which means the strip needs a time -> x map
+for the picture row. It does not derive one. Its own notion of duration
+knows nothing about the gap a document packs between clips (0.12s in this
+repo) or the span a collection card stands for, so a clock derived from
+widths drifts by one gap per gutter — a few pixels per card, and a bed
+visibly sliding off the shots it covers by the tenth one. The consumer
+already has the real times; it passes them as `itemTimes` and the strip
+pairs them with the widths it measured.
+
+The map is therefore piecewise linear and anchored on card EDGES: at a
+card's start time it returns that card's left edge exactly, and it
+interpolates across the gutter between two cards rather than snapping. A
+layer card's width is both its edges through that map, not
+`durationToWidth` — which is only right on a linear axis and would leave a
+bed short by one pack gap per shot it spans.
+
+A lane is NOT bounded by the picture's cuts, and the map reflects that in
+both directions. A card's start is arbitrary — it may begin inside one shot
+and end inside another, and two cards on one lane need neither touch nor
+tile — so nothing here assumes alignment or ordering among layer items.
+Past the last picture card the map extrapolates at that card's rate instead
+of clamping, because a lane can outlast the picture; clamping drew a 30s bed
+under a 12s cut as though it ended with the cut. Before the first card it
+still clamps, since content coordinates start at 0.
+
+Lanes stop at geometry. A card's lane is CONSUMER data — the engine has no
+`trackIndex` and no command that changes one — so cross-lane drag is not
+modelled here: layer cards drag like any other card and resolve through the
+same container droppable. A consumer that splits its children by lane is
+also handing the strip a FILTERED item source, which makes its published
+boundaries mean something different; `mapDropCommand` is where that gets
+corrected, the same seam a flat strip uses.
 
 ## FLIP animation: a layer above the reducer
 

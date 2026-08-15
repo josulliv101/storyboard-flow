@@ -11,7 +11,11 @@ import {
 import { useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { UndoRedoControls } from "./react/history-views";
-import { VirtualStrip, type VirtualStripHandle } from "./virtual/VirtualStrip";
+import {
+  VirtualStrip,
+  type StripLayer,
+  type VirtualStripHandle,
+} from "./virtual/VirtualStrip";
 import { durationToWidth } from "./virtual/virtual-strip-geometry";
 import {
   dispatchPointerSequence,
@@ -2391,5 +2395,276 @@ export const DropIndicatorCentersInGap: Story = {
     expect(barCenter()!).toBeCloseTo((m0Box.right + m1Box.left) / 2, 0);
 
     await releaseAt(insideM0Right);
+  },
+};
+
+// --- lane rows ---------------------------------------------------------------
+//
+// #397. A layered clip runs ALONGSIDE the picture, so it draws as its own
+// time-aligned row instead of taking a slot in the shot sequence. The picture
+// keeps the virtualizer; lane cards are real, focusable cards positioned by
+// time — few and long, where shots are many and short.
+
+const LANE_PPS = 40;
+
+function laneGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "shot1", name: "Shot 1", durationSeconds: 4 },
+        { kind: "media", id: "bed", name: "Bed", durationSeconds: 12.24 },
+        { kind: "media", id: "shot2", name: "Shot 2", durationSeconds: 4 },
+        { kind: "media", id: "vo", name: "VO", durationSeconds: 2 },
+        { kind: "media", id: "shot3", name: "Shot 3", durationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+// The PICTURE's clock: three 4s shots separated by the document's 0.12s pack
+// gap, which the 8px gutter absorbs — the case a width-derived clock drifts on.
+const PICTURE_IDS = ["shot1", "shot2", "shot3"].map(parseNodeId);
+const PICTURE_TIMES = [
+  { startSeconds: 0, durationSeconds: 4 },
+  { startSeconds: 4.12, durationSeconds: 4 },
+  { startSeconds: 8.24, durationSeconds: 4 },
+];
+// Lane 1: a bed under all three shots. Lane 2: a VO that lines up with
+// NOTHING — it starts inside shot 2, crosses a gutter and ends inside shot 3,
+// which is what audio actually does. A lane is not tied to the picture's cuts.
+const LANE_LAYERS: readonly StripLayer[] = [
+  { items: [{ id: parseNodeId("bed"), startSeconds: 0, durationSeconds: 12.24 }] },
+  { items: [{ id: parseNodeId("vo"), startSeconds: 5.5, durationSeconds: 3.6 }] },
+];
+
+function LaneHarness({ layers = LANE_LAYERS }: { layers?: readonly StripLayer[] }) {
+  return (
+    <DndCollections initialGraph={laneGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemIds={PICTURE_IDS}
+          itemTimes={PICTURE_TIMES}
+          layers={layers}
+          pixelsPerSecond={LANE_PPS}
+        />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const LaneRowSpansTheShotsItPlaysUnder: Story = {
+  render: () => <LaneHarness />,
+  play: async ({ canvasElement }) => {
+    const shot1 = nodeCard(canvasElement, "shot1");
+    await waitForLayout(shot1);
+    const shot2 = nodeCard(canvasElement, "shot2");
+    const shot3 = nodeCard(canvasElement, "shot3");
+    const bed = nodeCard(canvasElement, "bed");
+    const vo = nodeCard(canvasElement, "vo");
+
+    // THE assertion this feature exists for: the bed's edges land on the
+    // picture it covers — shot 1's left edge to shot 3's right edge, the two
+    // gutters in between included. A duration*pps width would fall short by
+    // exactly those gutters.
+    expect(bed.getBoundingClientRect().left).toBeCloseTo(
+      shot1.getBoundingClientRect().left,
+      0,
+    );
+    expect(bed.getBoundingClientRect().right).toBeCloseTo(
+      shot3.getBoundingClientRect().right,
+      0,
+    );
+
+    // The VO lines up with NOTHING: it begins inside shot 2, crosses the
+    // gutter, and ends inside shot 3. A lane carries its own clock, so a card
+    // on one is not required to touch any edge on any other row.
+    const shot2Box = shot2.getBoundingClientRect();
+    const shot3Box = shot3.getBoundingClientRect();
+    const voBox = vo.getBoundingClientRect();
+    expect(voBox.left).toBeGreaterThan(shot2Box.left);
+    expect(voBox.left).toBeLessThan(shot2Box.right);
+    expect(voBox.right).toBeGreaterThan(shot3Box.left);
+    expect(voBox.right).toBeLessThan(shot3Box.right);
+
+    // And they are ROWS: each sits below the picture, and below each other.
+    expect(bed.getBoundingClientRect().top).toBeGreaterThan(
+      shot1.getBoundingClientRect().bottom - 1,
+    );
+    expect(vo.getBoundingClientRect().top).toBeGreaterThan(
+      bed.getBoundingClientRect().bottom - 1,
+    );
+  },
+};
+
+export const LaneRowOutlastsThePicture: Story = {
+  // Music under a short cut. A lane is not bounded by the picture, so the bed
+  // has to draw its TRUE length and the content has to grow to hold it —
+  // clamping at the last shot drew a 30s bed as though it ended with the cut.
+  render: () => (
+    <LaneHarness
+      layers={[
+        { items: [{ id: parseNodeId("bed"), startSeconds: 0, durationSeconds: 30 }] },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const shot3 = nodeCard(canvasElement, "shot3");
+    await waitForLayout(nodeCard(canvasElement, "shot1"));
+    const bed = nodeCard(canvasElement, "bed");
+
+    // Past the last shot's right edge, by the 17.76s it runs on for.
+    expect(bed.getBoundingClientRect().right).toBeGreaterThan(
+      shot3.getBoundingClientRect().right + 100,
+    );
+    // And the scrollable content grew to cover it, rather than clipping it.
+    const scroller = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    expect(scroller.scrollWidth).toBeGreaterThan(
+      shot3.getBoundingClientRect().right - scroller.getBoundingClientRect().left,
+    );
+  },
+};
+
+export const LaneRowsCarryGridRowSemantics: Story = {
+  render: () => <LaneHarness />,
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "shot1"));
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+
+    // One row for the picture plus one per lane, and the widest row's count.
+    expect(strip).toHaveAttribute("aria-rowcount", "3");
+    expect(strip).toHaveAttribute("aria-colcount", "3");
+    // Every card is announced, layer cards included.
+    expect(strip).toHaveAttribute("aria-label", "Strip, 5 items");
+
+    const rows = [...strip.querySelectorAll('[role="row"]')];
+    expect(rows.map((row) => row.getAttribute("aria-rowindex"))).toEqual(["1", "2", "3"]);
+    // The picture is row 1 and is NOT the spacer any more — a row may not
+    // contain a row, so it gets its own element once lanes are siblings.
+    expect(rows[0]).toHaveAttribute("data-strip-lane", "0");
+    expect(rows[1]).toHaveAttribute("data-strip-lane", "1");
+  },
+};
+
+export const ArrowKeysCrossBetweenLanes: Story = {
+  render: () => <LaneHarness />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const shot1 = nodeCard(canvasElement, "shot1");
+    await waitForLayout(shot1);
+
+    // Down from shot 1 lands on what is playing UNDER it.
+    shot1.focus();
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => {
+      const bed = nodeCard(canvasElement, "bed");
+      expect(bed.ownerDocument.activeElement).toBe(bed);
+    });
+
+    // Down again reaches the second lane — the VO, the only card there.
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => {
+      const vo = nodeCard(canvasElement, "vo");
+      expect(vo.ownerDocument.activeElement).toBe(vo);
+    });
+
+    // Up from the VO (4.12s) lands on the bed, which is playing then.
+    await user.keyboard("{ArrowUp}");
+    await waitFor(() => {
+      const bed = nodeCard(canvasElement, "bed");
+      expect(bed.ownerDocument.activeElement).toBe(bed);
+    });
+
+    // Up again lands on shot 1, NOT the shot we came down from. Each move
+    // anchors on the current card's own start, and the bed starts at 0 — so
+    // up/down is not an inverse when the rows are cut differently, which is
+    // the normal case for a bed.
+    await user.keyboard("{ArrowUp}");
+    await waitFor(() => {
+      const shot1Again = nodeCard(canvasElement, "shot1");
+      expect(shot1Again.ownerDocument.activeElement).toBe(shot1Again);
+    });
+  },
+};
+
+export const ArrowRightStopsAtTheEndOfItsOwnRow: Story = {
+  render: () => <LaneHarness />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    await waitForLayout(nodeCard(canvasElement, "shot1"));
+    const shot3 = nodeCard(canvasElement, "shot3");
+
+    // The roving list is every row concatenated, so an unclamped step off the
+    // last shot would land on the bed — Right must never change rows.
+    shot3.focus();
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(shot3.ownerDocument.activeElement).toBe(shot3));
+  },
+};
+
+export const LaneCardsSelectLikeAnyOther: Story = {
+  render: () => <LaneHarness />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    await waitForLayout(nodeCard(canvasElement, "shot1"));
+
+    await user.click(nodeCard(canvasElement, "bed"));
+    await waitFor(() =>
+      expect(nodeCard(canvasElement, "bed")).toHaveAttribute("data-selected", "true"),
+    );
+  },
+};
+
+export const AnEmptyLaneDrawsNoRow: Story = {
+  render: () => <LaneHarness layers={[{ items: [] }, LANE_LAYERS[0]!]} />,
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "shot1"));
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+
+    // A row with no cells is an invalid grid tree, so the empty lane emits no
+    // element — the same way virtualization omits columns. Its INDEX is still
+    // reserved, so the lane below it stays row 3.
+    expect(strip).toHaveAttribute("aria-rowcount", "3");
+    const rows = [...strip.querySelectorAll('[role="row"]')];
+    expect(rows.map((row) => row.getAttribute("aria-rowindex"))).toEqual(["1", "3"]);
+  },
+};
+
+export const WithoutLanesTheStripIsUnchanged: Story = {
+  // The regression pin for every board that has no layers: the lane paths are
+  // gated all the way down to the DOM, so nothing about an ordinary strip
+  // moves — including vertical arrows staying unhandled, which is how the
+  // page scrolls with the pointer over a strip.
+  render: () => (
+    <DndCollections initialGraph={laneGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip collectionId={parseNodeId("strip")} pixelsPerSecond={LANE_PPS} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "shot1"));
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+
+    expect(strip).toHaveAttribute("aria-rowcount", "1");
+    expect(strip.querySelectorAll("[data-strip-lane]")).toHaveLength(0);
+    // The spacer is still the one row itself.
+    const rows = [...strip.querySelectorAll('[role="row"]')];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("aria-rowindex", "1");
+
+    nodeCard(canvasElement, "shot1").focus();
+    const keydown = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowDown",
+    });
+    strip.dispatchEvent(keydown);
+    expect(keydown.defaultPrevented).toBe(false);
   },
 };

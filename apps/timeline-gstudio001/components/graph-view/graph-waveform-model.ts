@@ -4,6 +4,7 @@ import {
   type CollectionsGraph,
 } from "@storyboard/collections-core";
 import type { DetailsById, FlatItem } from "@storyboard/timeline-domain";
+import { trackIndexOf } from "@storyboard/timeline-model/documents";
 
 /**
  * The PURE half of the waveform lane: which audio each drawn card refers to.
@@ -80,8 +81,13 @@ export function waveformSourcesFor(
   if (flatItems) {
     return flatItems.map((item) => sourceForNode(graph, details, item.nodeId as string));
   }
-  return getChildren(graph, parseNodeId(focusedId)).map((childId) =>
-    sourceForNode(graph, details, childId as string),
+  // PICTURE ONLY, to hold the index alignment with `cardsFor`, which measures
+  // the strip's own row and so drops anything on a lane. A lane row's own
+  // waveform is a separate band this does not draw yet.
+  return getChildren(graph, parseNodeId(focusedId)).flatMap((childId) =>
+    trackIndexOf({ trackIndex: details[childId as string]?.trackIndex ?? 0 }) === 0
+      ? [sourceForNode(graph, details, childId as string)]
+      : [],
   );
 }
 

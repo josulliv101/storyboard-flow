@@ -37,7 +37,7 @@ import {
   useCollectionsStore,
 } from "@storyboard/ui/dnd-collections";
 
-import { flattenMediaOrder } from "@storyboard/timeline-domain";
+import { flattenMediaOrder, type DetailsById } from "@storyboard/timeline-domain";
 
 import { formatDuration } from "@/lib/format-duration";
 import { graphClipboard } from "@/lib/graph-clipboard";
@@ -108,6 +108,7 @@ import {
   useSelectionCount,
   type PreviewTimeChannel,
 } from "./graph-preview";
+import { splitLaneRows } from "./graph-lane-rows";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { TagFilterProvider } from "./graph-tag-filter";
@@ -1542,6 +1543,38 @@ export function GraphBoard({
     [flatItems],
   );
 
+  // LANE ROWS. The picture (lane 0) keeps the virtualizer; everything on a
+  // higher lane draws as its own time-aligned row under it, so a bed visibly
+  // spans the shots it plays beneath instead of sitting in the queue after
+  // them.
+  //
+  // Null unless there is actually something on a lane, and the strip's lane
+  // paths are gated on the props being present — so an ordinary board renders
+  // exactly as it did before lanes existed, down to the DOM.
+  //
+  // Off in FLAT mode: a flat run spans many parents, so a card's lane would
+  // have to come from the manifest's lane-from-root rather than the local
+  // detail entry — a second lane source, and one this does not need.
+  const detailsSnapshot = useGraphDetailsSnapshot();
+  const laneRows = useMemo(() => {
+    if (flatOn) return null;
+    // The snapshot's type widens `DetailsById`'s values to `| undefined`;
+    // every read below already treats a missing entry as absent.
+    const model = splitLaneRows(graph, detailsSnapshot as DetailsById, focusedId);
+    if (model.layers.length === 0) return null;
+    return {
+      itemIds: model.pictureIds.map(parseNodeId),
+      itemTimes: model.pictureTimes,
+      layers: model.layers.map((layer) => ({
+        items: layer.items.map((item) => ({
+          id: parseNodeId(item.id),
+          startSeconds: item.startSeconds,
+          durationSeconds: item.durationSeconds,
+        })),
+      })),
+    };
+  }, [flatOn, graph, detailsSnapshot, focusedId]);
+
   // PLACEHOLDERS FOR THE HYDRATION GAP. Drilling into a collection navigates
   // at once, but its clips arrive on a fetch — so the surface is empty for a
   // beat and the user is looking at nothing, with no signal that anything is
@@ -1556,7 +1589,7 @@ export function GraphBoard({
   const focusedChildCount = useCollectionsSelector(
     (s) => s.graph.childrenById.get(parseNodeId(focusedId))?.length ?? 0,
   );
-  const focusedDetail = useGraphDetailsSnapshot()[focusedId];
+  const focusedDetail = detailsSnapshot[focusedId];
   const skeletonCount = hydrationSkeletonCount({
     hydrated: focusedDetail?.hydrated,
     itemCount: focusedDetail?.itemCount,
@@ -1932,7 +1965,13 @@ export function GraphBoard({
                 <NativeDropStrip collectionId={focusedId} projectId={projectId}>
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
-                itemIds={flatItemIds}
+                // Flat mode owns the item source when it is on; otherwise the
+                // lane split does, but ONLY when something is on a lane —
+                // undefined means "your own children", which is the original
+                // behaviour and the one every unlayered board still gets.
+                itemIds={flatItemIds ?? laneRows?.itemIds}
+                itemTimes={laneRows?.itemTimes}
+                layers={laneRows?.layers}
                 pixelsPerSecond={deferredPixelsPerSecond}
                 overscan={GRAPH_STRIP_OVERSCAN_ITEMS}
                 itemWidth={collectionCardWidth(deferredPixelsPerSecond, dims.strip)}
@@ -1956,6 +1995,7 @@ export function GraphBoard({
                           focusedId={focusedId}
                           pixelsPerSecond={deferredPixelsPerSecond}
                           cardHeight={dims.strip}
+                          laneScope="picture"
                         />
                       ) : null}
                       {waveformOn ? (
@@ -1963,6 +2003,7 @@ export function GraphBoard({
                           focusedId={focusedId}
                           pixelsPerSecond={deferredPixelsPerSecond}
                           cardHeight={dims.strip}
+                          laneScope="picture"
                         />
                       ) : null}
                       {previewOn ? (
@@ -1971,6 +2012,7 @@ export function GraphBoard({
                           channel={timeChannel}
                           pixelsPerSecond={deferredPixelsPerSecond}
                           cardHeight={dims.strip}
+                          laneScope="picture"
                         />
                       ) : null}
                     </>
@@ -2000,6 +2042,7 @@ export function GraphBoard({
                   channel={timeChannel}
                   pixelsPerSecond={deferredPixelsPerSecond}
                   cardHeight={dims.strip}
+                  laneScope="picture"
                 />
               )}
                 </NativeDropStrip>

@@ -15,6 +15,7 @@ import {
   ClearSelectionOnOutsideClick,
   DndCollections,
   buildGraph,
+  getChildren,
   parseNodeId,
   useCollectionsStore,
   type CollectionItemNode,
@@ -56,6 +57,7 @@ import { bootSessionKey } from "./boot-session-key";
 import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
+import { laneDropIndex, splitLaneRows } from "./graph-lane-rows";
 import { GraphViewLoadingSkeleton } from "./graph-view-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { FlatClosureHydrator, HydrationController } from "./graph-hydration";
@@ -534,19 +536,49 @@ export function GraphTimelineView({
       intent: DropIntent,
       graph: CollectionsGraph,
     ) => {
-      if (!flatOn) return command;
       const focused = parseNodeId(focusedId);
-      // The flat strip's own boundary, and nothing else.
+      // The focused surface's own boundary, and nothing else — every other
+      // drop names its target directly and is already right.
       if (intent.type !== "insert-at-index" || intent.collectionId !== focused) return command;
-      const target = resolveFlatDropTarget(
-        graph,
-        flattenMediaOrder(graph, focused, MAX_SUBTREE_DEPTH),
-        focused,
-        command.toIndex,
-      );
-      return { ...command, toParentId: target.parentId, toIndex: target.index };
+
+      if (flatOn) {
+        const target = resolveFlatDropTarget(
+          graph,
+          flattenMediaOrder(graph, focused, MAX_SUBTREE_DEPTH),
+          focused,
+          command.toIndex,
+        );
+        return { ...command, toParentId: target.parentId, toIndex: target.index };
+      }
+
+      // LANE TRANSLATION — the other view whose boundaries do not mean what
+      // the intent assumes.
+      //
+      // A strip with lane rows is handed the PICTURE's children only, so the
+      // boundary it publishes counts lane-0 cards, while `resolveCommandFromIntent`
+      // reads it as an index into the collection's full child list. On any
+      // board with a layer those disagree and the drop lands somewhere nobody
+      // chose. The grid is unaffected: it shows every child, so its boundaries
+      // already index the real list.
+      //
+      // Re-derived from the RAW boundary (`intent.index`) rather than patched
+      // onto `command.toIndex`, which was computed against the wrong list —
+      // the post-removal subtraction has to happen against the translated
+      // position, not be carried over from the untranslated one.
+      if (surface !== "strip") return command;
+      const model = splitLaneRows(graph, detailsStore.read(), focusedId);
+      if (model.layers.length === 0) return command;
+      return {
+        ...command,
+        toIndex: laneDropIndex(
+          model.pictureIds,
+          getChildren(graph, focused),
+          intent.index,
+          command.type === "move-nodes" ? command.nodeIds : [],
+        ),
+      };
     },
-    [flatOn, focusedId],
+    [flatOn, focusedId, surface, detailsStore],
   );
 
   const commandPolicy = useCallback<CommandPolicy>(

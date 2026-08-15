@@ -1003,6 +1003,10 @@ type VirtualStripProps = {
   itemContent?: CollectionItemContentComponent;          // per-view card pixels; overrides the provider registry
   itemShell?: CollectionItemShellComponent;              // per-view ITEM renderer (default NodeCard; registry ItemShell in between) — see "Custom item content"
   overlay?: ReactNode;                                   // STRICTLY PRESENTATIONAL content-coordinate layer over the strip (playhead, markers): rides scroll + live-trim transform. aria-hidden + pointer-events none — no interactive/focusable children (focusable-inside-aria-hidden is an a11y violation); interactive scrubbers belong in your own layer outside the strip
+  itemTimes?: readonly StripTimedSlot[];                 // the CONSUMER'S clock for the rendered items, aligned 1:1 by index. Required by `layers`, ignored without them. The strip cannot derive it — its own duration notion knows nothing of a document's inter-clip gap or the span a collection card stands for, so a width-derived clock drifts one gap per gutter. Caller owns reference stability
+  layers?: readonly StripLayer[];                        // LANE ROWS drawn under the picture, time-aligned to it — a music bed, a voiceover. `StripLayer = { items: readonly StripLayerItem[] }`, `StripLayerItem = { id: NodeId; startSeconds: number; durationSeconds: number }`. Requires `itemTimes`. NOT virtualized (layers are few and long where shots are many and short), so the picture virtualizer's index space is untouched
+  layerHeight?: number;                                  // default max(16, itemHeight / 3) — a bed reads as a slim band under full-height shots
+  layerGap?: number;                                     // default 6, above each lane row
   className?: string;
 };
 type VirtualStripHandle = {
@@ -1051,6 +1055,43 @@ only, floored clips cap at their right edge, out-of-range times clamp, and
 the transient first-item gutter is excluded. `timeToOffset({ ...,
 timeSeconds })` remains the one-shot convenience. Strips sized by a custom
 `itemWidthFor` need their own mapping against that same function.
+
+A lane carries its OWN clock: `startSeconds` is arbitrary, so a layer card may
+begin inside one picture card, cross a gutter and end inside another, and two
+cards on one lane need neither touch nor tile. Past the last picture card the
+map extrapolates at that card's rate rather than clamping — a lane can outlast
+the picture (music under a short cut) — and the content spacer grows to cover
+it. Before the first card it clamps, since content coordinates start at 0.
+
+**Lane rows.** With `layers` (and `itemTimes`) the strip becomes a stack:
+the picture keeps its virtualizer as row 1, and each layer draws under it as
+its own `role="row"`, positioned by TIME. A layer card's box is both edges
+run through the picture's time → x map, so a bed spans exactly the shots it
+plays under — gutters included. Sizing it by `durationToWidth` instead would
+leave it short by one pack gap per shot, because a strip is not a linear time
+axis. The map is piecewise linear and anchored on the card edges the strip
+measured, so an `itemWidthFor` override and a live trim both carry through;
+mid-trim, cards downstream of the trimmed one lag by the trim delta until the
+commit lands (only the consumer knows how it repacks), and are exact after.
+
+Roving focus becomes 2D over one flat list spanning every row, so the grid
+keeps its single tab stop: Left/Right step within a row, Home/End hit that
+row's ends, Up/Down cross rows at the nearest time. Vertical arrows stay
+UNHANDLED on a single-row strip — that is how the page scrolls with the
+pointer over one. `aria-rowcount` is `1 + layers.length` and an empty layer
+emits no row element (a row with no cells is an invalid grid tree) while
+keeping its index reserved.
+
+Cross-lane DRAG is deliberately not modelled: a lane is consumer data, not
+something this package's engine knows about. Layer cards drag like any other
+card and their drops resolve through the same container droppable, so a drop
+reorders within the collection and leaves the lane alone. Note that a strip
+handed a FILTERED `itemIds` (which is what a lane split produces) publishes
+boundaries into that filtered list — so the same `mapDropCommand` translation
+`itemIds` already documents applies, or drops land at the wrong position.
+
+A strip with no `layers` renders exactly as it did before they existed, down
+to the DOM: every lane path is gated.
 
 When `trimPixelsPerSecond` is set and a mounted video is selected,
 `VirtualStrip` renders the source-window overview (`TrimOverviewStrip`) as a
