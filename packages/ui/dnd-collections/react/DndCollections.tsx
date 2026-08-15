@@ -31,7 +31,11 @@ import {
 import { getEventCoordinates } from "@dnd-kit/utilities";
 
 import { getChildren, type CollectionItemNode, type CollectionsGraph, type NodeId } from "../core/graph";
-import type { AddNodesCommand, MoveNodesCommand } from "../core/commands";
+import type {
+  AddNodesCommand,
+  MoveNodesCommand,
+  SetNodePlacementCommand,
+} from "../core/commands";
 import {
   decodeDropTarget,
   encodeDropTarget,
@@ -194,6 +198,25 @@ export type DndCollectionsProps = Readonly<{
     graph: CollectionsGraph,
   ) => MoveNodesCommand | AddNodesCommand;
   /**
+   * Last look at a PLACEMENT before it commits — a drop onto a lane row.
+   *
+   * Separate from `mapDropCommand` rather than folded into it, because the two
+   * correct different things. That one fixes a BOUNDARY whose meaning a view
+   * changed; a lane and a time already mean the same thing in every view, so a
+   * placement has no boundary to fix. What a consumer wants here is to add
+   * DOMAIN detail the engine has no business computing — for the timeline, the
+   * inset a clip draws in once it is under the picture, which depends on the
+   * clip's aspect ratio and the project's output size. Neither is something a
+   * generic collections engine can or should know.
+   *
+   * Returning the command unchanged is a no-op.
+   */
+  mapPlacementCommand?: (
+    command: SetNodePlacementCommand,
+    intent: DropIntent,
+    graph: CollectionsGraph,
+  ) => SetNodePlacementCommand;
+  /**
    * Fires when a palette drag's factory-created nodes will NEVER commit —
    * cancelled, refused (including by `commandPolicy`), or orphaned by a
    * mid-drag graph replacement. Factories mint node ids and often park
@@ -315,6 +338,7 @@ export function DndCollections({
   keepMultiSelectModeWhenEmpty,
   commandPolicy,
   mapDropCommand,
+  mapPlacementCommand,
   onPaletteDiscard,
   dragGhostScale = 1,
   dragGhostWidth,
@@ -346,11 +370,13 @@ export function DndCollections({
   const onChangeRef = useRef(onChange);
   const commandPolicyRef = useRef(commandPolicy);
   const mapDropCommandRef = useRef(mapDropCommand);
+  const mapPlacementCommandRef = useRef(mapPlacementCommand);
   const onPaletteDiscardRef = useRef(onPaletteDiscard);
   useLayoutEffect(() => {
     onChangeRef.current = onChange;
     commandPolicyRef.current = commandPolicy;
     mapDropCommandRef.current = mapDropCommand;
+    mapPlacementCommandRef.current = mapPlacementCommand;
     onPaletteDiscardRef.current = onPaletteDiscard;
   });
   // Stable identity so the palette controller (and everything depending on
@@ -365,6 +391,11 @@ export function DndCollections({
   const handleMapDropCommand = useCallback(
     (command: MoveNodesCommand | AddNodesCommand, intent: DropIntent, graph: CollectionsGraph) =>
       mapDropCommandRef.current?.(command, intent, graph) ?? command,
+    []
+  );
+  const handleMapPlacementCommand = useCallback(
+    (command: SetNodePlacementCommand, intent: DropIntent, graph: CollectionsGraph) =>
+      mapPlacementCommandRef.current?.(command, intent, graph) ?? command,
     []
   );
 
@@ -392,6 +423,7 @@ export function DndCollections({
             <DndCollectionsContext
               animateMoves={animateMoves}
               mapDropCommand={handleMapDropCommand}
+              mapPlacementCommand={handleMapPlacementCommand}
               onPaletteDiscard={handlePaletteDiscard}
               dragGhostScale={dragGhostScale}
               dragGhostWidth={dragGhostWidth}
@@ -428,6 +460,7 @@ function DndCollectionsContext({
   children,
   animateMoves,
   mapDropCommand,
+  mapPlacementCommand,
   onPaletteDiscard,
   dragGhostScale,
   dragGhostWidth,
@@ -443,6 +476,12 @@ function DndCollectionsContext({
     intent: DropIntent,
     graph: CollectionsGraph,
   ) => MoveNodesCommand | AddNodesCommand;
+  /** Same treatment, for a drop onto a lane row — see the prop's doc above. */
+  mapPlacementCommand: (
+    command: SetNodePlacementCommand,
+    intent: DropIntent,
+    graph: CollectionsGraph,
+  ) => SetNodePlacementCommand;
   onPaletteDiscard: (nodes: readonly CollectionItemNode[]) => void;
   dragGhostScale: number;
   dragGhostWidth: number | undefined;
@@ -795,7 +834,9 @@ function DndCollectionsContext({
       // callback per render never leaves a stale mapping armed mid-drag.
       const command =
         commandResult.value.type === "set-node-placement"
-          ? commandResult.value
+          ? // A placement has no boundary to correct, but it CAN want domain
+            // detail the engine must not compute — see `mapPlacementCommand`.
+            mapPlacementCommand(commandResult.value, intent, graph)
           : mapDropCommand(commandResult.value, intent, graph);
 
       // Measure the ghost BEFORE the commit — dispatching unmounts the

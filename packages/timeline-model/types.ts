@@ -7,6 +7,8 @@
 // family) ride along on TimelineItemBase because stored clips round-trip
 // through view state in the legacy pipeline.
 
+import type { LayerFrame } from "./layer-frame";
+
 export type MediaKind = "image" | "video";
 export type CollectionEndpoint = "first" | "last";
 
@@ -58,6 +60,31 @@ export type TimelineItemBase = {
    * answer, and a stray value here must not open one.
    */
   placedStart?: number;
+
+  /**
+   * WHERE THIS DRAWS INSIDE THE PICTURE, when it runs under one.
+   *
+   * A lane clip has always been mixed UNDER the picture, and for sound that is
+   * the whole story. A picture cannot be under a picture — it would simply not
+   * be visible — so a layer that has a frame is composited OVER, into this
+   * sub-rectangle. "Under" describes the mix, "over" describes the screen.
+   *
+   * ABSENT MEANS NO PICTURE: the clip contributes its sound and nothing else,
+   * which is what every layered clip did before this existed, so no stored
+   * document changes what it renders. Discoverability is bought on the WRITE
+   * side instead — dropping a visual clip onto a lane stamps the default inset
+   * — rather than by inferring a frame here, which would silently change the
+   * output of timelines nobody has touched.
+   *
+   * IGNORED ON LANE 0, like `placedStart`. The picture is not inside itself.
+   *
+   * Normalized 0..1 of the OUTPUT frame, whose size is a per-render setting; a
+   * pixel rectangle would mean something different at every size. Height is
+   * absent on purpose — it follows from `aspect`, so an inset cannot be
+   * stretched. See {@link layerFrameRect} for resolving one, and
+   * {@link layerFrameForPreset} for the corner presets that write it.
+   */
+  layerFrame?: LayerFrame;
 
   /** Absolute timeline position. DERIVED by packing — see `placedStart`,
    *  which is the authored input this is computed from on lanes 1+. */

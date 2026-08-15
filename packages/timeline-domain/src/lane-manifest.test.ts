@@ -180,3 +180,83 @@ describe("manifest lanes", () => {
     });
   });
 });
+
+// WHERE A LAYER DRAWS. Absent means sound only, which is what every layered
+// clip did before compositing — so the manifest must not invent one.
+
+const INSET = { x: 0.65, y: 0.6, width: 0.3 };
+const frameOf = (manifest: ReturnType<typeof compile>, id: string) =>
+  manifest.leaves.find((leaf) => leaf.id === id)?.layerFrame;
+
+describe("manifest layer frames", () => {
+  it("carries the inset on a layered clip", () => {
+    const manifest = compile({
+      root: doc("root", [
+        media("shot", 10),
+        media("pip", 4, { trackIndex: 1, kind: "video", layerFrame: INSET }),
+      ]),
+    });
+    expect(frameOf(manifest, "pip")).toEqual(INSET);
+  });
+
+  it("emits NOTHING for a layer without one — sound only", () => {
+    const manifest = compile({
+      root: doc("root", [media("shot", 10), media("bed", 4, { trackIndex: 1 })]),
+    });
+    expect(frameOf(manifest, "bed")).toBeUndefined();
+    expect("layerFrame" in manifest.leaves[1]!).toBe(false);
+  });
+
+  it("DROPS a stale inset left on a clip that is back on the picture", () => {
+    // Moving a clip to lane 0 clears the frame on the write path, but a
+    // document written by anything else can still carry one. Lane 0 has
+    // nothing to be inset within, so it is not an instruction.
+    const manifest = compile({
+      root: doc("root", [media("shot", 10, { layerFrame: INSET })]),
+    });
+    expect(frameOf(manifest, "shot")).toBeUndefined();
+  });
+
+  it("does NOT inherit a collection's inset onto its children", () => {
+    // Lane is inherited — the outermost non-zero one wins, because "picture or
+    // under-layer" is settled by the outermost thing. A RECTANGLE is not:
+    // a frame on the scene says where the SCENE sits, and there is no defined
+    // composition of that with a frame inside it. So each leaf answers for
+    // itself, and a leaf that never had one has none.
+    const manifest = compile({
+      root: doc("root", [
+        media("shot", 10),
+        collection("scene", "child", 6, { trackIndex: 1, layerFrame: INSET }),
+      ]),
+      child: doc("child", [media("inner", 6)]),
+    });
+    // Under the picture, because the collection above it is…
+    expect(laneOf(manifest, "inner")).toBe(1);
+    // …but with no frame of its own.
+    expect(frameOf(manifest, "inner")).toBeUndefined();
+  });
+
+  it("keeps a leaf's OWN inset inside a layered collection", () => {
+    const manifest = compile({
+      root: doc("root", [
+        media("shot", 10),
+        collection("scene", "child", 6, { trackIndex: 1 }),
+      ]),
+      child: doc("child", [media("inner", 6, { layerFrame: INSET })]),
+    });
+    expect(frameOf(manifest, "inner")).toEqual(INSET);
+  });
+
+  it("drops a rectangle that is not one", () => {
+    const manifest = compile({
+      root: doc("root", [
+        media("shot", 10),
+        media("pip", 4, {
+          trackIndex: 1,
+          layerFrame: { x: 0.5, y: 0.5, width: 0 } as unknown as typeof INSET,
+        }),
+      ]),
+    });
+    expect(frameOf(manifest, "pip")).toBeUndefined();
+  });
+});

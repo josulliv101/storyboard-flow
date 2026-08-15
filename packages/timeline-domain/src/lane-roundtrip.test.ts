@@ -171,3 +171,165 @@ describe("lanes survive the graph round trip", () => {
     ]);
   });
 });
+
+// THE LAYER FRAME. Where a lane clip draws inside the picture — the one member
+// of the placement family that is an OBJECT, and the one whose write-back is
+// duplicated across `graphChildrenToClips`'s two branches. Missing either is
+// silent data loss on the next save rather than a crash, which is exactly the
+// failure mode that needs a test rather than a reading.
+
+const INSET = { x: 0.65, y: 0.6, width: 0.3 };
+
+describe("a layer frame survives the round trip", () => {
+  const framed: TimelineDocument = {
+    id: "col",
+    title: "Framed",
+    clips: packTimelineClips([
+      media("shot-1", 4),
+      media("pip", 6, { trackIndex: 1, kind: "video", layerFrame: INSET }),
+    ]),
+  };
+
+  it("comes back unchanged on a MEDIA clip", () => {
+    const pip = roundTrip(framed).find((clip) => clip.id === "pip");
+    expect(pip?.layerFrame).toEqual(INSET);
+  });
+
+  it("comes back unchanged on a COLLECTION clip — the other write-back", () => {
+    // The branch it would be easy to wire only the first of. A whole nested
+    // scene can sit under the picture, so it can carry an inset too.
+    const withScene: TimelineDocument = {
+      id: "col",
+      title: "Framed scene",
+      clips: packTimelineClips([
+        media("shot-1", 4),
+        {
+          id: "scene",
+          index: 1,
+          kind: "collection",
+          childTimelineId: "child",
+          title: "Scene",
+          alt: "scene collection",
+          aspect: 16 / 9,
+          trackIndex: 1,
+          layerFrame: INSET,
+          startTime: 0,
+          duration: 5,
+          sourceDuration: 5,
+          trimIn: 0,
+          trimOut: 0,
+          itemCount: 0,
+        } as TimelineClip,
+      ]),
+    };
+    const built = buildFocusedGraph(
+      {
+        [withScene.id]: withScene,
+        child: { id: "child", title: "Child", clips: [] },
+      },
+      withScene.id,
+      1,
+    );
+    if (!built.ok) throw new Error(built.error);
+    const clips = graphChildrenToClips(built.value.graph, built.value.details, withScene.id);
+    expect(clips.find((clip) => clip.id === "scene")?.layerFrame).toEqual(INSET);
+  });
+
+  it("IS STABLE — a second round trip does not drift the rectangle", () => {
+    const once = roundTrip(framed);
+    const twice = roundTrip({ ...framed, clips: once });
+    expect(twice.find((clip) => clip.id === "pip")?.layerFrame).toEqual(INSET);
+  });
+
+  it("DROPS a frame on the picture — lane 0 is not inside itself", () => {
+    const onPicture: TimelineDocument = {
+      id: "col",
+      title: "Stale inset",
+      clips: packTimelineClips([media("shot-1", 4, { layerFrame: INSET })]),
+    };
+    expect(roundTrip(onPicture)[0]?.layerFrame).toBeUndefined();
+  });
+
+  it("drops a rectangle that is not one, rather than storing it", () => {
+    const broken: TimelineDocument = {
+      id: "col",
+      title: "Broken inset",
+      clips: packTimelineClips([
+        media("shot-1", 4),
+        media("pip", 6, {
+          trackIndex: 1,
+          layerFrame: { x: 0.5, y: 0.5, width: 0 } as unknown as typeof INSET,
+        }),
+      ]),
+    };
+    expect(roundTrip(broken).find((clip) => clip.id === "pip")?.layerFrame).toBeUndefined();
+  });
+
+  it("leaves a document that uses no insets without the field", () => {
+    for (const clip of roundTrip(layered)) {
+      expect("layerFrame" in clip).toBe(false);
+    }
+  });
+});
+
+// A COLLECTION ON A LANE — found while carrying the frame through, and broken
+// well before it.
+//
+// The three collection-clip spec builders carried `disabled` but not the
+// placement family at all, so a layered scene lost its lane and its placed
+// start on the way IN: stored `trackIndex: 1, placedStart: 3` hydrated to a
+// node with neither, and the very next save wrote it back as `trackIndex: 0,
+// startTime: 0`. A whole nested scene under the picture snapped onto the cut,
+// and the graph node type says in as many words that it is allowed to sit
+// there. Media clips were fine, which is why nothing caught it.
+describe("a layered COLLECTION keeps its placement", () => {
+  const scene = (over: Partial<TimelineClip>): TimelineClip =>
+    ({
+      id: "scene",
+      index: 0,
+      kind: "collection",
+      childTimelineId: "child",
+      title: "Scene",
+      alt: "scene collection",
+      aspect: 16 / 9,
+      trackIndex: 0,
+      startTime: 0,
+      duration: 5,
+      sourceDuration: 5,
+      trimIn: 0,
+      trimOut: 0,
+      itemCount: 0,
+      ...over,
+    }) as TimelineClip;
+
+  const tripScene = (clip: TimelineClip) => {
+    const document: TimelineDocument = { id: "col", title: "T", clips: [clip] };
+    const built = buildFocusedGraph(
+      { col: document, child: { id: "child", title: "Child", clips: [] } },
+      "col",
+      1,
+    );
+    if (!built.ok) throw new Error(built.error);
+    return graphChildrenToClips(built.value.graph, built.value.details, "col")[0];
+  };
+
+  it("keeps its LANE", () => {
+    expect(tripScene(scene({ trackIndex: 1 }))?.trackIndex).toBe(1);
+  });
+
+  it("keeps its PLACED START, and the startTime derived from it", () => {
+    const back = tripScene(scene({ trackIndex: 1, placedStart: 3, startTime: 3 }));
+    expect(back?.placedStart).toBe(3);
+    expect(back?.startTime).toBe(3);
+  });
+
+  it("keeps its INSET", () => {
+    expect(tripScene(scene({ trackIndex: 1, layerFrame: INSET }))?.layerFrame).toEqual(INSET);
+  });
+
+  it("still puts an unlayered scene on the picture", () => {
+    const back = tripScene(scene({}));
+    expect(back?.trackIndex).toBe(0);
+    expect(back?.layerFrame).toBeUndefined();
+  });
+});

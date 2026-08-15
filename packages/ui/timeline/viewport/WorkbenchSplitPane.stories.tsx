@@ -660,3 +660,87 @@ export const WithoutLanesNothingIsLive: Story = {
     expect(canvas.getByLabelText("shot-a preview")).toBeInTheDocument();
   },
 };
+
+// ── PICTURE IN PICTURE ──────────────────────────────────────────────────────
+//
+// Solid colours, because this is the only assertion in the suite that can read
+// the CANVAS rather than a data attribute: a red picture with a blue inset in
+// the bottom-right, sampled back with getImageData. Data URIs never taint the
+// canvas, so the pixels are readable.
+
+const RED =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4IycHAALyARlNudhnAAAAAElFTkSuQmCC";
+const BLUE =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOQs7kDAAGyATfBjyy7AAAAAElFTkSuQmCC";
+
+/** The inset the default preset produces, near enough for a fixture: bottom
+ *  right, 30% of the frame's width. */
+const PIP_FRAME = { x: 0.66, y: 0.6, width: 0.3 };
+
+const PICTURE = laneClip("picture", 0, 10, 0, { src: RED, poster: RED });
+const PIP = laneClip("pip", 0, 10, 1, { src: BLUE, poster: BLUE, layerFrame: PIP_FRAME });
+
+/**
+ * Sample one pixel as `r,g,b`, in fractions of the PICTURE BOX — not of the
+ * canvas.
+ *
+ * The two are not the same and sampling the canvas gets you the letterbox: the
+ * pane fits the source inside the canvas and pads the rest with #050505, and
+ * the fixture's source is a 1x1 PNG, so the picture is a centred SQUARE with
+ * black bars either side. Compositing is positioned against that box for the
+ * same reason — the bars are not part of the frame.
+ */
+async function pixelAt(canvasElement: HTMLElement, fx: number, fy: number) {
+  const canvas = canvasElement.querySelector("canvas")!;
+  const context = canvas.getContext("2d")!;
+  const side = Math.min(canvas.width, canvas.height);
+  const left = (canvas.width - side) / 2;
+  const top = (canvas.height - side) / 2;
+  const x = Math.floor(left + side * fx);
+  const y = Math.floor(top + side * fy);
+  const [r, g, b] = context.getImageData(x, y, 1, 1).data;
+  return `${r},${g},${b}`;
+}
+
+const isRed = (pixel: string) => Number(pixel.split(",")[0]) > 150;
+const isBlue = (pixel: string) => Number(pixel.split(",")[2]) > 150;
+
+/** A video on a lane DRAWS, in the corner it was given — over the picture,
+ *  even though its sound is mixed under it. */
+export const ALayerWithAFrameIsComposited: Story = {
+  render: () => <LayeredFixture time={4} clips={[PICTURE, PIP]} />,
+  play: async ({ canvasElement }) => {
+    // The pane paints from async image `load` listeners, so wait for the
+    // picture to land before sampling anything.
+    await waitFor(async () => expect(isRed(await pixelAt(canvasElement, 0.5, 0.5))).toBe(true));
+
+    // The inset spans x 0.66-0.96 and, at 16:9 inside a square picture box,
+    // y 0.6-0.77. So its middle is BLUE…
+    await waitFor(async () => expect(isBlue(await pixelAt(canvasElement, 0.8, 0.68))).toBe(true));
+    // …while the same height on the far side is still the picture. A wash over
+    // the whole frame would pass the assertion above and fail this one.
+    expect(isRed(await pixelAt(canvasElement, 0.2, 0.68))).toBe(true);
+    // And so is directly ABOVE it, which pins the top edge.
+    expect(isRed(await pixelAt(canvasElement, 0.8, 0.4))).toBe(true);
+  },
+};
+
+/** WITHOUT a frame the same clip is sound only — which is what every layered
+ *  clip did before compositing, and what keeps stored timelines unchanged. */
+export const ALayerWithoutAFrameStaysInvisible: Story = {
+  render: () => (
+    <LayeredFixture
+      time={4}
+      clips={[PICTURE, laneClip("bed", 0, 10, 1, { src: BLUE, poster: BLUE })]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const surface = within(canvasElement).getByTestId("workbench-display-surface");
+    await waitFor(async () => expect(isRed(await pixelAt(canvasElement, 0.5, 0.5))).toBe(true));
+    // Live — it is playing…
+    expect(surface).toHaveAttribute("data-live-layer-count", "1");
+    // …and nowhere on screen: where the framed version drew, this one leaves
+    // the picture.
+    expect(isRed(await pixelAt(canvasElement, 0.8, 0.68))).toBe(true);
+  },
+};

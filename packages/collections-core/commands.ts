@@ -132,6 +132,9 @@ export type CollectionsCommand =
       placement: Readonly<{
         trackIndex?: number | null;
         placedStart?: number | null;
+        /** Where it draws inside the picture. Same tri-state as the other two:
+         *  absent leaves it, null clears it back to no picture at all. */
+        layerFrame?: Readonly<{ x: number; y: number; width: number }> | null;
       }>;
     }>;
 
@@ -505,7 +508,11 @@ function applySetDisabled(
 function applySetPlacement(
   graph: CollectionsGraph,
   nodeIds: readonly NodeId[],
-  placement: Readonly<{ trackIndex?: number | null; placedStart?: number | null }>
+  placement: Readonly<{
+    trackIndex?: number | null;
+    placedStart?: number | null;
+    layerFrame?: Readonly<{ x: number; y: number; width: number }> | null;
+  }>
 ): Result<ApplyCommandSuccess, CommandRejection> {
   if (nodeIds.length === 0) return { ok: false, error: { reason: "nothing-to-add" } };
 
@@ -543,6 +550,39 @@ function applySetPlacement(
       next[field] = wanted;
       changed = true;
     }
+
+    // THE FRAME IS COMPARED BY VALUE, and that is why it is not in the loop
+    // above. Every check there is `===`, which for two identical rectangles is
+    // false — so an unchanged frame would look like a change on every dispatch
+    // and push a no-op entry into undo history. A drag that ends where it
+    // started would then need an undo to get back to where it already was.
+    const wantedFrame = placement.layerFrame;
+    if (wantedFrame !== undefined) {
+      const currentFrame = node.layerFrame;
+      if (wantedFrame === null) {
+        if (currentFrame !== undefined) {
+          delete next.layerFrame;
+          changed = true;
+        }
+      } else if (
+        !Number.isFinite(wantedFrame.x) ||
+        !Number.isFinite(wantedFrame.y) ||
+        !Number.isFinite(wantedFrame.width)
+      ) {
+        // Rejected rather than dropped, for the same reason a non-finite lane
+        // is: this is a caller naming a value, not a stored document being read.
+        return { ok: false, error: { reason: "invalid-placement", nodeId } };
+      } else if (
+        currentFrame === undefined ||
+        currentFrame.x !== wantedFrame.x ||
+        currentFrame.y !== wantedFrame.y ||
+        currentFrame.width !== wantedFrame.width
+      ) {
+        next.layerFrame = { x: wantedFrame.x, y: wantedFrame.y, width: wantedFrame.width };
+        changed = true;
+      }
+    }
+
     // A node already in the target state contributes nothing. Skipped rather
     // than rejected, so placing a partly-placed selection still works.
     if (!changed) continue;

@@ -864,6 +864,108 @@ describe("set-node-placement", () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  // THE LAYER FRAME — where a lane clip draws inside the picture. Third member
+  // of the family, and the only one that is an OBJECT, which is the whole
+  // reason it needs its own cases.
+  const FRAME = { x: 0.65, y: 0.6, width: 0.3 };
+
+  test("carries a frame, and clears it with null", () => {
+    const set = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 1, layerFrame: FRAME },
+    });
+    if (!set.ok) throw new Error("expected ok");
+    expect(nodeOf(set.value.graph, "A").layerFrame).toEqual(FRAME);
+
+    const cleared = applyCommand(set.value.graph, {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { layerFrame: null },
+    });
+    if (!cleared.ok) throw new Error("expected ok");
+    // Deleted, not zeroed — absent is what "no picture" is spelled as.
+    expect("layerFrame" in nodeOf(cleared.value.graph, "A")).toBe(false);
+    // And clearing the frame left the LANE alone.
+    expect(nodeOf(cleared.value.graph, "A").trackIndex).toBe(1);
+  });
+
+  test("REFUSES an unchanged frame, so a drag that lands where it started is not undoable", () => {
+    // The reason the frame is compared by value instead of riding the `===`
+    // loop the scalar fields use. Two identical rectangles are not `===`, so
+    // without this every dispatch would look like a change and stack a no-op
+    // entry into undo history.
+    const set = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 1, layerFrame: FRAME },
+    });
+    if (!set.ok) throw new Error("expected ok");
+
+    const again = applyCommand(set.value.graph, {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      // A DIFFERENT object with the same numbers — what a second drag to the
+      // same place actually produces.
+      placement: { layerFrame: { ...FRAME } },
+    });
+    expect(again.ok).toBe(false);
+  });
+
+  test("a frame that differs in ANY component is a real change", () => {
+    const set = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 1, layerFrame: FRAME },
+    });
+    if (!set.ok) throw new Error("expected ok");
+
+    for (const next of [
+      { ...FRAME, x: 0.1 },
+      { ...FRAME, y: 0.1 },
+      { ...FRAME, width: 0.45 },
+    ]) {
+      const moved = applyCommand(set.value.graph, {
+        type: "set-node-placement",
+        nodeIds: [parseNodeId("A")],
+        placement: { layerFrame: next },
+      });
+      if (!moved.ok) throw new Error("expected ok");
+      expect(nodeOf(moved.value.graph, "A").layerFrame).toEqual(next);
+    }
+  });
+
+  test("rejects a non-finite frame rather than storing one", () => {
+    const result = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { layerFrame: { x: Number.NaN, y: 0.5, width: 0.3 } },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.reason).toBe("invalid-placement");
+  });
+
+  test("a frame change is UNDOABLE, which is the whole reason it lives on the node", () => {
+    const graph = fixture();
+    const set = applyCommand(graph, {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 1, layerFrame: FRAME },
+    });
+    if (!set.ok) throw new Error("expected ok");
+    const moved = applyCommand(set.value.graph, {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { layerFrame: { x: 0.05, y: 0.05, width: 0.2 } },
+    });
+    if (!moved.ok) throw new Error("expected ok");
+
+    // `nodes-updated` inverts by swapping before/after, so undo is free.
+    const back = applyPatch(moved.value.graph, invertPatch(moved.value.patch));
+    expect(nodeOf(back, "A").layerFrame).toEqual(FRAME);
+  });
 });
 
 describe("set-node-disabled", () => {

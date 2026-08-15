@@ -387,7 +387,13 @@ export function resolvePlacementCommand(
       value: {
         type: "set-node-placement",
         nodeIds: draggedIds,
-        placement: { trackIndex: null, placedStart: null },
+        // The frame goes with them. It describes where the clip sits INSIDE
+        // the picture, and a clip that IS the picture has nowhere to sit —
+        // leaving one behind would be an inset waiting to reappear the next
+        // time the clip was put on a lane, in a place nobody chose. Clearing
+        // needs no domain knowledge, so unlike stamping a default (see
+        // `mapPlacementCommand`) it belongs here.
+        placement: { trackIndex: null, placedStart: null, layerFrame: null },
       },
     };
   }

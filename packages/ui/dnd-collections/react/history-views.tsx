@@ -27,12 +27,22 @@ function describeCommand(command: CollectionsCommand): string {
       // Only the fields the command actually names — `undefined` means "leave
       // it alone", so listing it would describe a change that did not happen.
       const parts: string[] = [];
-      const { trackIndex, placedStart } = command.placement;
+      const { trackIndex, placedStart, layerFrame } = command.placement;
       if (trackIndex !== undefined) {
         parts.push(trackIndex === null ? "lane cleared" : `lane ${trackIndex}`);
       }
       if (placedStart !== undefined) {
         parts.push(placedStart === null ? "unplaced" : `at ${placedStart}s`);
+      }
+      // Adding a FIELD to an existing command is not a compile error here, the
+      // way adding a command type is — so this line is easy to forget, and
+      // forgetting it labels an inset change as if nothing had changed.
+      if (layerFrame !== undefined) {
+        parts.push(
+          layerFrame === null
+            ? "no inset"
+            : `inset ${Math.round(layerFrame.width * 100)}%`,
+        );
       }
       return `place [${command.nodeIds.join(", ")}] ${parts.join(", ")}`;
     }

@@ -7,6 +7,7 @@
 // round-trips and legacy writers produce nulls), while every REQUIRED
 // numeric must be a finite number (NaN/Infinity poison packing).
 
+import { layerFrameOf } from "./layer-frame";
 import { areTagsValid } from "./tags";
 import type { TimelineClip, TimelineDocument } from "./types";
 
@@ -124,6 +125,14 @@ function hasClipBase(clip: Record<string, unknown>): boolean {
     // by packing, so a NaN or a negative arriving from stored data would put
     // a clip somewhere no author asked for rather than being recomputed away.
     isOptionalNonNegative(clip.placedStart) &&
+    // Absent, or a rectangle `layerFrameOf` recognises. Delegated rather than
+    // spelled out here so the WRITE gate and the READ normalizer cannot drift
+    // apart and disagree about which stored rectangles are real — a frame that
+    // passed this and was then dropped on read would be an inset that saved
+    // and then vanished.
+    (clip.layerFrame === undefined ||
+      clip.layerFrame === null ||
+      layerFrameOf(clip.layerFrame) !== undefined) &&
     // Strictly boolean-or-absent. This gate guards the WRITE path, and a
     // truthy non-boolean would be read as "skip this clip" by the playback
     // and summary passes — a stored string "false" would silently drop a

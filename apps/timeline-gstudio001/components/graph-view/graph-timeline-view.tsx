@@ -25,6 +25,7 @@ import {
   type DropIntent,
   type GraphNodeSpec,
   type MoveNodesCommand,
+  type SetNodePlacementCommand,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
@@ -58,6 +59,7 @@ import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { laneDropIndex, splitLaneRows } from "./graph-lane-rows";
+import { withDefaultLayerFrame } from "./graph-layer-frame";
 import { GraphViewLoadingSkeleton } from "./graph-view-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { FlatClosureHydrator, HydrationController } from "./graph-hydration";
@@ -581,6 +583,20 @@ export function GraphTimelineView({
     [flatOn, focusedId, surface, detailsStore],
   );
 
+  // A clip dragged onto a lane gets the default inset, so the drop is visible
+  // rather than silently sound-only. Here rather than in the engine because
+  // the rectangle depends on the clip's aspect and the project's output size
+  // — see graph-layer-frame.ts.
+  const handleMapPlacementCommand = useCallback(
+    (command: SetNodePlacementCommand, _intent: DropIntent, graph: CollectionsGraph) =>
+      withDefaultLayerFrame(
+        command,
+        graph,
+        (nodeId) => detailsStore.read()[nodeId as string]?.aspect,
+      ),
+    [detailsStore],
+  );
+
   const commandPolicy = useCallback<CommandPolicy>(
     (command) => {
       // FLAT MODE refuses POSITION-based commands.
@@ -734,6 +750,7 @@ export function GraphTimelineView({
         keepMultiSelectModeWhenEmpty
         commandPolicy={commandPolicy}
         mapDropCommand={handleMapDropCommand}
+        mapPlacementCommand={handleMapPlacementCommand}
         itemInstructions="Press O to open the focused collection, or F2 to rename it."
       >
           <PersistenceBridge onSync={onSync} />
