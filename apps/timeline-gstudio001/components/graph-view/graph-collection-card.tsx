@@ -27,6 +27,7 @@ import {
 } from "./graph-card-placeholders";
 import {
   DisabledChip,
+  LaneChip,
   SELECT_HOVER_REVEAL_COLLECTION,
   SelectionIndicator,
 } from "./graph-card-badges";
@@ -37,7 +38,7 @@ import {
   CaptionTagRowSpacer,
 } from "./graph-card-caption";
 import { cardDimmingClass } from "./graph-card-dimming";
-import { collectionCardItemCount, collectionCardSeconds } from "./graph-card-model";
+import { collectionCardItemCount, collectionCardSeconds, laneOf } from "./graph-card-model";
 import {
   useCollectionPreviewFrames,
   useDisabledByAncestor,
@@ -148,6 +149,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         ].join(" ")}
       >
         {muted && <DisabledChip inherited={node.disabled !== true} />}
+        {/* A whole collection can sit under the picture too — every leaf
+            inside it then plays underneath, however its own children are
+            arranged. */}
+        {laneOf(detail) > 0 && <LaneChip lane={laneOf(detail)} />}
         {/* Collections are taggable too — `tags` sits on TimelineItemBase, not
             on the media members — and they route through THIS component rather
             than GraphClipContent (which returns null for them at its guard).

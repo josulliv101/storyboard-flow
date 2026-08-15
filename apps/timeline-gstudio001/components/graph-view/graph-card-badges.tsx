@@ -83,7 +83,15 @@ export function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) 
 export function ProvenanceLabel({
   parentId,
   name,
-}: Readonly<{ parentId: NodeId; name: string }>) {
+  shifted = false,
+}: Readonly<{
+  parentId: NodeId;
+  name: string;
+  /** A LaneChip has taken the corner — move along rather than sit under it.
+   *  Whole literal class names below, since Tailwind never generates an
+   *  interpolated offset. */
+  shifted?: boolean;
+}>) {
   const nav = useContext(GraphViewNavContext);
   return (
     <span
@@ -105,7 +113,10 @@ export function ProvenanceLabel({
       // duration pill right, and the label spanning both would sit under
       // them), and the top-right belongs to the disabled chip. Capped width so
       // a long collection name truncates instead of running into that chip.
-      className="pointer-events-auto absolute left-1 top-1 z-10 max-w-[70%] cursor-pointer truncate rounded bg-sky-950/85 px-1 py-0.5 text-[8px] leading-none font-semibold text-sky-200 ring-1 ring-sky-400/30 hover:bg-sky-900/90 hover:text-sky-100"
+      className={[
+        "pointer-events-auto absolute top-1 z-10 max-w-[70%] cursor-pointer truncate rounded bg-sky-950/85 px-1 py-0.5 text-[8px] leading-none font-semibold text-sky-200 ring-1 ring-sky-400/30 hover:bg-sky-900/90 hover:text-sky-100",
+        shifted ? "left-8" : "left-1",
+      ].join(" ")}
     >
       {name}
     </span>
@@ -260,6 +271,37 @@ export function SelectionIndicator({
         className={["size-4 text-white", selected ? "opacity-100" : "opacity-0"].join(" ")}
         strokeWidth={3}
       />
+    </span>
+  );
+}
+
+/**
+ * Which LANE a card is on, when it is not the picture.
+ *
+ * Absent on lane 0, which is almost every card — a badge that appeared on
+ * everything would say nothing. It shows up exactly when a clip has been put
+ * somewhere surprising, and "surprising" is the whole message: this does not
+ * play after the clip beside it, it plays UNDER the shots.
+ *
+ * Sky, matching the provenance label rather than the amber disabled chip: a
+ * lane is a placement, not a warning.
+ *
+ * TOP-LEFT, and it shares that corner with the provenance label — which they
+ * CAN both want at once. A flat run draws cards from nested collections
+ * inline, and one of those can perfectly well be on lane 1, so "they never
+ * appear together" is not true. The lane takes the corner and provenance
+ * shifts along, because a lane changes what you HEAR while provenance only
+ * says where a card is filed.
+ */
+export function LaneChip({ lane }: Readonly<{ lane: number }>) {
+  return (
+    <span
+      aria-hidden="true"
+      data-lane-chip={lane}
+      title={`Lane ${lane} — plays under the picture, not after it`}
+      className="pointer-events-none absolute left-1 top-1 z-20 rounded bg-sky-950/85 px-1 py-0.5 font-mono text-[8px] leading-none font-semibold tracking-[0.08em] text-sky-200 ring-1 ring-sky-400/30"
+    >
+      L{lane}
     </span>
   );
 }

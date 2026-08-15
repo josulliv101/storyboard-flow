@@ -440,3 +440,84 @@ export async function handleRemoveClip(
     written: outcome.affectedIds,
   });
 }
+
+// --- set_lane ----------------------------------------------------------------
+
+export type SetLaneArgs = Readonly<{
+  timelineId: string;
+  nodeId: string;
+  lane: number;
+}>;
+
+/**
+ * Move a clip between LANES: 0 is the picture, anything above runs under it.
+ *
+ * A detail-only write, like `set_tags` — `trackIndex` lives in the side table
+ * because the engine does not model it, so the graph is genuinely unchanged and
+ * there is no command to issue.
+ *
+ * BUT UNLIKE TAGS, THIS CHANGES PACKING. A tag alters nothing about where
+ * anything sits; a lane re-packs the whole parent (every lane starts at zero,
+ * so pulling a clip out of the picture closes the gap behind it) and can change
+ * the parent's own SPAN — a 30s bed moved onto lane 1 no longer extends the
+ * sequence, so the collection gets shorter, which changes the duration its own
+ * parent stores for it, and so on up. So the write set is the parent AND its
+ * ancestors, where `set_tags` correctly names only the parent.
+ *
+ * Getting that wrong would not fail loudly: the clip would move, and every
+ * ancestor would keep a stale duration until something unrelated rewrote it.
+ */
+export async function handleSetLane(
+  args: SetLaneArgs,
+  ctx: WriteContext,
+): Promise<ToolResult> {
+  const nodeId = parseNodeId(args.nodeId);
+  if (!Number.isInteger(args.lane) || args.lane < 0) {
+    return toolError("`lane` must be a whole number, 0 or more. 0 is the picture.");
+  }
+
+  const outcome = await applyCollectionsCommand(
+    args.timelineId,
+    (graph: CollectionsGraph, details) => {
+      if (!graph.nodesById.has(nodeId)) {
+        return { ok: false, message: `No node with id "${args.nodeId}".` } as const;
+      }
+      const parentId = graph.parentById.get(nodeId) ?? null;
+      if (parentId === null) {
+        return {
+          ok: false,
+          message: `"${args.nodeId}" is a timeline itself, not a clip inside one — no lane to put it on.`,
+        } as const;
+      }
+      const existing = details[nodeId as string];
+
+      // The parent and everything above it: a lane change can shorten or
+      // lengthen the parent, which every ancestor stores a duration for.
+      const affected: string[] = [];
+      let current: NodeId | null = parentId;
+      while (current !== null && !affected.includes(current as string)) {
+        affected.push(current as string);
+        current = graph.parentById.get(current) ?? null;
+      }
+
+      return {
+        ok: true,
+        // Spread the WHOLE existing entry — `graphChildrenToClips` rebuilds the
+        // clip from this record, so dropping `sourceAsset`, `poster` or `alt`
+        // here would erase them from the stored clip on save.
+        details: {
+          [nodeId as string]: { ...existing, trackIndex: args.lane } as DetailsById[string],
+        },
+        affectedCollectionIds: affected,
+      } as const;
+    },
+    ctx.requesterUid,
+  );
+  if (!outcome.ok) return reportFailure(outcome);
+  return toolOk(
+    args.lane === 0
+      ? `Moved "${args.nodeId}" onto the picture.`
+      : `Moved "${args.nodeId}" to lane ${args.lane} — it now plays under the picture.`,
+    { nodeId: args.nodeId, lane: args.lane, written: outcome.affectedIds },
+  );
+}

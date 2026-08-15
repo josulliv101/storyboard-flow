@@ -24,6 +24,7 @@ import { ProjectAssetScopeError } from "@/lib/project-asset-scope";
 import {
   handleMoveClip,
   handleRemoveClip,
+  handleSetLane,
   handleRenameItem,
   handleSetTags,
   handleTrimClip,
@@ -337,6 +338,26 @@ const handler = createMcpHandler(
         const uid = uidFrom(extra);
         if (!uid) return errorResult(NO_IDENTITY);
         return fromToolResult(await handleRenderStatus(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "set_lane",
+      "Move a clip between LANES. Lane 0 is the picture; anything above it plays UNDER the picture at the same time — a voiceover, a music bed. Every lane starts at the beginning of its collection, so putting a clip on lane 1 makes it run alongside the shots rather than after them." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
+        lane: z
+          .number()
+          .int()
+          .min(0)
+          .describe("0 is the picture. 1 and above run underneath it."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleSetLane(args, { requesterUid: uid }));
       },
     );
 

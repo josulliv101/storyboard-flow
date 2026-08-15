@@ -20,6 +20,7 @@ import { TrimPanel } from "./graph-trim-panel";
 import { AudioPlaceholder } from "./graph-card-placeholders";
 import {
   DisabledChip,
+  LaneChip,
   LiveDurationPill,
   ProvenanceLabel,
   SELECT_HOVER_REVEAL_MEDIA,
@@ -33,7 +34,7 @@ import {
   CaptionTagRowSpacer,
 } from "./graph-card-caption";
 import { cardDimmingClass } from "./graph-card-dimming";
-import { cardVideoFrameCount } from "./graph-card-model";
+import { cardVideoFrameCount, laneOf } from "./graph-card-model";
 import { useElementSize, useSettledFrameCount } from "./graph-card-measure";
 import { useVideoFrameLoading } from "./graph-card-frame-loading";
 import { useCardProvenance, useDisabledByAncestor } from "./graph-card-derivations";
@@ -101,6 +102,9 @@ export const GraphClipContent = memo(function GraphClipContent({
   // `node.name`: the node's name falls back to the derived alt, so it can't
   // tell "named by someone" from "named by the file system".
   const detail = useClipDetail(id as string);
+  // Which lane this plays in. Lives in the details side table because the
+  // engine does not model it — see set_lane.
+  const lane = laneOf(detail);
 
   // MEDIA pixels only. This guard is defensive: nothing in the graph view
   // reaches it with a collection node.
@@ -301,7 +305,16 @@ export const GraphClipContent = memo(function GraphClipContent({
         </span>
       )}
       {muted && <DisabledChip inherited={node.disabled !== true} />}
-      {provenance && <ProvenanceLabel parentId={provenance.parentId} name={provenance.name} />}
+      {/* Lane 0 is the picture and says nothing; anything above it is a
+          placement worth announcing on the card. */}
+      {lane > 0 && <LaneChip lane={lane} />}
+      {provenance && (
+        <ProvenanceLabel
+          parentId={provenance.parentId}
+          name={provenance.name}
+          shifted={lane > 0}
+        />
+      )}
       {trimEnabled && !muted && <LiveDurationPill id={id} node={node} />}
       {/* The live trim frame (video only): the source at the edge being
           dragged, floated into the header band for the length of the gesture.
