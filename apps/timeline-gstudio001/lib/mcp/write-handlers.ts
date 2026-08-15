@@ -23,7 +23,19 @@ import {
   type ApplyCommandOutcome,
 } from "./apply-command";
 import type { DetailsById } from "@storyboard/timeline-domain";
-import { defaultLayerFramePlacement } from "@/lib/default-layer-frame";
+import {
+  DEFAULT_LAYER_POSITION,
+  DEFAULT_LAYER_SIZE,
+  LAYER_FRAME_POSITIONS,
+  LAYER_FRAME_SIZES,
+  type LayerFramePosition,
+  type LayerFrameSize,
+} from "@storyboard/timeline-model/layer-frame";
+import {
+  defaultLayerFramePlacement,
+  hasPicture,
+  layerFrameForChoice,
+} from "@/lib/default-layer-frame";
 
 // Remote (server-side) write tools. Each one translates arguments into a single
 // CollectionsCommand and hands it to `applyCollectionsCommand`, which owns the
@@ -663,5 +675,98 @@ export async function handleSetStart(
       bumped: wasBumped,
       written: outcome.affectedIds,
     },
+  );
+}
+
+// --- set_layer_frame ---------------------------------------------------------
+
+export type SetLayerFrameArgs = Readonly<{
+  timelineId: string;
+  nodeId: string;
+  /** A named corner, or `"none"` to go back to sound only. */
+  position?: LayerFramePosition | "none";
+  size?: LayerFrameSize;
+}>;
+
+/**
+ * Move a layered clip's INSET — where it draws inside the picture.
+ *
+ * PRESETS, not four numbers, for the same reason the picker offers them: the
+ * useful range is narrow, and a preset stores exactly the rectangle a drag
+ * would, so the two authoring routes cannot diverge.
+ *
+ * The two refusals both describe something that cannot exist rather than
+ * something disallowed. A clip on lane 0 IS the picture, so there is no frame
+ * for it to sit inside. Audio has no picture to draw — and a frame on one is
+ * worse than useless, because a normalised audio segment carries a synthesised
+ * BLACK video stream that would paint over the shot.
+ */
+export async function handleSetLayerFrame(
+  args: SetLayerFrameArgs,
+  ctx: WriteContext,
+): Promise<ToolResult> {
+  const nodeId = parseNodeId(args.nodeId);
+  const position = args.position ?? DEFAULT_LAYER_POSITION;
+  const size = args.size ?? DEFAULT_LAYER_SIZE;
+  if (position !== "none" && !LAYER_FRAME_POSITIONS.includes(position)) {
+    return toolError(
+      `\`position\` must be one of ${LAYER_FRAME_POSITIONS.join(", ")}, or "none" for sound only.`,
+    );
+  }
+  if (!LAYER_FRAME_SIZES.includes(size)) {
+    return toolError(`\`size\` must be one of ${LAYER_FRAME_SIZES.join(", ")}.`);
+  }
+
+  let landedWidth = 0;
+
+  const outcome = await applyCollectionsCommand(
+    args.timelineId,
+    (graph: CollectionsGraph, details) => {
+      const node = graph.nodesById.get(nodeId);
+      if (!node) return { ok: false, message: `No node with id "${args.nodeId}".` } as const;
+      if ((graph.parentById.get(nodeId) ?? null) === null) {
+        return {
+          ok: false,
+          message: `"${args.nodeId}" is a timeline itself, not a clip inside one.`,
+        } as const;
+      }
+      if ((node.trackIndex ?? 0) === 0) {
+        return {
+          ok: false,
+          message:
+            `"${args.nodeId}" is on the picture, so there is no frame for it to sit inside — ` +
+            `an inset is where a clip draws WITHIN the picture. Put it on a lane with set_lane first.`,
+        } as const;
+      }
+      if (!hasPicture(node)) {
+        return {
+          ok: false,
+          message:
+            `"${args.nodeId}" has no picture to place — it is audio, and it is already mixed ` +
+            `under the picture. Only video, images and collections can be inset.`,
+        } as const;
+      }
+
+      if (position === "none") {
+        return {
+          ok: true,
+          command: { type: "set-node-placement", nodeIds: [nodeId], placement: { layerFrame: null } },
+        } as const;
+      }
+      const layerFrame = layerFrameForChoice(position, size, details[nodeId as string]?.aspect);
+      landedWidth = layerFrame.width;
+      return {
+        ok: true,
+        command: { type: "set-node-placement", nodeIds: [nodeId], placement: { layerFrame } },
+      } as const;
+    },
+    ctx.requesterUid,
+  );
+  if (!outcome.ok) return reportFailure(outcome);
+  return toolOk(
+    position === "none"
+      ? `"${args.nodeId}" is sound only now — it plays under the picture without being drawn.`
+      : `"${args.nodeId}" now draws ${position.replace("-", " ")}, at ${Math.round(landedWidth * 100)}% of the frame's width.`,
+    { nodeId: args.nodeId, position, size, written: outcome.affectedIds },
   );
 }

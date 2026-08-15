@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import { buildGraph, parseNodeId, type GraphNodeSpec } from "@storyboard/collections-core";
 
-import { defaultLayerFrame, defaultLayerFramePlacement, hasPicture } from "./default-layer-frame";
+import {
+  LAYER_FRAME_POSITIONS,
+  LAYER_FRAME_SIZES,
+} from "@storyboard/timeline-model/layer-frame";
+
+import {
+  defaultLayerFrame,
+  defaultLayerFramePlacement,
+  hasPicture,
+  layerFrameForChoice,
+  presetForLayerFrame,
+} from "./default-layer-frame";
 
 // A clip dropped on a lane has to be VISIBLE, or the gesture is the same dead
 // end lanes themselves were before the empty lane row: you do it, nothing
@@ -110,6 +121,57 @@ describe("defaultLayerFramePlacement", () => {
   it("still works with no detail recorded for the clip", () => {
     expect(defaultLayerFramePlacement(nodeIn(specs, "img"), undefined)).toEqual({
       layerFrame: defaultLayerFrame(undefined),
+    });
+  });
+});
+
+describe("presetForLayerFrame", () => {
+  it("round-trips every one of the twenty-seven", () => {
+    for (const position of LAYER_FRAME_POSITIONS) {
+      for (const size of LAYER_FRAME_SIZES) {
+        const frame = layerFrameForChoice(position, size, 16 / 9);
+        expect(presetForLayerFrame(frame, 16 / 9)).toEqual({ position, size });
+      }
+    }
+  });
+
+  it("says CUSTOM for a rectangle no preset produces", () => {
+    // Not an error, and not "whichever is nearest" — it is what a hand-written
+    // frame looks like, and what dragging an inset will produce.
+    expect(presetForLayerFrame({ x: 0.123, y: 0.456, width: 0.321 }, 16 / 9)).toBeNull();
+  });
+
+  it("says custom for no frame at all", () => {
+    expect(presetForLayerFrame(undefined, 16 / 9)).toBeNull();
+  });
+
+  it("is judged against the CLIP's aspect, not a fixed one", () => {
+    // The same stored rectangle means a different preset for a differently
+    // shaped clip, because `y` absorbs the height.
+    const squarish = layerFrameForChoice("bottom-right", "medium", 4 / 3);
+    expect(presetForLayerFrame(squarish, 4 / 3)).toEqual({
+      position: "bottom-right",
+      size: "medium",
+    });
+    expect(presetForLayerFrame(squarish, 16 / 9)).toBeNull();
+  });
+
+  it("collapses onto the FIRST match when a clip is too tall to move vertically", () => {
+    // A 9:16 clip at 30% of a 2.4:1 frame's width is taller than the frame, so
+    // every vertical position clamps to the same rectangle — top-right and
+    // bottom-right become the same picture. Reading order decides, and the
+    // picker lights up the top row. Not a defect: there is genuinely nowhere
+    // else for that inset to sit, and the alternative would be a picker whose
+    // buttons all do the same thing while pretending otherwise.
+    const tall = layerFrameForChoice("bottom-right", "medium", 9 / 16);
+    expect(layerFrameForChoice("top-right", "medium", 9 / 16)).toEqual(tall);
+    expect(presetForLayerFrame(tall, 9 / 16)?.position).toBe("top-right");
+  });
+
+  it("matches the default the write path stamps", () => {
+    expect(presetForLayerFrame(defaultLayerFrame(16 / 9), 16 / 9)).toEqual({
+      position: "bottom-right",
+      size: "medium",
     });
   });
 });

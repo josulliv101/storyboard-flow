@@ -25,6 +25,7 @@ import {
   handleMoveClip,
   handleRemoveClip,
   handleSetLane,
+  handleSetLayerFrame,
   handleSetStart,
   handleRenameItem,
   handleSetTags,
@@ -359,6 +360,40 @@ const handler = createMcpHandler(
         const uid = uidFrom(extra);
         if (!uid) return errorResult(NO_IDENTITY);
         return fromToolResult(await handleSetLane(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "set_layer_frame",
+      "Move a layered clip's INSET — where it draws inside the picture. Only for a clip already on a lane 1 or above that HAS a picture (video, image, or a nested collection): lane 0 IS the picture, so there is nothing for it to sit inside, and audio has no picture to draw. Pass position \"none\" to make it sound only again — mixed under the picture, not drawn." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
+        position: z
+          .enum([
+            "top-left",
+            "top",
+            "top-right",
+            "left",
+            "center",
+            "right",
+            "bottom-left",
+            "bottom",
+            "bottom-right",
+            "none",
+          ])
+          .optional()
+          .describe("Corner or edge of the frame. \"none\" clears the inset. Defaults to bottom-right."),
+        size: z
+          .enum(["small", "medium", "large"])
+          .optional()
+          .describe("Fraction of the frame's width: 20%, 30%, 45%. Defaults to medium."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleSetLayerFrame(args, { requesterUid: uid }));
       },
     );
 
