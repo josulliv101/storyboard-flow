@@ -65,14 +65,74 @@ export function compileCutList(
     .slice()
     .sort((a, b) => a.timelineStart - b.timelineStart);
 
+  // Lane 0 is the picture; everything above it runs underneath. The manifest
+  // has already resolved which is which, including for nested collections.
+  const picture = playable.filter((leaf) => leaf.trackIndex === 0);
+  const under = playable.filter((leaf) => leaf.trackIndex !== 0);
+
   let outputStart = 0;
-  const cuts: RenderCut[] = playable.map((leaf) => {
+  const cuts: RenderCut[] = picture.map((leaf) => {
     const cut = cutFromLeaf(leaf, outputStart);
     outputStart += cut.outputDuration;
     return cut;
   });
 
-  return { cuts, durationSeconds: outputStart, format };
+  const toOutputTime = boardToOutputTime(picture, outputStart);
+  const layers: RenderCut[] = under.flatMap((leaf) => {
+    const start = toOutputTime(leaf.timelineStart);
+    // Past the end of the picture entirely: it would play over nothing. A
+    // layer is defined by what it runs UNDER, so with no picture left there is
+    // nothing for it to be under.
+    if (start >= outputStart) return [];
+    const cut = cutFromLeaf(leaf, start);
+    // Clipped to the picture, for the same reason the output length is the
+    // picture's: a bed does not extend the film past its last frame.
+    const outputDuration = Math.min(cut.outputDuration, outputStart - start);
+    return outputDuration < MIN_CUT_SECONDS ? [] : [{ ...cut, outputDuration }];
+  });
+
+  return { cuts, layers, durationSeconds: outputStart, format };
+}
+
+/**
+ * Board time → output time, along the picture.
+ *
+ * Needed because closing the gaps MOVES everything. A bed that starts eight
+ * seconds into the board does not start eight seconds into the film: the
+ * picture before it has lost 0.12s per join and every disabled clip it
+ * contained, so the same instant of picture now arrives earlier. Positioning a
+ * layer by its board time would drift it later and later against the cut it
+ * was lined up with — by a second across twenty joins, which is a VO landing
+ * on the wrong shot.
+ *
+ * The map is piecewise-linear over the picture's cuts: inside a cut, offset
+ * from that cut's own output start; in the gap between two, the next cut's
+ * start, since the gap does not exist in the output; past the end, the end.
+ */
+function boardToOutputTime(
+  picture: readonly PlaybackLeaf[],
+  totalOutput: number,
+): (boardTime: number) => number {
+  // Built once and closed over: a layer list is short, but this is O(picture)
+  // per lookup otherwise and the picture is not.
+  const spans = picture.map((leaf, index) => ({
+    boardStart: leaf.timelineStart,
+    boardEnd: leaf.timelineStart + leaf.timelineDuration,
+    outputStart: picture
+      .slice(0, index)
+      .reduce((total, earlier) => total + earlier.timelineDuration, 0),
+  }));
+
+  return (boardTime: number) => {
+    if (spans.length === 0) return 0;
+    for (const span of spans) {
+      if (boardTime < span.boardStart) return span.outputStart;
+      if (boardTime < span.boardEnd) {
+        return span.outputStart + (boardTime - span.boardStart);
+      }
+    }
+    return totalOutput;
+  };
 }
 
 function cutFromLeaf(leaf: PlaybackLeaf, outputStart: number): RenderCut {

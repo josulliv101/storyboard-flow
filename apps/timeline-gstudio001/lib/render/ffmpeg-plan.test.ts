@@ -7,6 +7,7 @@ import {
   atempoChain,
   concatArgs,
   concatListFile,
+  mixArgs,
   segmentArgs,
   segmentFraction,
 } from "../../scripts/render-worker/ffmpeg-plan.mjs";
@@ -210,5 +211,64 @@ describe("segmentFraction", () => {
 
   it("is zero for nothing to do, rather than dividing by zero", () => {
     expect(segmentFraction(0, 0)).toBe(0);
+  });
+});
+
+describe("mixArgs — layers under the picture", () => {
+  const layer = (path: string, outputStart: number) => ({ path, outputStart });
+  const args = (layers: { path: string; outputStart: number }[]) =>
+    mixArgs("/tmp/picture.mp4", layers, "/tmp/out.mp4") as string[] | null;
+
+  it("is NULL with nothing to mix, so the concat IS the finished file", () => {
+    // Re-encoding to add nothing would cost a whole generation of the film.
+    expect(args([])).toBeNull();
+  });
+
+  it("delays each layer to its own start, in MILLISECONDS and per channel", () => {
+    // A single adelay value delays only the first channel — not a late start
+    // but a stereo image sliding apart.
+    const filter = valueAfter(args([layer("/tmp/vo.mp4", 1.5)])!, "-filter_complex");
+    expect(filter).toContain("[1:a]adelay=1500|1500[l1]");
+  });
+
+  it("rounds a fractional start to a whole millisecond", () => {
+    const filter = valueAfter(args([layer("/tmp/vo.mp4", 2.0004)])!, "-filter_complex");
+    expect(filter).toContain("adelay=2000|2000");
+  });
+
+  it("never delays by a negative amount", () => {
+    const filter = valueAfter(args([layer("/tmp/vo.mp4", -1)])!, "-filter_complex");
+    expect(filter).toContain("adelay=0|0");
+  });
+
+  it("MIXES WITHOUT NORMALISING — a bed must not halve the dialogue", () => {
+    // amix normalises by default, dividing every input by the input count.
+    const filter = valueAfter(args([layer("/tmp/bed.mp4", 0)])!, "-filter_complex");
+    expect(filter).toContain("normalize=0");
+  });
+
+  it("follows the PICTURE's length, not the longest layer", () => {
+    const filter = valueAfter(args([layer("/tmp/bed.mp4", 0)])!, "-filter_complex");
+    expect(filter).toContain("duration=first");
+  });
+
+  it("mixes the picture's own audio in with the layers", () => {
+    const filter = valueAfter(args([layer("/tmp/bed.mp4", 0)])!, "-filter_complex");
+    expect(filter).toContain("[0:a][l1]amix=inputs=2");
+  });
+
+  it("takes several layers — a VO over a bed", () => {
+    const out = args([layer("/tmp/bed.mp4", 0), layer("/tmp/vo.mp4", 3)])!;
+    const filter = valueAfter(out, "-filter_complex");
+    expect(filter).toContain("[1:a]adelay=0|0[l1]");
+    expect(filter).toContain("[2:a]adelay=3000|3000[l2]");
+    expect(filter).toContain("[0:a][l1][l2]amix=inputs=3");
+    expect(allValuesAfter(out, "-i")).toEqual(["/tmp/picture.mp4", "/tmp/bed.mp4", "/tmp/vo.mp4"]);
+  });
+
+  it("COPIES the video rather than re-encoding the whole film to add sound", () => {
+    const out = args([layer("/tmp/bed.mp4", 0)])!;
+    expect(valueAfter(out, "-c:v")).toBe("copy");
+    expect(allValuesAfter(out, "-map")).toEqual(["0:v", "[aout]"]);
   });
 });

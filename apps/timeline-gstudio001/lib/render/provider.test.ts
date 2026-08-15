@@ -70,7 +70,7 @@ describe("localRenderProvider", () => {
         id: "render-1",
         timelineId: "project-1",
         projectRevision: 3,
-        cutList: { cuts: [], durationSeconds: 0, format: { width: 1, height: 1, fps: 24 } },
+        cutList: { cuts: [], layers: [], durationSeconds: 0, format: { width: 1, height: 1, fps: 24 } },
         requestedBy: "user-a",
         createdAt: "2026-08-14T00:00:00.000Z",
       }),
