@@ -211,9 +211,28 @@ type GraphApi = {
 
 async function installGraphApi(
   page: Page,
-  options: { blockChildDocument?: boolean } = {},
+  options: {
+    blockChildDocument?: boolean;
+    /** Put named PROJECT clips on a lane above the picture, by id. */
+    lanes?: Readonly<Record<string, number>>;
+  } = {},
 ): Promise<GraphApi> {
   const documents = buildFixtureDocuments();
+  // The fixtures are all trackIndex 0 — they predate lanes — so this is how a
+  // test gets a layered board without maintaining a second fixture set.
+  const lanes = options.lanes;
+  if (lanes) {
+    const project = documents.get(PROJECT_ID);
+    if (project) {
+      documents.set(PROJECT_ID, {
+        ...project,
+        clips: project.clips.map((clip) => {
+          const lane = lanes[clip.id];
+          return lane === undefined ? clip : { ...clip, trackIndex: lane };
+        }),
+      });
+    }
+  }
   const patches: RecordedPatch[] = [];
   const batches: string[][] = [];
   // Served on GET and enforced on batch writes, like the real API: the
@@ -323,6 +342,16 @@ const strip = (page: Page, collectionId: string): Locator =>
 
 async function stripOrder(page: Page, collectionId: string): Promise<string[]> {
   return strip(page, collectionId)
+    .locator("[data-node-id]")
+    .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
+}
+
+/** The ids on one ROW of a layered strip — lane 0 is the picture, 1+ are the
+ *  layers under it. `stripOrder` collects every card in the strip, so on a
+ *  layered board it no longer describes the shot sequence. */
+async function laneOrder(page: Page, collectionId: string, lane: number): Promise<string[]> {
+  return strip(page, collectionId)
+    .locator(`[data-strip-lane="${lane}"]`)
     .locator("[data-node-id]")
     .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
 }
@@ -499,6 +528,34 @@ async function holdDrag(
   // its click propagates past window but is stopped before React's root
   // handler. Outlast the window before handing control back.
   await page.waitForTimeout(80);
+}
+
+/** `holdDrag` to an explicit POINT rather than onto a card — for drops that
+ *  must land in a GAP, where no card is under the pointer and the intent
+ *  resolves through the strip's container droppable (insert-at-index) instead
+ *  of against a card (insert-adjacent). The two take different paths through
+ *  the command resolver, and only the container one carries a boundary index. */
+async function holdDragToPoint(
+  page: Page,
+  source: Locator,
+  x: number,
+  y: number,
+): Promise<void> {
+  await source.waitFor({ state: "visible" });
+  await settleMoveAnimations(page);
+  const sourceBox = await source.boundingBox();
+  expect(sourceBox).not.toBeNull();
+
+  await page.mouse.move(
+    sourceBox!.x + sourceBox!.width / 2,
+    sourceBox!.y + sourceBox!.height / 2,
+  );
+  await page.mouse.down();
+  await page.waitForTimeout(400); // past the hold delay — the drag activates
+  await page.mouse.move(x, y, { steps: 12 });
+  await page.waitForTimeout(150); // dwell: let collision/intent settle
+  await page.mouse.up();
+  await page.waitForTimeout(80); // outlast dnd-kit's click suppressor
 }
 
 const undoButton = (page: Page): Locator => page.getByRole("button", { name: /undo/i });
@@ -8178,5 +8235,74 @@ test.describe("graph view E2E", () => {
     await expect(page.locator("[data-header-selection-overflow]")).toBeVisible();
     await page.locator("[data-header-selection-overflow]").click();
     await expect(page.getByRole("menuitem", { name: /^Delete/ })).toBeVisible();
+  });
+
+  // LANE ROWS (#397). A layered clip runs alongside the picture, so the board
+  // draws it as its own time-aligned row instead of a slot in the shot
+  // sequence. These drive the APP wiring — the lane split feeding the strip,
+  // and the drop translation that filtering the strip's item source forces.
+  test("a layered clip leaves the shot sequence and draws as its own row", async ({
+    page,
+  }) => {
+    await installGraphApi(page, { lanes: { bravo: 1 } });
+    await openGraph(page);
+
+    // Off the picture entirely, and the gap it left has closed.
+    await expect
+      .poll(() => laneOrder(page, PROJECT_ID, 0))
+      .toEqual(["alpha", CHILD_ID, "charlie"]);
+    expect(await laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
+
+    // A ROW, not a slot: below the picture, and starting where the picture is
+    // at its own start time. Lanes each pack from zero, so it begins ALONGSIDE
+    // alpha rather than after it — which is the whole point of the feature.
+    const alphaBox = (await strip(page, PROJECT_ID)
+      .locator('[data-node-id="alpha"]')
+      .boundingBox())!;
+    const bravoBox = (await strip(page, PROJECT_ID)
+      .locator('[data-node-id="bravo"]')
+      .boundingBox())!;
+    expect(bravoBox.y).toBeGreaterThanOrEqual(alphaBox.y + alphaBox.height);
+    expect(Math.abs(bravoBox.x - alphaBox.x)).toBeLessThanOrEqual(1);
+  });
+
+  test("a gap drop lands where the PICTURE says, not where the raw boundary would", async ({
+    page,
+  }) => {
+    await installGraphApi(page, { lanes: { bravo: 1 } });
+    await openGraph(page);
+    await expect
+      .poll(() => laneOrder(page, PROJECT_ID, 0))
+      .toEqual(["alpha", CHILD_ID, "charlie"]);
+
+    // Drop alpha in the gap BEFORE charlie — picture boundary 2. The strip
+    // publishes boundaries into the PICTURE list, while the intent resolver
+    // reads them against the collection's FULL children, where the layered
+    // bravo still sits at index 1. Untranslated that boundary resolves one
+    // short and lands alpha back where it started — a silent no-op. Translated
+    // it lands after clip-scene, which is what the indicator said.
+    const sceneBox = (await strip(page, PROJECT_ID)
+      .locator(`[data-node-id="${CHILD_ID}"]`)
+      .boundingBox())!;
+    const charlieBox = (await strip(page, PROJECT_ID)
+      .locator('[data-node-id="charlie"]')
+      .boundingBox())!;
+    const gapX = (sceneBox.x + sceneBox.width + charlieBox.x) / 2;
+    expect(gapX).toBeGreaterThan(sceneBox.x + sceneBox.width);
+    expect(gapX).toBeLessThan(charlieBox.x);
+
+    await holdDragToPoint(
+      page,
+      strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'),
+      gapX,
+      charlieBox.y + charlieBox.height / 2,
+    );
+
+    await expect
+      .poll(() => laneOrder(page, PROJECT_ID, 0))
+      .toEqual([CHILD_ID, "alpha", "charlie"]);
+    // And the reorder left the LANE alone — moving within the picture is not
+    // a lane change (that is a detail write, and a separate gesture).
+    expect(await laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
   });
 });

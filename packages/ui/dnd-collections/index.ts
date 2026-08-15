@@ -197,6 +197,9 @@ export { useEdgeAutoScroll } from "./react/use-edge-autoscroll";
 // cells + responsive columns (grid). VIRTUALIZATION-PLAN.md is the build log.
 export {
   VirtualStrip,
+  type StripLayer,
+  type StripLayerItem,
+  type StripTimedSlot,
   type VirtualStripHandle,
   type VirtualStripProps,
 } from "./virtual/VirtualStrip";

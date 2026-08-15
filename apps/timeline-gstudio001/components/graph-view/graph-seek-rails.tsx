@@ -41,6 +41,7 @@ import {
   childSpans,
   type ChildSpan,
   type GridPlayheadMap,
+  type LaneScope,
 } from "./graph-playhead-model";
 import { GRID_GAP } from "./graph-view-config";
 import { cardsFor, clipWidthAt } from "./preview-card-geometry";
@@ -410,7 +411,11 @@ export function GraphSeekRails({
   const cards = useMemo(
     // 0 card height, as in GraphGridPlayhead: the grid rails measure their
     // row from `cellWidth`, so per-clip widths never reach the geometry.
-    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, 0)),
+    //
+    // ALL lanes, as in GraphGridPlayhead and for the same reason: these rails
+    // are indexed against the grid's CELLS, and a grid draws every child. Only
+    // the strip lays clips onto lanes.
+    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, 0), "all"),
     [graph, details, spans, focusedId, pixelsPerSecond],
   );
   const cardCount = cards.length;
@@ -546,6 +551,7 @@ export function GraphStripSeekRail({
   pixelsPerSecond,
   cardHeight,
   ariaLabel = "Seek preview",
+  laneScope = "all",
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
@@ -554,6 +560,9 @@ export function GraphStripSeekRail({
    *  the rail's thumb in lockstep with the playhead line below it. */
   cardHeight: number;
   ariaLabel?: string;
+  /** "picture" when the strip below draws lanes as separate ROWS, so the
+   *  thumb tracks the same row the playhead line does. */
+  laneScope?: LaneScope;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -584,8 +593,18 @@ export function GraphStripSeekRail({
     () => detailsStore.read(),
   );
   const cards = useMemo(
-    () => cardsFor(graph, details, focusedId, spans, pixelsPerSecond, cardHeight, flatItems),
-    [graph, details, spans, focusedId, pixelsPerSecond, cardHeight, flatItems],
+    () =>
+      cardsFor(
+        graph,
+        details,
+        focusedId,
+        spans,
+        pixelsPerSecond,
+        cardHeight,
+        flatItems,
+        laneScope,
+      ),
+    [graph, details, spans, focusedId, pixelsPerSecond, cardHeight, flatItems, laneScope],
   );
   const map = useMemo(() => buildPlayheadMap(cards), [cards]);
   const start = cards[0]?.startTime ?? 0;

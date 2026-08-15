@@ -48,6 +48,7 @@ import {
   STRIP_GAP_PX,
   type ChildSpan,
   type GridPlayheadMap,
+  type LaneScope,
   type PlayheadMap,
   type PreviewCardSpans,
   type RulerWindow,
@@ -145,7 +146,12 @@ export function useFocusedTimelineAggregate(
   return useMemo(() => {
     // 0 card height: this readout is counts and seconds, never geometry, so
     // the collection aspect floor has nothing to act on here.
-    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, 0, flatItems);
+    //
+    // ALL lanes, unlike every other caller: a bed is a clip the user put on
+    // this timeline whatever row it ended up on, so it belongs in the count —
+    // and `playableSpanSeconds` takes the LONGEST lane, not their sum, so it
+    // still reports what a viewer would sit through.
+    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, 0, flatItems, "all");
     // Enabled-only, both numbers: this readout says what a viewer would sit
     // through, which is NOT how far the playhead travels now that disabled
     // cards keep their span. The two disagree by design — the ruler runs
@@ -164,10 +170,15 @@ export function GraphPlayhead({
   pixelsPerSecond,
   cardHeight,
   activeWindow,
+  laneScope = "all",
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
   pixelsPerSecond: number;
+  /** "picture" when the strip below draws lanes as separate ROWS, so this
+   *  measures the row it is actually over. Sub-timeline rows draw every child
+   *  in ONE row and keep the default. */
+  laneScope?: LaneScope;
   /** The strip's `itemHeight`. Feeds the collection aspect floor, so this
    *  marker lands on the same card edges the strip actually draws. */
   cardHeight: number;
@@ -197,7 +208,16 @@ export function GraphPlayhead({
       lastGraph = graph;
       lastDetails = details;
       map = buildPlayheadMap(
-        cardsFor(graph, details, focusedId, spans, pixelsPerSecond, cardHeight, flatItems),
+        cardsFor(
+          graph,
+          details,
+          focusedId,
+          spans,
+          pixelsPerSecond,
+          cardHeight,
+          flatItems,
+          laneScope,
+        ),
       );
       return true;
     };
@@ -251,6 +271,7 @@ export function GraphPlayhead({
     cardHeight,
     activeWindow,
     flatItems,
+    laneScope,
   ]);
 
   // No cap on the line: the seek rail's circular thumb above IS the
@@ -308,9 +329,12 @@ export function GraphRuler({
   focusedId,
   pixelsPerSecond,
   cardHeight,
+  laneScope = "all",
 }: Readonly<{
   focusedId: string;
   pixelsPerSecond: number;
+  /** See GraphPlayhead: "picture" when the strip draws lanes as rows. */
+  laneScope?: LaneScope;
   /** The strip's `itemHeight` — feeds the collection aspect floor so ticks
    *  and collection stretches land on the widths the strip draws. */
   cardHeight: number;
@@ -345,7 +369,16 @@ export function GraphRuler({
   // tick count follows the VIEWPORT, not the duration. Scrolling recomputes
   // only on chunk crossings (tickWindow identity is stable between them).
   const { ticks, collectionSpans, skips } = useMemo(() => {
-    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, cardHeight, flatItems);
+    const cards = cardsFor(
+      graph,
+      details,
+      focusedId,
+      spans,
+      pixelsPerSecond,
+      cardHeight,
+      flatItems,
+      laneScope,
+    );
     // A flat run holds no collections at all, so every card is ruled — the
     // blank-interior rule exists only for collection cards.
     const isCollection = flatItems
@@ -364,7 +397,17 @@ export function GraphRuler({
       // range as the ticks beside them.
       skips: buildStripOverlay(cards, tickWindow).skips,
     };
-  }, [graph, details, spans, focusedId, pixelsPerSecond, cardHeight, tickWindow, flatItems]);
+  }, [
+    graph,
+    details,
+    spans,
+    focusedId,
+    pixelsPerSecond,
+    cardHeight,
+    tickWindow,
+    flatItems,
+    laneScope,
+  ]);
 
   return (
     <div
@@ -450,12 +493,16 @@ export function GraphWaveformBand({
   focusedId,
   pixelsPerSecond,
   cardHeight,
+  laneScope = "all",
   /** Injected so a story can supply synthetic peaks without decoding audio. */
   cache = sharedWaveformCache(),
 }: Readonly<{
   focusedId: string;
   pixelsPerSecond: number;
   cardHeight: number;
+  /** See GraphPlayhead: "picture" when the strip draws lanes as rows. The
+   *  waveform sources are picture-only to match, so the two stay aligned. */
+  laneScope?: LaneScope;
   cache?: WaveformCache;
 }>) {
   const store = useCollectionsStore();
@@ -669,7 +716,13 @@ export function GraphGridPlayhead({
         // 0 card height: grid cells are uniform and this map lays out by
         // `cellWidth`, never by the per-clip width, so the strip's collection
         // aspect floor has nothing to act on here.
-        childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, 0)),
+        //
+        // ALL lanes, and it must be: this map pairs cards to cells BY INDEX,
+        // and a grid draws every child — it has no time axis, so nothing is
+        // laid onto a lane there. Handing it the strip's picture-only cards
+        // would shift every cell after the first layered clip and point the
+        // marker at the wrong one.
+        childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, 0), "all"),
         columns,
         cellWidth,
         cellHeight,

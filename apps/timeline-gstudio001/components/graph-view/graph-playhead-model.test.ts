@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildGraph, parseNodeId, type GraphNodeSpec } from "@storyboard/collections-core";
-import type { PlaybackLeaf, PlaybackManifest } from "@storyboard/timeline-domain";
+import type { ClipDetail, PlaybackLeaf, PlaybackManifest } from "@storyboard/timeline-domain";
 
 import {
   buildPlayheadMap,
@@ -45,6 +45,16 @@ function graphOf(roots: readonly GraphNodeSpec[]) {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 }
+
+/** A side-table entry that puts a clip on a lane above the picture. */
+const laneDetail = (trackIndex: number): ClipDetail => ({
+  alt: "",
+  aspect: 16 / 9,
+  trackIndex,
+});
+
+/** Packing sums 0.12s gaps, so exact equality trips on binary float error. */
+const round = (value: number) => Math.round(value * 100) / 100;
 
 function leaf(
   id: string,
@@ -107,6 +117,51 @@ describe("childSpans", () => {
     // The invariant the map's binary search requires.
     const times = cards.flatMap((card) => [card.startTime, card.endTime]);
     expect([...times].sort((left, right) => left - right)).toEqual(times);
+  });
+
+  // LANES. Everything above measures one row, because until lanes existed
+  // there was only one. These pin the two ways that assumption broke.
+  it("leaves layered clips out of the picture's geometry when asked for it", () => {
+    // The strip draws lane 1 as its OWN row, so a card there has no place in
+    // the picture row's card list — and leaving it in did more than add an
+    // entry: the monotonic clamp dragged shot2 from 4.12s to 16s, because the
+    // 12s bed was treated as sitting between them.
+    //
+    // Opt-IN, not the default: a surface drawing one card per child (the grid,
+    // a sub-timeline row, the header readout) must keep every clip or its
+    // index pairing shifts, and that failure is silent.
+    const graph = graphOf([
+      collection("root", [media("shot1", 4), media("bed", 12), media("shot2", 4)]),
+    ]);
+    const details = { bed: laneDetail(1) };
+
+    const cards = childSpans(graph, details, "root", null, flatWidth, "picture");
+
+    expect(cards.map((card) => [round(card.startTime), round(card.endTime)])).toEqual([
+      [0, 4],
+      [4.12, 8.12],
+    ]);
+  });
+
+  it("keeps layered clips by DEFAULT, each on its own clock", () => {
+    // One card per child is the default precisely because the grid and the
+    // sub-timeline rows pair cards to cells by INDEX.
+    const graph = graphOf([
+      collection("root", [media("shot1", 4), media("bed", 12), media("shot2", 4)]),
+    ]);
+    const details = { bed: laneDetail(1) };
+
+    const cards = childSpans(graph, details, "root", null, flatWidth);
+
+    // The bed starts at ZERO — alongside the picture, not after it. The clamp
+    // is per lane now, so lane 0's running end cannot reach across and move it.
+    expect(
+      cards.map((card) => [card.lane, round(card.startTime), round(card.endTime)]),
+    ).toEqual([
+      [0, 0, 4],
+      [1, 0, 12],
+      [0, 4.12, 8.12],
+    ]);
   });
 
   it("passes manifest spans through untouched when they are already ordered", () => {
@@ -224,6 +279,26 @@ describe("playableSpanSeconds", () => {
 
   it("is zero when every card is disabled", () => {
     expect(playableSpanSeconds([card(0, 4, true), card(4.12, 8.12, true)])).toBe(0);
+  });
+
+  it("takes the LONGEST lane, not the sum of them", () => {
+    // Two 4s shots with an 8s bed under them. Summing would claim 16s of
+    // viewing for 8s of timeline — and the board now plainly shows the bed
+    // running alongside the picture, so the readout has to agree with it.
+    const onLane = (lane: number, startTime: number, endTime: number): ChildSpan => ({
+      ...card(startTime, endTime),
+      lane,
+    });
+    const cards = [onLane(0, 0, 4), onLane(1, 0, 8), onLane(0, 4.12, 8.12)];
+    expect(playableSpanSeconds(cards)).toBeCloseTo(8.12, 6);
+  });
+
+  it("still counts a lane that outlasts the picture", () => {
+    const onLane = (lane: number, startTime: number, endTime: number): ChildSpan => ({
+      ...card(startTime, endTime),
+      lane,
+    });
+    expect(playableSpanSeconds([onLane(0, 0, 4), onLane(1, 0, 30)])).toBeCloseTo(30, 6);
   });
 });
 

@@ -7,6 +7,7 @@ import {
   childSpans,
   flatCardSpans,
   type ChildSpan,
+  type LaneScope,
   type PreviewCardSpans,
 } from "./graph-playhead-model";
 import { TIMELINE_PPS } from "./graph-view-config";
@@ -81,10 +82,21 @@ export function cardsFor(
    *  Callers that consume times and counts rather than geometry pass 0. */
   cardHeight: number,
   flatItems: readonly FlatItem[] | null,
+  /** Defaults to EVERY lane — see `childSpans`. Only an overlay measured
+   *  against a strip that draws lanes as separate ROWS passes "picture". Flat
+   *  mode is a single sequence either way. */
+  laneScope: LaneScope = "all",
 ): ChildSpan[] {
   return flatItems
     ? flatCardSpans(graph, flatItems, focusedId, spans, (seconds) =>
         durationToWidth(seconds, pixelsPerSecond),
       )
-    : childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, cardHeight));
+    : childSpans(
+        graph,
+        details,
+        focusedId,
+        spans,
+        clipWidthAt(pixelsPerSecond, cardHeight),
+        laneScope,
+      );
 }
