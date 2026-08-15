@@ -152,7 +152,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         {/* A whole collection can sit under the picture too — every leaf
             inside it then plays underneath, however its own children are
             arranged. */}
-        {laneOf(detail) > 0 && <LaneChip lane={laneOf(detail)} />}
+        {laneOf(node) > 0 && <LaneChip lane={laneOf(node)} />}
         {/* Collections are taggable too — `tags` sits on TimelineItemBase, not
             on the media members — and they route through THIS component rather
             than GraphClipContent (which returns null for them at its guard).

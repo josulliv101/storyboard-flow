@@ -12,7 +12,7 @@ import type { ClipDetail } from "@storyboard/timeline-domain";
 import { collectReachableDetailIds, createGraphDetailsStore } from "./graph-details-store";
 
 function detail(alt: string): ClipDetail {
-  return { alt, aspect: 16 / 9, trackIndex: 0 };
+  return { alt, aspect: 16 / 9 };
 }
 
 describe("createGraphDetailsStore", () => {

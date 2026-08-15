@@ -102,9 +102,9 @@ export const GraphClipContent = memo(function GraphClipContent({
   // `node.name`: the node's name falls back to the derived alt, so it can't
   // tell "named by someone" from "named by the file system".
   const detail = useClipDetail(id as string);
-  // Which lane this plays in. Lives in the details side table because the
-  // engine does not model it — see set_lane.
-  const lane = laneOf(detail);
+  // Which lane this plays in. Read from the NODE: lane and placement moved
+  // there when they became a command, which is what makes them undoable.
+  const lane = laneOf(node);
 
   // MEDIA pixels only. This guard is defensive: nothing in the graph view
   // reaches it with a collection node.

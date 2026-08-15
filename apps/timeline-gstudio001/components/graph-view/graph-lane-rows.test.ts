@@ -6,12 +6,12 @@ import { CLIP_GAP_SECONDS } from "@storyboard/timeline-model/constants";
 
 import { laneDropBoundary, laneDropIndex, splitLaneRows } from "./graph-lane-rows";
 
-const media = (id: string, durationSeconds: number): GraphNodeSpec => ({
-  kind: "media",
-  id,
-  name: id,
-  durationSeconds,
-});
+const media = (
+  id: string,
+  durationSeconds: number,
+  over: Partial<GraphNodeSpec> = {},
+): GraphNodeSpec =>
+  ({ kind: "media", id, name: id, durationSeconds, ...over }) as GraphNodeSpec;
 
 const collection = (id: string, children: readonly GraphNodeSpec[] = []): GraphNodeSpec => ({
   kind: "collection",
@@ -26,25 +26,20 @@ function graphOf(roots: readonly GraphNodeSpec[]) {
   return result.value;
 }
 
-/** A side-table entry with only the fields a test cares about set. */
+/** A side-table entry with only the fields a test cares about set. Lane and
+ *  placement are NOT among them any more — they live on the node. */
 const detail = (over: Partial<ClipDetail> = {}): ClipDetail => ({
   alt: "",
   aspect: 16 / 9,
-  trackIndex: 0,
   ...over,
 });
 
-/** A details side table putting the named nodes on a lane. */
-function lanes(byId: Readonly<Record<string, number>>): DetailsById {
-  const details: Record<string, ClipDetail> = {};
-  for (const [id, trackIndex] of Object.entries(byId)) details[id] = detail({ trackIndex });
-  return details;
-}
+const NO_DETAILS = {} as DetailsById;
 
 describe("splitLaneRows", () => {
   it("puts everything on the picture when nothing has a lane", () => {
     const graph = graphOf([collection("scene", [media("a", 4), media("b", 4)])]);
-    const model = splitLaneRows(graph, {} as DetailsById, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.pictureIds).toEqual(["a", "b"]);
     expect(model.layers).toEqual([]);
@@ -56,7 +51,7 @@ describe("splitLaneRows", () => {
 
   it("is empty for a collection with no children", () => {
     const graph = graphOf([collection("scene", [])]);
-    expect(splitLaneRows(graph, {} as DetailsById, "scene")).toEqual({
+    expect(splitLaneRows(graph, NO_DETAILS, "scene")).toEqual({
       pictureIds: [],
       pictureTimes: [],
       layers: [],
@@ -65,9 +60,13 @@ describe("splitLaneRows", () => {
 
   it("pulls a lane-1 clip off the picture and onto its own row", () => {
     const graph = graphOf([
-      collection("scene", [media("shot1", 4), media("bed", 12), media("shot2", 4)]),
+      collection("scene", [
+        media("shot1", 4),
+        media("bed", 12, { trackIndex: 1 }),
+        media("shot2", 4),
+      ]),
     ]);
-    const model = splitLaneRows(graph, lanes({ bed: 1 }), "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.pictureIds).toEqual(["shot1", "shot2"]);
     expect(model.layers).toHaveLength(1);
@@ -81,18 +80,26 @@ describe("splitLaneRows", () => {
     // THE point of packing per lane: shot2 now follows shot1 directly instead
     // of starting after a 12s bed that no longer sits between them.
     const graph = graphOf([
-      collection("scene", [media("shot1", 4), media("bed", 12), media("shot2", 4)]),
+      collection("scene", [
+        media("shot1", 4),
+        media("bed", 12, { trackIndex: 1 }),
+        media("shot2", 4),
+      ]),
     ]);
-    const model = splitLaneRows(graph, lanes({ bed: 1 }), "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.pictureTimes[1]?.startSeconds).toBe(4 + CLIP_GAP_SECONDS);
   });
 
   it("starts every lane at the same instant, so a bed runs UNDER the picture", () => {
     const graph = graphOf([
-      collection("scene", [media("shot1", 4), media("shot2", 4), media("bed", 8)]),
+      collection("scene", [
+        media("shot1", 4),
+        media("shot2", 4),
+        media("bed", 8, { trackIndex: 1 }),
+      ]),
     ]);
-    const model = splitLaneRows(graph, lanes({ bed: 1 }), "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.pictureTimes[0]?.startSeconds).toBe(0);
     expect(model.layers[0]?.items[0]?.startSeconds).toBe(0);
@@ -100,9 +107,13 @@ describe("splitLaneRows", () => {
 
   it("packs several cards on one lane in their own sequence", () => {
     const graph = graphOf([
-      collection("scene", [media("shot", 20), media("vo1", 3), media("vo2", 3)]),
+      collection("scene", [
+        media("shot", 20),
+        media("vo1", 3, { trackIndex: 1 }),
+        media("vo2", 3, { trackIndex: 1 }),
+      ]),
     ]);
-    const model = splitLaneRows(graph, lanes({ vo1: 1, vo2: 1 }), "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.layers[0]?.items).toEqual([
       { id: "vo1", startSeconds: 0, durationSeconds: 3 },
@@ -114,9 +125,13 @@ describe("splitLaneRows", () => {
     // #400. The board's geometry already accepted an arbitrary start; this is
     // the seam that finally supplies one — a voiceover at 7.5s with nothing
     // 7.5s long in front of it.
-    const graph = graphOf([collection("scene", [media("shot", 30), media("vo", 2)])]);
-    const details: DetailsById = { vo: detail({ trackIndex: 1, placedStart: 7.5 }) };
-    const model = splitLaneRows(graph, details, "scene");
+    const graph = graphOf([
+      collection("scene", [
+        media("shot", 30),
+        media("vo", 2, { trackIndex: 1, placedStart: 7.5 }),
+      ]),
+    ]);
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.layers[0]?.items).toEqual([
       { id: "vo", startSeconds: 7.5, durationSeconds: 2 },
@@ -127,13 +142,13 @@ describe("splitLaneRows", () => {
 
   it("queues an unplaced clip behind a placed one on the same lane", () => {
     const graph = graphOf([
-      collection("scene", [media("shot", 30), media("vo", 2), media("tail", 2)]),
+      collection("scene", [
+        media("shot", 30),
+        media("vo", 2, { trackIndex: 1, placedStart: 7.5 }),
+        media("tail", 2, { trackIndex: 1 }),
+      ]),
     ]);
-    const details: DetailsById = {
-      vo: detail({ trackIndex: 1, placedStart: 7.5 }),
-      tail: detail({ trackIndex: 1 }),
-    };
-    const model = splitLaneRows(graph, details, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.layers[0]?.items.map((item) => item.startSeconds)).toEqual([
       7.5,
@@ -143,9 +158,13 @@ describe("splitLaneRows", () => {
 
   it("gives each occupied lane its own row, in ascending order", () => {
     const graph = graphOf([
-      collection("scene", [media("shot", 10), media("music", 10), media("vo", 4)]),
+      collection("scene", [
+        media("shot", 10),
+        media("music", 10, { trackIndex: 1 }),
+        media("vo", 4, { trackIndex: 2 }),
+      ]),
     ]);
-    const model = splitLaneRows(graph, lanes({ vo: 2, music: 1 }), "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.layers.map((layer) => layer.lane)).toEqual([1, 2]);
     expect(model.layers[0]?.items[0]?.id).toBe("music");
@@ -155,8 +174,10 @@ describe("splitLaneRows", () => {
   it("skips unoccupied lanes rather than reserving a row for each", () => {
     // set_lane accepts any non-negative integer; reserving would draw fifty
     // rows for one clip. The chip still names the real lane.
-    const graph = graphOf([collection("scene", [media("shot", 10), media("bed", 10)])]);
-    const model = splitLaneRows(graph, lanes({ bed: 50 }), "scene");
+    const graph = graphOf([
+      collection("scene", [media("shot", 10), media("bed", 10, { trackIndex: 50 })]),
+    ]);
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.layers).toHaveLength(1);
     expect(model.layers[0]?.lane).toBe(50);
@@ -164,9 +185,13 @@ describe("splitLaneRows", () => {
 
   it("treats a fractional or negative lane as the picture", () => {
     const graph = graphOf([
-      collection("scene", [media("a", 4), media("b", 4), media("c", 4)]),
+      collection("scene", [
+        media("a", 4),
+        media("b", 4, { trackIndex: 1.5 }),
+        media("c", 4, { trackIndex: -1 }),
+      ]),
     ]);
-    const model = splitLaneRows(graph, lanes({ b: 1.5, c: -1 }), "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene");
 
     expect(model.pictureIds).toEqual(["a", "b", "c"]);
     expect(model.layers).toEqual([]);
@@ -176,16 +201,14 @@ describe("splitLaneRows", () => {
     const graph = graphOf([
       collection("scene", [
         collection("inner", [media("x", 5), media("y", 5)]),
-        media("bed", 20),
+        media("bed", 20, { trackIndex: 1 }),
       ]),
     ]);
     // `hydrated` is what makes a collection derive its span from live
     // children rather than the stored summary — the board's normal state
-    // once a collection's contents have arrived.
-    const details: DetailsById = {
-      inner: detail({ hydrated: true }),
-      bed: detail({ trackIndex: 1 }),
-    };
+    // once a collection's contents have arrived. It is still a DETAIL: the
+    // engine does not model hydration, only lane and placement moved.
+    const details: DetailsById = { inner: detail({ hydrated: true }) };
     const model = splitLaneRows(graph, details, "scene");
 
     expect(model.pictureIds).toEqual(["inner"]);

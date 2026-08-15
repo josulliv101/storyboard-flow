@@ -248,7 +248,6 @@ export function useNativeDrop(collectionId: string, projectId: string) {
                 detail: {
                   alt: file.name,
                   aspect: 16 / 9,
-                  trackIndex: 0,
                   poster: hosted.thumbnailUrl,
                   ...(sourceAsset === undefined ? {} : { sourceAsset }),
                 },
@@ -268,7 +267,6 @@ export function useNativeDrop(collectionId: string, projectId: string) {
               detail: {
                 alt: file.name,
                 aspect: 16 / 9,
-                trackIndex: 0,
                 sourceDuration: IMAGE_CLIP_SECONDS,
                 trimIn: 0,
                 trimOut: 0,

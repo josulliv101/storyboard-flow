@@ -492,26 +492,26 @@ export async function handleSetLane(
           message: `"${args.nodeId}" is a timeline itself, not a clip inside one — no lane to put it on.`,
         } as const;
       }
-      const existing = details[nodeId as string];
-
-      // The parent and everything above it: a lane change can shorten or
-      // lengthen the parent, which every ancestor stores a duration for.
-      const affected: string[] = [];
-      let current: NodeId | null = parentId;
-      while (current !== null && !affected.includes(current as string)) {
-        affected.push(current as string);
-        current = graph.parentById.get(current) ?? null;
-      }
-
+      // ONE COMMAND. The ancestor write set comes from the patch now —
+      // `collectAffectedCollectionIds` walks them for `nodes-updated`, which
+      // is exactly the rule the hand-rolled walk here implemented: a lane
+      // change moves the parent's span, and every ancestor stores a duration
+      // for it. And because it is a command, it is undoable.
+      //
+      // Lane 0 CLEARS the field rather than storing a 0 — absence is the
+      // picture, everywhere else in the model. It clears the placement too:
+      // the picture is a cut, so a placed start there means nothing, and
+      // leaving a stale one would resurface if the clip returned to a lane.
       return {
         ok: true,
-        // Spread the WHOLE existing entry — `graphChildrenToClips` rebuilds the
-        // clip from this record, so dropping `sourceAsset`, `poster` or `alt`
-        // here would erase them from the stored clip on save.
-        details: {
-          [nodeId as string]: { ...existing, trackIndex: args.lane } as DetailsById[string],
+        command: {
+          type: "set-node-placement",
+          nodeIds: [nodeId],
+          placement:
+            args.lane === 0
+              ? { trackIndex: null, placedStart: null }
+              : { trackIndex: args.lane },
         },
-        affectedCollectionIds: affected,
       } as const;
     },
     ctx.requesterUid,
@@ -582,8 +582,8 @@ export async function handleSetStart(
           message: `"${args.nodeId}" is a timeline itself, not a clip inside one — nothing to place.`,
         } as const;
       }
-      const existing = details[nodeId as string];
-      const lane = trackIndexOf({ trackIndex: existing?.trackIndex ?? 0 });
+      // From the NODE — lane and placement are engine-carried now.
+      const lane = trackIndexOf({ trackIndex: graph.nodesById.get(nodeId)?.trackIndex ?? 0 });
       if (lane === 0) {
         return {
           ok: false,
@@ -603,7 +603,9 @@ export async function handleSetStart(
           ? { lane, bumped: false }
           : resolvePlacement(
               graphChildrenToClips(graph, details, parentId as string),
-              existing?.sourceClipId ?? (nodeId as string),
+              // The projection reports a demoted duplicate under its STORED
+              // clip id, so match on that where there is one.
+              details[nodeId as string]?.sourceClipId ?? (nodeId as string),
               lane,
               start,
             );
@@ -611,30 +613,21 @@ export async function handleSetStart(
       landedLane = placement.lane;
       wasBumped = placement.bumped;
 
-      // The parent and everything above it: a placement can lengthen or
-      // shorten the parent, which every ancestor stores a duration for.
-      const affected: string[] = [];
-      let current: NodeId | null = parentId;
-      while (current !== null && !affected.includes(current as string)) {
-        affected.push(current as string);
-        current = graph.parentById.get(current) ?? null;
-      }
-
-      // Spread the WHOLE existing entry, as `set_lane` does: the clip is
-      // rebuilt from this record, so omitting a field erases it on save.
-      // `placedStart` is dropped entirely when re-queuing — absence IS the
-      // "queued" state, and writing a sentinel would be a second way to say it.
-      const { placedStart: _dropped, ...rest } = existing ?? {};
-      const next = {
-        ...rest,
-        trackIndex: placement.lane,
-        ...(start === null ? {} : { placedStart: start }),
-      } as DetailsById[string];
-
+      // ONE COMMAND, so the change rides the patch path: it lands in undo
+      // history, and `collectAffectedCollectionIds` walks the ancestors a
+      // `nodes-updated` patch implies — which is the same write set the
+      // hand-rolled walk here used to compute, for the same reason (a
+      // placement moves the parent's span, and every ancestor stores a
+      // duration for it).
+      //
+      // `null` CLEARS the placement, because absence IS the queued state.
       return {
         ok: true,
-        details: { [nodeId as string]: next },
-        affectedCollectionIds: affected,
+        command: {
+          type: "set-node-placement",
+          nodeIds: [nodeId],
+          placement: { trackIndex: placement.lane, placedStart: start },
+        },
       } as const;
     },
     ctx.requesterUid,

@@ -720,6 +720,152 @@ describe("patch inversion round-trips", () => {
   });
 });
 
+describe("set-node-placement", () => {
+  const nodeOf = (graph: CollectionsGraph, id: string) => graph.nodesById.get(parseNodeId(id))!;
+
+  test("sets a lane and a start on media and on collections, leaving structure alone", () => {
+    // A whole nested scene under the picture is a legitimate layer, so a
+    // collection has to be placeable too.
+    for (const target of ["A", "F"]) {
+      const graph = fixture();
+      const result = applyCommand(graph, {
+        type: "set-node-placement",
+        nodeIds: [parseNodeId(target)],
+        placement: { trackIndex: 1, placedStart: 7.5 },
+      });
+      if (!result.ok) throw new Error(JSON.stringify(result.error));
+      expect(nodeOf(result.value.graph, target).trackIndex).toBe(1);
+      expect(nodeOf(result.value.graph, target).placedStart).toBe(7.5);
+      for (const [id] of graph.childrenById) {
+        expect([...getChildren(result.value.graph, id)]).toEqual([...getChildren(graph, id)]);
+      }
+      expect(findGraphInvariantViolation(result.value.graph)).toBeNull();
+    }
+  });
+
+  test("an omitted field is LEFT ALONE, so a lane change cannot un-place a clip", () => {
+    const placed = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 1, placedStart: 7.5 },
+    });
+    if (!placed.ok) throw new Error("expected ok");
+
+    const moved = applyCommand(placed.value.graph, {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 2 },
+    });
+    if (!moved.ok) throw new Error("expected ok");
+    expect(nodeOf(moved.value.graph, "A").trackIndex).toBe(2);
+    expect(nodeOf(moved.value.graph, "A").placedStart).toBe(7.5);
+  });
+
+  test("null CLEARS a field, deleting the key rather than writing 0", () => {
+    const placed = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 1, placedStart: 7.5 },
+    });
+    if (!placed.ok) throw new Error("expected ok");
+
+    const cleared = applyCommand(placed.value.graph, {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { placedStart: null },
+    });
+    if (!cleared.ok) throw new Error("expected ok");
+    // Absence IS the queued state; a 0 would mean "placed at the very start".
+    expect("placedStart" in nodeOf(cleared.value.graph, "A")).toBe(false);
+    expect(nodeOf(cleared.value.graph, "A").trackIndex).toBe(1);
+  });
+
+  test("a no-op change is refused, so it never enters history", () => {
+    const noop = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { placedStart: null },
+    });
+    expect(noop.ok).toBe(false);
+    if (!noop.ok) expect(noop.error.reason).toBe("same-position");
+  });
+
+  test("a missing node is refused", () => {
+    const result = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("nope")],
+      placement: { trackIndex: 1 },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.reason).toBe("missing-node");
+  });
+
+  test("a non-finite value is refused rather than stored", () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const result = applyCommand(fixture(), {
+        type: "set-node-placement",
+        nodeIds: [parseNodeId("A")],
+        placement: { placedStart: bad },
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.reason).toBe("invalid-placement");
+    }
+  });
+
+  test("UNDO restores the previous placement — the whole point of the command", () => {
+    // Lane and placement used to live in a consumer side-table, where a change
+    // emitted no patch and could not be undone at all.
+    const placed = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [parseNodeId("A")],
+      placement: { trackIndex: 1, placedStart: 7.5 },
+    });
+    if (!placed.ok) throw new Error("expected ok");
+
+    const undone = applyPatch(placed.value.graph, invertPatch(placed.value.patch));
+    expect("trackIndex" in nodeOf(undone, "A")).toBe(false);
+    expect("placedStart" in nodeOf(undone, "A")).toBe(false);
+
+    const redone = applyPatch(undone, placed.value.patch);
+    expect(nodeOf(redone, "A").trackIndex).toBe(1);
+    expect(nodeOf(redone, "A").placedStart).toBe(7.5);
+  });
+
+  test("a whole selection is placed in ONE patch, and comes back in one undo", () => {
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "set-node-placement",
+      nodeIds: ids(["A", "B"]),
+      placement: { trackIndex: 1 },
+    });
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.patch.type).toBe("nodes-updated");
+
+    const undone = applyPatch(result.value.graph, invertPatch(result.value.patch));
+    for (const id of ["A", "B"]) expect("trackIndex" in nodeOf(undone, id)).toBe(false);
+  });
+
+  test("a repeated id contributes one update, so the patch stays reversible", () => {
+    const result = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: ids(["A", "A"]),
+      placement: { trackIndex: 1 },
+    });
+    if (!result.ok) throw new Error("expected ok");
+    if (result.value.patch.type !== "nodes-updated") throw new Error("expected nodes-updated");
+    expect(result.value.patch.updates).toHaveLength(1);
+  });
+
+  test("an empty batch is refused", () => {
+    const result = applyCommand(fixture(), {
+      type: "set-node-placement",
+      nodeIds: [],
+      placement: { trackIndex: 1 },
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe("set-node-disabled", () => {
   const nodeOf = (graph: CollectionsGraph, id: string) => graph.nodesById.get(parseNodeId(id))!;
 

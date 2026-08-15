@@ -108,6 +108,31 @@ export type CollectionsCommand =
        *  One decision for the whole batch — a mixed selection resolves to a
        *  single target state rather than each item flipping its own way. */
       disabled: boolean;
+    }>
+  | Readonly<{
+      type: "set-node-placement";
+      /**
+       * Any nodes — media or collection. Structure is untouched.
+       *
+       * A LIST for the same reason `set-node-disabled` is one: moving a
+       * multi-selection onto a lane is ONE user action, and per-node dispatch
+       * would give it N history entries to undo one at a time.
+       */
+      nodeIds: readonly NodeId[];
+      /**
+       * Which lane, and where on it. `undefined` LEAVES A FIELD ALONE; null
+       * CLEARS it back to the default. The two are distinct because the common
+       * drag sets both while a lane change on its own must not silently
+       * un-place a clip.
+       *
+       * The engine stores these and never reads them — see the note on
+       * `ImageMediaNode`. It is the consumer that decides what lane 0 means
+       * and how a placed start packs.
+       */
+      placement: Readonly<{
+        trackIndex?: number | null;
+        placedStart?: number | null;
+      }>;
     }>;
 
 export type CommandRejection =
@@ -128,6 +153,8 @@ export type CommandRejection =
   | Readonly<{ reason: "not-media-node"; nodeId: NodeId }>
   /** `rename-node` was given a blank name. */
   | Readonly<{ reason: "invalid-node-name"; nodeId: NodeId }>
+  /** `set-node-placement` was given a non-finite lane or start. */
+  | Readonly<{ reason: "invalid-placement"; nodeId: NodeId }>
   /** `update-media`'s payload doesn't match the node's mediaKind, or carries non-finite values. */
   | Readonly<{ reason: "invalid-media-update"; nodeId: NodeId }>
   | Readonly<{ reason: "nothing-to-move" }>
@@ -158,6 +185,9 @@ export function applyCommand(
   }
   if (command.type === "set-node-disabled") {
     return applySetDisabled(graph, command.nodeIds, command.disabled);
+  }
+  if (command.type === "set-node-placement") {
+    return applySetPlacement(graph, command.nodeIds, command.placement);
   }
   if (command.type === "rename-node") {
     return applyRename(graph, command.nodeId, command.name);
@@ -446,6 +476,72 @@ function applySetDisabled(
       after = rest as CollectionItemNode;
     }
     updates.push({ nodeId, before: node, after });
+  }
+
+  if (updates.length === 0) return { ok: false, error: { reason: "same-position" } };
+
+  const patch: CollectionsPatch = { type: "nodes-updated", updates };
+  return { ok: true, value: { graph: applyPatch(graph, patch), patch } };
+}
+
+/**
+ * Set the lane and/or the placed start of a batch of nodes.
+ *
+ * Deliberately the same shape as `applySetDisabled`, because it is the same
+ * kind of change: a DOMAIN fact the engine carries and never interprets,
+ * emitted as `nodes-updated` so it rides the patch path — which is what makes
+ * undo and redo work on it for free, since that patch already inverts by
+ * swapping before/after.
+ *
+ * `undefined` leaves a field untouched; `null` clears it. Only actual changes
+ * become updates, so a batch that asks for what is already true is a no-op
+ * rather than a history entry.
+ */
+function applySetPlacement(
+  graph: CollectionsGraph,
+  nodeIds: readonly NodeId[],
+  placement: Readonly<{ trackIndex?: number | null; placedStart?: number | null }>
+): Result<ApplyCommandSuccess, CommandRejection> {
+  if (nodeIds.length === 0) return { ok: false, error: { reason: "nothing-to-add" } };
+
+  const updates: { nodeId: NodeId; before: CollectionItemNode; after: CollectionItemNode }[] = [];
+  const seen = new Set<NodeId>();
+  for (const nodeId of nodeIds) {
+    // A repeated id would emit two updates for one node, and the second's
+    // `before` would already be the first's `after` — an unreversible patch.
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    const node = graph.nodesById.get(nodeId);
+    // A MISSING node is still an error: the caller named something that does
+    // not exist, and silently skipping it would hide a real bug.
+    if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
+
+    const next: Record<string, unknown> = { ...node };
+    let changed = false;
+    for (const field of ["trackIndex", "placedStart"] as const) {
+      const wanted = placement[field];
+      if (wanted === undefined) continue;
+      const current = node[field];
+      if (wanted === null) {
+        if (current === undefined) continue;
+        delete next[field];
+        changed = true;
+        continue;
+      }
+      // A non-finite value would be stored verbatim and read back as a
+      // placement nobody can express — rejected rather than silently dropped,
+      // because unlike hydration this is a caller naming a value.
+      if (!Number.isFinite(wanted)) {
+        return { ok: false, error: { reason: "invalid-placement", nodeId } };
+      }
+      if (current === wanted) continue;
+      next[field] = wanted;
+      changed = true;
+    }
+    // A node already in the target state contributes nothing. Skipped rather
+    // than rejected, so placing a partly-placed selection still works.
+    if (!changed) continue;
+    updates.push({ nodeId, before: node, after: next as CollectionItemNode });
   }
 
   if (updates.length === 0) return { ok: false, error: { reason: "same-position" } };

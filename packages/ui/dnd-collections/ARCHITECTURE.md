@@ -541,13 +541,20 @@ of clamping, because a lane can outlast the picture; clamping drew a 30s bed
 under a 12s cut as though it ended with the cut. Before the first card it
 still clamps, since content coordinates start at 0.
 
-Lanes stop at geometry. A card's lane is CONSUMER data — the engine has no
-`trackIndex` and no command that changes one — so cross-lane drag is not
-modelled here: layer cards drag like any other card and resolve through the
-same container droppable. A consumer that splits its children by lane is
-also handing the strip a FILTERED item source, which makes its published
-boundaries mean something different; `mapDropCommand` is where that gets
-corrected, the same seam a flat strip uses.
+Lanes stop at geometry HERE, but not in the engine. `trackIndex` and
+`placedStart` are node fields, changed through `set-node-placement` — the
+same shape as `disabled`, and for the same reason: they are DOMAIN facts the
+engine carries and never interprets, and putting them behind a command is
+what makes them ride the patch path and undo. The side-table rule is "does
+the engine MUTATE it", not "does the engine understand it".
+
+What the STRIP still does not model is the cross-lane DRAG. Layer cards drag
+like any other card and resolve through the same container droppable, so a
+drop reorders within the collection and leaves the placement alone. A
+consumer that splits its children by lane is also handing the strip a
+FILTERED item source, which makes its published boundaries mean something
+different; `mapDropCommand` is where that gets corrected, the same seam a
+flat strip uses.
 
 ## FLIP animation: a layer above the reducer
 

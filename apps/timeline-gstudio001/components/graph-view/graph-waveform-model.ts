@@ -85,7 +85,7 @@ export function waveformSourcesFor(
   // the strip's own row and so drops anything on a lane. A lane row's own
   // waveform is a separate band this does not draw yet.
   return getChildren(graph, parseNodeId(focusedId)).flatMap((childId) =>
-    trackIndexOf({ trackIndex: details[childId as string]?.trackIndex ?? 0 }) === 0
+    trackIndexOf({ trackIndex: graph.nodesById.get(childId)?.trackIndex ?? 0 }) === 0
       ? [sourceForNode(graph, details, childId as string)]
       : [],
   );

@@ -73,7 +73,6 @@ describe("cloneNodeForInsert: media", () => {
     const detail: ClipDetail = {
       alt: "Pic",
       aspect: 16 / 9,
-      trackIndex: 0,
       // Must be dropped: reusing it would collide with the source clip.
       sourceClipId: "m1",
     };
@@ -101,7 +100,6 @@ describe("cloneNodeForInsert: collection deep clone", () => {
   const detail: ClipDetail = {
     alt: "Root",
     aspect: 16 / 9,
-    trackIndex: 0,
     itemCount: 2,
     duration: 10,
     hydrated: false,
@@ -206,7 +204,6 @@ describe("cloneNodeForInsert: collection deep clone", () => {
     const refDetail: ClipDetail = {
       alt: "Ref",
       aspect: 16 / 9,
-      trackIndex: 0,
       hydrated: false,
       duplicateOfTimelineId: "S",
     };
