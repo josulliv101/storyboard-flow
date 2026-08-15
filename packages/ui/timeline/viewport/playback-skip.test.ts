@@ -118,3 +118,57 @@ describe("nextPlayableTime", () => {
     }
   });
 });
+
+// ── LANES ───────────────────────────────────────────────────────────────────
+//
+// Several clips can cover one instant now: lane 0 is the picture, anything
+// above it runs underneath. The surface draws frames from what this returns,
+// so picking an under-layer means trying to draw a clip with no picture.
+
+function onLane(clip: TimelineClip, trackIndex: number): TimelineClip {
+  return { ...clip, trackIndex };
+}
+
+describe("getContainingClip with lanes", () => {
+  it("prefers the PICTURE when a layer covers the same instant", () => {
+    // The array is sorted by start time, so a bed starting at 0 is found
+    // before a shot starting at 0 — the old array-order rule drew the bed.
+    const bed = onLane(image("bed", 0, 30), 1);
+    const shot = image("shot", 0, 4);
+    expect(getContainingClip([bed, shot], 2)?.id).toBe("shot");
+  });
+
+  it("picks the picture whichever order they arrive in", () => {
+    const bed = onLane(image("bed", 0, 30), 1);
+    const shot = image("shot", 0, 4);
+    expect(getContainingClip([shot, bed], 2)?.id).toBe("shot");
+  });
+
+  it("prefers the LOWEST lane, not merely lane 0", () => {
+    const vo = onLane(image("vo", 0, 10), 2);
+    const bed = onLane(image("bed", 0, 10), 1);
+    expect(getContainingClip([vo, bed], 5)?.id).toBe("bed");
+  });
+
+  it("still returns a layer when nothing else covers the time", () => {
+    // Past the picture, a bed is all there is — and the caller needs to know
+    // the time is inside material rather than in a gap.
+    const bed = onLane(image("bed", 0, 30), 1);
+    const shot = image("shot", 0, 4);
+    expect(getContainingClip([bed, shot], 20)?.id).toBe("bed");
+  });
+
+  it("keeps ARRAY ORDER within a single lane", () => {
+    // Two clips on the picture overlapping is not something packing produces,
+    // but the old behaviour was first-wins and nothing should change for it.
+    const first = image("first", 0, 10);
+    const second = image("second", 0, 10);
+    expect(getContainingClip([first, second], 5)?.id).toBe("first");
+  });
+
+  it("is unchanged for a timeline that uses no lanes", () => {
+    expect(getContainingClip(clips, 2)?.id).toBe("a");
+    expect(getContainingClip(clips, 9)?.id).toBe("c");
+    expect(getContainingClip(clips, 30)).toBeNull();
+  });
+});

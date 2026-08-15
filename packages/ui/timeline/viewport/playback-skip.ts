@@ -29,11 +29,30 @@ export function clipContainsPlaybackTime(clip: TimelineClip, currentTime: number
   return currentTime >= playbackStart && currentTime <= playbackStart + playbackDuration;
 }
 
-/** The clip that literally covers this time — never one held over from
- *  earlier. Callers deciding whether a time is INSIDE material (as opposed to
- *  what to draw at it) must use this. */
+/**
+ * The clip that literally covers this time — never one held over from
+ * earlier. Callers deciding whether a time is INSIDE material (as opposed to
+ * what to draw at it) must use this.
+ *
+ * THE LOWEST LANE WINS when several cover the same instant, which is what
+ * lanes made possible. This used to take the first match in array order, and
+ * the array is sorted by start time — so a bed starting at 0 could be found
+ * before the shot starting at 0, and the surface would try to draw a clip
+ * that has no picture. Lane 0 IS the picture; anything above it is running
+ * underneath and is never what a frame comes from.
+ *
+ * `reduce` rather than a sort: this runs per frame while playing, and the
+ * answer is one element.
+ */
 export function getContainingClip(clips: readonly TimelineClip[], currentTime: number) {
-  return clips.find((clip) => clipContainsPlaybackTime(clip, currentTime)) ?? null;
+  let best: TimelineClip | null = null;
+  for (const clip of clips) {
+    if (!clipContainsPlaybackTime(clip, currentTime)) continue;
+    // Strictly lower, so the FIRST clip on a given lane still wins ties —
+    // preserving the old array-order behaviour within a lane.
+    if (best === null || clip.trackIndex < best.trackIndex) best = clip;
+  }
+  return best;
 }
 
 export function getTimelineDuration(clips: readonly TimelineClip[]) {
