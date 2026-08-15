@@ -33,7 +33,7 @@ import { tagsField } from "@storyboard/timeline-model/tags";
 // The lane normaliser the model packs with. Imported rather than re-derived:
 // this file's packing is the twin of `packTimelineClips`, and two different
 // answers to "which lane is this clip on" would move layered clips on save.
-import { trackIndexOf } from "@storyboard/timeline-model/documents";
+import { placedStartOf, trackIndexOf } from "@storyboard/timeline-model/documents";
 import type {
   AssetSourceRef,
   CollectionTimelineClip,
@@ -65,6 +65,12 @@ export type ClipDetail = Readonly<{
   title?: string;
   aspect: number;
   trackIndex: number;
+  /** Where the author placed this clip on its lane, when they placed it —
+   *  see `TimelineItemBase.placedStart`. Rides the side table for the same
+   *  reason `trackIndex` does: the collections engine models neither lanes
+   *  nor time, so there is no graph command that could carry it. Absent
+   *  means queued; ignored on lane 0. */
+  placedStart?: number;
   poster?: string;
   playbackStartTime?: number;
   playbackDuration?: number;
@@ -172,6 +178,10 @@ function mediaDetail(clip: Exclude<TimelineClip, CollectionTimelineClip>): ClipD
     ...(clip.title === undefined ? {} : { title: clip.title }),
     aspect: clip.aspect,
     trackIndex: clip.trackIndex,
+    // Captured INBOUND as well as written back out: without this a stored
+    // placement is lost the moment the document is hydrated into a graph, and
+    // the clip silently rejoins its lane's queue on the next save.
+    ...(clip.placedStart === undefined ? {} : { placedStart: clip.placedStart }),
     ...(clip.poster === undefined ? {} : { poster: clip.poster }),
     ...(clip.sourceAsset === undefined ? {} : { sourceAsset: clip.sourceAsset }),
     ...tagsField(clip.tags),
@@ -190,6 +200,7 @@ function collectionDetail(clip: CollectionTimelineClip, hydrated: boolean): Clip
     alt: clip.alt,
     aspect: clip.aspect,
     trackIndex: clip.trackIndex,
+    ...(clip.placedStart === undefined ? {} : { placedStart: clip.placedStart }),
     ...tagsField(clip.tags),
     ...(clip.trashedAt === undefined ? {} : { trashedAt: clip.trashedAt }),
     ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
@@ -672,17 +683,26 @@ export function graphChildrenToClips(
   const nextStartByTrack = new Map<number, number>();
   const startFor = (track: number) =>
     nextStartByTrack.get(track) ?? TIMELINE_LEADING_PADDING_SECONDS;
+  // The cursor never rewinds, exactly as in `packTimelineClips`: a clip
+  // placed earlier than its lane's queue has reached must not drag the
+  // following queued clip back on top of a neighbour.
+  const advance = (track: number, end: number) =>
+    nextStartByTrack.set(track, Math.max(startFor(track), end));
 
   return getChildren(graph, parseNodeId(collectionId)).map((childId, index) => {
     const node = graph.nodesById.get(childId);
     if (!node) throw new Error(`Graph child "${childId}" missing from nodesById.`);
     const detail = details[childId];
     const trackIndex = trackIndexOf({ trackIndex: detail?.trackIndex ?? 0 });
-    const startTime = startFor(trackIndex);
+    // PLACED or queued — the same resolution the model packer uses, imported
+    // rather than re-implemented so the twins cannot drift on the one field
+    // whose whole purpose is to override the cursor.
+    const placedStart = placedStartOf({ placedStart: detail?.placedStart }, trackIndex);
+    const startTime = placedStart ?? startFor(trackIndex);
 
     if (node.kind === "media") {
       const duration = mediaDurationSeconds(node);
-      nextStartByTrack.set(trackIndex, startTime + duration + CLIP_GAP_SECONDS);
+      advance(trackIndex, startTime + duration + CLIP_GAP_SECONDS);
       const base = {
         // A demoted duplicate (see clipSpecs) writes back its STORED id.
         id: detail?.sourceClipId ?? (node.id as string),
@@ -695,6 +715,10 @@ export function graphChildrenToClips(
         ...(detail?.title === undefined ? {} : { title: detail.title }),
         aspect: detail?.aspect ?? 16 / 9,
         trackIndex,
+        // THE WRITE-BACK, like tags: the stored clip is rebuilt from this
+        // record, so omitting it here would silently un-place the clip on
+        // the next save and drop it back into its lane's queue.
+        ...(placedStart === undefined ? {} : { placedStart }),
         startTime,
         duration,
         ...(detail?.playbackStartTime === undefined
@@ -772,7 +796,7 @@ export function graphChildrenToClips(
       ? hydratedCollectionPlayableDuration(graph, details, node.id)
       : detail?.playableDuration;
     const playableDuration = playable === duration ? undefined : playable;
-    nextStartByTrack.set(trackIndex, startTime + duration + CLIP_GAP_SECONDS);
+    advance(trackIndex, startTime + duration + CLIP_GAP_SECONDS);
     return {
       id: detail?.sourceClipId ?? (node.id as string),
       index,
@@ -790,6 +814,7 @@ export function graphChildrenToClips(
       alt: detail?.alt ?? `${node.name} collection`,
       aspect: detail?.aspect ?? 16 / 9,
       trackIndex,
+      ...(placedStart === undefined ? {} : { placedStart }),
       startTime,
       duration,
       sourceDuration: detail?.sourceDuration ?? duration,

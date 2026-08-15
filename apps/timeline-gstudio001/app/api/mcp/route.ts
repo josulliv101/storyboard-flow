@@ -25,6 +25,7 @@ import {
   handleMoveClip,
   handleRemoveClip,
   handleSetLane,
+  handleSetStart,
   handleRenameItem,
   handleSetTags,
   handleTrimClip,
@@ -358,6 +359,26 @@ const handler = createMcpHandler(
         const uid = uidFrom(extra);
         if (!uid) return errorResult(NO_IDENTITY);
         return fromToolResult(await handleSetLane(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "set_start",
+      "Place a clip at an exact time on its LANE — audio starts when it starts, and does not have to line up with anything on another lane. Only for clips on a lane above 0: the picture is a cut, whose clips pack end to end. Pass null to put the clip back in its lane's queue. If something is already playing on that lane at that moment, the clip moves to the first lane above with room and the result says so." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
+        startSeconds: z
+          .number()
+          .min(0)
+          .nullable()
+          .describe("Seconds from the start of the collection, or null to re-queue it."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleSetStart(args, { requesterUid: uid }));
       },
     );
 

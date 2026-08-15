@@ -119,6 +119,11 @@ function hasClipBase(clip: Record<string, unknown>): boolean {
     trimsFitInSource(clip) &&
     isOptionalNonNegative(clip.playbackStartTime) &&
     isOptionalNonNegative(clip.playbackDuration) &&
+    // Absent OR a real non-negative time. Gated the same way
+    // `playbackStartTime` is, and for a sharper reason: this one is HONOURED
+    // by packing, so a NaN or a negative arriving from stored data would put
+    // a clip somewhere no author asked for rather than being recomputed away.
+    isOptionalNonNegative(clip.placedStart) &&
     // Strictly boolean-or-absent. This gate guards the WRITE path, and a
     // truthy non-boolean would be read as "skip this clip" by the playback
     // and summary passes — a stored string "false" would silently drop a

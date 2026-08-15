@@ -81,17 +81,56 @@ export function trackIndexOf(clip: Pick<TimelineClip, "trackIndex">): number {
  * Identical to the old behaviour for any document that has never used lanes,
  * because every clip in one is on track 0 — which is every document written
  * before this.
+ *
+ * HONOURS `placedStart` on lanes 1+, which is what makes a lane a timeline
+ * rather than a parallel queue: a voiceover can begin at 7.5s without 7.5s of
+ * something in front of it. Absent means queued, so a document with nothing
+ * placed packs exactly as it did before the field existed.
  */
 export function packTimelineClips(clips: TimelineClip[]) {
   const nextStartByTrack = new Map<number, number>();
 
   return clips.map((clip, index) => {
     const track = trackIndexOf(clip);
-    const startTime = nextStartByTrack.get(track) ?? TIMELINE_LEADING_PADDING_SECONDS;
+    const placed = placedStartOf(clip, track);
+    const startTime = placed ?? nextStartByTrack.get(track) ?? TIMELINE_LEADING_PADDING_SECONDS;
     const nextClip = { ...clip, index, startTime };
-    nextStartByTrack.set(track, startTime + nextClip.duration + CLIP_GAP_SECONDS);
+    // The cursor NEVER REWINDS. A clip placed earlier than its lane's queue
+    // has already reached would otherwise drag the following queued clip back
+    // on top of a neighbour — the placement is one clip's business, and it
+    // must not reorganise the ones it was dropped in front of.
+    //
+    // No gap is added BEFORE a placed start: `CLIP_GAP_SECONDS` separates
+    // consecutive shots, and a placed start is already exact. It still
+    // applies AFTER one, so a queued clip following a placed clip clears it.
+    nextStartByTrack.set(
+      track,
+      Math.max(
+        nextStartByTrack.get(track) ?? TIMELINE_LEADING_PADDING_SECONDS,
+        startTime + nextClip.duration + CLIP_GAP_SECONDS,
+      ),
+    );
     return nextClip;
   });
+}
+
+/**
+ * The authored start this clip should pack at, or undefined to queue it.
+ *
+ * Defensive in the same way `trackIndexOf` is, and for the same reason: this
+ * value is HONOURED rather than recomputed, so anything that is not a real
+ * non-negative time has to fall back to queuing instead of placing a clip
+ * where nobody asked. Lane 0 never places — the picture is a cut.
+ */
+export function placedStartOf(
+  clip: Pick<TimelineClip, "placedStart">,
+  track: number,
+): number | undefined {
+  if (track <= 0) return undefined;
+  const placed = clip.placedStart;
+  return typeof placed === "number" && Number.isFinite(placed) && placed >= 0
+    ? placed
+    : undefined;
 }
 
 /** The clips that actually play and count. Absent `disabled` means enabled. */

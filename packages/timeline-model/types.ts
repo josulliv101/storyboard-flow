@@ -37,7 +37,30 @@ export type TimelineItemBase = {
   aspect: number;
   trackIndex: number;
 
-  /** Absolute timeline position. */
+  /**
+   * WHERE THE AUTHOR PUT THIS CLIP on its lane, when they put it somewhere.
+   *
+   * The counterpart to `startTime`, which is always DERIVED: packing gives
+   * each lane a running cursor and every clip's start comes out of it, so a
+   * lane is a parallel queue and the only way to place a voiceover at 7.5s
+   * would be to put 7.5s of something in front of it. This is the field that
+   * says "start here" and means it.
+   *
+   * ABSENT MEANS QUEUED — pack behind the previous clip on this lane, which
+   * is what every document written before this did, so nothing needs
+   * migrating. Absence is also the safe default: a writer that forgets this
+   * field gets the old behaviour rather than moving a clip to zero.
+   *
+   * IGNORED ON LANE 0, deliberately and defensively. The picture is a CUT:
+   * trimming a shot closes the gap behind it and reordering repacks. A hole
+   * there is not silence either — the player holds the last frame — so
+   * deliberate gaps in the picture are a different feature with a different
+   * answer, and a stray value here must not open one.
+   */
+  placedStart?: number;
+
+  /** Absolute timeline position. DERIVED by packing — see `placedStart`,
+   *  which is the authored input this is computed from on lanes 1+. */
   startTime: number;
   /** Visible duration after trimming. */
   duration: number;

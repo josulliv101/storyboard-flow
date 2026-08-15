@@ -108,6 +108,55 @@ describe("lanes survive the graph round trip", () => {
     );
   });
 
+  it("carries a PLACED start through unchanged", () => {
+    // The twin-math risk lands hardest on this field: it is the one input that
+    // overrides the cursor, so an adapter that dropped it would re-queue every
+    // placed clip on the next save — silently, and only for layered documents.
+    const placed: TimelineDocument = {
+      id: "col",
+      title: "Placed",
+      clips: packTimelineClips([
+        media("shot", 30),
+        media("vo", 2, { trackIndex: 1, placedStart: 7.5 }),
+      ]),
+    };
+    expect(roundTrip(placed).map((c) => [c.id, c.startTime, c.placedStart])).toEqual([
+      ["shot", 0, undefined],
+      ["vo", 7.5, 7.5],
+    ]);
+  });
+
+  it("keeps a placed start stable across a SECOND round trip", () => {
+    const placed: TimelineDocument = {
+      id: "col",
+      title: "Placed",
+      clips: packTimelineClips([
+        media("shot", 30),
+        media("vo", 2, { trackIndex: 1, placedStart: 7.5 }),
+        media("next", 2, { trackIndex: 1 }),
+      ]),
+    };
+    const once = roundTrip(placed);
+    const twice = roundTrip({ ...placed, clips: once });
+    expect(twice.map((c) => [c.id, c.startTime])).toEqual(
+      once.map((c) => [c.id, c.startTime]),
+    );
+    // And the queued clip behind it still clears it.
+    expect(once.find((c) => c.id === "next")?.startTime).toBe(9.5 + CLIP_GAP_SECONDS);
+  });
+
+  it("agrees that a placement on the PICTURE is ignored", () => {
+    const onPicture: TimelineDocument = {
+      id: "col",
+      title: "Picture",
+      clips: packTimelineClips([media("a", 4), media("b", 2, { placedStart: 30 })]),
+    };
+    expect(roundTrip(onPicture).map((c) => c.startTime)).toEqual([
+      0,
+      4 + CLIP_GAP_SECONDS,
+    ]);
+  });
+
   it("normalises a phantom lane the same way on both sides", () => {
     // `validate` admits any finite number; both implementations must send a
     // non-integer to lane 0 or they disagree about where it starts.

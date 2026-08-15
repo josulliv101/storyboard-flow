@@ -100,6 +100,29 @@ describe("manifest lanes", () => {
     expect(manifest.durationSeconds).toBe(30);
   });
 
+  it("compiles a PLACED clip at the time it was placed", () => {
+    // #400, and the reason the read side needed no changes: the manifest has
+    // always read `clip.startTime`, so a start the packer honours arrives here
+    // on its own. This is what the render mixes against, so it is where
+    // "placed at 7.5s" becomes "audible at 7.5s".
+    const manifest = compile({
+      root: doc("root", [
+        media("shot", 30),
+        media("vo", 2, {
+          trackIndex: 1,
+          placedStart: 7.5,
+          kind: "audio",
+          src: "https://cdn.test/vo.wav",
+        }),
+      ]),
+    });
+    const vo = manifest.leaves.find((leaf) => leaf.id === "vo");
+    expect(vo?.timelineStart).toBe(7.5);
+    expect(vo?.trackIndex).toBe(1);
+    // And the picture is where it always was.
+    expect(manifest.leaves.find((leaf) => leaf.id === "shot")?.timelineStart).toBe(0);
+  });
+
   it("a bed inside a lane-0 collection is UNDER — its own lane decides", () => {
     const manifest = compile({
       root: doc("root", [collection("scene", "scene-doc", 20)]),
