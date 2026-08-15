@@ -531,3 +531,132 @@ export const ClosablePreview: Story = {
     expect(await canvas.findByTestId("preview-closed")).toBeInTheDocument();
   },
 };
+
+// ── LANES ───────────────────────────────────────────────────────────────────
+//
+// A timeline shaped like a real one: two shots with the packing gap between
+// them, and a bed running underneath across the cut.
+//
+// CLIP_GAP_SECONDS is 0.12, so shot B starts at 4.12 and the window 4.00-4.12
+// is covered by nothing but the bed. That window is the interesting one twice
+// over: the bed has to be audible in it, and the surface has to keep showing
+// shot A rather than the bed's stand-in.
+
+function laneClip(
+  id: string,
+  startTime: number,
+  duration: number,
+  trackIndex: number,
+  extra: Partial<TimelineClip> = {},
+): TimelineClip {
+  return {
+    id,
+    index: 0,
+    kind: "image",
+    src: PIXEL,
+    alt: id,
+    title: id,
+    aspect: 16 / 9,
+    trackIndex,
+    startTime,
+    duration,
+    sourceDuration: duration,
+    trimIn: 0,
+    trimOut: 0,
+    ...extra,
+  } as TimelineClip;
+}
+
+const SHOT_A = laneClip("shot-a", 0, 4, 0);
+const SHOT_B = laneClip("shot-b", 4.12, 4, 0);
+const BED = laneClip("bed", 0, 6, 1);
+
+function LayeredFixture({ time, clips }: { time: number; clips: TimelineClip[] }) {
+  const [currentTime, setCurrentTime] = useState(time);
+
+  return (
+    <main className="min-h-[900px] bg-zinc-950 p-4 text-zinc-100">
+      <WorkbenchDisplaySurface
+        clips={clips}
+        currentTime={currentTime}
+        onCurrentTimeChange={setCurrentTime}
+        className="h-[320px]"
+      />
+    </main>
+  );
+}
+
+/** A bed under the picture is LIVE alongside it, not instead of it. The export
+ *  has always mixed layered audio; until this, the preview silenced it. */
+export const LayeredAudioPlaysUnderThePicture: Story = {
+  render: () => <LayeredFixture time={2} clips={[SHOT_A, SHOT_B, BED]} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const surface = canvas.getByTestId("workbench-display-surface");
+
+    // Two clips cover t=2: the shot and the bed. The shot supplies the frame…
+    expect(canvas.getByLabelText("shot-a preview")).toBeInTheDocument();
+    // …and the bed is playing underneath it rather than being paused to zero.
+    expect(surface).toHaveAttribute("data-live-layer-count", "1");
+  },
+};
+
+/** THE GAP AT EVERY CUT. Packing leaves 0.12s between shots; a bed covers it.
+ *  The surface must hold the outgoing shot — resolving "what covers this time"
+ *  would answer "the bed" and flash its stand-in three frames per cut. */
+export const APictureGapHoldsTheOutgoingShot: Story = {
+  render: () => <LayeredFixture time={4.06} clips={[SHOT_A, SHOT_B, BED]} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const surface = canvas.getByTestId("workbench-display-surface");
+
+    expect(canvas.getByLabelText("shot-a preview")).toBeInTheDocument();
+    // Still sounding through the cut — the gap is a picture gap, not a hole in
+    // the timeline.
+    expect(surface).toHaveAttribute("data-live-layer-count", "1");
+  },
+};
+
+/** A layer that has ENDED is not held the way a frame is. The screen cannot
+ *  show nothing, so the picture holds; sound can stop, so it stops. */
+export const AFinishedLayerGoesSilent: Story = {
+  render: () => <LayeredFixture time={7} clips={[SHOT_A, SHOT_B, BED]} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const surface = canvas.getByTestId("workbench-display-surface");
+
+    expect(canvas.getByLabelText("shot-b preview")).toBeInTheDocument();
+    expect(surface).toHaveAttribute("data-live-layer-count", "0");
+  },
+};
+
+/** A disabled layer is silent, while a disabled PICTURE is still drawn (grayed)
+ *  because scrubbing can rest inside it. */
+export const ADisabledLayerIsNotLive: Story = {
+  render: () => (
+    <LayeredFixture
+      time={2}
+      clips={[SHOT_A, SHOT_B, laneClip("bed", 0, 6, 1, { disabled: true })]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByTestId("workbench-display-surface")).toHaveAttribute(
+      "data-live-layer-count",
+      "0",
+    );
+  },
+};
+
+/** Nothing lane-shaped changes for a timeline that uses no lanes. */
+export const WithoutLanesNothingIsLive: Story = {
+  render: () => <LayeredFixture time={2} clips={[SHOT_A, SHOT_B]} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByTestId("workbench-display-surface")).toHaveAttribute(
+      "data-live-layer-count",
+      "0",
+    );
+    expect(canvas.getByLabelText("shot-a preview")).toBeInTheDocument();
+  },
+};

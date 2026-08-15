@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { TimelineClip } from "../types";
-import { getContainingClip, getTimelineDuration, nextPlayableTime } from "./playback-skip";
+import {
+  getContainingClip,
+  getLiveLayerClips,
+  getPictureClip,
+  getTimelineDuration,
+  nextPlayableTime,
+} from "./playback-skip";
 
 function image(
   id: string,
@@ -170,5 +176,108 @@ describe("getContainingClip with lanes", () => {
     expect(getContainingClip(clips, 2)?.id).toBe("a");
     expect(getContainingClip(clips, 9)?.id).toBe("c");
     expect(getContainingClip(clips, 30)).toBeNull();
+  });
+
+  it("RETURNS THE BED IN A PICTURE GAP — correct here, wrong to draw", () => {
+    // Packing leaves CLIP_GAP_SECONDS between every two picture clips, so this
+    // is the shape of every cut on a timeline that has a bed under it. Asking
+    // "is this time inside material" the answer really is the bed, and
+    // nextPlayableTime needs that or it would snap the clock across the gap
+    // while the bed is still playing.
+    //
+    // It is the WRONG answer to "what do I draw", which is why the surface
+    // resolves the picture through getPictureClip instead.
+    const shots = [image("a", 0, 4), image("c", 4.12, 4)];
+    const bed = onLane(image("bed", 0, 30), 1);
+    expect(getContainingClip([...shots, bed], 4.06)?.id).toBe("bed");
+  });
+});
+
+// ── WHAT DRAWS, AND WHAT MERELY PLAYS ───────────────────────────────────────
+//
+// Two questions, previously answered by one function. getContainingClip stays
+// the answer to "is this time inside material" (nextPlayableTime's question).
+// These two split out the surface's question: exactly one clip supplies the
+// frame, and any number of others are simultaneously audible underneath it.
+
+describe("getPictureClip", () => {
+  it("is the lane-0 clip covering the time", () => {
+    const bed = onLane(image("bed", 0, 30), 1);
+    const shot = image("shot", 0, 4);
+    expect(getPictureClip([bed, shot], 2)?.id).toBe("shot");
+  });
+
+  it("HOLDS THE OUTGOING SHOT ACROSS A PICTURE GAP, bed or no bed", () => {
+    // The bug this function exists for. Packing puts CLIP_GAP_SECONDS between
+    // every two picture clips, so with a bed under the cut there is a 120ms
+    // window at EVERY cut that only the bed covers — and drawing the bed means
+    // flashing the audio stand-in three frames per cut.
+    //
+    // A gap carries no new frame. It is not an instruction to stop showing the
+    // shot that was on screen.
+    const shots = [image("a", 0, 4), image("c", 4.12, 4)];
+    const bed = onLane(image("bed", 0, 30), 1);
+    expect(getPictureClip([...shots, bed], 4.06)?.id).toBe("a");
+    expect(getPictureClip(shots, 4.06)?.id).toBe("a");
+  });
+
+  it("holds the last shot past the end of the picture", () => {
+    const shot = image("shot", 0, 4);
+    const bed = onLane(image("bed", 0, 30), 1);
+    expect(getPictureClip([shot, bed], 20)?.id).toBe("shot");
+  });
+
+  it("draws nothing in a LEADING gap, before any shot has started", () => {
+    // Nothing has been shown yet, so there is nothing to hold.
+    expect(getPictureClip([image("shot", 4, 4)], 1)).toBeNull();
+  });
+
+  it("falls back to any lane when the timeline has NO picture at all", () => {
+    // A timeline of nothing but audio still has to draw its stand-in rather
+    // than an empty surface — there is no picture to prefer or to hold.
+    const vo = onLane(image("vo", 0, 10), 1);
+    const bed = onLane(image("bed", 0, 10), 2);
+    expect(getPictureClip([bed, vo], 5)?.id).toBe("vo");
+  });
+
+  it("prefers a real picture over a lane clip that started earlier", () => {
+    const bed = onLane(image("bed", 0, 30), 1);
+    const shot = image("shot", 10, 4);
+    expect(getPictureClip([bed, shot], 12)?.id).toBe("shot");
+  });
+});
+
+describe("getLiveLayerClips", () => {
+  it("is every lane clip covering the time, and never the picture", () => {
+    const shot = image("shot", 0, 10);
+    const bed = onLane(image("bed", 0, 30), 1);
+    const vo = onLane(image("vo", 2, 4), 2);
+    expect(getLiveLayerClips([shot, bed, vo], 3).map((clip) => clip.id)).toEqual(["bed", "vo"]);
+  });
+
+  it("DOES NOT HOLD a finished layer — a bed that ended is silent", () => {
+    // The opposite rule to the picture. Holding a frame across a gap is right
+    // because the screen cannot show nothing; holding SOUND across one would
+    // keep playing a bed that ended.
+    const shot = image("shot", 0, 30);
+    const bed = onLane(image("bed", 0, 4), 1);
+    expect(getLiveLayerClips([shot, bed], 10)).toEqual([]);
+  });
+
+  it("leaves out a disabled layer", () => {
+    const bed = onLane(image("bed", 0, 30, true), 1);
+    const vo = onLane(image("vo", 0, 30), 2);
+    expect(getLiveLayerClips([bed, vo], 5).map((clip) => clip.id)).toEqual(["vo"]);
+  });
+
+  it("is empty for a timeline that uses no lanes", () => {
+    expect(getLiveLayerClips(clips, 2)).toEqual([]);
+  });
+
+  it("returns the SAME empty array every time, since this runs per frame", () => {
+    // Allocating a fresh [] 60 times a second for the overwhelmingly common
+    // case — a timeline with no lanes at all — is the kind of per-frame garbage
+    // getContainingClip's manual loop exists to avoid.
+    expect(getLiveLayerClips(clips, 2)).toBe(getLiveLayerClips(clips, 5));
   });
 });

@@ -150,14 +150,31 @@ function compileFixtureManifest(
      *  no way back on the way down: an enabled child of a disabled parent
      *  still does not play. */
     inheritedDisabled: boolean,
+    /** The OUTERMOST non-zero lane seen on the way down, 0 while still on the
+     *  picture — the same one-way shape as `inheritedDisabled`.
+     *
+     *  Missing here for the same reason `disabled` once was, and it would have
+     *  failed the same way: this mock emitted no `trackIndex` at all, so every
+     *  leaf arrived on lane 0 and the manifest said the timeline had no lanes.
+     *  A test asserting that a bed plays under the picture would have passed
+     *  against a manifest in which there was no bed. */
+    laneFromRoot: number,
   ) => {
     const doc = documents.get(documentId);
     if (!doc) return;
     for (const clip of doc.clips) {
       const clipDisabled = inheritedDisabled || clip.disabled === true;
+      const clipLane =
+        laneFromRoot !== 0 ? laneFromRoot : ((clip.trackIndex as number | undefined) ?? 0);
       if (clip.kind === "collection") {
         const childId = clip.childTimelineId as string;
-        walk(childId, [...path, childId], offset + (clip.startTime as number), clipDisabled);
+        walk(
+          childId,
+          [...path, childId],
+          offset + (clip.startTime as number),
+          clipDisabled,
+          clipLane,
+        );
         continue;
       }
       leaves.push({
@@ -170,12 +187,15 @@ function compileFixtureManifest(
         timelineDuration: clip.duration,
         sourceStart: clip.trimIn ?? 0,
         playbackRate: 1,
+        // Always present, exactly as the real compiler emits it — 0 is the
+        // answer for everything written before lanes, never absence.
+        trackIndex: clipLane,
         // Omitted when false, exactly as the real compiler emits it.
         ...(clipDisabled ? { disabled: true } : {}),
       });
     }
   };
-  walk(rootId, [rootId], 0, false);
+  walk(rootId, [rootId], 0, false, 0);
   const durationSeconds = root.clips.reduce(
     (duration, clip) =>
       Math.max(duration, (clip.startTime as number) + (clip.duration as number)),
@@ -8340,5 +8360,50 @@ test.describe("graph view E2E", () => {
     // And the reorder left the LANE alone — moving within the picture is not
     // a lane change (that is a detail write, and a separate gesture).
     expect(await laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
+  });
+
+  // LAYERED PLAYBACK. The board has drawn lanes since #397 and the export has
+  // mixed them since phase 2, but the PREVIEW silenced everything except one
+  // clip — so a bed was audible in the finished mp4 and not while you worked
+  // on it. This drives the whole app path: lane on the clip → trackIndex in
+  // the manifest → a second element live in the pane.
+  test("a layered clip is LIVE in the preview, and the picture HOLDS under it", async ({
+    page,
+  }) => {
+    await installGraphApi(page, { lanes: { bravo: 1 } });
+    await openGraph(page);
+    await expect.poll(() => laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
+
+    await previewToggle(page).click();
+    const surface = page.getByTestId("workbench-display-surface");
+    await expect(surface).toBeVisible();
+    // On the MANIFEST before scrubbing — only it carries `trackIndex`, so the
+    // projection fallback would report no lanes at all. Same reasoning as the
+    // disabled-clip scrub above.
+    await expect(page.locator("[data-preview-source]")).toHaveAttribute(
+      "data-preview-source",
+      "manifest",
+    );
+
+    // bravo spans 6-10 (fixture starts are `1 + index * 5`), and the picture
+    // has NOTHING there: alpha ends at 7 and clip-scene starts at 11. So this
+    // window is both halves of the change at once — a layer that has to be
+    // live, over a picture gap the surface has to hold across.
+    const rail = page.locator("[data-graph-seek-rail]").first();
+    await expect(rail).toBeVisible();
+    const box = (await rail.boundingBox())!;
+    const canvas = surface.locator("canvas");
+
+    await expect(async () => {
+      for (const fraction of [0.4, 0.42, 0.44, 0.46]) {
+        await page.mouse.click(box.x + box.width * fraction, box.y + box.height / 2);
+        if ((await surface.getAttribute("data-live-layer-count")) === "1") break;
+      }
+      await expect(surface).toHaveAttribute("data-live-layer-count", "1", { timeout: 700 });
+      // Holding alpha, NOT drawing bravo. Resolving "what covers this time"
+      // would answer bravo here — that is the flash this fixes, and packing
+      // puts a gap like it at every cut.
+      await expect(canvas).toHaveAttribute("aria-label", "alpha preview", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
   });
 });
