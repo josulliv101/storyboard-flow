@@ -49,10 +49,14 @@ export async function handleRenderTimeline(
   const compiled = await compileTimelineManifest(args.timelineId, ctx.requesterUid);
   if (!compiled) return toolError(`No timeline with id "${args.timelineId}".`);
 
+  // An explicit argument wins; then the PROJECT's stored shape; then the
+  // default. Per-argument rather than all-or-nothing so `fps` alone can be
+  // overridden without discarding the project's size.
+  const base = compiled.renderFormat ?? DEFAULT_RENDER_FORMAT;
   const format = {
-    width: args.width ?? DEFAULT_RENDER_FORMAT.width,
-    height: args.height ?? DEFAULT_RENDER_FORMAT.height,
-    fps: args.fps ?? DEFAULT_RENDER_FORMAT.fps,
+    width: args.width ?? base.width,
+    height: args.height ?? base.height,
+    fps: args.fps ?? base.fps,
   };
   const cutList = compileCutList(compiled.manifest, format);
   if (cutList.cuts.length === 0) {

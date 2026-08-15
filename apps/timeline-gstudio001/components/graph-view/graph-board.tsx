@@ -116,6 +116,7 @@ import { ActiveTagFilters, TagFilterControl } from "./graph-tag-filter-control";
 import { ItemDetailsProvider } from "./graph-item-details-context";
 import { useGraphDetailsSnapshot } from "./graph-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
+import { GraphRenderFormat } from "./graph-render-format";
 import { GraphRenderStatus } from "./graph-render-status";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
@@ -1742,6 +1743,14 @@ export function GraphBoard({
                   without this the only sign one had finished was a card
                   appearing in Renders. */}
               <GraphRenderStatus timelineId={projectId} />
+              {/* The SHAPE the project exports at. Beside the render status
+                  because it answers the question that one raises — a render
+                  finished, at what size? — and because there is no render
+                  dialog in this app to put it in: renders start from the MCP
+                  tools. Unlike its two neighbours it is always present, since
+                  "what will this export as" is a standing fact rather than a
+                  transient status. */}
+              <GraphRenderFormat timelineId={projectId} />
             </div>
             {/* Middle summary and the right-hand controls fade out under the
                 drag readout that overlays this row, and fade back on drop. The

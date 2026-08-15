@@ -72,11 +72,13 @@ export type RenderCut = Readonly<{
 /** Output format. Fixed per job rather than per cut: the worker normalises
  *  every source to this before concatenating, because ffmpeg's concat
  *  demuxer requires identical parameters and produces garbage without it. */
-export type RenderFormat = Readonly<{
-  width: number;
-  height: number;
-  fps: number;
-}>;
+// Re-exported from the MODEL, not declared here: a project stores the format
+// it renders at, so the shape belongs with the stored document. Two
+// declarations of "how big is the output" is how a preview and a render come
+// to disagree.
+import type { RenderFormat } from "@storyboard/timeline-model/render-format";
+
+export type { RenderFormat };
 
 /**
  * The finished cut list — everything a renderer needs and nothing about how it

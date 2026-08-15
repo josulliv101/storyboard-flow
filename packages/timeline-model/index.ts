@@ -4,5 +4,6 @@ export * from "./constants";
 export * from "./documents";
 export * from "./placement";
 export * from "./layer-frame";
+export * from "./render-format";
 export * from "./validate";
 export * from "./clip-display";
