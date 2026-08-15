@@ -2603,6 +2603,117 @@ export const PlacementIsUndoable: Story = {
   },
 };
 
+/** The lane harness with history controls and a readout, for drag stories. */
+function LaneDragHarness() {
+  return (
+    <DndCollections initialGraph={laneGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-2">
+        <UndoRedoControls />
+        <PlacementReadout id="bed" />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemIds={PICTURE_IDS}
+          itemTimes={PICTURE_TIMES}
+          layers={LANE_LAYERS}
+          pixelsPerSecond={LANE_PPS}
+        />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const DraggingBetweenLanesPlacesTheClip: Story = {
+  // #399 phase B. Dragging a bed onto another lane row resolves to a LANE and
+  // a TIME, not a boundary index — and commits as `set-node-placement`, so it
+  // is undoable like any other change.
+  render: () => <LaneDragHarness />,
+  play: async ({ canvasElement }) => {
+    const shot1 = nodeCard(canvasElement, "shot1");
+    await waitForLayout(shot1);
+    const readout = () =>
+      canvasElement.querySelector("[data-placement]")?.getAttribute("data-placement");
+
+    // The bed starts unplaced on lane 1 (its row comes from the `layers` prop).
+    expect(readout()).toBe("-1@-1");
+
+    // Drop it onto the SECOND lane row, over shot 2.
+    const lane2 = canvasElement.querySelector<HTMLElement>('[data-strip-lane="2"]')!;
+    const shot2Box = nodeCard(canvasElement, "shot2").getBoundingClientRect();
+    const laneBox = lane2.getBoundingClientRect();
+    // 20px in from shot 2's edge is OUTSIDE the 8px snap range, so this lands
+    // exactly where the pointer is: 20px at 40px/s is 0.5s past 4.12.
+    const target = { x: shot2Box.left + 20, y: laneBox.top + laneBox.height / 2 };
+
+    await dragToPoint(nodeHandle(canvasElement, "bed"), target);
+
+    await waitFor(() => expect(readout()).toBe("2@4.62"));
+  },
+};
+
+export const PlacementPreviewSnapsToACut: Story = {
+  // The preview is the whole reason snapping is discoverable: without it a
+  // user cannot tell that releasing here lands on the cut rather than 3px off.
+  render: () => <LaneDragHarness />,
+  play: async ({ canvasElement }) => {
+    const shot1 = nodeCard(canvasElement, "shot1");
+    await waitForLayout(shot1);
+    const shot2Box = nodeCard(canvasElement, "shot2").getBoundingClientRect();
+    const lane2 = canvasElement.querySelector<HTMLElement>('[data-strip-lane="2"]')!;
+    const laneBox = lane2.getBoundingClientRect();
+    const marker = () =>
+      canvasElement.querySelector<HTMLElement>("[data-place-indicator]");
+
+    // Nothing to preview until a drag is live.
+    expect(marker()).toBeNull();
+
+    // HOLD 3px past shot 2's left edge — inside the 8px snap range.
+    const near = { x: shot2Box.left + 3, y: laneBox.top + laneBox.height / 2 };
+    await dragHoldAt(nodeHandle(canvasElement, "bed"), near);
+
+    await waitFor(() => expect(marker()).not.toBeNull());
+    expect(marker()!.getAttribute("data-place-indicator")).toBe("2");
+    // Snapped: the marker sits ON the cut, not 3px past it. Compared against
+    // shot 2's own left edge so this holds whatever the container's offset is.
+    const markerX = marker()!.getBoundingClientRect().left;
+    expect(Math.abs(markerX - shot2Box.left)).toBeLessThanOrEqual(1.5);
+
+    await releaseAt(near);
+  },
+};
+
+export const DraggingOntoThePictureRejoinsTheCut: Story = {
+  render: () => <LaneDragHarness />,
+  play: async ({ canvasElement }) => {
+    const shot1 = nodeCard(canvasElement, "shot1");
+    await waitForLayout(shot1);
+    const readout = () =>
+      canvasElement.querySelector("[data-placement]")?.getAttribute("data-placement");
+    const undo = () => within(canvasElement).getByRole("button", { name: /undo/i });
+
+    // Put it somewhere first, so clearing is observable.
+    const lane2 = canvasElement.querySelector<HTMLElement>('[data-strip-lane="2"]')!;
+    const laneBox = lane2.getBoundingClientRect();
+    await dragToPoint(nodeHandle(canvasElement, "bed"), {
+      x: shot1.getBoundingClientRect().left + 4,
+      y: laneBox.top + laneBox.height / 2,
+    });
+    await waitFor(() => expect(readout()).toBe("2@0"));
+
+    // Now drag it onto the PICTURE row: lane and placement both clear, and the
+    // clip takes the slot its array position gives it in the cut. One command,
+    // so one undo puts it back.
+    const pictureBox = shot1.getBoundingClientRect();
+    await dragToPoint(nodeHandle(canvasElement, "bed"), {
+      x: pictureBox.left + 40,
+      y: pictureBox.top + pictureBox.height / 2,
+    });
+    await waitFor(() => expect(readout()).toBe("-1@-1"));
+
+    await userEvent.setup().click(undo());
+    await waitFor(() => expect(readout()).toBe("2@0"));
+  },
+};
+
 export const LaneRowsCarryGridRowSemantics: Story = {
   render: () => <LaneHarness />,
   play: async ({ canvasElement }) => {

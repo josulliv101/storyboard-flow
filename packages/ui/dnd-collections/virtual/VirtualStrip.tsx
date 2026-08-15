@@ -63,6 +63,11 @@ import {
   resolveBoundaryIndex,
   slotSizeFor,
 } from "./virtual-strip-geometry";
+import { useDroppable } from "@dnd-kit/core";
+import {
+  VIRTUAL_PLACE_DATA_KEY,
+  type VirtualPlaceTarget,
+} from "../react/virtual-droppable";
 import {
   createLaneTimeMap,
   laneFlatIndex,
@@ -71,6 +76,8 @@ import {
   laneRowTop,
   laneStackHeight,
   resolveLaneStripIndex,
+  snapEdgesFor,
+  snapToEdges,
   type LanePictureSlot,
   type LaneRowLayout,
 } from "./virtual-strip-lanes";
@@ -124,6 +131,54 @@ const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
 // Gap between the floating overview tooltip and the top of the strip.
 const OVERVIEW_GAP = 8;
+
+/** How close (in px) a dragged clip has to be to a cut before it snaps to it. */
+const SNAP_THRESHOLD_PX = 8;
+
+/**
+ * One row registered as a drop target that resolves to a LANE and a TIME.
+ *
+ * A component rather than a loop of hooks: the row count changes with the
+ * data, and `useDroppable` cannot be called conditionally. Each row owns its
+ * own registration and hands the provider a resolver, exactly as the strip
+ * container does for boundary indices.
+ */
+function LaneRowDroppable({
+  collectionId,
+  lane,
+  resolveTime,
+  style,
+  children,
+  ...rest
+}: Readonly<{
+  collectionId: NodeId;
+  lane: number;
+  resolveTime: (point: Readonly<{ x: number; y: number }>) => number;
+  style: CSSProperties;
+  children: ReactNode;
+}> &
+  Readonly<Record<string, unknown>>) {
+  // Read through a ref so the droppable's data closure never goes stale as the
+  // layout changes mid-drag — the same indirection the container droppable's
+  // `resolveBoundary` uses.
+  const resolveRef = useRef(resolveTime);
+  resolveRef.current = resolveTime;
+  const { setNodeRef } = useDroppable({
+    id: `vlane:${collectionId}:${lane}`,
+    data: {
+      [VIRTUAL_PLACE_DATA_KEY]: {
+        collectionId,
+        lane,
+        resolveTime: (point) => resolveRef.current(point),
+      } satisfies VirtualPlaceTarget,
+    },
+  });
+  return (
+    <div ref={setNodeRef} style={style} {...rest}>
+      {children}
+    </div>
+  );
+}
 
 // A lane row draws as a slim band under the picture — the editor idiom, where
 // a bed or a voiceover must not compete with the shots for height. A fraction
@@ -776,6 +831,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       itemWidthFor,
     ]);
 
+    // Read imperatively by the drop resolver, which runs on dnd-kit's collision
+    // cadence rather than React's — a closure captured at render would be a
+    // frame behind the layout it is measuring against.
+    const laneMapRef = useRef(laneTimeMap);
+    laneMapRef.current = laneTimeMap;
+
     // Every layer card's box, plus the furthest right edge any of them reach —
     // the spacer has to cover a bed that outlasts the picture.
     const layerPlacements = useMemo(() => {
@@ -792,6 +853,20 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       }
       return { byId, right };
     }, [laneRows, laneTimeMap]);
+
+    // What snapping measures against: the picture's cuts, each lane's own
+    // clips, and which clip is being dragged (it must not snap to itself).
+    const laneRowsRef = useRef<{
+      picture: readonly StripTimedSlot[];
+      byLane: Map<number, readonly StripLayerItem[]>;
+      draggedId: string;
+    }>({ picture: [], byLane: new Map(), draggedId: "" });
+    const activeId = useCollectionsSelector((s) => s.interaction.activeIds[0] ?? null);
+    laneRowsRef.current = {
+      picture: itemTimes ?? [],
+      byLane: new Map((laneRows ?? []).map((layer, index) => [index + 1, layer.items])),
+      draggedId: (activeId as string | null) ?? "",
+    };
 
     // Row 0 is the picture, then each layer in order — the shape the roving
     // resolver navigates. Empty without lanes, which is what keeps the plain
@@ -815,6 +890,55 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const rovingIndexById = useMemo(
       () => (laneRows ? new Map(rovingIds.map((id, index) => [id, index])) : indexById),
       [laneRows, rovingIds, indexById],
+    );
+
+    // SHIFT places exactly, overriding the snap. Tracked here rather than read
+    // off the drag event because dnd-kit's collision pass carries no
+    // modifiers, and the user can press or release Shift mid-drag — the answer
+    // has to be live at the moment the pointer moves, not at pick-up. Listeners
+    // only exist while a drag does.
+    const exactRef = useRef(false);
+    const isDragging = useCollectionsSelector((s) => s.interaction.isDragging);
+    useEffect(() => {
+      if (!isDragging || !laneRows) return;
+      const sync = (event: KeyboardEvent) => {
+        exactRef.current = event.shiftKey;
+      };
+      window.addEventListener("keydown", sync);
+      window.addEventListener("keyup", sync);
+      return () => {
+        exactRef.current = false;
+        window.removeEventListener("keydown", sync);
+        window.removeEventListener("keyup", sync);
+      };
+    }, [isDragging, laneRows]);
+
+    // Pointer -> a start time on the CONSUMER'S clock, for one row.
+    //
+    // The dragged clip is placed by its LEFT EDGE, which is what the indicator
+    // draws and what a user aims with — grabbing a bed in the middle and
+    // dropping it should not bury its start half a card to the left.
+    const resolveTimeFor = useCallback(
+      (lane: number) => (point: VirtualViewPoint) => {
+        const content = contentRef.current;
+        const map = laneMapRef.current;
+        if (!content || !map) return 0;
+        const contentX = point.x - content.getBoundingClientRect().left;
+        const raw = map.timeAt(contentX);
+        if (exactRef.current) return raw;
+        const rows = laneRowsRef.current;
+        return snapToEdges(
+          map,
+          raw,
+          snapEdgesFor(
+            rows.picture,
+            lane === 0 ? [] : (rows.byLane.get(lane) ?? []),
+            rows.draggedId,
+          ),
+          SNAP_THRESHOLD_PX,
+        );
+      },
+      [contentRef],
     );
 
     // Pointer -> visible boundary index from the virtualizer's measurements
@@ -1075,6 +1199,25 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       return intent.index;
     });
 
+    // A live PLACEMENT intent aimed at this strip: which row, and at what
+    // time. Selected as primitives rather than the intent object so the
+    // subscription compares by value — the intent is a fresh object on every
+    // pointer move.
+    const placingLane = useCollectionsSelector((s) => {
+      const intent = s.interaction.dropIntent;
+      return intent?.type === "place-at-time" &&
+        intent.collectionId === collectionId &&
+        !s.interaction.dropIntentInvalid
+        ? intent.lane
+        : null;
+    });
+    const placingStart = useCollectionsSelector((s) => {
+      const intent = s.interaction.dropIntent;
+      return intent?.type === "place-at-time" && intent.collectionId === collectionId
+        ? intent.startSeconds
+        : null;
+    });
+
     // Boundary k's line sits in the gap before item k (measured offsets, so
     // variable widths align). Boundaries under the pointer are always near
     // the viewport, so the mounted-items lookup is sufficient; k === count
@@ -1147,17 +1290,21 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // the live-trim anchor transform all apply to them for free.
     const laneRowElements = laneRows?.map((layer, layerIndex) => {
       if (layer.items.length === 0) return null;
+      const lane = layerIndex + 1;
       return (
-        <div
+        <LaneRowDroppable
           key={`lane-${layerIndex}`}
+          collectionId={collectionId}
+          lane={lane}
+          resolveTime={resolveTimeFor(lane)}
           role="row"
           aria-rowindex={layerIndex + 2}
-          data-strip-lane={layerIndex + 1}
+          data-strip-lane={lane}
           style={{
             position: "absolute",
             left: 0,
             right: 0,
-            top: laneRowTop(layerIndex + 1, itemHeight, layerHeight, layerGap),
+            top: laneRowTop(lane, itemHeight, layerHeight, layerGap),
             height: layerHeight,
           }}
         >
@@ -1191,7 +1338,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
               </div>
             );
           })}
-        </div>
+        </LaneRowDroppable>
       );
     });
 
@@ -1293,6 +1440,25 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 transform: dragShiftX ? `translateX(${dragShiftX}px)` : undefined,
               }}
             >
+              {/* PLACEMENT preview. The insert indicator marks a boundary
+                  between two cards; a placement has no boundary — it lands at
+                  a moment on a row — so it draws where the clip's LEFT EDGE
+                  will be, which is what the drop actually sets and what the
+                  user is aiming. On the picture row it is a full-height bar,
+                  because dropping there means "rejoin the cut" rather than
+                  "land at this instant". */}
+              {laneRows !== null && placingLane !== null && laneTimeMap !== null && (
+                <div
+                  aria-hidden="true"
+                  data-place-indicator={placingLane}
+                  className="pointer-events-none absolute z-20 w-0.5 -translate-x-1/2 rounded-full bg-primary"
+                  style={{
+                    left: placingStart === null ? 0 : laneTimeMap.at(placingStart),
+                    top: laneRowTop(placingLane, itemHeight, layerHeight, layerGap),
+                    height: placingLane === 0 ? itemHeight : layerHeight,
+                  }}
+                />
+              )}
               {indicatorLeft !== null && (
                 <div
                   aria-hidden="true"
@@ -1302,7 +1468,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 />
               )}
               {laneRows && childIds.length > 0 ? (
-                <div
+                // A drop target too, so a layered clip dragged up here
+                // rejoins the cut. It resolves to lane 0, which the command
+                // resolver reads as "clear the placement" — the picture packs
+                // from array order, so there is no time to land at.
+                <LaneRowDroppable
+                  collectionId={collectionId}
+                  lane={0}
+                  resolveTime={resolveTimeFor(0)}
                   role="row"
                   aria-rowindex={1}
                   data-strip-lane={0}
@@ -1315,7 +1488,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   }}
                 >
                   {pictureCells}
-                </div>
+                </LaneRowDroppable>
               ) : (
                 pictureCells
               )}

@@ -8266,6 +8266,42 @@ test.describe("graph view E2E", () => {
     expect(Math.abs(bravoBox.x - alphaBox.x)).toBeLessThanOrEqual(1);
   });
 
+  test("dragging a layered clip onto the picture row puts it back in the cut", async ({
+    page,
+  }) => {
+    // #399 phase B, in the real app. The drop resolves to a LANE (0) rather
+    // than a boundary index, and commits as `set-node-placement` — which is a
+    // command, so Ctrl+Z puts it back.
+    await installGraphApi(page, { lanes: { bravo: 1 } });
+    await openGraph(page);
+    await expect.poll(() => laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
+
+    // Aim at a picture CARD, not a gap. Crossing a row has to beat the card
+    // underneath or the gesture would need the user to hunt for a gutter.
+    const alphaBox = (await strip(page, PROJECT_ID)
+      .locator('[data-node-id="alpha"]')
+      .boundingBox())!;
+    await holdDragToPoint(
+      page,
+      strip(page, PROJECT_ID).locator('[data-node-id="bravo"]'),
+      alphaBox.x + alphaBox.width / 2,
+      alphaBox.y + alphaBox.height / 2,
+    );
+
+    // Lane 1 is empty, and bravo is back among the shots at its array
+    // position. Read through `stripOrder`, not the lane-0 row: with nothing
+    // left on a lane the board drops the row DOM entirely and renders as the
+    // plain strip it was before lanes — which is the gating working.
+    await expect.poll(() => laneOrder(page, PROJECT_ID, 1)).toEqual([]);
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+
+    // And it is UNDOABLE, which is what phase A was for.
+    await undoButton(page).click();
+    await expect.poll(() => laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
+  });
+
   test("a gap drop lands where the PICTURE says, not where the raw boundary would", async ({
     page,
   }) => {

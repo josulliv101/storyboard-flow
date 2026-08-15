@@ -6,7 +6,11 @@ import {
   getChildren,
   isSameOrAncestor,
 } from "./graph";
-import { type AddNodesCommand, type MoveNodesCommand } from "./commands";
+import {
+  type AddNodesCommand,
+  type MoveNodesCommand,
+  type SetNodePlacementCommand,
+} from "./commands";
 
 // The intent layer answers "what did the user seem to mean?" from raw
 // geometry (which droppable, where in its rect), completely separately from
@@ -46,7 +50,27 @@ export type DropIntent =
    * cards still occupy their slots during a drag, and the post-removal
    * conversion happens in `resolveCommandFromIntent`, nowhere else.
    */
-  | Readonly<{ type: "insert-at-index"; collectionId: NodeId; index: number }>;
+  | Readonly<{ type: "insert-at-index"; collectionId: NodeId; index: number }>
+  /**
+   * Drop onto a LANE at a TIME, rather than into a sequence at an index.
+   *
+   * The engine does not interpret either number — it does not pack and does
+   * not know what a second is. It routes them, exactly as it stores
+   * `trackIndex`/`placedStart` on a node without reading them. What makes
+   * this an intent rather than a consumer callback is that the result is
+   * still a command, so a placement made by dragging is undoable like any
+   * other change.
+   *
+   * `startSeconds` is on the CONSUMER'S clock, already snapped (or not) by
+   * whatever resolved it. Lane 0 is legitimate: dragging a clip back onto
+   * the picture is how it rejoins the cut.
+   */
+  | Readonly<{
+      type: "place-at-time";
+      collectionId: NodeId;
+      lane: number;
+      startSeconds: number;
+    }>;
 
 export type RectLike = Readonly<{ left: number; top: number; width: number; height: number }>;
 
@@ -184,6 +208,11 @@ export function intentDestination(graph: CollectionsGraph, intent: DropIntent): 
       return intent.collectionId;
     case "insert-adjacent":
       return graph.parentById.get(intent.targetId) ?? null;
+    // A placement does not RE-PARENT: the clip stays where it is in the tree
+    // and only its lane and start change. The destination is therefore the
+    // collection it is already in, which is the one the row belongs to.
+    case "place-at-time":
+      return intent.collectionId;
   }
 }
 
@@ -220,6 +249,14 @@ export function resolveCommandFromIntent(
   draggedIds: readonly NodeId[]
 ): Result<MoveNodesCommand, IntentRejection> {
   const draggedSet = new Set(draggedIds);
+
+  // A PLACEMENT is not a move: it rewrites two fields and leaves the structure
+  // alone. Refused here rather than handled, so the one function that does
+  // post-removal index math keeps its narrow contract — `resolvePlacementCommand`
+  // is its counterpart.
+  if (intent.type === "place-at-time") {
+    return { ok: false, error: { reason: "invalid-index", index: intent.lane } };
+  }
 
   if (intent.type === "nest-inside" || intent.type === "append-to-collection") {
     const children = getChildren(graph, intent.collectionId);
@@ -314,3 +351,60 @@ export function resolveAddCommandFromIntent(
   };
 }
 
+
+/**
+ * A `place-at-time` intent -> the command that carries it.
+ *
+ * Separate from `resolveCommandFromIntent` because a placement is NOT a move:
+ * it rewrites two fields on a node and leaves the structure alone, so it
+ * resolves to `set-node-placement` and that function keeps its narrow
+ * move-nodes contract.
+ *
+ * LANE 0 CLEARS BOTH FIELDS, and drops the time on the floor. The picture is
+ * a cut — its clips pack end to end from array order — so there is no "here"
+ * to place a clip at on that row. Dropping onto it means "rejoin the cut", and
+ * the clip takes the slot its array position gives it; nudging it along from
+ * there is the ordinary reorder drag, which already exists. The alternative
+ * was a move AND a placement for one gesture, which this store cannot express
+ * as a single history entry — it would have cost two undos for one drag.
+ *
+ * Every other lane places at the time given. Non-finite values are refused
+ * rather than stored, the same way the reducer refuses them.
+ */
+export function resolvePlacementCommand(
+  intent: Extract<DropIntent, { type: "place-at-time" }>,
+  draggedIds: readonly NodeId[]
+): Result<SetNodePlacementCommand, IntentRejection> {
+  if (draggedIds.length === 0) {
+    return { ok: false, error: { reason: "invalid-index", index: 0 } };
+  }
+  if (!Number.isInteger(intent.lane) || intent.lane < 0) {
+    return { ok: false, error: { reason: "invalid-index", index: intent.lane } };
+  }
+  if (intent.lane === 0) {
+    return {
+      ok: true,
+      value: {
+        type: "set-node-placement",
+        nodeIds: draggedIds,
+        placement: { trackIndex: null, placedStart: null },
+      },
+    };
+  }
+  if (!Number.isFinite(intent.startSeconds)) {
+    return { ok: false, error: { reason: "invalid-index", index: intent.startSeconds } };
+  }
+  return {
+    ok: true,
+    value: {
+      type: "set-node-placement",
+      nodeIds: draggedIds,
+      placement: {
+        trackIndex: intent.lane,
+        // Never negative: the picture starts at zero and a lane shares its
+        // origin, so a drag past the left edge means "at the very start".
+        placedStart: Math.max(0, intent.startSeconds),
+      },
+    },
+  };
+}

@@ -9,6 +9,8 @@ import {
   laneRowTop,
   laneStackHeight,
   resolveLaneStripIndex,
+  snapEdgesFor,
+  snapToEdges,
   type LaneRowLayout,
 } from "./virtual-strip-lanes";
 
@@ -96,6 +98,96 @@ describe("createLaneTimeMap", () => {
       { left: 168, width: 128, startSeconds: 4.12, durationSeconds: 100 },
     ]);
     expect(map.at(54.12)).toBe(232);
+  });
+});
+
+describe("timeAt — the inverse a drag needs", () => {
+  const map = createLaneTimeMap(SHOTS);
+
+  it("returns 0 for every x when there are no slots", () => {
+    expect(createLaneTimeMap([]).timeAt(100)).toBe(0);
+  });
+
+  it("inverts `at` exactly on card edges", () => {
+    for (const time of [0, 4, 4.12, 8.24, 12.24]) {
+      expect(map.timeAt(map.at(time))).toBeCloseTo(time, 6);
+    }
+  });
+
+  it("inverts `at` inside a card and across a gutter", () => {
+    for (const time of [1, 2, 3.9, 4.06, 5.5, 9.1, 11]) {
+      expect(map.timeAt(map.at(time))).toBeCloseTo(time, 6);
+    }
+  });
+
+  it("clamps before the run and extrapolates past it, mirroring `at`", () => {
+    expect(map.timeAt(-50)).toBe(0);
+    // 40px past the last shot's right edge is 1s past its end.
+    expect(map.timeAt(496 + 40)).toBeCloseTo(13.24, 6);
+    expect(map.timeAt(Number.NaN)).toBe(0);
+  });
+
+  it("round-trips a time that is past the picture", () => {
+    for (const time of [13, 20, 42]) {
+      expect(map.timeAt(map.at(time))).toBeCloseTo(time, 6);
+    }
+  });
+});
+
+describe("snapToEdges", () => {
+  const map = createLaneTimeMap(SHOTS);
+
+  it("snaps to a cut the pointer is near", () => {
+    // Shot 2 starts at 4.12s (x=168). A drop at x=170 is 2px away.
+    const near = map.timeAt(170);
+    expect(snapToEdges(map, near, [4.12], 6)).toBe(4.12);
+  });
+
+  it("leaves a time alone when nothing is close enough", () => {
+    const far = map.timeAt(240);
+    expect(snapToEdges(map, far, [4.12], 6)).toBe(far);
+  });
+
+  it("measures in PIXELS, so the same gesture holds at any zoom", () => {
+    // The same 0.15s gap is 6px at 40px/s and 60px at 400px/s: snappable at
+    // one zoom and not the other, which is the point of a pixel threshold.
+    const zoomed = createLaneTimeMap([
+      { left: 0, width: 1600, startSeconds: 0, durationSeconds: 4 },
+    ]);
+    expect(snapToEdges(map, 3.85, [4], 8)).toBe(4);
+    expect(snapToEdges(zoomed, 3.85, [4], 8)).toBe(3.85);
+  });
+
+  it("takes the NEAREST edge when several are in range", () => {
+    const near = map.timeAt(166);
+    expect(snapToEdges(map, near, [4, 4.12], 20)).toBe(4.12);
+  });
+
+  it("is inert with no edges, which is how a caller turns it off", () => {
+    expect(snapToEdges(map, 5.5, [], 6)).toBe(5.5);
+    expect(snapToEdges(map, 5.5, [5.5], 0)).toBe(5.5);
+  });
+});
+
+describe("snapEdgesFor", () => {
+  const picture = [
+    { startSeconds: 0, durationSeconds: 4 },
+    { startSeconds: 4.12, durationSeconds: 4 },
+  ];
+
+  it("offers both ends of every picture card", () => {
+    // Rounded: an end is start + duration, and 4.12 + 4 is not 8.12 in binary.
+    const round = (value: number) => Math.round(value * 100) / 100;
+    expect(snapEdgesFor(picture, [], "x").map(round)).toEqual([0, 4, 4.12, 8.12]);
+  });
+
+  it("offers the other clips on the lane, but never the dragged one", () => {
+    const lane = [
+      { id: "bed", startSeconds: 0, durationSeconds: 6 },
+      { id: "vo", startSeconds: 9, durationSeconds: 2 },
+    ];
+    // `bed` is being dragged, so its own edges are not targets.
+    expect(snapEdgesFor([], lane, "bed")).toEqual([9, 11]);
   });
 });
 
