@@ -32,6 +32,12 @@ const RENDER_COLLECTION = "gstudioRenderJobs";
  */
 const CLAIM_SCAN_LIMIT = 20;
 
+/** How many of a timeline's renders one listing reads before narrowing to the
+ *  caller's own. Bounds the read cost of a poll that runs while a tab is open;
+ *  a project with more than this many renders still shows its newest, because
+ *  the sort happens after. */
+const LIST_SCAN_LIMIT = 20;
+
 type RenderJobRecord = {
   timelineId?: string;
   projectRevision?: number;
@@ -159,6 +165,31 @@ export async function claimNextRenderJob(
     if (claimed !== null) return claimed;
   }
   return null;
+}
+
+/**
+ * The most recent renders of one timeline, newest first.
+ *
+ * Equality-only query plus an in-memory sort, for the same reason the claim
+ * scan is: `where(timelineId).orderBy(createdAt)` needs a composite index and
+ * therefore a deploy, and a project has renders in the single figures. The
+ * limit is what keeps that true regardless.
+ */
+export async function listRenderJobsForTimeline(
+  timelineId: string,
+  requesterUid: string,
+  limit = 5,
+): Promise<StoredRenderJob[]> {
+  const snapshot = await collection()
+    .where("timelineId", "==", timelineId)
+    .limit(LIST_SCAN_LIMIT)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => toStoredJob(doc.id, (doc.data() ?? {}) as RenderJobRecord))
+    .filter((job): job is StoredRenderJob => job !== null && job.requestedBy === requesterUid)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
 }
 
 export type ReportResult =

@@ -115,6 +115,7 @@ import { ActiveTagFilters, TagFilterControl } from "./graph-tag-filter-control";
 import { ItemDetailsProvider } from "./graph-item-details-context";
 import { useGraphDetailsSnapshot } from "./graph-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
+import { GraphRenderStatus } from "./graph-render-status";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
@@ -1697,6 +1698,13 @@ export function GraphBoard({
             <div data-crumb-wing className="flex min-w-0 flex-1 items-center gap-3">
               {breadcrumb}
               <GraphSaveStatus />
+              {/* Beside the save status, and for the same reason it sits here:
+                  "where am I / how is it doing" reads as one line, and both
+                  take no space when they have nothing to say. Renders are
+                  started from the MCP tools rather than from this board, so
+                  without this the only sign one had finished was a card
+                  appearing in Renders. */}
+              <GraphRenderStatus timelineId={projectId} />
             </div>
             {/* Middle summary and the right-hand controls fade out under the
                 drag readout that overlays this row, and fade back on drop. The

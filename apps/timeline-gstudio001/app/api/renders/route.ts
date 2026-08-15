@@ -6,7 +6,7 @@ import { compileTimelineManifest } from "@/lib/compile-timeline-manifest";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 import { TimelineClosureTooLargeError } from "@/lib/load-timeline-closure";
 import { compileCutList, DEFAULT_RENDER_FORMAT } from "@/lib/render/cut-list";
-import { createRenderJob } from "@/lib/render/job-store";
+import { createRenderJob, listRenderJobsForTimeline } from "@/lib/render/job-store";
 import { renderProviders } from "@/lib/render/registry";
 import type { RenderJob } from "@/lib/render/types";
 
@@ -19,6 +19,47 @@ function isValidTimelineId(id: string) {
 
 function mintRenderId(): string {
   return `render-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * This timeline's recent renders, newest first — what the board's status chip
+ * polls.
+ *
+ * A LISTING rather than a per-id lookup, because a render is started from
+ * somewhere else entirely (the MCP tools, an agent) and the board has no id to
+ * ask about. The poll RATE is where the cost of that lives, and it is decided
+ * client-side in `lib/render/render-poll`: fast while something is encoding,
+ * slow when idle, and stopped completely while the tab is hidden.
+ *
+ * The cut list is not returned. It is large, it is the worker's business, and
+ * a chip needs a state, a fraction and a URL.
+ */
+export async function GET(request: Request) {
+  const { user, response } = await requireAuthUser();
+  if (response || !user) {
+    return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const timelineId = new URL(request.url).searchParams.get("timelineId") ?? "";
+  if (!isValidTimelineId(timelineId)) {
+    return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });
+  }
+
+  try {
+    const jobs = await listRenderJobsForTimeline(timelineId, user.uid);
+    return NextResponse.json({
+      renders: jobs.map((job) => ({
+        id: job.id,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        durationSeconds: job.cutList.durationSeconds,
+        ...job.progress,
+      })),
+    });
+  } catch (error) {
+    console.error("[GSTUDIO_RENDER_LIST_ERROR]", error);
+    return NextResponse.json({ error: "Unable to read renders." }, { status: 500 });
+  }
 }
 
 /**
