@@ -23,6 +23,8 @@ import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-vie
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
+import { useClipDetail } from "./graph-details-context";
+import { LayerFramePicker } from "./graph-layer-frame-picker";
 import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
@@ -284,6 +286,9 @@ function CollectionDetails({
 
 function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () => void }>) {
   const live = useLiveTrim(node.id);
+  // For the inset picker: the clip's shape decides the inset's height, and
+  // therefore which preset a stored rectangle came from.
+  const detail = useClipDetail(node.id as string);
   const history = useScopedHistory(node.id);
   const rename = useInlineRename(node.id, node.name, "item-details");
   // A still has no source window to map, so the trim half of this view is
@@ -517,6 +522,23 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
           <div className="flex items-center justify-between font-mono text-[11px] text-zinc-500">
             <span className="text-blue-300/90">still · {formatSeconds(showing)} on screen</span>
             <span>drag the card&apos;s edge on the strip to change how long it holds</span>
+          </div>
+        )}
+
+        {/* WHERE IT DRAWS, for a clip that is under the picture. Only shown
+            when it is actually on a lane and actually has a picture: the
+            control describes a rectangle inside the frame, and neither the
+            picture itself nor a voiceover has one.
+
+            The first FORM control for a placement field — lane and placed
+            start are drag-only. It exists because the write path stamps a
+            default corner when a clip lands on a lane, and a default nobody
+            can move is worse than no default at all. Dispatches
+            `set-node-placement`, so unlike the tag editor below it IS
+            undoable. */}
+        {(node.trackIndex ?? 0) > 0 && node.mediaKind !== "audio" && (
+          <div className="flex flex-col gap-1.5 border-t border-white/10 pt-3">
+            <LayerFramePicker node={node} aspect={detail?.aspect} disabled={live !== null} />
           </div>
         )}
 

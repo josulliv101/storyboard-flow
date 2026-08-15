@@ -1,8 +1,13 @@
 import {
   DEFAULT_LAYER_POSITION,
   DEFAULT_LAYER_SIZE,
+  LAYER_FRAME_POSITIONS,
+  LAYER_FRAME_SIZES,
   layerFrameForPreset,
+  sameLayerFrame,
   type LayerFrame,
+  type LayerFramePosition,
+  type LayerFrameSize,
 } from "@storyboard/timeline-model/layer-frame";
 import type { CollectionItemNode } from "@storyboard/ui/dnd-collections";
 
@@ -68,4 +73,51 @@ export function defaultLayerFramePlacement(
 ): Readonly<{ layerFrame?: LayerFrame }> {
   if (!hasPicture(node) || node?.layerFrame !== undefined) return {};
   return { layerFrame: defaultLayerFrame(detail?.aspect) };
+}
+
+/**
+ * The rectangle a preset produces at THIS project's output size.
+ *
+ * The picker and the tool both go through here so neither has to know the
+ * output aspect, and neither can pick a different one from the other.
+ */
+export function layerFrameForChoice(
+  position: LayerFramePosition,
+  size: LayerFrameSize,
+  aspect: number | undefined,
+): LayerFrame {
+  return layerFrameForPreset(position, size, aspect ?? FALLBACK_ASPECT, FRAME_ASPECT);
+}
+
+export type LayerFrameChoice = Readonly<{
+  position: LayerFramePosition;
+  size: LayerFrameSize;
+}>;
+
+/**
+ * Which preset a stored rectangle came from, if any.
+ *
+ * Reverse-mapped by generating all 27 and comparing, rather than by solving
+ * the geometry backwards: the forward function is the definition, and anything
+ * that re-derived it could drift from it. Twenty-seven cheap comparisons run
+ * when a modal opens, not per frame.
+ *
+ * `null` means CUSTOM — a rectangle no preset produces. That is not an error:
+ * it is what a hand-written frame looks like, and what dragging an inset will
+ * produce when that ships. The picker says so rather than lighting up whichever
+ * preset happens to be nearest.
+ */
+export function presetForLayerFrame(
+  frame: LayerFrame | undefined,
+  aspect: number | undefined,
+): LayerFrameChoice | null {
+  if (frame === undefined) return null;
+  for (const position of LAYER_FRAME_POSITIONS) {
+    for (const size of LAYER_FRAME_SIZES) {
+      if (sameLayerFrame(frame, layerFrameForChoice(position, size, aspect))) {
+        return { position, size };
+      }
+    }
+  }
+  return null;
 }

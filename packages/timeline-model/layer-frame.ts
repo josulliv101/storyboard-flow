@@ -48,6 +48,23 @@ export type LayerFramePosition =
 
 export type LayerFrameSize = "small" | "medium" | "large";
 
+/** Every position, in READING ORDER — which is also the order a 3x3 picker
+ *  lays them out, so a consumer can map straight over it. */
+export const LAYER_FRAME_POSITIONS: readonly LayerFramePosition[] = [
+  "top-left",
+  "top",
+  "top-right",
+  "left",
+  "center",
+  "right",
+  "bottom-left",
+  "bottom",
+  "bottom-right",
+];
+
+/** Smallest first. */
+export const LAYER_FRAME_SIZES: readonly LayerFrameSize[] = ["small", "medium", "large"];
+
 /** Width as a fraction of the frame. Three steps rather than a number, because
  *  the useful range is narrow and picking from it is faster than typing into
  *  it. A free rect can still be written directly; these are just the presets. */
