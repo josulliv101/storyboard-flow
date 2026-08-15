@@ -61,6 +61,18 @@ describe("isTimelineClip", () => {
     expect(isTimelineClip({ ...image, sourceAsset: null })).toBe(true);
   });
 
+  it("gates placedStart, which packing HONOURS rather than recomputes", () => {
+    // Sharper than the other optionals: a bad value here does not get
+    // recalculated away, it puts a clip somewhere nobody asked for.
+    expect(isTimelineClip({ ...image, placedStart: 7.5 })).toBe(true);
+    expect(isTimelineClip({ ...image, placedStart: 0 })).toBe(true);
+    expect(isTimelineClip({ ...image, placedStart: null })).toBe(true);
+    expect(isTimelineClip({ ...image, placedStart: -1 })).toBe(false);
+    expect(isTimelineClip({ ...image, placedStart: Number.NaN })).toBe(false);
+    expect(isTimelineClip({ ...image, placedStart: Number.POSITIVE_INFINITY })).toBe(false);
+    expect(isTimelineClip({ ...image, placedStart: "7.5" })).toBe(false);
+  });
+
   it("accepts a finite preview trim and rejects malformed preview trims", () => {
     const preview = collection.previewItems[0];
     expect(

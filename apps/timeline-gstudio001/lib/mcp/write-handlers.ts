@@ -8,6 +8,9 @@ import {
 } from "@storyboard/collections-core";
 
 import { normalizeTags, tagsField } from "@storyboard/timeline-model/tags";
+import { trackIndexOf } from "@storyboard/timeline-model/documents";
+import { resolvePlacement } from "@storyboard/timeline-model/placement";
+import { graphChildrenToClips } from "@storyboard/timeline-domain";
 
 import { checkUserScopedId } from "@/lib/timeline-ownership";
 import { describeDispatchRejection, toolError, toolOk } from "@/lib/webmcp/results";
@@ -519,5 +522,142 @@ export async function handleSetLane(
       ? `Moved "${args.nodeId}" onto the picture.`
       : `Moved "${args.nodeId}" to lane ${args.lane} — it now plays under the picture.`,
     { nodeId: args.nodeId, lane: args.lane, written: outcome.affectedIds },
+  );
+}
+
+// --- set_start ---------------------------------------------------------------
+
+export type SetStartArgs = Readonly<{
+  timelineId: string;
+  nodeId: string;
+  /** Seconds from the start of the collection, or null to re-queue the clip. */
+  startSeconds: number | null;
+}>;
+
+/**
+ * Place a clip at an explicit time on its lane — what makes a lane a TIMELINE
+ * rather than a parallel queue. Audio starts when it starts; a voiceover at
+ * 7.5s should not need 7.5s of something in front of it.
+ *
+ * A detail-only write, like `set_lane`: `placedStart` lives in the side table
+ * because the engine models neither lanes nor time, so the graph is genuinely
+ * unchanged and there is no command to issue. It carries the same ancestor
+ * write set for the same reason — a placement moves the parent's span, and
+ * every ancestor stores a duration for it.
+ *
+ * REFUSES THE PICTURE. Lane 0 is a cut: trimming a shot closes the gap behind
+ * it and reordering repacks, and a hole there is not silence — the player
+ * holds the last frame. Placing a shot is a different feature; this says so
+ * rather than writing a field that packing would ignore anyway.
+ *
+ * ON A COLLISION IT BUMPS rather than failing. Placing a clip on top of
+ * something already on its lane moves it to the first lane above with room,
+ * and the result says where it landed. See `resolvePlacement` for why that is
+ * decided by packing rather than by comparing against current positions.
+ */
+export async function handleSetStart(
+  args: SetStartArgs,
+  ctx: WriteContext,
+): Promise<ToolResult> {
+  const nodeId = parseNodeId(args.nodeId);
+  const start = args.startSeconds;
+  if (start !== null && (!Number.isFinite(start) || start < 0)) {
+    return toolError("`startSeconds` must be a number of seconds, 0 or more — or null to re-queue.");
+  }
+
+  let requestedLane = 0;
+  let landedLane = 0;
+  let wasBumped = false;
+
+  const outcome = await applyCollectionsCommand(
+    args.timelineId,
+    (graph: CollectionsGraph, details) => {
+      if (!graph.nodesById.has(nodeId)) {
+        return { ok: false, message: `No node with id "${args.nodeId}".` } as const;
+      }
+      const parentId = graph.parentById.get(nodeId) ?? null;
+      if (parentId === null) {
+        return {
+          ok: false,
+          message: `"${args.nodeId}" is a timeline itself, not a clip inside one — nothing to place.`,
+        } as const;
+      }
+      const existing = details[nodeId as string];
+      const lane = trackIndexOf({ trackIndex: existing?.trackIndex ?? 0 });
+      if (lane === 0) {
+        return {
+          ok: false,
+          message:
+            `"${args.nodeId}" is on the picture, which is a cut — its clips pack end to end and ` +
+            `a gap in it holds the last frame rather than going silent. Put it on a lane first ` +
+            `with set_lane, then place it.`,
+        } as const;
+      }
+
+      // Judged against the layout this write would PRODUCE — see
+      // `resolvePlacement`. The clips come from the same projection the board
+      // and the player read, so "does it collide" means the same thing here as
+      // it will on screen.
+      const placement =
+        start === null
+          ? { lane, bumped: false }
+          : resolvePlacement(
+              graphChildrenToClips(graph, details, parentId as string),
+              existing?.sourceClipId ?? (nodeId as string),
+              lane,
+              start,
+            );
+      requestedLane = lane;
+      landedLane = placement.lane;
+      wasBumped = placement.bumped;
+
+      // The parent and everything above it: a placement can lengthen or
+      // shorten the parent, which every ancestor stores a duration for.
+      const affected: string[] = [];
+      let current: NodeId | null = parentId;
+      while (current !== null && !affected.includes(current as string)) {
+        affected.push(current as string);
+        current = graph.parentById.get(current) ?? null;
+      }
+
+      // Spread the WHOLE existing entry, as `set_lane` does: the clip is
+      // rebuilt from this record, so omitting a field erases it on save.
+      // `placedStart` is dropped entirely when re-queuing — absence IS the
+      // "queued" state, and writing a sentinel would be a second way to say it.
+      const { placedStart: _dropped, ...rest } = existing ?? {};
+      const next = {
+        ...rest,
+        trackIndex: placement.lane,
+        ...(start === null ? {} : { placedStart: start }),
+      } as DetailsById[string];
+
+      return {
+        ok: true,
+        details: { [nodeId as string]: next },
+        affectedCollectionIds: affected,
+      } as const;
+    },
+    ctx.requesterUid,
+  );
+  if (!outcome.ok) return reportFailure(outcome);
+
+  if (start === null) {
+    return toolOk(
+      `"${args.nodeId}" is queued again — it now follows the clip before it on lane ${landedLane}.`,
+      { nodeId: args.nodeId, lane: landedLane, placedStart: null, written: outcome.affectedIds },
+    );
+  }
+  return toolOk(
+    wasBumped
+      ? `Placed "${args.nodeId}" at ${start}s. Lane ${requestedLane} was already busy at that ` +
+          `moment, so it moved to lane ${landedLane}.`
+      : `Placed "${args.nodeId}" at ${start}s on lane ${landedLane}.`,
+    {
+      nodeId: args.nodeId,
+      lane: landedLane,
+      placedStart: start,
+      bumped: wasBumped,
+      written: outcome.affectedIds,
+    },
   );
 }

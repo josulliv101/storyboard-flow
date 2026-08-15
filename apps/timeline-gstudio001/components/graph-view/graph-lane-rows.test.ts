@@ -110,6 +110,37 @@ describe("splitLaneRows", () => {
     ]);
   });
 
+  it("carries a PLACED start onto the row, lining up with nothing", () => {
+    // #400. The board's geometry already accepted an arbitrary start; this is
+    // the seam that finally supplies one — a voiceover at 7.5s with nothing
+    // 7.5s long in front of it.
+    const graph = graphOf([collection("scene", [media("shot", 30), media("vo", 2)])]);
+    const details: DetailsById = { vo: detail({ trackIndex: 1, placedStart: 7.5 }) };
+    const model = splitLaneRows(graph, details, "scene");
+
+    expect(model.layers[0]?.items).toEqual([
+      { id: "vo", startSeconds: 7.5, durationSeconds: 2 },
+    ]);
+    // The picture is untouched by a placement on a lane.
+    expect(model.pictureTimes[0]?.startSeconds).toBe(0);
+  });
+
+  it("queues an unplaced clip behind a placed one on the same lane", () => {
+    const graph = graphOf([
+      collection("scene", [media("shot", 30), media("vo", 2), media("tail", 2)]),
+    ]);
+    const details: DetailsById = {
+      vo: detail({ trackIndex: 1, placedStart: 7.5 }),
+      tail: detail({ trackIndex: 1 }),
+    };
+    const model = splitLaneRows(graph, details, "scene");
+
+    expect(model.layers[0]?.items.map((item) => item.startSeconds)).toEqual([
+      7.5,
+      9.5 + CLIP_GAP_SECONDS,
+    ]);
+  });
+
   it("gives each occupied lane its own row, in ascending order", () => {
     const graph = graphOf([
       collection("scene", [media("shot", 10), media("music", 10), media("vo", 4)]),

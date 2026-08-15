@@ -107,6 +107,72 @@ describe("packTimelineClips", () => {
   it("is empty for no clips", () => {
     expect(packTimelineClips([])).toEqual([]);
   });
+
+  // PLACED starts — what makes a lane a timeline rather than a parallel queue.
+  it("starts a placed clip exactly where it was placed", () => {
+    const packed = packTimelineClips([
+      clip("shot", 4),
+      clip("vo", 2, { trackIndex: 1, placedStart: 7.5 }),
+    ]);
+    expect(starts(packed)).toEqual([0, 7.5]);
+  });
+
+  it("queues a lane clip with no placement, exactly as before", () => {
+    const packed = packTimelineClips([
+      clip("shot", 20),
+      clip("bed", 4, { trackIndex: 1 }),
+      clip("vo", 2, { trackIndex: 1 }),
+    ]);
+    expect(starts(packed)).toEqual([0, 0, 4 + CLIP_GAP_SECONDS]);
+  });
+
+  it("queues a following clip AFTER a placed one, gap included", () => {
+    const packed = packTimelineClips([
+      clip("shot", 30),
+      clip("vo", 2, { trackIndex: 1, placedStart: 7.5 }),
+      clip("next", 2, { trackIndex: 1 }),
+    ]);
+    expect(starts(packed)).toEqual([0, 7.5, 9.5 + CLIP_GAP_SECONDS]);
+  });
+
+  it("never REWINDS the lane cursor for a clip placed behind the queue", () => {
+    // `late` already carried the lane to 10s. Placing `early` at 1s must not
+    // drag `tail` back on top of `late` — a placement is one clip's business.
+    const packed = packTimelineClips([
+      clip("shot", 40),
+      clip("late", 10, { trackIndex: 1 }),
+      clip("early", 2, { trackIndex: 1, placedStart: 1 }),
+      clip("tail", 2, { trackIndex: 1 }),
+    ]);
+    expect(starts(packed)).toEqual([0, 0, 1, 10 + CLIP_GAP_SECONDS]);
+  });
+
+  it("IGNORES a placement on the picture — lane 0 is a cut", () => {
+    const packed = packTimelineClips([
+      clip("a", 4),
+      clip("b", 2, { placedStart: 30 }),
+    ]);
+    expect(starts(packed)).toEqual([0, 4 + CLIP_GAP_SECONDS]);
+  });
+
+  it("ignores a placement that is not a real non-negative time", () => {
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const packed = packTimelineClips([
+        clip("shot", 20),
+        clip("vo", 2, { trackIndex: 1, placedStart: bad }),
+      ]);
+      expect(starts(packed)[1]).toBe(0);
+    }
+  });
+
+  it("lets two lanes be placed independently of each other", () => {
+    const packed = packTimelineClips([
+      clip("shot", 30),
+      clip("bed", 5, { trackIndex: 1, placedStart: 2 }),
+      clip("vo", 3, { trackIndex: 2, placedStart: 11.25 }),
+    ]);
+    expect(starts(packed)).toEqual([0, 2, 11.25]);
+  });
 });
 
 describe("collectionSpanSeconds", () => {
