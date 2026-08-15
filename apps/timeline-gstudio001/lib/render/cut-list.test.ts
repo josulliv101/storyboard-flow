@@ -17,6 +17,9 @@ function leaf(over: Partial<PlaybackLeaf> & { id: string }): PlaybackLeaf {
     timelineDuration: 4,
     sourceStart: 0,
     playbackRate: 1,
+    // Lane 0 unless a case overrides it — every cut-list test so far is a
+    // single sequence.
+    trackIndex: 0,
     ...over,
   };
 }

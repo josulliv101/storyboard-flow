@@ -57,6 +57,9 @@ function leaf(
     collectionPath,
     kind: "image",
     src: `https://cdn.test/${id}.jpg`,
+    // Lane 0 — the picture. These fixtures predate lanes and none of them
+    // exercise layering.
+    trackIndex: 0,
     timelineStart,
     timelineDuration,
     sourceStart: 0,
