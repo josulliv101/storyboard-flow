@@ -209,6 +209,37 @@ export function segmentFraction(index, total) {
 }
 
 /**
+ * A framed layer's rectangle in OUTPUT PIXELS.
+ *
+ * The stored frame is normalized 0..1 of the output frame and carries no
+ * height — the clip's own aspect supplies that, which is what makes a stretched
+ * inset unexpressible.
+ *
+ * BOTH DIMENSIONS ARE ROUNDED TO EVEN. yuv420p subsamples chroma 2x2, so
+ * libx264 refuses an odd dimension outright; a 30%-of-1152 inset is 345.6px
+ * and would fail the encode on arithmetic alone. Clamped into the frame
+ * afterwards, because a rectangle written at one output size can be rendered
+ * at another and ffmpeg's overlay silently CROPS what hangs off the edge.
+ */
+export function layerRectPixels(frame, aspect, format) {
+  const even = (value) => Math.max(2, Math.round(value / 2) * 2);
+  const clipAspect = aspect > 0 ? aspect : 16 / 9;
+  const width = even(Math.min(1, Math.max(0, frame.width)) * format.width);
+  const height = even(width / clipAspect);
+  // Rounded to even as well: an odd offset is legal for overlay but makes the
+  // chroma planes land on a half-pixel, which reads as a soft edge on one side
+  // of the inset and a hard one on the other.
+  const x = even(Math.min(1, Math.max(0, frame.x)) * format.width);
+  const y = even(Math.min(1, Math.max(0, frame.y)) * format.height);
+  return {
+    width: Math.min(width, format.width),
+    height: Math.min(height, format.height),
+    x: Math.max(0, Math.min(x, format.width - Math.min(width, format.width))),
+    y: Math.max(0, Math.min(y, format.height - Math.min(height, format.height))),
+  };
+}
+
+/**
  * Mix the under-layers into the concatenated picture.
  *
  * Input 0 is the picture (video + its own audio); inputs 1..N are the layer
@@ -252,20 +283,79 @@ export function mixArgs(picturePath, layers, outputPath) {
     mixLabels.push(label);
   });
 
-  const filter = [
-    ...chains,
+  chains.push(
     `${mixLabels.join("")}amix=inputs=${mixLabels.length}:duration=first:normalize=0[aout]`,
-  ].join(";");
+  );
+
+  // THE PICTURE HALF. Only layers that were given a rectangle composite; the
+  // rest contribute sound and nothing else, which is what every layer did
+  // before this and what keeps the copy below available.
+  //
+  // Ordered so the LOWEST lane is drawn LAST and therefore ends up on top —
+  // the same rule as everywhere else here, and as the preview canvas.
+  const framed = layers
+    .map((layer, index) => ({ layer, streamIndex: index + 1 }))
+    .filter(({ layer }) => layer.rect !== undefined)
+    .sort((a, b) => (b.layer.trackIndex ?? 0) - (a.layer.trackIndex ?? 0));
+
+  if (framed.length === 0) {
+    return [
+      "-y",
+      ...inputs,
+      "-filter_complex", chains.join(";"),
+      "-map", "0:v",
+      "-map", "[aout]",
+      // The picture is already encoded exactly right by the concat — copying
+      // it keeps the mix from costing a second generation of the whole film.
+      // Available only because nothing is being drawn over it.
+      "-c:v", "copy",
+      "-c:a", "aac",
+      "-ar", "48000",
+      "-ac", "2",
+      "-movflags", "+faststart",
+      outputPath,
+    ];
+  }
+
+  // Each layer segment was ENCODED AT ITS INSET SIZE (see the worker), so no
+  // `scale` is needed here and — more to the point — none is wanted: a layer
+  // normalised to the full frame carries letterbox bars, and scaling that down
+  // would composite the bars along with the picture.
+  //
+  // `enable='between(t,start,end)'` is what makes an overlay a CLIP rather
+  // than a watermark. Without it the inset appears at t=0 and stays for the
+  // whole film. `t` is the OUTPUT clock, which is what `outputStart` is on.
+  let videoLabel = "[0:v]";
+  framed.forEach(({ layer, streamIndex }, position) => {
+    const { rect } = layer;
+    const start = Math.max(0, layer.outputStart);
+    const end = start + Math.max(0, layer.outputDuration ?? 0);
+    const out = position === framed.length - 1 ? "[vout]" : `[v${position}]`;
+    chains.push(
+      `${videoLabel}[${streamIndex}:v]overlay=${rect.x}:${rect.y}` +
+        `:enable='between(t,${round(start)},${round(end)})'${out}`,
+    );
+    videoLabel = out;
+  });
 
   return [
     "-y",
     ...inputs,
-    "-filter_complex", filter,
-    "-map", "0:v",
+    "-filter_complex", chains.join(";"),
+    "-map", "[vout]",
     "-map", "[aout]",
-    // The picture is already encoded exactly right by the concat — copying it
-    // keeps the mix from costing a second generation of the whole film.
-    "-c:v", "copy",
+    // The copy is gone the moment anything is drawn over the picture — this is
+    // a second generation of the whole film, and the only way to avoid it
+    // would be to composite per segment before the concat, which would need
+    // the compiler to say which layer overlaps which cut.
+    //
+    // Spelled out rather than reusing `encodeArgs`: that carries `-shortest`,
+    // for the segments' synthesised silence, and `-shortest` against
+    // `amix=duration=first` would end the film at whichever stream finished
+    // first rather than at the picture.
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-pix_fmt", "yuv420p",
     "-c:a", "aac",
     "-ar", "48000",
     "-ac", "2",

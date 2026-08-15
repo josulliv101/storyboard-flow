@@ -318,3 +318,78 @@ describe("compileCutList — layers", () => {
     expect(list.durationSeconds).toBe(0);
   });
 });
+
+// COMPOSITING FACTS reach the worker, and only when there is something to
+// composite — `layers.some(has a rect)` has to stay an honest test of "does
+// this render need a re-encode of the whole film".
+
+const INSET = { x: 0.65, y: 0.6, width: 0.3 };
+
+describe("compileCutList — layer frames", () => {
+  it("carries the frame, the lane and the aspect for a framed layer", () => {
+    const { layers } = compileCutList(
+      manifestOf([
+        ...packed([{ id: "shot", timelineDuration: 10 }]),
+        leaf({
+          id: "pip",
+          trackIndex: 2,
+          timelineStart: 1,
+          timelineDuration: 3,
+          layerFrame: INSET,
+          aspect: 4 / 3,
+        }),
+      ]),
+    );
+    expect(layers[0]).toMatchObject({ layerFrame: INSET, trackIndex: 2, aspect: 4 / 3 });
+  });
+
+  it("emits NEITHER for a layer without a frame — sound only, and the copy stays", () => {
+    const { layers } = compileCutList(
+      manifestOf([
+        ...packed([{ id: "shot", timelineDuration: 10 }]),
+        leaf({ id: "bed", trackIndex: 1, timelineStart: 0, timelineDuration: 3 }),
+      ]),
+    );
+    expect("layerFrame" in layers[0]!).toBe(false);
+    expect("trackIndex" in layers[0]!).toBe(false);
+  });
+
+  it("REFUSES A FRAME ON AUDIO, which would paint black over the picture", () => {
+    // A normalised audio segment has a SYNTHESISED BLACK video stream —
+    // `segmentArgs` builds one so concat stays happy. Composite that and the
+    // voiceover draws a black rectangle over the shot for its whole length.
+    // Nothing stops a stored document carrying a frame on an audio clip, so
+    // the refusal has to be here rather than assumed upstream.
+    const { layers } = compileCutList(
+      manifestOf([
+        ...packed([{ id: "shot", timelineDuration: 10 }]),
+        leaf({
+          id: "vo",
+          kind: "audio",
+          trackIndex: 1,
+          timelineStart: 0,
+          timelineDuration: 3,
+          layerFrame: INSET,
+        }),
+      ]),
+    );
+    expect("layerFrame" in layers[0]!).toBe(false);
+  });
+
+  it("never puts a frame on the PICTURE", () => {
+    const { cuts } = compileCutList(
+      manifestOf(packed([{ id: "shot", timelineDuration: 10, layerFrame: INSET }])),
+    );
+    expect("layerFrame" in cuts[0]!).toBe(false);
+  });
+
+  it("defaults a missing aspect to widescreen rather than dropping the frame", () => {
+    const { layers } = compileCutList(
+      manifestOf([
+        ...packed([{ id: "shot", timelineDuration: 10 }]),
+        leaf({ id: "pip", trackIndex: 1, timelineStart: 0, timelineDuration: 3, layerFrame: INSET }),
+      ]),
+    );
+    expect(layers[0]).toMatchObject({ aspect: 16 / 9 });
+  });
+});

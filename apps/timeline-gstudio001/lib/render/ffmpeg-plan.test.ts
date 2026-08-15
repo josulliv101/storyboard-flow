@@ -7,6 +7,7 @@ import {
   atempoChain,
   concatArgs,
   concatListFile,
+  layerRectPixels,
   mixArgs,
   segmentArgs,
   segmentFraction,
@@ -270,5 +271,150 @@ describe("mixArgs — layers under the picture", () => {
     const out = args([layer("/tmp/bed.mp4", 0)])!;
     expect(valueAfter(out, "-c:v")).toBe("copy");
     expect(allValuesAfter(out, "-map")).toEqual(["0:v", "[aout]"]);
+  });
+});
+
+// COMPOSITING. A layer that was given a rectangle is drawn INTO the picture,
+// not merely mixed under it. Everything above still holds for a layer without
+// one, which is what keeps the copy fast path — and every layer written before
+// this feature.
+
+describe("layerRectPixels", () => {
+  it("turns a normalized frame into output pixels", () => {
+    const rect = layerRectPixels({ x: 0.5, y: 0.5, width: 0.25 }, 16 / 9, FORMAT);
+    expect(rect.width).toBe(288); // 0.25 x 1152
+    expect(rect.x).toBe(576); // 0.5 x 1152
+    expect(rect.y).toBe(240); // 0.5 x 480
+  });
+
+  it("keeps the CLIP's shape, so an inset is never stretched", () => {
+    const rect = layerRectPixels({ x: 0, y: 0, width: 0.25 }, 16 / 9, FORMAT);
+    expect(rect.width / rect.height).toBeCloseTo(16 / 9, 1);
+    const tall = layerRectPixels({ x: 0, y: 0, width: 0.25 }, 9 / 16, FORMAT);
+    expect(tall.width / tall.height).toBeCloseTo(9 / 16, 1);
+  });
+
+  it("ROUNDS EVERYTHING EVEN — libx264 refuses an odd dimension in yuv420p", () => {
+    // 0.3 x 1152 is 345.6, and the height that follows is not an integer
+    // either. An encode fails outright on this, so it is arithmetic that has
+    // to be right rather than a matter of taste.
+    for (const width of [0.3, 0.17, 0.43, 0.29]) {
+      const rect = layerRectPixels({ x: 0.31, y: 0.37, width }, 16 / 9, FORMAT);
+      for (const value of [rect.width, rect.height, rect.x, rect.y]) {
+        expect(value % 2).toBe(0);
+      }
+    }
+  });
+
+  it("NUDGES A RECTANGLE BACK INSIDE the frame rather than letting it be cropped", () => {
+    // A frame written at one output size, rendered at another. ffmpeg's
+    // overlay silently crops whatever hangs off the edge, so an inset that
+    // half-left the frame would come out sliced with nothing to say why.
+    const rect = layerRectPixels({ x: 0.95, y: 0.95, width: 0.3 }, 16 / 9, FORMAT);
+    expect(rect.x + rect.width).toBeLessThanOrEqual(FORMAT.width);
+    expect(rect.y + rect.height).toBeLessThanOrEqual(FORMAT.height);
+  });
+
+  it("survives a nonsense aspect instead of producing a zero-size box", () => {
+    const rect = layerRectPixels({ x: 0, y: 0, width: 0.3 }, 0, FORMAT);
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+  });
+});
+
+describe("mixArgs — compositing a framed layer", () => {
+  const framed = (over: Record<string, unknown> = {}) => ({
+    path: "/tmp/pip.mp4",
+    outputStart: 2,
+    outputDuration: 3,
+    trackIndex: 1,
+    rect: { x: 800, y: 300, width: 288, height: 162 },
+    ...over,
+  });
+
+  it("KEEPS THE COPY when no layer has a rectangle", () => {
+    // The whole reason compositing is opt-in. A bed and a voiceover must not
+    // start costing a re-encode of the entire film.
+    const out = mixArgs("/tmp/picture.mp4", [{ path: "/tmp/bed.mp4", outputStart: 0 }], "/tmp/o.mp4")!;
+    expect(valueAfter(out, "-c:v")).toBe("copy");
+    expect(allValuesAfter(out, "-map")).toEqual(["0:v", "[aout]"]);
+  });
+
+  it("overlays at the rectangle's own pixels, and re-encodes", () => {
+    const out = mixArgs("/tmp/picture.mp4", [framed()], "/tmp/o.mp4")!;
+    const filter = valueAfter(out, "-filter_complex")!;
+    expect(filter).toContain("[0:v][1:v]overlay=800:300");
+    expect(allValuesAfter(out, "-map")).toEqual(["[vout]", "[aout]"]);
+    expect(valueAfter(out, "-c:v")).toBe("libx264");
+  });
+
+  it("adds NO SCALE — the segment was already encoded at the inset's size", () => {
+    // Scaling here would drag the letterbox bars a full-frame normalisation
+    // adds along with the picture.
+    expect(valueAfter(mixArgs("/tmp/p.mp4", [framed()], "/tmp/o.mp4")!, "-filter_complex")).not.toContain(
+      "scale=",
+    );
+  });
+
+  it("adds NO EXTRA INPUT — the overlay reads a stream already there", () => {
+    const out = mixArgs("/tmp/picture.mp4", [framed()], "/tmp/o.mp4")!;
+    expect(allValuesAfter(out, "-i")).toEqual(["/tmp/picture.mp4", "/tmp/pip.mp4"]);
+  });
+
+  it("ENABLES ONLY OVER ITS OWN SPAN, so an inset is a clip and not a watermark", () => {
+    // Without `enable` the overlay appears at t=0 and stays for the whole
+    // film — which looks like a bug in the timeline rather than in the filter.
+    const filter = valueAfter(mixArgs("/tmp/p.mp4", [framed()], "/tmp/o.mp4")!, "-filter_complex")!;
+    expect(filter).toContain("enable='between(t,2,5)'");
+  });
+
+  it("still mixes the framed layer's SOUND, not just its picture", () => {
+    const filter = valueAfter(mixArgs("/tmp/p.mp4", [framed()], "/tmp/o.mp4")!, "-filter_complex")!;
+    expect(filter).toContain("[1:a]adelay=2000|2000[l1]");
+    expect(filter).toContain("amix=inputs=2:duration=first:normalize=0[aout]");
+  });
+
+  it("draws the LOWEST lane last, so it ends up on top", () => {
+    // The same rule the board and the player use for lanes.
+    const filter = valueAfter(
+      mixArgs(
+        "/tmp/p.mp4",
+        [framed({ path: "/tmp/low.mp4", trackIndex: 1 }), framed({ path: "/tmp/high.mp4", trackIndex: 3 })],
+        "/tmp/o.mp4",
+      )!,
+      "-filter_complex",
+    )!;
+    // Lane 3 composites first (input 2), lane 1 second (input 1) and wins.
+    expect(filter.indexOf("[2:v]overlay")).toBeLessThan(filter.indexOf("[1:v]overlay"));
+    expect(filter).toContain("[vout]");
+  });
+
+  it("chains several overlays through intermediate labels", () => {
+    const filter = valueAfter(
+      mixArgs("/tmp/p.mp4", [framed({ trackIndex: 1 }), framed({ trackIndex: 2 })], "/tmp/o.mp4")!,
+      "-filter_complex",
+    )!;
+    expect(filter).toContain("[v0]");
+    expect(filter).toContain("[vout]");
+  });
+
+  it("mixes an UNFRAMED layer's sound while compositing a framed one", () => {
+    const out = mixArgs(
+      "/tmp/p.mp4",
+      [{ path: "/tmp/bed.mp4", outputStart: 0 }, framed()],
+      "/tmp/o.mp4",
+    )!;
+    const filter = valueAfter(out, "-filter_complex")!;
+    // Three audio streams in the mix…
+    expect(filter).toContain("amix=inputs=3");
+    // …and exactly one overlay: the bed has no picture to draw.
+    expect(filter.match(/overlay=/g)).toHaveLength(1);
+  });
+
+  it("does NOT carry -shortest, which would end the film early", () => {
+    // `encodeArgs` has it, for the segments' synthesised silence. Against
+    // `amix=duration=first` it would end the output at whichever stream
+    // finished first rather than at the picture.
+    expect(mixArgs("/tmp/p.mp4", [framed()], "/tmp/o.mp4")!).not.toContain("-shortest");
   });
 });

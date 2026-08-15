@@ -312,7 +312,7 @@ const handler = createMcpHandler(
 
     server.tool(
       "render_timeline",
-      "Export a timeline as a single mp4: its complete nested contents, flattened, with the board's clip gaps closed and disabled clips skipped. Returns immediately with a render id — the encode happens on a render worker. Poll it with `render_status`. Note: layered audio is not supported yet; clips render in sequence.",
+      "Export a timeline as a single mp4: its complete nested contents, flattened, with the board's clip gaps closed and disabled clips skipped. Returns immediately with a render id — the encode happens on a render worker. Poll it with `render_status`. Lane 0 is the picture and concatenates; anything on a lane above it is mixed UNDER the picture, and if it has been given an inset (see `set_lane`) it is also composited OVER it as a picture-in-picture.",
       {
         timelineId: z
           .string()

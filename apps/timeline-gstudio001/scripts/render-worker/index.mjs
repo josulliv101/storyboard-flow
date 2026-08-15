@@ -29,6 +29,7 @@ import {
   probeAudioArgs,
   segmentArgs,
   segmentFraction,
+  layerRectPixels,
 } from "./ffmpeg-plan.mjs";
 
 const APP_URL = (process.env.RENDER_APP_URL ?? "").replace(/\/$/, "");
@@ -147,7 +148,13 @@ async function renderJob(job) {
     const total = cuts.length + layers.length;
     let done = 0;
 
-    const normalise = async (cut, name) => {
+    // `at` is the size to ENCODE this segment at, defaulting to the output
+    // format. A framed layer overrides it with the inset's own pixel size:
+    // segmentArgs fits-and-pads every source to whatever it is given, so a
+    // layer normalised at full frame carries letterbox bars, and scaling that
+    // down in the overlay would composite the bars along with the picture.
+    // Encoding it small also means the overlay needs no scale filter at all.
+    const normalise = async (cut, name, at = format) => {
       // Downloaded rather than streamed: a 404 or an expired URL then fails
       // here, clearly, instead of surfacing as an opaque ffmpeg error four
       // steps later.
@@ -155,7 +162,7 @@ async function renderJob(job) {
       await download(cut.src, sourcePath);
       const hasAudio = cut.kind === "video" ? await probeHasAudio(sourcePath) : false;
       const segmentPath = join(workDir, `seg-${name}.mp4`);
-      await run("ffmpeg", segmentArgs({ ...cut, src: sourcePath }, format, segmentPath, { hasAudio }));
+      await run("ffmpeg", segmentArgs({ ...cut, src: sourcePath }, at, segmentPath, { hasAudio }));
       await report(job.id, {
         type: "progress",
         fraction: segmentFraction(done, total),
@@ -180,9 +187,22 @@ async function renderJob(job) {
     // used by the mix.
     const layerSegments = [];
     for (const [index, layer] of layers.entries()) {
+      // A rectangle means this one is COMPOSITED, not merely mixed. Resolved
+      // once here, so the size it is encoded at and the position it is drawn
+      // at cannot disagree.
+      const rect =
+        layer.layerFrame === undefined
+          ? undefined
+          : layerRectPixels(layer.layerFrame, layer.aspect ?? 16 / 9, format);
       layerSegments.push({
-        path: await normalise(layer, `lay-${String(index).padStart(4, "0")}`),
+        path: await normalise(
+          layer,
+          `lay-${String(index).padStart(4, "0")}`,
+          rect === undefined ? format : { ...format, width: rect.width, height: rect.height },
+        ),
         outputStart: layer.outputStart,
+        outputDuration: layer.outputDuration,
+        ...(rect === undefined ? {} : { rect, trackIndex: layer.trackIndex ?? 1 }),
       });
     }
 
@@ -190,7 +210,21 @@ async function renderJob(job) {
     // Null means nothing to mix: the concat already IS the finished file, and
     // re-encoding to add nothing would cost a generation of the whole film.
     const outputPath = mix === null ? picturePath : join(workDir, `${job.id}.mp4`);
-    if (mix !== null) await run("ffmpeg", mix);
+    if (mix !== null) {
+      // SAY SO BEFORE STARTING. Segment progress caps at 0.95 and neither the
+      // concat nor the mix reported anything, which was tolerable while the
+      // mix was an audio remux over a copied video. Compositing makes it a
+      // full re-encode of the finished film — comfortably the longest step of
+      // the job — and a bar that sits still for minutes with no message is how
+      // a working render gets killed for looking hung.
+      const compositing = layerSegments.some((layer) => layer.rect !== undefined);
+      await report(job.id, {
+        type: "progress",
+        fraction: segmentFraction(total, total),
+        message: compositing ? "compositing layers" : "mixing audio",
+      });
+      await run("ffmpeg", mix);
+    }
 
     const url = await uploadResult(job.id, outputPath);
     await report(job.id, { type: "succeed", outputUrl: url });
