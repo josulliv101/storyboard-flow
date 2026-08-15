@@ -344,7 +344,7 @@ const handler = createMcpHandler(
 
     server.tool(
       "set_lane",
-      "Move a clip between LANES. Lane 0 is the picture; anything above it plays UNDER the picture at the same time — a voiceover, a music bed. Every lane starts at the beginning of its collection, so putting a clip on lane 1 makes it run alongside the shots rather than after them." +
+      "Move a clip between LANES. Lane 0 is the picture; anything above it plays UNDER the picture at the same time — a voiceover, a music bed. Every lane starts at the beginning of its collection, so putting a clip on lane 1 makes it run alongside the shots rather than after them. A clip that HAS a picture (video, image, or a whole nested scene) also gets a default inset in the bottom-right when it lands on a lane, so it is composited over the picture rather than contributing only its sound; moving it back to lane 0 clears that." +
         NO_LIVE_PUSH_NOTE,
       {
         timelineId: TIMELINE_ID_FIELD,

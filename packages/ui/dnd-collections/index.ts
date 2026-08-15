@@ -44,6 +44,7 @@ export {
   type CommandRejection,
   type MediaUpdate,
   type MoveNodesCommand,
+  type SetNodePlacementCommand,
   type UpdateMediaCommand,
 } from "./core/commands";
 export { hydrateCollection, type HydrateRejection } from "./core/hydrate";

@@ -29,6 +29,7 @@ import { useTimelineDocuments } from "../timeline-document-store";
 
 import { createAudioMixer, type AudioMixer } from "./audio-graph";
 
+import { layerFrameOf, layerFrameRect, type LayerFrame } from "@storyboard/timeline-model/layer-frame";
 import type { CollectionTimelineClip, TimelineClip } from "../types";
 import { formatSeconds } from "../utils";
 import {
@@ -623,21 +624,48 @@ function getActiveClip(
   return getPictureClip(clips, currentTime);
 }
 
-/** Every under-layer audible at this instant, as resolvable media. The picture
- *  is excluded — it arrives separately as the thing that DRAWS. */
-function getLayerMedia(
+/** One under-layer running at this instant: what to play, and — when it has
+ *  been given a frame — where to draw it inside the picture. */
+type LiveLayer = Readonly<{
+  media: DisplayMedia;
+  /** Absent means SOUND ONLY, which is what every layer did before
+   *  compositing. It is not a default waiting to be filled in here. */
+  frame?: LayerFrame;
+  /** The clip's own shape, so the inset is never stretched. */
+  aspect: number;
+  /** Which lane, for draw order. */
+  lane: number;
+}>;
+
+/**
+ * Every under-layer live at this instant. The picture is excluded — it arrives
+ * separately as the thing that decides the frame.
+ *
+ * Sorted so the LOWEST lane is drawn last and therefore ends up on top,
+ * matching "lowest lane wins" everywhere else here. Sorting at resolve time
+ * rather than per draw: the live set changes far less often than the canvas
+ * repaints, and there are only ever a handful of them.
+ */
+function getLiveLayers(
   clips: TimelineClip[],
   currentTime: number,
   getCollectionClipFramePreview: GetCollectionClipFramePreview,
-): DisplayMedia[] {
+): LiveLayer[] {
   const live = getLiveLayerClips(clips, currentTime);
   if (live.length === 0) return [];
-  const media: DisplayMedia[] = [];
+  const layers: LiveLayer[] = [];
   for (const clip of live) {
-    const resolved = resolveClipMedia(clip, currentTime, getCollectionClipFramePreview);
-    if (resolved !== null) media.push(resolved);
+    const media = resolveClipMedia(clip, currentTime, getCollectionClipFramePreview);
+    if (media === null) continue;
+    const frame = layerFrameOf(clip.layerFrame);
+    layers.push({
+      media,
+      ...(frame === undefined ? {} : { frame }),
+      aspect: clip.aspect > 0 ? clip.aspect : 16 / 9,
+      lane: clip.trackIndex,
+    });
   }
-  return media;
+  return layers.sort((a, b) => b.lane - a.lane);
 }
 
 // normalizePlaybackTime is `nextPlayableTime` (./playback-skip): it decides
@@ -669,7 +697,7 @@ export function WorkbenchDisplaySurface({
   const activeClipDisabledRef = useRef(false);
   // The under-layers audible right now. The picture is `activeMediaRef`; these
   // play alongside it and, in this phase, are heard and not seen.
-  const liveLayerMediaRef = useRef<DisplayMedia[]>([]);
+  const liveLayerMediaRef = useRef<LiveLayer[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const timeoutFrameRef = useRef<number | null>(null);
   // PER ELEMENT, keyed by media key. This was a single slot, which was correct
@@ -886,7 +914,56 @@ export function WorkbenchDisplaySurface({
     // its true black, and a leaked filter would tint the next frame drawn.
     if (activeClipDisabledRef.current) context.filter = "grayscale(1) opacity(0.45)";
     context.drawImage(drawable, left, top, width, height);
+    // Reset BEFORE compositing, not just after: an inset is its own clip and
+    // must not inherit the picture's grayed-out treatment.
     context.filter = "none";
+
+    // THE UNDER-LAYERS, OVER THE PICTURE.
+    //
+    // Inside `drawDrawable` deliberately. Nine call sites repaint this canvas
+    // — the clock, six async media listeners, a ResizeObserver, and the frame
+    // override's settle loop — and every one of them that draws a picture
+    // arrives here. Compositing at the call sites instead would mean finding
+    // all nine, and missing one shows up as an inset that vanishes whenever
+    // some unrelated image finishes loading.
+    //
+    // Positioned against the PICTURE box, not the canvas: the black bars are
+    // letterboxing, not part of the frame. Note this is the one place preview
+    // and render can disagree — the stored rectangle is normalized to the
+    // OUTPUT frame (2.4:1 today) while the preview box takes the source's
+    // aspect, so when those differ an inset's vertical margin here is not
+    // exactly the margin in the file. The render is authoritative; this is
+    // close enough to position by eye and exact in x and in size.
+    const picture = playbackSurfaceRectRef.current;
+    if (picture === null) return;
+    const frameAspect = picture.height > 0 ? picture.width / picture.height : 1;
+    for (const layer of liveLayerMediaRef.current) {
+      if (layer.frame === undefined) continue;
+      const cached = cacheRef.current.get(layer.media.key);
+      // An <audio> has no frames, so a rectangle on one draws nothing. It
+      // should never have got a frame at all — see `hasPicture` on the write
+      // path — but a stored document can carry anything.
+      if (!cached || cached.kind === "audio") continue;
+      // Not decoded yet. Skipped rather than drawn as a blank: the next
+      // repaint picks it up, and the picture underneath stays intact.
+      const element =
+        cached.kind === "image"
+          ? cached.element.complete && cached.element.naturalWidth > 0
+            ? cached.element
+            : null
+          : cached.element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+            ? cached.element
+            : null;
+      if (element === null) continue;
+      const rect = layerFrameRect(layer.frame, layer.aspect, frameAspect);
+      context.drawImage(
+        element,
+        picture.left + rect.x * picture.width,
+        picture.top + rect.y * picture.height,
+        rect.width * picture.width,
+        rect.height * picture.height,
+      );
+    }
   }, []);
 
   const drawEmptyFrame = useCallback(() => {
@@ -1163,7 +1240,7 @@ export function WorkbenchDisplaySurface({
     // The under-layers playing at this instant, alongside the picture rather
     // than instead of it. Resolved even when the picture is missing: a bed
     // running under a gap keeps playing, which is the whole point of a bed.
-    const layers = getLayerMedia(
+    const layers = getLiveLayers(
       sortedClipsRef.current,
       timelineTime,
       getCollectionClipFramePreview,
@@ -1172,13 +1249,16 @@ export function WorkbenchDisplaySurface({
 
     const liveKeys = new Set<string>();
     if (media) liveKeys.add(media.key);
-    for (const layer of layers) liveKeys.add(layer.key);
+    for (const layer of layers) liveKeys.add(layer.media.key);
     pauseClipsNotLive(liveKeys);
 
     for (const layer of layers) {
-      // Never `draws` — an under-layer is audible in this phase, not visible.
+      // Never `draws`: a layer does not own the canvas, so it must not trigger
+      // a repaint of its own. The picture does that, and `drawDrawable`
+      // composites whatever is live at the time — so an inset lands on the
+      // picture's schedule rather than each layer demanding its own.
       // Never `silent` — getLiveLayerClips already dropped the disabled ones.
-      syncMediaElement(layer, { shouldPlay, forceSeek, draws: false, silent: false });
+      syncMediaElement(layer.media, { shouldPlay, forceSeek, draws: false, silent: false });
     }
 
     if (!media) {
@@ -1530,7 +1610,7 @@ export function WorkbenchDisplaySurface({
     };
     const activeKey = activeMediaRef.current?.key;
     if (activeKey) raise(activeKey, activeClipDisabledRef.current);
-    for (const layer of liveLayerMediaRef.current) raise(layer.key, false);
+    for (const layer of liveLayerMediaRef.current) raise(layer.media.key, false);
   }, [activeMuted, activeVolume, applyGain, getMixer]);
 
   const canPlay = duration > 0 && sortedClips.length > 0;

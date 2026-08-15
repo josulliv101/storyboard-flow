@@ -34,6 +34,7 @@ import { tagsField } from "@storyboard/timeline-model/tags";
 // this file's packing is the twin of `packTimelineClips`, and two different
 // answers to "which lane is this clip on" would move layered clips on save.
 import { placedStartOf, trackIndexOf } from "@storyboard/timeline-model/documents";
+import { layerFrameOf } from "@storyboard/timeline-model/layer-frame";
 import type {
   AssetSourceRef,
   CollectionTimelineClip,
@@ -140,11 +141,16 @@ type BuildContext = {
  * only reroutes which side of the seam carries them. No data migration.
  */
 function placementSpec(
-  clip: Pick<TimelineClip, "trackIndex" | "placedStart">,
-): Readonly<{ trackIndex?: number; placedStart?: number }> {
+  clip: Pick<TimelineClip, "trackIndex" | "placedStart" | "layerFrame">,
+): Readonly<{
+  trackIndex?: number;
+  placedStart?: number;
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
+}> {
   return {
     ...(clip.trackIndex === undefined ? {} : { trackIndex: clip.trackIndex }),
     ...(clip.placedStart === undefined ? {} : { placedStart: clip.placedStart }),
+    ...(clip.layerFrame === undefined ? {} : { layerFrame: clip.layerFrame }),
   };
 }
 
@@ -290,6 +296,7 @@ function clipSpecs(
         name: clip.title,
         children: [],
         ...(clip.disabled ? { disabled: true } : {}),
+        ...placementSpec(clip),
       };
     }
     ctx.used.add(childId);
@@ -303,6 +310,7 @@ function clipSpecs(
         name: clip.title,
         children: clipSpecs(ctx, childDoc, hydrateLevels - 1),
         ...(clip.disabled ? { disabled: true } : {}),
+        ...placementSpec(clip),
       };
     }
 
@@ -314,6 +322,7 @@ function clipSpecs(
       name: clip.title,
       children: [],
       ...(clip.disabled ? { disabled: true } : {}),
+      ...placementSpec(clip),
     };
   });
 }
@@ -713,6 +722,11 @@ export function graphChildrenToClips(
     // rather than re-implemented so the twins cannot drift on the one field
     // whose whole purpose is to override the cursor.
     const placedStart = placedStartOf({ placedStart: node.placedStart }, trackIndex);
+    // Same rule as the two above, and the same reason for using the model's own
+    // normalizer: this value is HONOURED, so a rectangle that is not one has to
+    // become "no picture" rather than an inset nobody asked for. Lane 0 never
+    // carries a frame — the picture is not inside itself.
+    const layerFrame = trackIndex === 0 ? undefined : layerFrameOf(node.layerFrame);
     const startTime = placedStart ?? startFor(trackIndex);
 
     if (node.kind === "media") {
@@ -734,6 +748,7 @@ export function graphChildrenToClips(
         // record, so omitting it here would silently un-place the clip on
         // the next save and drop it back into its lane's queue.
         ...(placedStart === undefined ? {} : { placedStart }),
+        ...(layerFrame === undefined ? {} : { layerFrame }),
         startTime,
         duration,
         ...(detail?.playbackStartTime === undefined
@@ -830,6 +845,7 @@ export function graphChildrenToClips(
       aspect: detail?.aspect ?? 16 / 9,
       trackIndex,
       ...(placedStart === undefined ? {} : { placedStart }),
+      ...(layerFrame === undefined ? {} : { layerFrame }),
       startTime,
       duration,
       sourceDuration: detail?.sourceDuration ?? duration,

@@ -23,6 +23,7 @@ import {
   type ApplyCommandOutcome,
 } from "./apply-command";
 import type { DetailsById } from "@storyboard/timeline-domain";
+import { defaultLayerFramePlacement } from "@/lib/default-layer-frame";
 
 // Remote (server-side) write tools. Each one translates arguments into a single
 // CollectionsCommand and hands it to `applyCollectionsCommand`, which owns the
@@ -498,10 +499,17 @@ export async function handleSetLane(
       // change moves the parent's span, and every ancestor stores a duration
       // for it. And because it is a command, it is undoable.
       //
-      // Lane 0 CLEARS the field rather than storing a 0 — absence is the
-      // picture, everywhere else in the model. It clears the placement too:
-      // the picture is a cut, so a placed start there means nothing, and
-      // leaving a stale one would resurface if the clip returned to a lane.
+      // Lane 0 CLEARS the fields rather than storing a 0 — absence is the
+      // picture, everywhere else in the model. It clears the placement and the
+      // inset too: the picture is a cut, so a placed start there means
+      // nothing, and a frame describes where a clip sits INSIDE the picture,
+      // which the picture cannot do. Leaving either would resurface the moment
+      // the clip returned to a lane, in a place nobody chose.
+      //
+      // Going the other way, a clip with a picture gets the default inset —
+      // the same one the drag stamps, so the two authoring routes land in the
+      // same place rather than one producing a visible layer and the other a
+      // silent one.
       return {
         ok: true,
         command: {
@@ -509,8 +517,11 @@ export async function handleSetLane(
           nodeIds: [nodeId],
           placement:
             args.lane === 0
-              ? { trackIndex: null, placedStart: null }
-              : { trackIndex: args.lane },
+              ? { trackIndex: null, placedStart: null, layerFrame: null }
+              : {
+                  trackIndex: args.lane,
+                  ...defaultLayerFramePlacement(graph.nodesById.get(nodeId), details[nodeId]),
+                },
         },
       } as const;
     },

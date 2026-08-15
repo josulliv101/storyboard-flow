@@ -354,14 +354,22 @@ describe("resolvePlacementCommand", () => {
     });
   });
 
-  test("LANE 0 CLEARS BOTH FIELDS and ignores the time", () => {
+  test("LANE 0 CLEARS THE WHOLE PLACEMENT and ignores the time", () => {
     // Dropping onto the picture means "rejoin the cut". There is no "here" to
     // place at on that row — its clips pack end to end from array order — so
     // the clip takes the slot its position gives it. One command, one undo;
     // a move as well would have cost two.
+    //
+    // The INSET goes with them: it says where the clip sits inside the
+    // picture, and a clip that IS the picture has nowhere to sit. Left behind,
+    // it would reappear unannounced the next time the clip went on a lane.
     const result = place(0, 7.5);
     if (!result.ok) throw new Error(JSON.stringify(result.error));
-    expect(result.value.placement).toEqual({ trackIndex: null, placedStart: null });
+    expect(result.value.placement).toEqual({
+      trackIndex: null,
+      placedStart: null,
+      layerFrame: null,
+    });
   });
 
   test("clamps a drag past the left edge to the very start", () => {

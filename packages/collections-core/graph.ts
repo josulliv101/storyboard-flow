@@ -79,6 +79,20 @@ export type ImageMediaNode = Readonly<{
    */
   trackIndex?: number;
   placedStart?: number;
+  /**
+   * Where this draws inside the picture when it runs under one — normalized
+   * 0..1 of the output frame, top-left corner and width.
+   *
+   * Third member of the placement family, on the node for the same single
+   * reason: `set-node-placement` changes it, so it has to ride the patch path
+   * to be undoable. The engine understands it exactly as little as it
+   * understands the other two.
+   *
+   * Structural rather than the domain's `LayerFrame` type because this package
+   * has NO dependencies and must keep none — which costs nothing here, since
+   * an opaque carried value is all the engine ever needed.
+   */
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
 }>;
 
 export type VideoMediaNode = Readonly<{
@@ -113,6 +127,7 @@ export type VideoMediaNode = Readonly<{
   /** See ImageMediaNode — lane and placement, carried not interpreted. */
   trackIndex?: number;
   placedStart?: number;
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
 }>;
 
 /**
@@ -150,6 +165,7 @@ export type AudioMediaNode = Readonly<{
   /** See ImageMediaNode — lane and placement, carried not interpreted. */
   trackIndex?: number;
   placedStart?: number;
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
 }>;
 
 export type MediaNode = ImageMediaNode | VideoMediaNode | AudioMediaNode;
@@ -172,6 +188,7 @@ export type CollectionNode = Readonly<{
    *  picture is a legitimate layer. */
   trackIndex?: number;
   placedStart?: number;
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
 }>;
 
 export type CollectionItemNode = MediaNode | CollectionNode;
@@ -263,6 +280,7 @@ export type GraphNodeSpec =
       disabled?: boolean;
       trackIndex?: number;
       placedStart?: number;
+      layerFrame?: Readonly<{ x: number; y: number; width: number }>;
     }>
   | Readonly<{
       kind: "media";
@@ -277,6 +295,7 @@ export type GraphNodeSpec =
       disabled?: boolean;
       trackIndex?: number;
       placedStart?: number;
+      layerFrame?: Readonly<{ x: number; y: number; width: number }>;
     }>
   | Readonly<{
       kind: "media";
@@ -290,6 +309,7 @@ export type GraphNodeSpec =
       disabled?: boolean;
       trackIndex?: number;
       placedStart?: number;
+      layerFrame?: Readonly<{ x: number; y: number; width: number }>;
     }>
   | Readonly<{
       kind: "collection";
@@ -299,6 +319,7 @@ export type GraphNodeSpec =
       disabled?: boolean;
       trackIndex?: number;
       placedStart?: number;
+      layerFrame?: Readonly<{ x: number; y: number; width: number }>;
     }>;
 
 /** A media spec, i.e. every member of GraphNodeSpec that is not a collection. */
@@ -326,8 +347,12 @@ type MediaNodeSpec = Extract<GraphNodeSpec, { kind: "media" }>;
  * graph is concerned.
  */
 function placementOf(
-  spec: Readonly<{ trackIndex?: unknown; placedStart?: unknown }>,
-): Readonly<{ trackIndex?: number; placedStart?: number }> {
+  spec: Readonly<{ trackIndex?: unknown; placedStart?: unknown; layerFrame?: unknown }>,
+): Readonly<{
+  trackIndex?: number;
+  placedStart?: number;
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
+}> {
   const lane = spec.trackIndex;
   const start = spec.placedStart;
   return {
@@ -335,7 +360,26 @@ function placementOf(
     ...(typeof start === "number" && Number.isFinite(start) && start >= 0
       ? { placedStart: start }
       : {}),
+    ...(frameOf(spec.layerFrame) === undefined ? {} : { layerFrame: frameOf(spec.layerFrame) }),
   };
+}
+
+/**
+ * A layer frame kept only when it is structurally a rectangle.
+ *
+ * STRUCTURE ONLY — three finite numbers — and deliberately not the domain's
+ * 0..1 range check. Same posture as the fractional lane above: the engine's job
+ * here is to refuse to carry something that is not a rectangle at all, while
+ * the domain normalizer decides which rectangles are meaningful. Tightening
+ * this would fail to hydrate a document the timeline model is happy to read.
+ */
+function frameOf(value: unknown): Readonly<{ x: number; y: number; width: number }> | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { x, y, width } = value as Record<string, unknown>;
+  if (typeof x !== "number" || !Number.isFinite(x)) return undefined;
+  if (typeof y !== "number" || !Number.isFinite(y)) return undefined;
+  if (typeof width !== "number" || !Number.isFinite(width)) return undefined;
+  return { x, y, width };
 }
 
 function mediaNodeFromSpec(id: NodeId, spec: MediaNodeSpec): MediaNode {

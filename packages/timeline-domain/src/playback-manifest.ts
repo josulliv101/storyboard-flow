@@ -19,6 +19,7 @@
 // (draw it grayed).
 
 import { trackIndexOf } from "@storyboard/timeline-model/documents";
+import { layerFrameOf, type LayerFrame } from "@storyboard/timeline-model/layer-frame";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 export type PlaybackLeaf = Readonly<{
@@ -49,6 +50,19 @@ export type PlaybackLeaf = Readonly<{
    * Absent is impossible; 0 is the answer for everything written before lanes.
    */
   trackIndex: number;
+  /**
+   * Where this draws inside the picture, normalized 0..1 of the output frame.
+   * Absent means it contributes SOUND ONLY, which is what every layer did
+   * before compositing existed.
+   *
+   * The leaf's OWN frame, unlike `trackIndex` above, which takes the outermost
+   * lane on the path. Lane answers "is this picture or under-layer", and a
+   * collection above can settle that for everything beneath it. A rectangle
+   * cannot be settled that way: a frame on the collection would describe where
+   * the SCENE sits, and there is no defined composition of the two — so an
+   * inset inside a layered collection is not inherited, it is its own.
+   */
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
   /** Skipped by the PLAYER, not by this compiler. A disabled leaf keeps its
    *  full span on the timeline — that span is what the playhead jumps over
    *  while playing and what a scrub can land inside. Set when the leaf's own
@@ -81,6 +95,14 @@ type TimeWindow = Readonly<{
   outputStart: number;
   outputDuration: number;
 }>;
+
+/** The leaf's frame, defended through the model's own normalizer so a stored
+ *  rectangle that is not one compiles to "sound only" rather than to an inset
+ *  in an undefined place. */
+function frameField(clip: TimelineClip): Readonly<{ layerFrame?: LayerFrame }> {
+  const frame = layerFrameOf(clip.layerFrame);
+  return frame === undefined ? {} : { layerFrame: frame };
+}
 
 function documentDuration(document: TimelineDocument): number {
   return document.clips.reduce(
@@ -115,6 +137,10 @@ function addMediaLeaf(
     sourceStart: clip.trimIn + clipProgress * sourceRange,
     playbackRate: (sourceRange / Math.max(0.001, clip.duration)) / outputScale,
     trackIndex,
+    // Only where it actually runs under the picture. A frame left behind on a
+    // clip that has since been moved back onto the cut is stale authoring, not
+    // an instruction — and lane 0 has nothing to be inset within.
+    ...(trackIndex === 0 ? {} : frameField(clip)),
     ...(disabled ? { disabled: true } : {}),
   });
 }
