@@ -37,6 +37,7 @@ import {
   encodeDropTarget,
   intentDestination,
   resolveCommandFromIntent,
+  resolvePlacementCommand,
   resolveDropIntent,
   type DropIntent,
   type PanelChildRect,
@@ -73,7 +74,12 @@ import { LiveAnnouncementRegion, useAnnounceChannel } from "./use-announcements"
 import { useCollectionsKeyboard } from "./use-keyboard-controller";
 import { usePaletteDrag } from "./use-palette-drag";
 import { createEdgeAutoScrollCoordinator } from "./edge-autoscroll-coordinator";
-import { VIRTUAL_INSERT_DATA_KEY, isVirtualInsertTarget } from "./virtual-droppable";
+import {
+  VIRTUAL_INSERT_DATA_KEY,
+  VIRTUAL_PLACE_DATA_KEY,
+  isVirtualInsertTarget,
+  isVirtualPlaceTarget,
+} from "./virtual-droppable";
 
 // Provider wiring: dnd-kit supplies the sensors, collision built-ins, and
 // the DragOverlay; this file owns collision -> intent resolution and the
@@ -525,12 +531,29 @@ function DndCollectionsContext({
       // them resolves an intent the store flags as invalid (cycle), which
       // drives the "Cannot drop" preview instead of dead silence.
       const draggedIds = new Set<string>(activeIds);
+      // Which row the dragged clip is on now — the picture unless it says
+      // otherwise. Decides which ROW targets can apply to this drag at all.
+      const draggedLane = graph.nodesById.get(activeIds[0] as NodeId)?.trackIndex ?? 0;
       const droppableContainers = args.droppableContainers.filter((container) => {
         // Virtualized containers carry their own resolver (see
         // react/virtual-droppable.ts) instead of an encoded target id.
         const virtualInsert = container.data.current?.[VIRTUAL_INSERT_DATA_KEY];
         if (isVirtualInsertTarget(virtualInsert)) {
           return graph.nodesById.get(virtualInsert.collectionId)?.kind === "collection";
+        }
+        const virtualPlace = container.data.current?.[VIRTUAL_PLACE_DATA_KEY];
+        if (isVirtualPlaceTarget(virtualPlace)) {
+          // THE PICTURE IS ORDERED; A LANE IS PLACED. So the picture row is a
+          // placement target only for a clip arriving FROM a lane ("put this
+          // back in the cut"). For a clip already on the picture it is removed
+          // from consideration entirely, or an ordinary reorder resolves to a
+          // no-op placement instead of an insert — and REMOVED, not merely
+          // ranked lower, because the row's rect is smaller than the strip's
+          // and pointerWithin ranks by distance-to-centre, so it would win by
+          // accident. That regression is what `a gap drop lands where the
+          // PICTURE says` caught.
+          if (virtualPlace.lane === 0 && draggedLane === 0) return false;
+          return graph.nodesById.get(virtualPlace.collectionId)?.kind === "collection";
         }
         const target = decodeDropTarget(String(container.id));
         if (!target) return false; // unknown droppables are never winners
@@ -577,7 +600,17 @@ function DndCollectionsContext({
         const nodeHit = collisions.find(
           (collision) => decodeDropTarget(String(collision.id))?.type === "node"
         );
-        if (nodeHit && nodeHit !== collisions[0]) {
+        // A ROW BEATS A CARD. Only rows that can apply to this drag survived
+        // the filter above, so any row still here is the answer: dragging a
+        // bed up onto the picture has to work anywhere on that row, not only
+        // through a gutter between two shots.
+        const rowHit = collisions.find((collision) => {
+          const container = droppableContainers.find((c) => c.id === collision.id);
+          return isVirtualPlaceTarget(container?.data.current?.[VIRTUAL_PLACE_DATA_KEY]);
+        });
+        if (rowHit && rowHit !== collisions[0]) {
+          collisions = [rowHit, ...collisions.filter((c) => c !== rowHit)];
+        } else if (nodeHit && nodeHit !== collisions[0]) {
           collisions = [nodeHit, ...collisions.filter((c) => c !== nodeHit)];
         }
       }
@@ -615,6 +648,29 @@ function DndCollectionsContext({
           type: "insert-at-index",
           collectionId: virtualInsert.collectionId,
           index,
+        };
+        return collisions;
+      }
+
+      // A LANE ROW: a lane and a time rather than a boundary index.
+      const virtualPlace = winnerContainer?.data.current?.[VIRTUAL_PLACE_DATA_KEY];
+      if (isVirtualPlaceTarget(virtualPlace)) {
+        let startSeconds: number;
+        try {
+          startSeconds = virtualPlace.resolveTime(point);
+        } catch {
+          intentRef.current = null;
+          return collisions;
+        }
+        if (!Number.isFinite(startSeconds)) {
+          intentRef.current = null;
+          return collisions;
+        }
+        intentRef.current = {
+          type: "place-at-time",
+          collectionId: virtualPlace.collectionId,
+          lane: virtualPlace.lane,
+          startSeconds,
         };
         return collisions;
       }
@@ -718,7 +774,16 @@ function DndCollectionsContext({
         return;
       }
 
-      const commandResult = resolveCommandFromIntent(graph, intent, activeIds);
+      // A PLACEMENT takes its own resolver: it rewrites two fields on the
+      // node and leaves the structure alone, so it is not a move and does not
+      // go through the post-removal index math. It also skips
+      // `mapDropCommand`, which exists to correct a BOUNDARY whose meaning a
+      // view changed — a placement carries a lane and a time, which mean the
+      // same thing in every view.
+      const commandResult =
+        intent.type === "place-at-time"
+          ? resolvePlacementCommand(intent, activeIds)
+          : resolveCommandFromIntent(graph, intent, activeIds);
       if (!commandResult.ok) {
         store.endDrag();
         announce("Cancelled drag.");
@@ -728,7 +793,10 @@ function DndCollectionsContext({
       // collection's own children gets to correct the target here — see
       // `mapDropCommand`. Read through the ref so a consumer that rebuilds the
       // callback per render never leaves a stale mapping armed mid-drag.
-      const command = mapDropCommand(commandResult.value, intent, graph);
+      const command =
+        commandResult.value.type === "set-node-placement"
+          ? commandResult.value
+          : mapDropCommand(commandResult.value, intent, graph);
 
       // Measure the ghost BEFORE the commit — dispatching unmounts the
       // overlay, and this box is where the dropped card's motion should
@@ -761,6 +829,20 @@ function DndCollectionsContext({
       store.endDrag();
 
       if (dispatched.ok) {
+        // A PLACEMENT did not move anything between collections, so the
+        // move wording would be wrong — it says which lane the clip landed
+        // on, which is the thing that changed and the thing a screen-reader
+        // user cannot see.
+        if (command.type === "set-node-placement") {
+          const lane = command.placement.trackIndex;
+          const what = activeIds.length > 1 ? `${activeIds.length} items` : "item";
+          announce(
+            lane === null || lane === undefined || lane === 0
+              ? `Moved ${what} onto the picture.`
+              : `Moved ${what} to lane ${lane}.`
+          );
+          return;
+        }
         const targetName = graph.nodesById.get(command.toParentId)?.name ?? "collection";
         announce(
           activeIds.length > 1

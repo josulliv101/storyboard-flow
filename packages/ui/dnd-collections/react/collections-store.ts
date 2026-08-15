@@ -937,6 +937,15 @@ function intentEqual(a: DropIntent | null, b: DropIntent | null): boolean {
         a.collectionId === b.collectionId &&
         a.index === b.index
       );
+    case "place-at-time":
+      return (
+        b.type === "place-at-time" &&
+        a.collectionId === b.collectionId &&
+        a.lane === b.lane &&
+        // A placement moves CONTINUOUSLY, so equality here is what keeps a
+        // drag from re-rendering on every sub-pixel pointer move.
+        a.startSeconds === b.startSeconds
+      );
   }
 }
 

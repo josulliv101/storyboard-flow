@@ -35,6 +35,15 @@ export type LanePictureSlot = Readonly<{
 export type LaneTimeMap = Readonly<{
   /** Content-x for a time on the picture's clock — O(log n). */
   at: (timeSeconds: number) => number;
+  /**
+   * The inverse: a content-x back to a time. What a DRAG needs, since a
+   * pointer arrives in pixels and a placement is stored in seconds.
+   *
+   * Exactly inverts `at` on the range it covers, including across gutters.
+   * Outside the picture it extrapolates and clamps the same way `at` does, so
+   * `timeAt(at(t)) === t` for any t the picture can express.
+   */
+  timeAt: (contentX: number) => number;
 }>;
 
 /**
@@ -129,7 +138,109 @@ export function createLaneTimeMap(slots: readonly LanePictureSlot[]): LaneTimeMa
     return from + ((timeSeconds - slotEnd) / gutterSeconds) * (next.left - from);
   };
 
-  return { at };
+  /** Index of the last slot whose LEFT EDGE is at or before `x`. */
+  const locateX = (x: number): number => {
+    let lo = 0;
+    let hi = count - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (slotAt(mid).left <= x) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+
+  const timeAt = (contentX: number): number => {
+    if (count === 0) return 0;
+    const first = slotAt(0);
+    if (!Number.isFinite(contentX) || contentX <= first.left) return first.startSeconds;
+    const last = slotAt(count - 1);
+    const lastRight = last.left + last.width;
+    const lastEnd = last.startSeconds + last.durationSeconds;
+    // Past the picture, at the last card's own rate — the mirror of `at`,
+    // which extrapolates there rather than clamping because a lane can
+    // outlast the picture.
+    if (contentX >= lastRight) {
+      const rate = last.width > 0 ? last.durationSeconds / last.width : 0;
+      return lastEnd + (contentX - lastRight) * rate;
+    }
+
+    const index = locateX(contentX);
+    const slot = slotAt(index);
+    const slotRight = slot.left + slot.width;
+    if (contentX <= slotRight) {
+      if (slot.width <= 0) return slot.startSeconds;
+      const within = (contentX - slot.left) / slot.width;
+      return slot.startSeconds + within * slot.durationSeconds;
+    }
+    // In the gutter after it — `locateX` only returns the last index when x is
+    // past its right edge, and that already clamped above.
+    const next = slotAt(index + 1);
+    const gutterPx = next.left - slotRight;
+    const from = slot.startSeconds + slot.durationSeconds;
+    if (gutterPx <= 0) return next.startSeconds;
+    return from + ((contentX - slotRight) / gutterPx) * (next.startSeconds - from);
+  };
+
+  return { at, timeAt };
+}
+
+/**
+ * Snap a dragged time to a nearby edge, IN PIXELS.
+ *
+ * The threshold has to be a pixel distance rather than a duration: the strip's
+ * scale changes with zoom, so "within 0.2s" is a hand-width at one zoom and
+ * invisible at another, while "within 6px" is the same gesture everywhere.
+ *
+ * `edges` are the times worth landing on — the picture's cuts, and the ends of
+ * the other clips on the lane being dropped onto. The caller decides what
+ * belongs in that list; this only measures. The nearest edge inside the
+ * threshold wins, and ties go to the earlier one so the result is stable as
+ * the pointer jitters.
+ *
+ * Returns the original time when nothing is close enough, which is also how a
+ * caller disables snapping — pass no edges.
+ */
+export function snapToEdges(
+  map: LaneTimeMap,
+  timeSeconds: number,
+  edges: readonly number[],
+  thresholdPx: number,
+): number {
+  if (edges.length === 0 || !(thresholdPx > 0)) return timeSeconds;
+  const x = map.at(timeSeconds);
+  let best = timeSeconds;
+  let bestDistance = thresholdPx;
+  for (const edge of edges) {
+    const distance = Math.abs(map.at(edge) - x);
+    // Strictly less, so the first edge at a given distance keeps it.
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = edge;
+    }
+  }
+  return best;
+}
+
+/**
+ * The times a drop should snap to: every picture card's start and end, plus
+ * the ends of the clips already on the target lane — minus the clip being
+ * dragged, which must not snap to itself.
+ */
+export function snapEdgesFor(
+  picture: readonly LaneRowItem[],
+  laneItems: readonly Readonly<{ id: string; startSeconds: number; durationSeconds: number }>[],
+  draggedId: string,
+): number[] {
+  const edges: number[] = [];
+  for (const item of picture) {
+    edges.push(item.startSeconds, item.startSeconds + Math.max(0, item.durationSeconds));
+  }
+  for (const item of laneItems) {
+    if (item.id === draggedId) continue;
+    edges.push(item.startSeconds, item.startSeconds + Math.max(0, item.durationSeconds));
+  }
+  return edges;
 }
 
 /**

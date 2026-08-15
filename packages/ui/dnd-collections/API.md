@@ -1082,15 +1082,32 @@ pointer over one. `aria-rowcount` is `1 + layers.length` and an empty layer
 emits no row element (a row with no cells is an invalid grid tree) while
 keeping its index reserved.
 
-Cross-lane DRAG is deliberately not modelled by the strip: layer cards drag
-like any other card and their drops resolve through the same container
-droppable, so a drop reorders within the collection and leaves the placement
-alone. The VALUES themselves are engine state — `trackIndex` and
-`placedStart` are node fields changed by `set-node-placement`, so a lane or
-placement change is undoable like any other command. Note that a strip handed
-a FILTERED `itemIds` (which is what a lane split produces) publishes
-boundaries into that filtered list — so the same `mapDropCommand` translation
-`itemIds` already documents applies, or drops land at the wrong position.
+**Dragging onto a lane.** Each row registers its own droppable
+(`VirtualPlaceTarget`) resolving the pointer to a lane and a TIME rather than
+a boundary index — an index means nothing on a lane, where clips are
+positioned by their own start. The provider forms a `place-at-time` intent and
+`resolvePlacementCommand` turns it into `set-node-placement`, so a drag is
+undoable like any other command. The time comes from `LaneTimeMap.timeAt`, the
+inverse of `at`.
+
+Snapping is measured in PIXELS (`8px`), because the scale changes with zoom:
+targets are the picture's cuts and the other clips on the destination lane,
+never the dragged clip itself. Holding SHIFT places exactly.
+
+Two precedence rules extend the package's existing "a card beats a container":
+a ROW beats the strip container (it is the more specific answer), and CROSSING
+a row beats a card (dragging a bed up onto the picture has to work anywhere on
+that row). Within one row a card still wins, so reorder is untouched.
+
+Dropping on the picture row resolves to lane 0, which CLEARS the placement —
+the clip rejoins the cut at its array position. There is no time to land at on
+a row that packs end to end, and a move plus a placement is not expressible as
+one history entry.
+
+A placement skips `mapDropCommand`: that seam corrects a BOUNDARY whose meaning
+a view changed, and a lane and a time mean the same thing in every view. A
+strip handed a FILTERED `itemIds` still needs it for ordinary inserts, though —
+so the translation `itemIds` documents applies, or those drops land wrong.
 
 A strip with no `layers` renders exactly as it did before they existed, down
 to the DOM: every lane path is gated.

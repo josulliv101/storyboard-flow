@@ -170,6 +170,11 @@ export type AddNodesCommand = Extract<CollectionsCommand, { type: "add-nodes" }>
 /** The `update-media` variant — what the pointer trim handles and keyboard trim produce. */
 export type UpdateMediaCommand = Extract<CollectionsCommand, { type: "update-media" }>;
 
+export type SetNodePlacementCommand = Extract<
+  CollectionsCommand,
+  { type: "set-node-placement" }
+>;
+
 export type ApplyCommandSuccess = Readonly<{
   graph: CollectionsGraph;
   patch: CollectionsPatch;

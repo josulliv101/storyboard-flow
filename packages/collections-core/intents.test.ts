@@ -6,6 +6,7 @@ import {
   isIntentInvalid,
   resolveCommandFromIntent,
   resolveDropIntent,
+  resolvePlacementCommand,
   type RectLike,
 } from "./intents";
 
@@ -332,5 +333,67 @@ describe("resolveCommandFromIntent (post-removal index math)", () => {
       ids(["A"])
     );
     expect(result).toEqual({ ok: false, error: { reason: "missing-node", nodeId: "ghost" } });
+  });
+});
+
+describe("resolvePlacementCommand", () => {
+  const ids = (list: readonly string[]) => list.map(parseNodeId);
+  const place = (lane: number, startSeconds: number) =>
+    resolvePlacementCommand(
+      { type: "place-at-time", collectionId: parseNodeId("root"), lane, startSeconds },
+      ids(["A"]),
+    );
+
+  test("carries the lane and the time onto a set-node-placement", () => {
+    const result = place(1, 7.5);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.value).toEqual({
+      type: "set-node-placement",
+      nodeIds: ids(["A"]),
+      placement: { trackIndex: 1, placedStart: 7.5 },
+    });
+  });
+
+  test("LANE 0 CLEARS BOTH FIELDS and ignores the time", () => {
+    // Dropping onto the picture means "rejoin the cut". There is no "here" to
+    // place at on that row — its clips pack end to end from array order — so
+    // the clip takes the slot its position gives it. One command, one undo;
+    // a move as well would have cost two.
+    const result = place(0, 7.5);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.value.placement).toEqual({ trackIndex: null, placedStart: null });
+  });
+
+  test("clamps a drag past the left edge to the very start", () => {
+    const result = place(1, -3);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.placement.placedStart).toBe(0);
+  });
+
+  test("refuses a fractional or negative lane", () => {
+    expect(place(1.5, 1).ok).toBe(false);
+    expect(place(-1, 1).ok).toBe(false);
+  });
+
+  test("refuses a non-finite time", () => {
+    expect(place(1, Number.NaN).ok).toBe(false);
+    expect(place(1, Number.POSITIVE_INFINITY).ok).toBe(false);
+  });
+
+  test("refuses an empty drag set", () => {
+    const result = resolvePlacementCommand(
+      { type: "place-at-time", collectionId: parseNodeId("root"), lane: 1, startSeconds: 1 },
+      [],
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test("places a whole multi-selection in ONE command", () => {
+    const result = resolvePlacementCommand(
+      { type: "place-at-time", collectionId: parseNodeId("root"), lane: 2, startSeconds: 3 },
+      ids(["A", "B"]),
+    );
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.nodeIds).toEqual(ids(["A", "B"]));
   });
 });

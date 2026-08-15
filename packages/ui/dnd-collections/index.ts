@@ -187,8 +187,11 @@ export {
 } from "./react/container-context";
 export {
   VIRTUAL_INSERT_DATA_KEY,
+  VIRTUAL_PLACE_DATA_KEY,
   isVirtualInsertTarget,
+  isVirtualPlaceTarget,
   type VirtualInsertTarget,
+  type VirtualPlaceTarget,
 } from "./react/virtual-droppable";
 export { useEdgeAutoScroll } from "./react/use-edge-autoscroll";
 

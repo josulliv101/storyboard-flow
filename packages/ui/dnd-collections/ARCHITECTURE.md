@@ -548,13 +548,25 @@ engine carries and never interprets, and putting them behind a command is
 what makes them ride the patch path and undo. The side-table rule is "does
 the engine MUTATE it", not "does the engine understand it".
 
-What the STRIP still does not model is the cross-lane DRAG. Layer cards drag
-like any other card and resolve through the same container droppable, so a
-drop reorders within the collection and leaves the placement alone. A
-consumer that splits its children by lane is also handing the strip a
-FILTERED item source, which makes its published boundaries mean something
-different; `mapDropCommand` is where that gets corrected, the same seam a
-flat strip uses.
+Dragging onto a lane goes through the SAME pipeline as everything else, with
+one extra target shape. A row registers a `VirtualPlaceTarget` resolving to a
+lane and a time — a boundary index means nothing where clips are positioned by
+their own start — the provider forms a `place-at-time` intent, and
+`resolvePlacementCommand` turns it into `set-node-placement`. It is not a move,
+so it does not go near the post-removal index math and does not consult
+`mapDropCommand`: that seam corrects a BOUNDARY whose meaning a view changed,
+and a lane and a time mean the same thing everywhere.
+
+Collision precedence gained two rules, both extending "a card beats a
+container" and for the same reason (pointerWithin ranks by distance-to-centre
+with no notion of z-order): a ROW beats the strip container, and CROSSING a row
+beats a card. The second is what lets a bed be dragged up onto the picture
+anywhere on that row rather than only through a gutter; within one row a card
+still wins, so reorder is untouched.
+
+A consumer that splits its children by lane is still handing the strip a
+FILTERED item source, so ordinary inserts keep needing the `mapDropCommand`
+translation a flat strip uses.
 
 ## FLIP animation: a layer above the reducer
 
