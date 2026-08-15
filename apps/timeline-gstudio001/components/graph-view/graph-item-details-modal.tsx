@@ -520,7 +520,15 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
           </>
         ) : (
           <div className="flex items-center justify-between font-mono text-[11px] text-zinc-500">
-            <span className="text-blue-300/90">still · {formatSeconds(showing)} on screen</span>
+            {/* This branch is everything that is NOT video, which is images
+                AND audio — so it cannot say "still" for both. A voiceover is
+                not a still, and calling it one is the kind of wrong label
+                nobody reports and everybody notices. */}
+            <span className="text-blue-300/90">
+              {node.mediaKind === "audio"
+                ? `sound · ${formatSeconds(showing)} long`
+                : `still · ${formatSeconds(showing)} on screen`}
+            </span>
             <span>drag the card&apos;s edge on the strip to change how long it holds</span>
           </div>
         )}
