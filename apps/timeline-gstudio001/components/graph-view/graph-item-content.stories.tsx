@@ -143,11 +143,11 @@ const ASSET_B: PreviewItem = {
  *  `hydrated: false` keeps the frames coming from the stored `previewItems`
  *  here — a hydrated card would instead derive them from live graph children,
  *  which this offline fixture deliberately does not carry. */
-function renderWithDetail(previewItems: PreviewItem[]) {
+function renderWithDetail(previewItems: PreviewItem[], trackIndex = 0) {
   const detail: ClipDetail = {
     alt: "A timeline",
     aspect: 16 / 9,
-    trackIndex: 0,
+    trackIndex,
     hydrated: false,
     itemCount: previewItems.length,
     duration: previewItems.length * 4,
@@ -628,6 +628,57 @@ export const NoDisabledChipWhenEnabled: Story = {
     const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
     await expect(surface.classList.contains("is-disabled-card")).toBe(false);
     await expect(canvasElement.querySelector("[data-disabled-chip]")).toBeNull();
+  },
+};
+
+// ── Lanes ───────────────────────────────────────────────────────────────────
+//
+// Lane 0 is the picture; anything above it plays UNDER the picture at the same
+// time. The chip exists because that placement is invisible otherwise: the
+// card sits in the same strip either way, and nothing else on it says that it
+// will be heard rather than watched in turn.
+
+/**
+ * A card on lane 1 says so. `L1`, sky rather than the disabled chip's amber —
+ * a lane is a placement, not a warning.
+ */
+export const LaneChipOnAnUnderLayer: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([ASSET_A, ASSET_B], 1)],
+  play: async ({ canvasElement }) => {
+    const chip = canvasElement.querySelector<HTMLElement>("[data-lane-chip]")!;
+    await expect(chip).not.toBeNull();
+    await expect(chip.dataset.laneChip).toBe("1");
+    await expect(chip.textContent).toBe("L1");
+    await expect(getComputedStyle(chip).opacity).toBe("1");
+  },
+};
+
+/**
+ * The PICTURE carries no chip at all. Almost every card is lane 0, and a badge
+ * that appeared on everything would say nothing — the chip earns its place by
+ * marking the surprising case only.
+ */
+export const NoLaneChipOnThePicture: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([ASSET_A, ASSET_B], 0)],
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-lane-chip]")).toBeNull();
+  },
+};
+
+/**
+ * A phantom lane index reads as the picture, matching how the model packs it.
+ *
+ * `validate` admits any finite number for `trackIndex`, so stored data can
+ * carry a fractional or negative one. It packs as lane 0, so a chip claiming
+ * otherwise would describe a placement the file does not have.
+ */
+export const PhantomLaneShowsNoChip: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([ASSET_A, ASSET_B], -2)],
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-lane-chip]")).toBeNull();
   },
 };
 

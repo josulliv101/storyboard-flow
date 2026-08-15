@@ -179,3 +179,16 @@ export function collectionCardSeconds(
   if (input.hydrated) return input.liveSeconds;
   return input.storedPlayableDuration ?? input.storedDuration ?? null;
 }
+
+/**
+ * Which LANE a card's clip plays in, from its side-table entry.
+ *
+ * Defensive in the same way `trackIndexOf` in the model is, and for the same
+ * reason: a detail entry can carry anything a stored document did, and a
+ * fractional or negative index would put a chip on a card that packs as
+ * picture. One answer to "which lane", on both sides of the seam.
+ */
+export function laneOf(detail: Readonly<{ trackIndex?: number }> | undefined): number {
+  const track = detail?.trackIndex;
+  return typeof track === "number" && Number.isInteger(track) && track >= 0 ? track : 0;
+}
