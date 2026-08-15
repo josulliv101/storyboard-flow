@@ -24,6 +24,7 @@ import {
   segmentArgs,
   concatArgs,
   concatListFile,
+  mixArgs,
   probeAudioArgs,
 } from "./ffmpeg-plan.mjs";
 
@@ -112,6 +113,64 @@ try {
   // segment. If concat dropped it, the audio stream would be short.
   const audioDuration = Number(await run("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0", finalPath]));
   check("audio runs the WHOLE file, not just the first cut", audioDuration.toFixed(2), (d) => Math.abs(Number(d) - expectedDuration) < 0.35);
+
+  // --- LANES: mix a bed and a VO UNDER the finished picture ---------------
+  //
+  // The phase 2 claim. `finalPath` is the picture; the two layers are
+  // normalised the same way a cut is, then delayed and mixed beneath it.
+  const bedSeg = join(dir, "layer-bed.mp4");
+  await run("ffmpeg", segmentArgs(
+    { src: voice, kind: "audio", sourceStart: 0, outputDuration: 6, playbackRate: 1, outputStart: 0 },
+    FORMAT, bedSeg,
+  ));
+  const voSeg = join(dir, "layer-vo.mp4");
+  await run("ffmpeg", segmentArgs(
+    { src: withAudio, kind: "video", sourceStart: 0, outputDuration: 2, playbackRate: 1, outputStart: 0 },
+    FORMAT, voSeg, { hasAudio: true },
+  ));
+
+  const mixed = join(dir, "mixed.mp4");
+  const mix = mixArgs(finalPath, [
+    { path: bedSeg, outputStart: 0 },
+    { path: voSeg, outputStart: 3 },
+  ], mixed);
+  check("mixArgs produced a command for two layers", mix !== null, true);
+  await run("ffmpeg", mix);
+
+  const mixedDuration = Number(await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", mixed]));
+  // duration=first: the PICTURE decides, so the mix is the same length even
+  // though a layer was delayed 3s into it.
+  check("mixing does not lengthen the film", mixedDuration.toFixed(2), (d) => Math.abs(Number(d) - expectedDuration) < 0.35);
+
+  const mixedStreams = await run("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", mixed]);
+  check("mixed file still has video AND audio", mixedStreams.split("\n").map((s) => s.trim()).sort().join(","), "audio,video");
+
+  const mixedVideoCodec = await run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", mixed]);
+  check("video was COPIED, not re-encoded", mixedVideoCodec, "h264");
+
+  // The audible proof: measure loudness before and after. Adding a bed and a
+  // VO must make the film LOUDER, not quieter — which is what amix's default
+  // normalising would have done by dividing every input by the input count.
+  // `volumedetect` reports on STDERR, like everything ffmpeg says about a
+  // file — `run` resolves stdout, so this needs its own capture.
+  const meanVolume = (path) =>
+    new Promise((resolve) => {
+      const child = spawn("ffmpeg", [
+        "-hide_banner", "-nostats",
+        "-i", path,
+        "-af", "volumedetect",
+        "-f", "null", "-",
+      ]);
+      let err = "";
+      child.stderr.on("data", (chunk) => (err += chunk));
+      child.on("close", () => {
+        const match = /mean_volume:\s*(-?[\d.]+) dB/.exec(err);
+        resolve(match ? Number(match[1]) : Number.NaN);
+      });
+    });
+  const before = await meanVolume(finalPath);
+  const after = await meanVolume(mixed);
+  check(`mix is LOUDER than the picture alone (${before.toFixed(1)} -> ${after.toFixed(1)} dB)`, after > before, true);
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

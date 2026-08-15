@@ -56,17 +56,30 @@ export type RenderFormat = Readonly<{
  * The finished cut list — everything a renderer needs and nothing about how it
  * renders.
  *
- * PHASE 1 IS A SEQUENCE. `cuts` never overlap, because the stored model cannot
- * express overlap: `packTimelineClips` packs one sequence and `trackIndex` is
- * carried but always 0. Layered audio (VO or a bed UNDER the picture) needs
- * per-track packing in the model first, and is deliberately out of scope here
- * rather than faked — an export that silently flattened a layered mix into a
- * sequence would be worse than one that cannot express it yet.
+ * TWO PARTS, because a timeline has two kinds of content. `cuts` is the
+ * PICTURE: lane 0, concatenated, gaps closed. `layers` is everything placed
+ * UNDER it — a voiceover, a music bed — which does not concatenate, because
+ * the whole point of it is to play at the same time as something else.
  */
 export type RenderCutList = Readonly<{
+  /** The picture, in order, touching. Never overlapping. */
   cuts: readonly RenderCut[];
-  /** Total output length: the sum of the cut durations, gaps already removed.
-   *  NOT the manifest's `durationSeconds`, which is board time. */
+  /**
+   * Everything on a lane above the picture, positioned in OUTPUT time.
+   *
+   * These DO overlap the cuts — that is what makes them layers — and they may
+   * overlap each other, which is a VO over a bed. Empty for any timeline that
+   * uses no lanes, which is every one written before phase 2.
+   */
+  layers: readonly RenderCut[];
+  /**
+   * Total output length: the sum of the PICTURE's durations, gaps removed.
+   *
+   * The picture decides, not the longest layer. A 30-second bed under eight
+   * seconds of picture makes an eight-second film with the bed cut off at the
+   * end — which is what a bed is for. The alternative, extending the output to
+   * the longest layer, ends the film on however much black the bed had left.
+   */
   durationSeconds: number;
   format: RenderFormat;
 }>;

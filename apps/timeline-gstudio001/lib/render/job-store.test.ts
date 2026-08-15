@@ -66,6 +66,7 @@ const CUT_LIST: RenderCutList = {
       outputStart: 0,
     },
   ],
+  layers: [],
   durationSeconds: 4,
   format: { width: 1152, height: 480, fps: 24 },
 };

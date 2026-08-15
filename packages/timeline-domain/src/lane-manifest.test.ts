@@ -1,0 +1,159 @@
+import { describe, expect, it } from "vitest";
+
+import { packTimelineClips } from "@storyboard/timeline-model/documents";
+import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
+
+import { compilePlaybackManifest } from "./playback-manifest";
+
+// What the manifest says about LANES — the read model export and the player
+// both consume, so "is this leaf picture or under-layer" gets decided here
+// exactly once.
+
+function media(
+  id: string,
+  duration: number,
+  over: Partial<TimelineClip> = {},
+): TimelineClip {
+  return {
+    id,
+    index: 0,
+    kind: "image",
+    src: `https://cdn.test/${id}.png`,
+    alt: id,
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: 0,
+    duration,
+    sourceDuration: duration,
+    trimIn: 0,
+    trimOut: 0,
+    ...over,
+  } as TimelineClip;
+}
+
+function collection(
+  id: string,
+  childTimelineId: string,
+  duration: number,
+  over: Partial<TimelineClip> = {},
+): TimelineClip {
+  return {
+    id,
+    index: 0,
+    kind: "collection",
+    childTimelineId,
+    title: id,
+    itemCount: 1,
+    previewItems: [],
+    alt: `${id} collection`,
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: 0,
+    duration,
+    sourceDuration: duration,
+    trimIn: 0,
+    trimOut: 0,
+    ...over,
+  } as unknown as TimelineClip;
+}
+
+const doc = (id: string, clips: TimelineClip[]): TimelineDocument => ({
+  id,
+  title: id,
+  clips: packTimelineClips(clips),
+});
+
+const compile = (documents: Record<string, TimelineDocument>, root = "root") =>
+  compilePlaybackManifest(documents, root, 1, "2026-08-15T00:00:00.000Z");
+
+const laneOf = (manifest: ReturnType<typeof compile>, id: string) =>
+  manifest.leaves.find((leaf) => leaf.id === id)?.trackIndex;
+
+describe("manifest lanes", () => {
+  it("puts everything on the picture when nothing uses lanes", () => {
+    const manifest = compile({ root: doc("root", [media("a", 4), media("b", 4)]) });
+    expect(manifest.leaves.map((leaf) => leaf.trackIndex)).toEqual([0, 0]);
+  });
+
+  it("EMITS OVERLAPPING LEAVES for a bed under the picture", () => {
+    // The whole point of phase 2: two leaves live at the same instant.
+    const manifest = compile({
+      root: doc("root", [
+        media("shot-1", 4),
+        media("shot-2", 4),
+        media("bed", 30, { trackIndex: 1, kind: "audio", src: "https://cdn.test/bed.wav" }),
+      ]),
+    });
+    const bed = manifest.leaves.find((leaf) => leaf.id === "bed");
+    const shot2 = manifest.leaves.find((leaf) => leaf.id === "shot-2");
+    expect(bed?.timelineStart).toBe(0);
+    expect(bed?.trackIndex).toBe(1);
+    // shot-2 starts while the bed is still running — they overlap.
+    expect(shot2!.timelineStart).toBeGreaterThan(0);
+    expect(shot2!.timelineStart).toBeLessThan(bed!.timelineStart + bed!.timelineDuration);
+  });
+
+  it("reports the whole timeline's duration as the FURTHEST lane end", () => {
+    const manifest = compile({
+      root: doc("root", [media("shot", 4), media("bed", 30, { trackIndex: 1 })]),
+    });
+    expect(manifest.durationSeconds).toBe(30);
+  });
+
+  it("a bed inside a lane-0 collection is UNDER — its own lane decides", () => {
+    const manifest = compile({
+      root: doc("root", [collection("scene", "scene-doc", 20)]),
+      "scene-doc": doc("scene-doc", [
+        media("shot", 4),
+        media("bed", 20, { trackIndex: 1 }),
+      ]),
+    });
+    expect(laneOf(manifest, "shot")).toBe(0);
+    expect(laneOf(manifest, "bed")).toBe(1);
+  });
+
+  it("EVERYTHING inside a lane-1 collection is under, however it is arranged", () => {
+    // The outermost placement decides the role. A shot on lane 0 inside a
+    // collection that was itself placed under the picture is still under it.
+    const manifest = compile({
+      root: doc("root", [
+        media("picture", 10),
+        collection("under", "under-doc", 10, { trackIndex: 1 }),
+      ]),
+      "under-doc": doc("under-doc", [media("inner", 10)]),
+    });
+    expect(laneOf(manifest, "picture")).toBe(0);
+    expect(laneOf(manifest, "inner")).toBe(1);
+  });
+
+  it("does NOT let an inner lane override an outer one", () => {
+    // A lane-2 clip inside a lane-1 collection is still "under the picture at
+    // lane 1" — the inner index only described that collection's own layout,
+    // which the window math has already resolved.
+    const manifest = compile({
+      root: doc("root", [collection("under", "under-doc", 10, { trackIndex: 1 })]),
+      "under-doc": doc("under-doc", [media("deep", 10, { trackIndex: 2 })]),
+    });
+    expect(laneOf(manifest, "deep")).toBe(1);
+  });
+
+  it("normalises a phantom lane to the picture", () => {
+    const manifest = compile({
+      root: doc("root", [media("odd", 4, { trackIndex: -3 })]),
+    });
+    expect(laneOf(manifest, "odd")).toBe(0);
+  });
+
+  it("keeps carrying disabled independently of the lane", () => {
+    const manifest = compile({
+      root: doc("root", [
+        media("shot", 4),
+        media("bed", 20, { trackIndex: 1, disabled: true }),
+      ]),
+    });
+    expect(manifest.leaves.find((leaf) => leaf.id === "bed")).toMatchObject({
+      trackIndex: 1,
+      disabled: true,
+    });
+  });
+});

@@ -25,6 +25,7 @@ import { join } from "node:path";
 import {
   concatArgs,
   concatListFile,
+  mixArgs,
   probeAudioArgs,
   segmentArgs,
   segmentFraction,
@@ -139,32 +140,57 @@ async function renderJob(job) {
   const workDir = await mkdtemp(join(tmpdir(), `render-${job.id}-`));
   try {
     await report(job.id, { type: "start" });
-    const { cuts, format } = job.cutList;
-    const segments = [];
+    const { cuts, layers = [], format } = job.cutList;
+    // Both kinds normalise the same way, so one loop makes both. Only what
+    // happens AFTER differs: the picture concatenates, the layers get mixed
+    // underneath it.
+    const total = cuts.length + layers.length;
+    let done = 0;
 
-    for (const [index, cut] of cuts.entries()) {
+    const normalise = async (cut, name) => {
       // Downloaded rather than streamed: a 404 or an expired URL then fails
       // here, clearly, instead of surfacing as an opaque ffmpeg error four
       // steps later.
-      const sourcePath = join(workDir, `src-${index}${extensionFor(cut)}`);
+      const sourcePath = join(workDir, `src-${name}${extensionFor(cut)}`);
       await download(cut.src, sourcePath);
-
       const hasAudio = cut.kind === "video" ? await probeHasAudio(sourcePath) : false;
-      const segmentPath = join(workDir, `seg-${String(index).padStart(4, "0")}.mp4`);
+      const segmentPath = join(workDir, `seg-${name}.mp4`);
       await run("ffmpeg", segmentArgs({ ...cut, src: sourcePath }, format, segmentPath, { hasAudio }));
-      segments.push(segmentPath);
-
       await report(job.id, {
         type: "progress",
-        fraction: segmentFraction(index, cuts.length),
-        message: `cut ${index + 1} of ${cuts.length}`,
+        fraction: segmentFraction(done, total),
+        message: `${done + 1} of ${total}`,
       });
+      done += 1;
+      return segmentPath;
+    };
+
+    const segments = [];
+    for (const [index, cut] of cuts.entries()) {
+      segments.push(await normalise(cut, `pic-${String(index).padStart(4, "0")}`));
     }
 
     const listPath = join(workDir, "concat.txt");
     await writeFile(listPath, concatListFile(segments));
-    const outputPath = join(workDir, `${job.id}.mp4`);
-    await run("ffmpeg", concatArgs(listPath, outputPath));
+    const picturePath = join(workDir, `picture-${job.id}.mp4`);
+    await run("ffmpeg", concatArgs(listPath, picturePath));
+
+    // THE LAYERS. Each is normalised like a cut — so a trimmed or rate-scaled
+    // VO is resolved exactly the way a shot would be — and only its audio is
+    // used by the mix.
+    const layerSegments = [];
+    for (const [index, layer] of layers.entries()) {
+      layerSegments.push({
+        path: await normalise(layer, `lay-${String(index).padStart(4, "0")}`),
+        outputStart: layer.outputStart,
+      });
+    }
+
+    const mix = mixArgs(picturePath, layerSegments, join(workDir, `${job.id}.mp4`));
+    // Null means nothing to mix: the concat already IS the finished file, and
+    // re-encoding to add nothing would cost a generation of the whole film.
+    const outputPath = mix === null ? picturePath : join(workDir, `${job.id}.mp4`);
+    if (mix !== null) await run("ffmpeg", mix);
 
     const url = await uploadResult(job.id, outputPath);
     await report(job.id, { type: "succeed", outputUrl: url });

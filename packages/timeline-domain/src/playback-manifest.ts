@@ -18,6 +18,7 @@
 // only it knows whether the user is playing (jump the span) or scrubbing
 // (draw it grayed).
 
+import { trackIndexOf } from "@storyboard/timeline-model/documents";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 export type PlaybackLeaf = Readonly<{
@@ -31,6 +32,23 @@ export type PlaybackLeaf = Readonly<{
   timelineDuration: number;
   sourceStart: number;
   playbackRate: number;
+  /**
+   * Which lane this plays in, relative to the ROOT timeline: 0 is the picture,
+   * anything higher runs under it.
+   *
+   * THE OUTERMOST NON-ZERO LANE ON THE PATH, not the leaf's own. Where a thing
+   * sits relative to the root is what decides whether it is picture or
+   * under-layer; a lane inside a collection only governs that collection's own
+   * layout, which the window math has already resolved by the time a leaf
+   * exists.
+   *
+   * So a bed on lane 1 inside a lane-0 scene is lane 1 — it runs under. And
+   * every leaf inside a lane-1 collection is lane 1, however its own children
+   * are arranged, because the whole collection was placed under the picture.
+   *
+   * Absent is impossible; 0 is the answer for everything written before lanes.
+   */
+  trackIndex: number;
   /** Skipped by the PLAYER, not by this compiler. A disabled leaf keeps its
    *  full span on the timeline — that span is what the playhead jumps over
    *  while playing and what a scrub can land inside. Set when the leaf's own
@@ -79,6 +97,7 @@ function addMediaLeaf(
   overlapStart: number,
   overlapEnd: number,
   disabled: boolean,
+  trackIndex: number,
 ): void {
   const localSpan = Math.max(0.001, window.localEnd - window.localStart);
   const outputScale = window.outputDuration / localSpan;
@@ -95,6 +114,7 @@ function addMediaLeaf(
     timelineDuration: (overlapEnd - overlapStart) * outputScale,
     sourceStart: clip.trimIn + clipProgress * sourceRange,
     playbackRate: (sourceRange / Math.max(0.001, clip.duration)) / outputScale,
+    trackIndex,
     ...(disabled ? { disabled: true } : {}),
   });
 }
@@ -111,6 +131,11 @@ function flattenDocument(
    *  the way down — an enabled child of a disabled parent still does not play.
    */
   inheritedDisabled: boolean,
+  /** The outermost non-zero lane seen on the way down, or 0 while still on the
+   *  picture. Once a collection has put us under the picture, everything below
+   *  it is under there too — there is no way back up, the same shape
+   *  `inheritedDisabled` has. */
+  laneFromRoot: number,
 ): void {
   if (visited.has(documentId)) throw new Error(`Collection cycle detected at "${documentId}".`);
   const document = documents[documentId];
@@ -130,9 +155,13 @@ function flattenDocument(
     // it is marked. That span is what the player jumps over and what a scrub
     // can land inside.
     const clipDisabled = inheritedDisabled || clip.disabled === true;
+    // The OUTERMOST non-zero lane wins: once something above put us under the
+    // picture, a lane index down here only described that collection's own
+    // internal layout, which the window math has already resolved.
+    const clipLane = laneFromRoot !== 0 ? laneFromRoot : trackIndexOf(clip);
 
     if (clip.kind !== "collection") {
-      addMediaLeaf(leaves, clip, path, window, overlapStart, overlapEnd, clipDisabled);
+      addMediaLeaf(leaves, clip, path, window, overlapStart, overlapEnd, clipDisabled, clipLane);
       continue;
     }
 
@@ -159,6 +188,7 @@ function flattenDocument(
       nextVisited,
       leaves,
       clipDisabled,
+      clipLane,
     );
   }
 }
@@ -199,6 +229,9 @@ export function compilePlaybackManifest(
     new Set(),
     leaves,
     false,
+    // The root IS the picture. Everything descends from lane 0 until some clip
+    // on the way down says otherwise.
+    0,
   );
 
   return {
@@ -228,7 +261,9 @@ export function manifestToClips(manifest: PlaybackManifest): TimelineClip[] {
       index,
       alt: leaf.id,
       aspect: 16 / 9,
-      trackIndex: 0,
+      // The leaf's REAL lane, so the player lays simultaneous leaves out the
+      // way the board does rather than stacking them all on the picture.
+      trackIndex: leaf.trackIndex,
       startTime: leaf.timelineStart,
       duration: leaf.timelineDuration,
       sourceDuration: leaf.sourceStart + sourceRange,

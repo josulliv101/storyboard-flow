@@ -207,3 +207,69 @@ export function segmentFraction(index, total) {
   if (total <= 0) return 0;
   return Math.min(0.95, ((index + 1) / total) * 0.95);
 }
+
+/**
+ * Mix the under-layers into the concatenated picture.
+ *
+ * Input 0 is the picture (video + its own audio); inputs 1..N are the layer
+ * segments, already normalised by `segmentArgs`, so their audio is 48k stereo
+ * like everything else. Only their AUDIO is used — a layer's picture, if it
+ * had one, is not composited. That is phase 2's stated limit: lanes carry
+ * sound under the picture, not picture over it.
+ *
+ * THREE ffmpeg details, each of which is a wrong file if missed:
+ *
+ * `normalize=0` on amix. It defaults to ON, which divides every input by the
+ * number of inputs — so adding a quiet bed would silently halve the dialogue
+ * that was already there. The layers were levelled when they were made; the
+ * mixer must not second-guess them.
+ *
+ * `duration=first` so the output follows the PICTURE. Without it amix runs to
+ * the longest input and a 30s bed under 8s of picture yields 30 seconds, the
+ * last 22 of them black.
+ *
+ * `adelay` in MILLISECONDS, and per channel — `adelay=1500|1500` for stereo.
+ * A single value delays only the first channel, which is not a late start but
+ * a stereo image that slides apart.
+ */
+export function mixArgs(picturePath, layers, outputPath) {
+  if (layers.length === 0) {
+    // Nothing to mix. Returning the concat's own arguments would re-encode for
+    // no reason; the caller uses the picture as the finished file instead.
+    return null;
+  }
+
+  const inputs = ["-i", picturePath];
+  const chains = [];
+  const mixLabels = ["[0:a]"];
+
+  layers.forEach((layer, index) => {
+    const streamIndex = index + 1;
+    inputs.push("-i", layer.path);
+    const delayMs = Math.max(0, Math.round(layer.outputStart * 1000));
+    const label = `[l${streamIndex}]`;
+    chains.push(`[${streamIndex}:a]adelay=${delayMs}|${delayMs}${label}`);
+    mixLabels.push(label);
+  });
+
+  const filter = [
+    ...chains,
+    `${mixLabels.join("")}amix=inputs=${mixLabels.length}:duration=first:normalize=0[aout]`,
+  ].join(";");
+
+  return [
+    "-y",
+    ...inputs,
+    "-filter_complex", filter,
+    "-map", "0:v",
+    "-map", "[aout]",
+    // The picture is already encoded exactly right by the concat — copying it
+    // keeps the mix from costing a second generation of the whole film.
+    "-c:v", "copy",
+    "-c:a", "aac",
+    "-ar", "48000",
+    "-ac", "2",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}

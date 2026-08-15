@@ -17,6 +17,9 @@ function leaf(over: Partial<PlaybackLeaf> & { id: string }): PlaybackLeaf {
     timelineDuration: 4,
     sourceStart: 0,
     playbackRate: 1,
+    // Lane 0 unless a case overrides it — every cut-list test so far is a
+    // single sequence.
+    trackIndex: 0,
     ...over,
   };
 }
@@ -172,5 +175,146 @@ describe("compileCutList", () => {
     const manifest = manifestOf(leaves);
     compileCutList(manifest);
     expect(manifest.leaves.map((l) => l.id)).toEqual(["late", "early"]);
+  });
+});
+
+// ── LANES (phase 2) ─────────────────────────────────────────────────────────
+//
+// Lane 0 is the picture and concatenates; anything above it runs UNDER and
+// must be repositioned, because closing the gaps moves the picture out from
+// under it.
+
+describe("compileCutList — layers", () => {
+  it("has no layers at all for a timeline that uses none", () => {
+    const list = compileCutList(manifestOf(packed([{ id: "a" }, { id: "b" }])));
+    expect(list.layers).toEqual([]);
+  });
+
+  it("keeps the picture out of the layers, and the layers out of the picture", () => {
+    const manifest = manifestOf([
+      ...packed([{ id: "shot-1" }, { id: "shot-2" }]),
+      leaf({
+        id: "bed",
+        kind: "audio",
+        src: "https://cdn.test/bed.wav",
+        trackIndex: 1,
+        timelineStart: 0,
+        timelineDuration: 30,
+      }),
+    ]);
+    const list = compileCutList(manifest);
+    expect(list.cuts.map((cut) => cut.src)).toEqual([
+      "https://cdn.test/shot-1.mp4",
+      "https://cdn.test/shot-2.mp4",
+    ]);
+    expect(list.layers.map((cut) => cut.src)).toEqual(["https://cdn.test/bed.wav"]);
+  });
+
+  it("THE PICTURE decides the length, and a long bed is clipped to it", () => {
+    // A 30s bed under 8s of picture makes an 8s film with the bed cut off —
+    // which is what a bed is for. Extending to the longest layer would end the
+    // film on however much black the bed had left.
+    const manifest = manifestOf([
+      ...packed([{ id: "shot-1" }, { id: "shot-2" }]),
+      leaf({ id: "bed", trackIndex: 1, timelineStart: 0, timelineDuration: 30 }),
+    ]);
+    const list = compileCutList(manifest);
+    expect(list.durationSeconds).toBe(8);
+    expect(list.layers[0]).toMatchObject({ outputStart: 0, outputDuration: 8 });
+  });
+
+  it("REMAPS a layer through the closed gaps, so it stays on its shot", () => {
+    // The bed lines up with shot-2, which starts at board 4.12 and output 4.
+    // Positioning by board time would land it 0.12s late — and that error
+    // compounds, a second across twenty joins, which is a VO on the wrong shot.
+    const shots = packed([{ id: "shot-1" }, { id: "shot-2" }, { id: "shot-3" }]);
+    const shot2Start = shots[1]!.timelineStart;
+    const manifest = manifestOf([
+      ...shots,
+      leaf({ id: "vo", trackIndex: 1, timelineStart: shot2Start, timelineDuration: 4 }),
+    ]);
+    const list = compileCutList(manifest);
+    expect(shot2Start).toBeCloseTo(4 + GAP, 6);
+    expect(list.layers[0]?.outputStart).toBe(4);
+  });
+
+  it("remaps a layer that starts INSIDE a shot to the same offset within it", () => {
+    const shots = packed([{ id: "shot-1" }, { id: "shot-2" }]);
+    const oneIntoShot2 = shots[1]!.timelineStart + 1;
+    const manifest = manifestOf([
+      ...shots,
+      leaf({ id: "vo", trackIndex: 1, timelineStart: oneIntoShot2, timelineDuration: 2 }),
+    ]);
+    expect(compileCutList(manifest).layers[0]?.outputStart).toBe(5);
+  });
+
+  it("pulls a layer that starts IN A GAP forward to the next shot", () => {
+    // The gap does not exist in the output, so there is nowhere else for it.
+    const shots = packed([{ id: "shot-1" }, { id: "shot-2" }]);
+    const inTheGap = shots[0]!.timelineDuration + GAP / 2;
+    const manifest = manifestOf([
+      ...shots,
+      leaf({ id: "sting", trackIndex: 1, timelineStart: inTheGap, timelineDuration: 2 }),
+    ]);
+    expect(compileCutList(manifest).layers[0]?.outputStart).toBe(4);
+  });
+
+  it("DROPS a layer that starts after the picture ends", () => {
+    // A layer is defined by what it runs under; with no picture left there is
+    // nothing for it to be under.
+    const shots = packed([{ id: "shot-1" }]);
+    const manifest = manifestOf([
+      ...shots,
+      leaf({ id: "tail", trackIndex: 1, timelineStart: 100, timelineDuration: 5 }),
+    ]);
+    const list = compileCutList(manifest);
+    expect(list.layers).toEqual([]);
+    expect(list.durationSeconds).toBe(4);
+  });
+
+  it("drops a disabled layer like any other disabled leaf", () => {
+    const manifest = manifestOf([
+      ...packed([{ id: "shot-1" }]),
+      leaf({ id: "bed", trackIndex: 1, timelineStart: 0, timelineDuration: 4, disabled: true }),
+    ]);
+    expect(compileCutList(manifest).layers).toEqual([]);
+  });
+
+  it("closes the picture's gaps even when a DISABLED shot sat between them", () => {
+    // The layer map is built from the surviving picture, so a dropped shot
+    // pulls later layers forward with it rather than leaving them stranded.
+    const shots = packed([{ id: "a" }, { id: "b", disabled: true }, { id: "c" }]);
+    const cStart = shots[2]!.timelineStart;
+    const manifest = manifestOf([
+      ...shots,
+      leaf({ id: "vo", trackIndex: 1, timelineStart: cStart, timelineDuration: 2 }),
+    ]);
+    const list = compileCutList(manifest);
+    expect(list.cuts.map((cut) => cut.outputStart)).toEqual([0, 4]);
+    expect(list.layers[0]?.outputStart).toBe(4);
+  });
+
+  it("keeps SEVERAL layers, which is a VO over a bed", () => {
+    const manifest = manifestOf([
+      ...packed([{ id: "shot-1" }, { id: "shot-2" }]),
+      leaf({ id: "bed", trackIndex: 1, timelineStart: 0, timelineDuration: 8 }),
+      leaf({ id: "vo", trackIndex: 2, timelineStart: 0, timelineDuration: 3 }),
+    ]);
+    const list = compileCutList(manifest);
+    expect(list.layers.map((cut) => cut.src)).toEqual([
+      "https://cdn.test/bed.mp4",
+      "https://cdn.test/vo.mp4",
+    ]);
+  });
+
+  it("has no picture, and therefore no layers, when only lanes above 0 survive", () => {
+    // Nothing to run under. An audio-only export is a different feature.
+    const manifest = manifestOf([
+      leaf({ id: "bed", trackIndex: 1, timelineStart: 0, timelineDuration: 8 }),
+    ]);
+    const list = compileCutList(manifest);
+    expect(list.cuts).toEqual([]);
+    expect(list.layers).toEqual([]);
+    expect(list.durationSeconds).toBe(0);
   });
 });
