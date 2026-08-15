@@ -30,6 +30,10 @@ import {
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "@storyboard/timeline-model/constants";
 import { tagsField } from "@storyboard/timeline-model/tags";
+// The lane normaliser the model packs with. Imported rather than re-derived:
+// this file's packing is the twin of `packTimelineClips`, and two different
+// answers to "which lane is this clip on" would move layered clips on save.
+import { trackIndexOf } from "@storyboard/timeline-model/documents";
 import type {
   AssetSourceRef,
   CollectionTimelineClip,
@@ -660,17 +664,25 @@ export function graphChildrenToClips(
   details: DetailsById,
   collectionId: string,
 ): TimelineClip[] {
-  let nextStartTime = TIMELINE_LEADING_PADDING_SECONDS;
+  // PER LANE, exactly as `packTimelineClips` does — this is the twin of that
+  // math, and the two drifting is the whole reason the comment at the top of
+  // this file insists they are identical. A graph write that packed one
+  // sequence while the model packed lanes would move every layered clip the
+  // moment it was saved.
+  const nextStartByTrack = new Map<number, number>();
+  const startFor = (track: number) =>
+    nextStartByTrack.get(track) ?? TIMELINE_LEADING_PADDING_SECONDS;
 
   return getChildren(graph, parseNodeId(collectionId)).map((childId, index) => {
     const node = graph.nodesById.get(childId);
     if (!node) throw new Error(`Graph child "${childId}" missing from nodesById.`);
     const detail = details[childId];
-    const startTime = nextStartTime;
+    const trackIndex = trackIndexOf({ trackIndex: detail?.trackIndex ?? 0 });
+    const startTime = startFor(trackIndex);
 
     if (node.kind === "media") {
       const duration = mediaDurationSeconds(node);
-      nextStartTime += duration + CLIP_GAP_SECONDS;
+      nextStartByTrack.set(trackIndex, startTime + duration + CLIP_GAP_SECONDS);
       const base = {
         // A demoted duplicate (see clipSpecs) writes back its STORED id.
         id: detail?.sourceClipId ?? (node.id as string),
@@ -682,7 +694,7 @@ export function graphChildrenToClips(
         alt: detail?.alt ?? node.name,
         ...(detail?.title === undefined ? {} : { title: detail.title }),
         aspect: detail?.aspect ?? 16 / 9,
-        trackIndex: detail?.trackIndex ?? 0,
+        trackIndex,
         startTime,
         duration,
         ...(detail?.playbackStartTime === undefined
@@ -760,7 +772,7 @@ export function graphChildrenToClips(
       ? hydratedCollectionPlayableDuration(graph, details, node.id)
       : detail?.playableDuration;
     const playableDuration = playable === duration ? undefined : playable;
-    nextStartTime += duration + CLIP_GAP_SECONDS;
+    nextStartByTrack.set(trackIndex, startTime + duration + CLIP_GAP_SECONDS);
     return {
       id: detail?.sourceClipId ?? (node.id as string),
       index,
@@ -777,7 +789,7 @@ export function graphChildrenToClips(
       ...(playableDuration === undefined ? {} : { playableDuration }),
       alt: detail?.alt ?? `${node.name} collection`,
       aspect: detail?.aspect ?? 16 / 9,
-      trackIndex: detail?.trackIndex ?? 0,
+      trackIndex,
       startTime,
       duration,
       sourceDuration: detail?.sourceDuration ?? duration,

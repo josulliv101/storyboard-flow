@@ -48,19 +48,48 @@ function previewItemOf(clip: ImageTimelineClip | VideoTimelineClip) {
   };
 }
 
-/** Derive startTime/index for a clip sequence: leading padding, then each
- *  clip's duration plus the standard gap. The one packing definition every
- *  write path shares. */
+/**
+ * Which lane a clip plays in. Lanes pack independently, so this is what lets a
+ * voiceover run UNDER the picture rather than after it.
+ *
+ * Defensive rather than trusting: `validate` deliberately admits any finite
+ * number here, and a stray `1.5` or `-1` arriving from stored data would mint
+ * a phantom lane that nothing can author or see. Anything that is not a
+ * non-negative integer is track 0 — the same lane every document written
+ * before lanes existed is already on.
+ */
+export function trackIndexOf(clip: Pick<TimelineClip, "trackIndex">): number {
+  const track = clip.trackIndex;
+  return Number.isInteger(track) && track >= 0 ? track : 0;
+}
+
+/**
+ * Derive startTime/index for a clip sequence: leading padding, then each
+ * clip's duration plus the standard gap. The one packing definition every
+ * write path shares.
+ *
+ * PACKS PER LANE. Each `trackIndex` gets its own running start, so lane 1
+ * begins at the same instant lane 0 does and the two play together. Packing
+ * them into one sequence — which is what this did until lanes — is exactly
+ * what made a bed or a VO impossible to express: it could only ever be placed
+ * AFTER the picture, never under it.
+ *
+ * `index` stays the ARRAY position, not a per-lane counter. It is the
+ * document's own order and the tiebreak readers use; making it lane-relative
+ * would give two clips the same index and silently reorder them.
+ *
+ * Identical to the old behaviour for any document that has never used lanes,
+ * because every clip in one is on track 0 — which is every document written
+ * before this.
+ */
 export function packTimelineClips(clips: TimelineClip[]) {
-  let nextStartTime = TIMELINE_LEADING_PADDING_SECONDS;
+  const nextStartByTrack = new Map<number, number>();
 
   return clips.map((clip, index) => {
-    const nextClip = {
-      ...clip,
-      index,
-      startTime: nextStartTime,
-    };
-    nextStartTime += nextClip.duration + CLIP_GAP_SECONDS;
+    const track = trackIndexOf(clip);
+    const startTime = nextStartByTrack.get(track) ?? TIMELINE_LEADING_PADDING_SECONDS;
+    const nextClip = { ...clip, index, startTime };
+    nextStartByTrack.set(track, startTime + nextClip.duration + CLIP_GAP_SECONDS);
     return nextClip;
   });
 }
@@ -85,11 +114,21 @@ export function enabledClips(clips: readonly TimelineClip[]): TimelineClip[] {
  * span.
  */
 export function collectionSpanSeconds(clips: readonly TimelineClip[]): number {
-  const last = clips[clips.length - 1];
-  // The empty case and the unreachable out-of-range case answer alike: a
-  // zero-width collection card cannot be seen or clicked either way.
-  if (last === undefined) return 3;
-  return last.startTime + last.duration + TIMELINE_LEADING_PADDING_SECONDS;
+  // The empty case: a zero-width collection card cannot be seen or clicked.
+  if (clips.length === 0) return 3;
+  // THE FURTHEST END, not the last clip's.
+  //
+  // This read `clips[clips.length - 1]` while every document was one sequence,
+  // where the two are the same thing. With LANES they are not: a bed on track 1
+  // can outlast the picture on track 0 and still sit earlier in the array, and
+  // the old reading would have reported a collection SHORTER than its own
+  // contents — which shrinks its card, truncates its parent's packing, and
+  // clips the tail off a render.
+  const end = clips.reduce(
+    (furthest, clip) => Math.max(furthest, clip.startTime + clip.duration),
+    0,
+  );
+  return end + TIMELINE_LEADING_PADDING_SECONDS;
 }
 
 /**
