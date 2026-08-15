@@ -9,7 +9,14 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
+import { defaultLayerFrame } from "@/lib/default-layer-frame";
+
 import { LayerFramePicker } from "./graph-layer-frame-picker";
+
+// The fixture rectangle is DERIVED, not hardcoded. These stories used a
+// literal { x: 0.665, y: 0.511 } — what the default produced when the output
+// was 2.4:1 — and it silently stopped being the default the day the render
+// format changed to 16:9, so "shows the current preset" started showing none.
 
 // The first FORM control for a placement field — lane and placed start are
 // drag-only. Deterministic and offline: an in-memory graph, no network, no
@@ -68,7 +75,7 @@ const frameOf = (canvasElement: HTMLElement) =>
  *  opens with a button already lit rather than looking untouched. */
 export const ShowsTheCurrentPreset: Story = {
   render: () => (
-    <DndCollections initialGraph={graphWith({ x: 0.665, y: 0.511, width: 0.3 })}>
+    <DndCollections initialGraph={graphWith(defaultLayerFrame(16 / 9))}>
       <Harness />
     </DndCollections>
   ),
@@ -88,7 +95,7 @@ export const ShowsTheCurrentPreset: Story = {
 /** Picking a corner writes the rectangle, and the button follows. */
 export const PickingACornerMovesTheInset: Story = {
   render: () => (
-    <DndCollections initialGraph={graphWith({ x: 0.665, y: 0.511, width: 0.3 })}>
+    <DndCollections initialGraph={graphWith(defaultLayerFrame(16 / 9))}>
       <Harness />
     </DndCollections>
   ),
@@ -116,7 +123,7 @@ export const PickingACornerMovesTheInset: Story = {
  *  reset the other. */
 export const ChangingSizeKeepsThePosition: Story = {
   render: () => (
-    <DndCollections initialGraph={graphWith({ x: 0.665, y: 0.511, width: 0.3 })}>
+    <DndCollections initialGraph={graphWith(defaultLayerFrame(16 / 9))}>
       <Harness />
     </DndCollections>
   ),
@@ -139,7 +146,7 @@ export const ChangingSizeKeepsThePosition: Story = {
  *  contributing audio and no picture, which is what a bed wants. */
 export const SoundOnlyClearsTheInset: Story = {
   render: () => (
-    <DndCollections initialGraph={graphWith({ x: 0.665, y: 0.511, width: 0.3 })}>
+    <DndCollections initialGraph={graphWith(defaultLayerFrame(16 / 9))}>
       <Harness />
     </DndCollections>
   ),

@@ -107,7 +107,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const cutList = compileCutList(compiled.manifest, DEFAULT_RENDER_FORMAT);
+    // The PROJECT's shape when it has chosen one — set from the board — and
+    // the default otherwise. A render started here and one started by an agent
+    // must produce the same file.
+    const cutList = compileCutList(compiled.manifest, compiled.renderFormat ?? DEFAULT_RENDER_FORMAT);
     if (cutList.cuts.length === 0) {
       // Nothing enabled to render. A refusal rather than an empty file: an
       // export that silently produced zero seconds would look like a failure

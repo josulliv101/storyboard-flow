@@ -8,6 +8,7 @@
 // through view state in the legacy pipeline.
 
 import type { LayerFrame } from "./layer-frame";
+import type { RenderFormat } from "./render-format";
 
 export type MediaKind = "image" | "video";
 export type CollectionEndpoint = "first" | "last";
@@ -264,4 +265,18 @@ export type TimelineDocument = {
   title: string;
   description?: string;
   clips: TimelineClip[];
+  /**
+   * The shape this project exports at.
+   *
+   * ABSENT MEANS THE DEFAULT (`DEFAULT_RENDER_FORMAT`, 16:9 720p), so no
+   * stored project needs migrating and one that never touches the setting
+   * never grows the field — the same rule `placedStart`, `disabled` and
+   * `layerFrame` follow.
+   *
+   * On the DOCUMENT rather than a user preference because it describes the
+   * deliverable, not the person: two projects can legitimately want different
+   * shapes, and a render started by an agent must produce the same file as one
+   * started from the board.
+   */
+  renderFormat?: RenderFormat;
 };

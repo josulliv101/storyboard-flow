@@ -8,6 +8,7 @@
 // numeric must be a finite number (NaN/Infinity poison packing).
 
 import { layerFrameOf } from "./layer-frame";
+import { renderFormatOf } from "./render-format";
 import { areTagsValid } from "./tags";
 import type { TimelineClip, TimelineDocument } from "./types";
 
@@ -210,6 +211,13 @@ export function isStoredTimelineDocument(value: unknown): value is TimelineDocum
     document.id.length > 0 &&
     typeof document.title === "string" &&
     isOptionalString(document.description) &&
+    // Absent, or a format `renderFormatOf` recognises. Delegated for the same
+    // reason `layerFrame` is: the WRITE gate and the READ normalizer must not
+    // drift apart, or a format that saved and then vanished would look like
+    // the setting simply not working.
+    (document.renderFormat === undefined ||
+      document.renderFormat === null ||
+      renderFormatOf(document.renderFormat) !== undefined) &&
     Array.isArray(document.clips) &&
     document.clips.every(isTimelineClip)
   );

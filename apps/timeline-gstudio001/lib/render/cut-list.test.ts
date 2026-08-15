@@ -158,10 +158,14 @@ describe("compileCutList", () => {
     expect(list.cuts.map((cut) => cut.src)).toEqual(["https://cdn.test/a.mp4"]);
   });
 
-  it("defaults to the format the cuts use today, and takes an override", () => {
+  it("defaults to 16:9, and takes an override", () => {
+    // The default is a DELIVERABLE decision, not a description of the sources
+    // — this project's material is mostly ~2.35:1 — and a project that wants
+    // something else stores its own (`TimelineDocument.renderFormat`).
     const manifest = manifestOf(packed([{ id: "a" }]));
     expect(compileCutList(manifest).format).toEqual(DEFAULT_RENDER_FORMAT);
-    expect(DEFAULT_RENDER_FORMAT).toEqual({ width: 1152, height: 480, fps: 24 });
+    expect(DEFAULT_RENDER_FORMAT).toEqual({ width: 1280, height: 720, fps: 24 });
+    expect(DEFAULT_RENDER_FORMAT.width / DEFAULT_RENDER_FORMAT.height).toBeCloseTo(16 / 9, 6);
 
     const square = compileCutList(manifest, { width: 1080, height: 1080, fps: 30 });
     expect(square.format).toEqual({ width: 1080, height: 1080, fps: 30 });

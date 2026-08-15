@@ -1,3 +1,4 @@
+import { renderFormatOf, type RenderFormat } from "@storyboard/timeline-model/render-format";
 import "server-only";
 
 import { compilePlaybackManifest, type PlaybackManifest } from "@storyboard/timeline-domain";
@@ -27,7 +28,14 @@ import { loadTimelineClosure } from "./load-timeline-closure";
 export async function compileTimelineManifest(
   timelineId: string,
   uid: string,
-): Promise<Readonly<{ manifest: PlaybackManifest; missing: readonly string[] }> | null> {
+): Promise<Readonly<{
+  manifest: PlaybackManifest;
+  missing: readonly string[];
+  /** The project's own output shape, when it has set one. Returned here
+   *  because both render entry points already call this and would otherwise
+   *  re-read the root document just to learn the size. */
+  renderFormat?: RenderFormat;
+}> | null> {
   const entry = await readStoredTimelineEntry(timelineId, uid);
   if (!entry) return null;
 
@@ -46,5 +54,8 @@ export async function compileTimelineManifest(
     new Date().toISOString(),
     revisions,
   );
-  return { manifest, missing };
+  // Defended, not trusted — a stored format that is not a usable one falls
+  // back to the default rather than reaching ffmpeg.
+  const renderFormat = renderFormatOf(documents[timelineId]?.renderFormat);
+  return { manifest, missing, ...(renderFormat === undefined ? {} : { renderFormat }) };
 }

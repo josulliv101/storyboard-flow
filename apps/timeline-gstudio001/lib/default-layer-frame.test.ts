@@ -157,15 +157,20 @@ describe("presetForLayerFrame", () => {
   });
 
   it("collapses onto the FIRST match when a clip is too tall to move vertically", () => {
-    // A 9:16 clip at 30% of a 2.4:1 frame's width is taller than the frame, so
-    // every vertical position clamps to the same rectangle — top-right and
-    // bottom-right become the same picture. Reading order decides, and the
-    // picker lights up the top row. Not a defect: there is genuinely nowhere
-    // else for that inset to sit, and the alternative would be a picker whose
-    // buttons all do the same thing while pretending otherwise.
-    const tall = layerFrameForChoice("bottom-right", "medium", 9 / 16);
-    expect(layerFrameForChoice("top-right", "medium", 9 / 16)).toEqual(tall);
-    expect(presetForLayerFrame(tall, 9 / 16)?.position).toBe("top-right");
+    // A clip tall enough to fill the frame's height leaves no room to move
+    // vertically, so every vertical position clamps to the same rectangle and
+    // top-right and bottom-right become the same picture. Reading order
+    // decides, and the picker lights the top row. Not a defect: there is
+    // genuinely nowhere else for that inset to sit.
+    //
+    // The aspect is pinned HERE rather than borrowed from the output format,
+    // which changed under this test once already — at 16:9 a 9:16 clip no
+    // longer quite fills the height, and the case silently stopped being the
+    // one the name describes.
+    const SLIVER = 1 / 4;
+    const tall = layerFrameForChoice("bottom-right", "medium", SLIVER);
+    expect(layerFrameForChoice("top-right", "medium", SLIVER)).toEqual(tall);
+    expect(presetForLayerFrame(tall, SLIVER)?.position).toBe("top-right");
   });
 
   it("matches the default the write path stamps", () => {

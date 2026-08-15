@@ -34,7 +34,14 @@ const PIXEL =
 // ── Fixture documents ───────────────────────────────────────────────────────
 
 type FixtureClip = Record<string, unknown> & { id: string };
-type FixtureDocument = { id: string; title: string; clips: FixtureClip[] };
+type FixtureDocument = {
+  id: string;
+  title: string;
+  clips: FixtureClip[];
+  /** The project's own output shape. Absent until something sets it, which is
+   *  what every fixture starts as. */
+  renderFormat?: { width: number; height: number; fps: number };
+};
 
 function mediaClip(
   id: string,
@@ -8406,4 +8413,28 @@ test.describe("graph view E2E", () => {
       await expect(canvas).toHaveAttribute("aria-label", "alpha preview", { timeout: 700 });
     }).toPass({ timeout: 10000 });
   });
+
+  // THE RENDER FORMAT. A project's own output shape, stored on its document —
+  // the first render setting in the app, and the first render UI of any kind
+  // (renders still start from the MCP tools; this board only reports on them).
+  test("the render format is shown, changeable, and PERSISTS", async ({ page }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    const control = page.locator("[data-render-format]");
+    // A project that has never chosen still says what it will export as.
+    await expect(control).toHaveAttribute("data-render-format", "1280x720");
+    await expect(control).toContainText("16:9");
+
+    await control.click();
+    await page.locator('[data-render-format-option="scope"]').click();
+    await expect(control).toHaveAttribute("data-render-format", "1152x480");
+
+    // And it REACHES THE DOCUMENT, which is the half that matters — the
+    // control could show anything; the render reads the stored value.
+    await expect
+      .poll(() => api.documents.get(PROJECT_ID)?.renderFormat ?? null)
+      .toEqual({ width: 1152, height: 480, fps: 24 });
+  });
+
 });

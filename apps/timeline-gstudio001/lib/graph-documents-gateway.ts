@@ -1,4 +1,9 @@
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
+import {
+  renderFormatOf,
+  sameRenderFormat,
+  type RenderFormat,
+} from "@storyboard/timeline-model/render-format";
 import type { DocumentsById } from "@storyboard/timeline-domain";
 
 // The graph view's ONLY coupling to persistence: GET /api/timelines/[id]
@@ -84,6 +89,16 @@ export type GraphDocumentsGateway = Readonly<{
    * Ensures the document is loaded first, then joins the debounce window.
    */
   renameTimeline: (timelineId: string, title: string) => Promise<void>;
+  /**
+   * Set the shape this project renders at, or clear it back to the default.
+   *
+   * A DOCUMENT-level write, exactly like `renameTimeline`: it spreads the
+   * cached document and replaces one field, so the clips — and every other
+   * document field — ride through untouched. That spread is what makes adding
+   * a document field safe here at all; a write that rebuilt the document from
+   * its clips would drop this on the next save.
+   */
+  setRenderFormat: (timelineId: string, format: RenderFormat | null) => Promise<void>;
   /**
    * Insert a BRAND-NEW document into the cache (a collection minted
    * client-side, e.g. a sidebar-tool drop) with an expected revision of 0 —
@@ -874,6 +889,31 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       const current = documents[timelineId];
       if (!current || current.title === title) return;
       documents = { ...documents, [timelineId]: { ...current, title } };
+      notify();
+      dirtyIds.add(timelineId);
+      scheduleFlush();
+    },
+    setRenderFormat: async (timelineId, format) => {
+      const gen = generation;
+      if (!documents[timelineId]) await ensure(timelineId);
+      if (gen !== generation) return;
+      const current = documents[timelineId];
+      if (!current) return;
+      // Defended on the way in, so a bad value cannot reach ffmpeg through the
+      // stored document — and `null` clears the field rather than storing a
+      // default, since absence IS the default everywhere in this model.
+      const next = format === null ? undefined : renderFormatOf(format);
+      if (format !== null && next === undefined) return;
+      const unchanged =
+        next === undefined
+          ? current.renderFormat === undefined
+          : current.renderFormat !== undefined && sameRenderFormat(current.renderFormat, next);
+      if (unchanged) return;
+      const { renderFormat: _dropped, ...rest } = current;
+      documents = {
+        ...documents,
+        [timelineId]: next === undefined ? rest : { ...rest, renderFormat: next },
+      };
       notify();
       dirtyIds.add(timelineId);
       scheduleFlush();

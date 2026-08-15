@@ -9,19 +9,14 @@
 
 import type { PlaybackLeaf, PlaybackManifest } from "@storyboard/timeline-domain";
 
+import { DEFAULT_RENDER_FORMAT } from "@storyboard/timeline-model/render-format";
+
 import type { RenderCut, RenderCutList, RenderFormat } from "./types";
 
-/**
- * What the 35s cuts use today, and the default until export grows a settings
- * surface. Deliberately a constant with a name rather than a literal at the
- * call site: the first thing anyone will want to change is the size, and the
- * second is to know what it was when a given file was made.
- */
-export const DEFAULT_RENDER_FORMAT: RenderFormat = {
-  width: 1152,
-  height: 480,
-  fps: 24,
-};
+// The default lives with the stored model now, because a project can override
+// it — see `TimelineDocument.renderFormat`. Re-exported here so the many
+// existing importers of `DEFAULT_RENDER_FORMAT` keep working.
+export { DEFAULT_RENDER_FORMAT };
 
 /** Below this, a cut cannot survive rounding to a frame boundary and is more
  *  likely a packing artefact than an intended shot. */
