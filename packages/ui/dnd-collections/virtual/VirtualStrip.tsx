@@ -1317,6 +1317,13 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
           role="row"
           aria-rowindex={layerIndex + 2}
           data-strip-lane={lane}
+          data-place-target={placingLane === lane ? "true" : undefined}
+          // WHICH ROW the drop lands on. The time indicator runs the full
+          // stack height so it cannot be hidden, which means it can no longer
+          // say which lane on its own — this does.
+          className={
+            placingLane === lane ? "rounded-sm bg-primary/10 ring-1 ring-primary/50" : undefined
+          }
           style={{
             position: "absolute",
             left: 0,
@@ -1471,15 +1478,20 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   user is aiming. On the picture row it is a full-height bar,
                   because dropping there means "rejoin the cut" rather than
                   "land at this instant". */}
-              {laneRows !== null && placingLane !== null && laneTimeMap !== null && (
+              {placingLane !== null && laneTimeMap !== null && (
                 <div
                   aria-hidden="true"
                   data-place-indicator={placingLane}
-                  className="pointer-events-none absolute z-20 w-0.5 -translate-x-1/2 rounded-full bg-primary"
+                  // FULL HEIGHT, and thicker. Confined to its own row it was a
+                  // 2px line directly under the drag ghost — which is centred
+                  // on the pointer, so the one thing that shows you the snap
+                  // was hidden by the thing you were dragging. Running the
+                  // whole stack clears the ghost at top and bottom, and it
+                  // reads against the picture, which is what a time is
+                  // measured against. WHICH row is the row highlight's job.
+                  className="pointer-events-none absolute inset-y-0 z-20 w-1 -translate-x-1/2 rounded-full bg-primary"
                   style={{
                     left: placingStart === null ? 0 : laneTimeMap.at(placingStart),
-                    top: laneRowTop(placingLane, itemHeight, layerHeight, layerGap),
-                    height: placingLane === 0 ? itemHeight : layerHeight,
                   }}
                 />
               )}
@@ -1503,6 +1515,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   role="row"
                   aria-rowindex={1}
                   data-strip-lane={0}
+                  data-place-target={placingLane === 0 ? "true" : undefined}
+                  className={
+                    placingLane === 0 ? "rounded-sm bg-primary/10 ring-1 ring-primary/50" : undefined
+                  }
                   style={{
                     position: "absolute",
                     left: 0,
@@ -1529,7 +1545,16 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   resolveTime={resolveTimeFor(newLane)}
                   aria-hidden="true"
                   data-strip-new-lane={newLane}
-                  className="rounded-sm border border-dashed border-border/70"
+                  data-place-target={placingLane === newLane ? "true" : undefined}
+                  // At border/70 on a dark board this was a rectangle you
+                  // could find once you knew it was there and would never
+                  // discover. It is an invitation, so it looks like one — and
+                  // it fills in when the drop would actually land on it.
+                  className={
+                    placingLane === newLane
+                      ? "rounded-sm border-2 border-dashed border-primary bg-primary/15"
+                      : "rounded-sm border-2 border-dashed border-muted-foreground/50"
+                  }
                   style={{
                     position: "absolute",
                     left: 0,
