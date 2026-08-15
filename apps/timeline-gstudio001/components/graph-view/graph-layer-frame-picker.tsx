@@ -42,6 +42,26 @@ const SIZE_LABELS: Readonly<Record<LayerFrameSize, string>> = {
   large: "L",
 };
 
+// LITERAL SKY, NOT `bg-primary`, and this is load-bearing rather than a style
+// preference.
+//
+// The design tokens are declared only under `.graph-view-theme` (see
+// app/globals.css, which says so and explains why: defining them globally would
+// repaint the legacy views). This modal is PORTALED TO document.body, which is
+// outside that element — so inside it `--gv-primary` does not resolve,
+// `bg-primary/30` computes to `rgba(0,0,0,0)` and `border-primary` falls back
+// to `currentColor`. Measured, not guessed: the first version of this picker
+// marked its selection with a transparent fill and a white border, and looked
+// almost identical to the unselected state.
+//
+// Everything else in this modal is already written in literal zinc/sky for the
+// same reason, so this matches the neighbours as well as the app's active
+// treatment (HEADER_TOGGLE_ACTIVE in graph-board.tsx).
+const CELL_ACTIVE = "bg-sky-400/70 ring-1 ring-sky-300";
+const CELL_IDLE = "bg-white/10 hover:bg-white/20";
+const CHIP_ACTIVE = "border-sky-400/70 bg-sky-400/15 text-sky-200";
+const CHIP_IDLE = "border-white/15 bg-white/5 text-zinc-400 hover:bg-white/10";
+
 export function LayerFramePicker({
   node,
   aspect,
@@ -96,10 +116,17 @@ export function LayerFramePicker({
         </span>
       </div>
 
-      <div className="flex items-start gap-3">
-        {/* The 3x3 reads as the frame it describes, so the button's POSITION
-            is the label — the accessible name carries the words. */}
-        <div className="grid grid-cols-3 gap-1" role="group" aria-label="Inset position">
+      <div className="flex items-center gap-4">
+        {/* ONE BORDERED BOX, not nine floating chips — it has to read as the
+            FRAME the inset sits inside, or "bottom right" is a word rather
+            than a place. Proportioned 2.4:1 to match the render's own output
+            shape, and the cells are hairline-separated rather than gapped so
+            the box stays a box. */}
+        <div
+          role="group"
+          aria-label="Inset position"
+          className="grid aspect-[2.4] w-[120px] shrink-0 grid-cols-3 grid-rows-3 gap-px overflow-hidden rounded-[3px] border border-white/25 bg-white/25 p-px"
+        >
           {LAYER_FRAME_POSITIONS.map((position) => {
             const active = current?.position === position;
             return (
@@ -111,18 +138,17 @@ export function LayerFramePicker({
                 aria-pressed={active}
                 data-layer-position={position}
                 onClick={() => set(position, size)}
+                title={POSITION_LABELS[position]}
                 className={cn(
-                  "h-5 w-7 rounded-sm border transition-colors disabled:opacity-40",
-                  active
-                    ? "border-primary bg-primary/30"
-                    : "border-white/15 bg-white/5 hover:bg-white/10",
+                  "transition-colors disabled:opacity-40",
+                  active ? CELL_ACTIVE : CELL_IDLE,
                 )}
               />
             );
           })}
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col items-start gap-1.5">
           <div className="flex gap-1" role="group" aria-label="Inset size">
             {LAYER_FRAME_SIZES.map((option) => {
               const active = current?.size === option;
@@ -136,10 +162,8 @@ export function LayerFramePicker({
                   data-layer-size={option}
                   onClick={() => set(current?.position ?? "bottom-right", option)}
                   className={cn(
-                    "h-5 w-6 rounded-sm border font-mono text-[10px] transition-colors disabled:opacity-40",
-                    active
-                      ? "border-primary bg-primary/30 text-zinc-100"
-                      : "border-white/15 bg-white/5 text-zinc-400 hover:bg-white/10",
+                    "h-6 w-7 rounded-sm border font-mono text-[10px] transition-colors disabled:opacity-40",
+                    active ? CHIP_ACTIVE : CHIP_IDLE,
                   )}
                 >
                   {SIZE_LABELS[option]}
@@ -147,12 +171,14 @@ export function LayerFramePicker({
               );
             })}
           </div>
+          {/* Quieter than the two groups above: it is the way OUT of the
+              feature, not a fourth position. */}
           <button
             type="button"
             disabled={disabled || frame === undefined}
             data-layer-frame-clear
             onClick={clear}
-            className="rounded-sm border border-white/15 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 transition-colors hover:bg-white/10 disabled:opacity-40"
+            className="font-mono text-[10px] text-zinc-500 underline decoration-dotted underline-offset-2 transition-colors hover:text-zinc-300 disabled:no-underline disabled:opacity-40 disabled:hover:text-zinc-500"
           >
             sound only
           </button>

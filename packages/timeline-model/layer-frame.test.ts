@@ -7,6 +7,7 @@ import {
   layerFrameHeight,
   layerFrameOf,
   layerFrameRect,
+  outputFrameRect,
   sameLayerFrame,
 } from "./layer-frame";
 
@@ -168,5 +169,61 @@ describe("sameLayerFrame", () => {
     expect(sameLayerFrame(undefined, undefined)).toBe(true);
     expect(sameLayerFrame(undefined, { x: 0.1, y: 0.2, width: 0.3 })).toBe(false);
     expect(sameLayerFrame({ x: 0.1, y: 0.2, width: 0.3 }, undefined)).toBe(false);
+  });
+});
+
+describe("outputFrameRect", () => {
+  // A 640x360 picture drawn at (0,0), and a 2.4:1 render.
+  const PICTURE = { left: 0, top: 0, width: 640, height: 360 };
+
+  it("PILLARBOXES a picture narrower than the output", () => {
+    // What ffmpeg's decrease+pad does: same height, wider frame, centred.
+    const out = outputFrameRect(PICTURE, FRAME);
+    expect(out.height).toBe(360);
+    expect(out.width).toBeCloseTo(360 * FRAME, 3);
+    expect(out.left).toBeCloseTo((640 - 360 * FRAME) / 2, 3);
+    // The frame extends PAST the picture on both sides — that is the padding,
+    // and an inset near an edge legitimately lands on it.
+    expect(out.left).toBeLessThan(0);
+  });
+
+  it("letterboxes a picture wider than the output", () => {
+    const out = outputFrameRect({ left: 0, top: 0, width: 640, height: 100 }, 1.0);
+    expect(out.width).toBe(640);
+    expect(out.height).toBe(640);
+  });
+
+  it("is the picture itself when the shapes already agree", () => {
+    const out = outputFrameRect(PICTURE, 16 / 9);
+    expect(out.width).toBeCloseTo(640, 3);
+    expect(out.height).toBeCloseTo(360, 3);
+    expect(out.left).toBeCloseTo(0, 3);
+    expect(out.top).toBeCloseTo(0, 3);
+  });
+
+  it("stays centred on the picture, wherever the picture is", () => {
+    const offset = outputFrameRect({ left: 100, top: 40, width: 640, height: 360 }, FRAME);
+    const centreX = offset.left + offset.width / 2;
+    const centreY = offset.top + offset.height / 2;
+    expect(centreX).toBeCloseTo(100 + 320, 3);
+    expect(centreY).toBeCloseTo(40 + 180, 3);
+  });
+
+  it("REPRODUCES THE RENDER'S MARGINS, which is the whole point", () => {
+    // The number that sent me here: composing the default inset against the
+    // picture box gave 22px and 68px where the render gives 40px and 40px.
+    // Against the output frame the preview agrees with the file.
+    const frame = layerFrameForPreset("bottom-right", "medium", WIDESCREEN, FRAME);
+    const out = outputFrameRect(PICTURE, FRAME);
+    const rect = layerFrameRect(frame, WIDESCREEN, FRAME);
+    const right = out.width - (rect.x + rect.width) * out.width;
+    const bottom = out.height - (rect.y + rect.height) * out.height;
+    // Even in pixels, as the margin rule intends — and in the same ratio the
+    // 1152x480 render produces.
+    expect(Math.abs(right - bottom)).toBeLessThan(1);
+  });
+
+  it("survives a nonsense aspect", () => {
+    expect(Number.isFinite(outputFrameRect(PICTURE, 0).width)).toBe(true);
   });
 });

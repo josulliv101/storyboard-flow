@@ -744,3 +744,85 @@ export const ALayerWithoutAFrameStaysInvisible: Story = {
     expect(isRed(await pixelAt(canvasElement, 0.8, 0.68))).toBe(true);
   },
 };
+
+/**
+ * THE SAME INSET, composed against the RENDER's frame rather than the picture.
+ *
+ * The stored rectangle is normalized to the output frame, and that is a
+ * different box from the picture whenever the source's shape differs from the
+ * render's — the export fits the source in and pads the rest. Composing
+ * against the picture put the default inset at 22px and 68px of margin where
+ * the render gives 40px and 40px; against the output frame the preview agrees
+ * with the file.
+ *
+ * The fixture's source is 1x1, so its picture box is SQUARE and a 2.4:1 output
+ * frame extends well past it either side — which is exactly the padding the
+ * render would add, and an inset near the edge sits over it on purpose.
+ */
+export const TheInsetLandsWhereTheRenderPutsIt: Story = {
+  render: () => (
+    <main className="min-h-[900px] bg-zinc-950 p-4 text-zinc-100">
+      <WorkbenchDisplaySurface
+        clips={[PICTURE, PIP]}
+        currentTime={4}
+        onCurrentTimeChange={() => {}}
+        outputAspect={1152 / 480}
+        className="h-[320px]"
+      />
+    </main>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(async () => expect(isRed(await pixelAt(canvasElement, 0.5, 0.5))).toBe(true));
+
+    // The inset is no longer inside the picture SQUARE — the output frame is
+    // wider than it, so the bottom-right corner of the frame is out over the
+    // padding. What must hold is that it is still drawn, and still to the
+    // lower right of the picture's centre.
+    const canvas = canvasElement.querySelector("canvas")!;
+    const context = canvas.getContext("2d")!;
+    const found: Array<[number, number]> = [];
+    for (let x = 0; x < canvas.width; x += 8) {
+      for (let y = 0; y < canvas.height; y += 8) {
+        const [r, g, b] = context.getImageData(x, y, 1, 1).data;
+        if (b! > 150 && r! < 120) found.push([x, y]);
+      }
+    }
+    expect(found.length).toBeGreaterThan(0);
+    const minX = Math.min(...found.map(([x]) => x));
+    const minY = Math.min(...found.map(([, y]) => y));
+    expect(minX).toBeGreaterThan(canvas.width / 2);
+    expect(minY).toBeGreaterThan(canvas.height / 2);
+  },
+};
+
+/**
+ * THE REAL CASE: a 16:9 picture in a 2.4:1 render.
+ *
+ * The fixture above uses a 1x1 source, so its picture box is square and the
+ * output frame extends absurdly past it. Every real source here is 16:9, and
+ * this is what that actually looks like — the shape to judge the default inset
+ * by, and the one that decides whether it sits on the picture or off it.
+ */
+const RED_169 =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAIAAAC0SDtlAAAAFElEQVR42mO4IydHEmIY1TAoNAAAHVGdgV3m+aoAAAAASUVORK5CYII=";
+
+export const ARealisticSixteenNineSource: Story = {
+  render: () => (
+    <main className="min-h-[900px] bg-zinc-950 p-4 text-zinc-100">
+      <WorkbenchDisplaySurface
+        clips={[
+          laneClip("picture", 0, 10, 0, { src: RED_169, poster: RED_169 }),
+          laneClip("pip", 0, 10, 1, { src: BLUE, poster: BLUE, layerFrame: PIP_FRAME }),
+        ]}
+        currentTime={4}
+        onCurrentTimeChange={() => {}}
+        outputAspect={1152 / 480}
+        className="h-[320px]"
+      />
+    </main>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(async () => expect(isRed(await pixelAt(canvasElement, 0.5, 0.5))).toBe(true));
+    expect(isBlue(await pixelAt(canvasElement, 0.5, 0.5))).toBe(false);
+  },
+};

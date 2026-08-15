@@ -107,6 +107,43 @@ export function layerFrameHeight(width: number, clipAspect: number, frameAspect:
   return (width * frameAspect) / aspect;
 }
 
+/** A box in whatever units the caller is working in — canvas pixels, usually. */
+export type Box = Readonly<{ left: number; top: number; width: number; height: number }>;
+
+/**
+ * The OUTPUT FRAME a drawn picture sits inside.
+ *
+ * The stored rectangle is normalized to the output frame, not to the picture,
+ * and the two are different boxes whenever the source's shape differs from the
+ * render's: the export fits the source into the output and PADS the remainder
+ * (`fitFilter`, decrease + pad), so a 16:9 shot in a 2.4:1 render is
+ * pillarboxed and the frame extends past the picture on both sides.
+ *
+ * A preview that placed the inset against the PICTURE instead would put it in
+ * the wrong place, and not subtly: for the default bottom-right inset the
+ * render's margins are 40.3px and 40.3px, while composing against a 16:9
+ * picture box gives 22.4px and 68.0px. Measured, which is how this was found —
+ * it looked wrong in a screenshot before it looked wrong in a number.
+ *
+ * Returns the output frame centred on the picture, which is where padding puts
+ * it. An inset near an edge can therefore land over the padding, exactly as it
+ * does in the finished file.
+ */
+export function outputFrameRect(picture: Box, outputAspect: number): Box {
+  const aspect = outputAspect > 0 ? outputAspect : 1;
+  const pictureAspect = picture.height > 0 ? picture.width / picture.height : aspect;
+  // Narrower than the output means the output is WIDER at the same height —
+  // pillarboxed. Otherwise it is letterboxed and the width is what is shared.
+  const width = pictureAspect < aspect ? picture.height * aspect : picture.width;
+  const height = pictureAspect < aspect ? picture.height : picture.width / aspect;
+  return {
+    left: picture.left + (picture.width - width) / 2,
+    top: picture.top + (picture.height - height) / 2,
+    width,
+    height,
+  };
+}
+
 /**
  * A stored frame resolved against a real output size and a real clip.
  *

@@ -12,6 +12,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { DEFAULT_RENDER_FORMAT } from "@/lib/render/cut-list";
+
 import {
   MIN_ITEM_WIDTH,
   durationToWidth,
@@ -1131,6 +1133,11 @@ export function PreviewShell({
           enabled ? (
             <WorkbenchDisplaySurface
               clips={clips}
+              // So a layered clip's inset lands where the RENDER will put it.
+              // Its rectangle is normalized to the output frame, which is a
+              // different box from the picture whenever the source's shape
+              // differs from the render's.
+              outputAspect={DEFAULT_RENDER_FORMAT.width / DEFAULT_RENDER_FORMAT.height}
               currentTime={time}
               onCurrentTimeChange={handleTimeChange}
               playing={playing}
