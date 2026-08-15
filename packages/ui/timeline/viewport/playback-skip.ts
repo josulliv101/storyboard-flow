@@ -55,6 +55,85 @@ export function getContainingClip(clips: readonly TimelineClip[], currentTime: n
   return best;
 }
 
+/** One array, reused. `getLiveLayerClips` runs per frame and the overwhelming
+ *  majority of timelines have no lanes at all, so the common answer must not
+ *  allocate. */
+const NO_LAYERS: readonly TimelineClip[] = [];
+
+/**
+ * The clip the surface draws its frame FROM — the picture, and only ever the
+ * picture.
+ *
+ * `getContainingClip` answers a different question ("is this time inside
+ * material"), and its answer is right for `nextPlayableTime` and wrong here.
+ * The two diverge at every cut: packing leaves `CLIP_GAP_SECONDS` between
+ * picture clips, so on a timeline with a bed under it there is a ~120ms window
+ * at EVERY cut that only the bed covers. Drawing what covers the time there
+ * means flashing the audio stand-in three frames per cut.
+ *
+ * So, in order:
+ *
+ * - a lane-0 clip covering this time, first in array order — the common case;
+ * - otherwise the most recently started lane-0 clip, HELD. A gap carries no new
+ *   frame; it is not an instruction to stop showing the shot that was on
+ *   screen. This is what closes the flash, and it is also the pre-existing gap
+ *   rule, now restricted to the picture;
+ * - otherwise, if the timeline has no lane-0 material AT ALL, whatever covers
+ *   the time on any lane. A timeline of nothing but audio still has to draw its
+ *   stand-in rather than an empty surface.
+ *
+ * Disabled clips are NOT skipped: scrubbing can rest inside one and the surface
+ * draws it grayed. That is the opposite of `getLiveLayerClips` below, and the
+ * asymmetry is deliberate — a disabled clip still occupies the screen, but it
+ * must not make a sound.
+ */
+export function getPictureClip(clips: readonly TimelineClip[], currentTime: number) {
+  let held: TimelineClip | null = null;
+  let sawPicture = false;
+
+  for (const clip of clips) {
+    if (clip.trackIndex !== 0) continue;
+    sawPicture = true;
+    // First match wins, preserving the array-order rule within a lane.
+    if (clipContainsPlaybackTime(clip, currentTime)) return clip;
+    const start = getClipPlaybackStart(clip);
+    if (start > currentTime) continue;
+    if (held === null || start > getClipPlaybackStart(held)) held = clip;
+  }
+
+  if (held !== null) return held;
+  // A leading gap on a real picture correctly yields null — nothing has been
+  // shown yet, so there is nothing to hold.
+  return sawPicture ? null : getContainingClip(clips, currentTime);
+}
+
+/**
+ * Every under-layer audible at this instant: lane 1 and above, enabled, and
+ * STRICTLY covering the time.
+ *
+ * Strict, where the picture holds. Holding a frame across a gap is right
+ * because the screen cannot show nothing; holding SOUND across one would keep
+ * playing a bed after it ended.
+ *
+ * Returned in array order rather than lane order. Draw order is the caller's
+ * business and changes far less often than once a frame — sorting here would
+ * allocate on every tick to answer a question that only matters when the live
+ * set itself changes.
+ */
+export function getLiveLayerClips(
+  clips: readonly TimelineClip[],
+  currentTime: number,
+): readonly TimelineClip[] {
+  let live: TimelineClip[] | null = null;
+  for (const clip of clips) {
+    if (clip.trackIndex === 0) continue;
+    if (clip.disabled === true) continue;
+    if (!clipContainsPlaybackTime(clip, currentTime)) continue;
+    (live ??= []).push(clip);
+  }
+  return live ?? NO_LAYERS;
+}
+
 export function getTimelineDuration(clips: readonly TimelineClip[]) {
   return clips.reduce(
     (duration, clip) =>

@@ -35,10 +35,15 @@ import {
   clipContainsPlaybackTime,
   getClipPlaybackDuration,
   getClipPlaybackStart,
-  getContainingClip,
+  getLiveLayerClips,
+  getPictureClip,
   getTimelineDuration,
   nextPlayableTime,
 } from "./playback-skip";
+
+/** "Stop everything." One shared instance — the override effect asks for it on
+ *  every change, and a fresh Set per call would be litter. */
+const NO_LIVE_KEYS: ReadonlySet<string> = new Set<string>();
 
 type DisplayMedia = {
   key: string;
@@ -610,25 +615,29 @@ function getActiveClip(
     return preferredClip;
   }
 
-  const containing = getContainingClip(clips, currentTime);
-  if (containing) return containing;
+  // The PICTURE, which also holds the last shot across a gap — see
+  // `getPictureClip`. It used to be `getContainingClip` plus a hold loop right
+  // here, and the difference is the whole reason that function was split:
+  // packing leaves a gap at every cut, and a lane clip covering that gap made
+  // the surface try to draw an under-layer.
+  return getPictureClip(clips, currentTime);
+}
 
-  // Nothing covers this time: the playhead sits in a GAP between clips, or
-  // past the last one. Hold the clip that most recently started instead of
-  // returning null — null renders the empty surface, so a gap flashed to
-  // black mid-timeline. A gap carries no NEW frame; it is not an instruction
-  // to blank what a real clip last showed. (The old special case for "past
-  // the final clip" was this same rule, applied only at the tail.)
-  //
-  // Scans for the greatest start rather than trusting array order, so it
-  // holds the right frame even for a caller that has not sorted. A leading
-  // gap — before any clip has started — correctly still yields null.
-  let held: TimelineClip | null = null;
-  for (const clip of clips) {
-    if (getClipPlaybackStart(clip) > currentTime) continue;
-    if (!held || getClipPlaybackStart(clip) > getClipPlaybackStart(held)) held = clip;
+/** Every under-layer audible at this instant, as resolvable media. The picture
+ *  is excluded — it arrives separately as the thing that DRAWS. */
+function getLayerMedia(
+  clips: TimelineClip[],
+  currentTime: number,
+  getCollectionClipFramePreview: GetCollectionClipFramePreview,
+): DisplayMedia[] {
+  const live = getLiveLayerClips(clips, currentTime);
+  if (live.length === 0) return [];
+  const media: DisplayMedia[] = [];
+  for (const clip of live) {
+    const resolved = resolveClipMedia(clip, currentTime, getCollectionClipFramePreview);
+    if (resolved !== null) media.push(resolved);
   }
-  return held;
+  return media;
 }
 
 // normalizePlaybackTime is `nextPlayableTime` (./playback-skip): it decides
@@ -658,9 +667,16 @@ export function WorkbenchDisplaySurface({
   const cacheRef = useRef(new Map<string, CachedMedia>());
   const activeMediaRef = useRef<DisplayMedia | null>(null);
   const activeClipDisabledRef = useRef(false);
+  // The under-layers audible right now. The picture is `activeMediaRef`; these
+  // play alongside it and, in this phase, are heard and not seen.
+  const liveLayerMediaRef = useRef<DisplayMedia[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const timeoutFrameRef = useRef<number | null>(null);
-  const pendingSeekDrawCleanupRef = useRef<(() => void) | null>(null);
+  // PER ELEMENT, keyed by media key. This was a single slot, which was correct
+  // while exactly one element could ever be seeking: a second element seeking
+  // concurrently would run the first's cleanup as if it were its own, leaving
+  // the first's listeners attached and its own removed.
+  const pendingSeekDrawCleanupRef = useRef(new Map<string, () => void>());
   const playbackAnchorRef = useRef<{ timelineTime: number; startedAtMs: number } | null>(null);
   const lastPublishedAtRef = useRef(0);
   const lastRenderedMediaKeyRef = useRef<string | null>(null);
@@ -734,6 +750,12 @@ export function WorkbenchDisplaySurface({
   const activeClipIndex = useMemo(
     () => (activeClip ? sortedClips.findIndex((clip) => clip.id === activeClip.id) : -1),
     [activeClip, sortedClips],
+  );
+  // Derived in render from the same pure function the clock path uses, so the
+  // published count and the elements actually playing cannot disagree.
+  const liveLayers = useMemo(
+    () => getLiveLayerClips(sortedClips, currentTime),
+    [currentTime, sortedClips],
   );
   const activeMedia = useMemo(
     () =>
@@ -983,36 +1005,70 @@ export function WorkbenchDisplaySurface({
 
   const frameOverrideRef = useRef(frameOverride);
 
-  const pauseInactiveVideos = useCallback((activeKey: string | null) => {
+  /**
+   * Everything that is NOT live right now goes quiet and stops.
+   *
+   * Live is a SET, not one key. It used to be one: the picture. But a bed on a
+   * lane is playing at the same instant as the shot it runs under, and the
+   * export has always mixed it — silencing it here is what made the preview
+   * disagree with the finished file.
+   */
+  const pauseClipsNotLive = useCallback((liveKeys: ReadonlySet<string>) => {
     const mixer = getMixer();
     cacheRef.current.forEach((cached, key) => {
       if (!isPlayable(cached)) return;
-      if (key !== activeKey) {
-        cached.element.pause();
-        // The prefetch window pulls in the next few clips REGARDLESS of whether
-        // they are disabled, so silence is decided here rather than there.
-        mixer.setSourceGain(cached.element, 0);
-      }
+      if (liveKeys.has(key)) return;
+      cached.element.pause();
+      // The prefetch window pulls in the next few clips REGARDLESS of whether
+      // they are disabled, so silence is decided here rather than there.
+      mixer.setSourceGain(cached.element, 0);
     });
   }, [getMixer]);
 
-  /** The active clip is the only audible one, and a DISABLED clip is silent
-   *  even though scrubbing can rest on it and draw its grayed frame. */
-  const applyActiveGain = useCallback(
+  /**
+   * Raise one live element to the current level.
+   *
+   * `silent` is passed rather than read from a ref because it is a PER-CLIP
+   * fact and there is now more than one live clip: the picture can be disabled
+   * (scrubbed into, drawn grayed, and heard by nobody) while the bed under it
+   * plays perfectly normally. A single `activeClipDisabledRef` consulted here
+   * would mute the bed for the picture's sake.
+   */
+  const applyGain = useCallback(
     // HTMLMediaElement, not HTMLVideoElement: the mixer takes either, and
     // audio clips need their gain applied on the same path or a volume change
     // reaches every clip except the one that is playing.
-    (element: HTMLMediaElement) => {
+    (element: HTMLMediaElement, silent: boolean) => {
       const { volume: level, muted: isMuted } = audioLevelRef.current;
-      const audible = !isMuted && !activeClipDisabledRef.current;
-      getMixer().setSourceGain(element, audible ? level : 0);
+      getMixer().setSourceGain(element, isMuted || silent ? 0 : level);
     },
     [getMixer],
   );
 
-  const syncActiveVideo = useCallback((media: DisplayMedia, shouldPlay: boolean, forceSeek = false) => {
+  /**
+   * Bring one media element into line with the clock: right source time, right
+   * rate, right gain, playing or not.
+   *
+   * `draws` separates the picture from an under-layer. Both are seeked and both
+   * are played; only the picture repaints the canvas when its seek lands. A
+   * layer that repainted would be asking the surface to redraw the picture on
+   * the layer's schedule, several times a second, for no change in pixels.
+   *
+   * `silent` is the clip's own disabled state — see `applyGain`.
+   */
+  const syncMediaElement = useCallback((
+    media: DisplayMedia,
+    { shouldPlay, forceSeek = false, draws, silent }:
+      { shouldPlay: boolean; forceSeek?: boolean; draws: boolean; silent: boolean },
+  ) => {
     const cached = ensureCachedMedia(media);
     if (!isPlayable(cached)) return;
+    // Metadata-only preload is right for a clip the prefetch window merely
+    // pulled in (a lossless voice take is large, and speculatively fetching
+    // four of them to play one is waste). It is wrong the moment the element
+    // has to actually play, so buying the rest of the file is deferred to
+    // exactly here — the first time this element is live.
+    if (shouldPlay && cached.element.preload !== "auto") cached.element.preload = "auto";
 
     // Named `video` throughout because every call below is HTMLMediaElement
     // API that an <audio> satisfies identically — readyState, currentTime,
@@ -1032,23 +1088,27 @@ export function WorkbenchDisplaySurface({
         // decision, and the voice should not move with it.
         video.preservesPitch = true;
       }
-      applyActiveGain(video);
+      applyGain(video, silent);
       if (forceSeek || drift > maxDrift) {
-        pendingSeekDrawCleanupRef.current?.();
-        pendingSeekDrawCleanupRef.current = null;
+        const pending = pendingSeekDrawCleanupRef.current;
+        // This element's own pending cleanup, not whatever seeked last.
+        pending.get(media.key)?.();
+        pending.delete(media.key);
 
-        const drawAfterSeek = () => {
-          pendingSeekDrawCleanupRef.current?.();
-          pendingSeekDrawCleanupRef.current = null;
-          drawActiveFrame();
-        };
+        if (draws) {
+          const drawAfterSeek = () => {
+            pending.get(media.key)?.();
+            pending.delete(media.key);
+            drawActiveFrame();
+          };
 
-        video.addEventListener("seeked", drawAfterSeek, { once: true });
-        video.addEventListener("loadeddata", drawAfterSeek, { once: true });
-        pendingSeekDrawCleanupRef.current = () => {
-          video.removeEventListener("seeked", drawAfterSeek);
-          video.removeEventListener("loadeddata", drawAfterSeek);
-        };
+          video.addEventListener("seeked", drawAfterSeek, { once: true });
+          video.addEventListener("loadeddata", drawAfterSeek, { once: true });
+          pending.set(media.key, () => {
+            video.removeEventListener("seeked", drawAfterSeek);
+            video.removeEventListener("loadeddata", drawAfterSeek);
+          });
+        }
         video.currentTime = targetTime;
       }
       if (shouldPlay && video.paused) {
@@ -1063,7 +1123,7 @@ export function WorkbenchDisplaySurface({
       } else if (!shouldPlay) {
         video.pause();
       }
-      drawActiveFrame();
+      if (draws) drawActiveFrame();
     };
 
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
@@ -1072,8 +1132,8 @@ export function WorkbenchDisplaySurface({
     }
 
     video.addEventListener("loadedmetadata", seek, { once: true });
-    video.addEventListener("loadeddata", drawActiveFrame, { once: true });
-  }, [applyActiveGain, drawActiveFrame, ensureCachedMedia]);
+    if (draws) video.addEventListener("loadeddata", drawActiveFrame, { once: true });
+  }, [applyGain, drawActiveFrame, ensureCachedMedia]);
 
   const renderFrameAtTime = useCallback((timelineTime: number, shouldPlay: boolean, forceSeek = false) => {
     // An override owns the picture while it is set. Guarding HERE rather than
@@ -1100,13 +1160,32 @@ export function WorkbenchDisplaySurface({
     // disabled span before anything is drawn (see nextPlayableTime).
     activeClipDisabledRef.current = active?.disabled === true;
 
+    // The under-layers playing at this instant, alongside the picture rather
+    // than instead of it. Resolved even when the picture is missing: a bed
+    // running under a gap keeps playing, which is the whole point of a bed.
+    const layers = getLayerMedia(
+      sortedClipsRef.current,
+      timelineTime,
+      getCollectionClipFramePreview,
+    );
+    liveLayerMediaRef.current = layers;
+
+    const liveKeys = new Set<string>();
+    if (media) liveKeys.add(media.key);
+    for (const layer of layers) liveKeys.add(layer.key);
+    pauseClipsNotLive(liveKeys);
+
+    for (const layer of layers) {
+      // Never `draws` — an under-layer is audible in this phase, not visible.
+      // Never `silent` — getLiveLayerClips already dropped the disabled ones.
+      syncMediaElement(layer, { shouldPlay, forceSeek, draws: false, silent: false });
+    }
+
     if (!media) {
-      pauseInactiveVideos(null);
       drawEmptyFrame();
       return;
     }
 
-    pauseInactiveVideos(media.key);
     const cached = ensureCachedMedia(media);
 
     if (cached.kind === "image") {
@@ -1118,15 +1197,21 @@ export function WorkbenchDisplaySurface({
       return;
     }
 
-    syncActiveVideo(media, shouldPlay, forceSeek || mediaChanged);
+    syncMediaElement(media, {
+      shouldPlay,
+      forceSeek: forceSeek || mediaChanged,
+      draws: true,
+      silent: activeClipDisabledRef.current,
+    });
   }, [
     drawActiveFrame,
     drawDrawable,
     drawEmptyFrame,
     ensureCachedMedia,
-    pauseInactiveVideos,
+    getCollectionClipFramePreview,
+    pauseClipsNotLive,
     preferredClipId,
-    syncActiveVideo,
+    syncMediaElement,
   ]);
 
   useLayoutEffect(() => {
@@ -1168,15 +1253,19 @@ export function WorkbenchDisplaySurface({
     activeMediaRef.current = media;
     lastRenderedMediaKeyRef.current = media.key;
     activeClipDisabledRef.current = false;
-    pauseInactiveVideos(null);
+    // NOTHING is live under an override — it owns the picture, and the layers
+    // stop with it. An override is a still, so a bed left running underneath
+    // would be sound advancing against a frame that is not moving.
+    liveLayerMediaRef.current = [];
+    pauseClipsNotLive(NO_LIVE_KEYS);
     ensureCachedMedia(media);
-    // NOTE: no `syncActiveVideo` here. The override's seeking is driven by the
+    // NOTE: no `syncMediaElement` here. The override's seeking is driven by the
     // settle loop below instead — see the comment there for why this path
     // cannot use the clock path's issue-and-listen approach.
   }, [
     ensureCachedMedia,
     frameOverride,
-    pauseInactiveVideos,
+    pauseClipsNotLive,
     renderFrameAtTime,
   ]);
 
@@ -1415,8 +1504,9 @@ export function WorkbenchDisplaySurface({
           cached.element.load();
         }
       });
-      pendingSeekDrawCleanupRef.current?.();
-      pendingSeekDrawCleanupRef.current = null;
+      const pending = pendingSeekDrawCleanupRef.current;
+      pending.forEach((cleanup) => cleanup());
+      pending.clear();
       mediaCache.clear();
       mixerRef.current?.dispose();
       mixerRef.current = null;
@@ -1431,11 +1521,17 @@ export function WorkbenchDisplaySurface({
     mixer.setMasterVolume(activeVolume);
     mixer.setMuted(activeMuted);
 
-    const activeKey = activeMediaRef.current?.key ?? null;
-    if (!activeKey) return;
-    const cached = cacheRef.current.get(activeKey);
-    if (isPlayable(cached)) applyActiveGain(cached.element);
-  }, [activeMuted, activeVolume, applyActiveGain, getMixer]);
+    // EVERY live source, not just the picture. A volume change that reached
+    // only the active clip would leave a bed playing at the level it was
+    // started with — audible proof that the two were on different paths.
+    const raise = (key: string, silent: boolean) => {
+      const cached = cacheRef.current.get(key);
+      if (isPlayable(cached)) applyGain(cached.element, silent);
+    };
+    const activeKey = activeMediaRef.current?.key;
+    if (activeKey) raise(activeKey, activeClipDisabledRef.current);
+    for (const layer of liveLayerMediaRef.current) raise(layer.key, false);
+  }, [activeMuted, activeVolume, applyGain, getMixer]);
 
   const canPlay = duration > 0 && sortedClips.length > 0;
   const canSeekPrevious = sortedClips.length > 0 && currentTime > 0;
@@ -1481,6 +1577,11 @@ export function WorkbenchDisplaySurface({
       data-testid="workbench-display-surface"
       data-buffered-media-count={bufferedMedia.length}
       data-preview-playing={isPlaying}
+      // How many UNDER-LAYERS are audible right now, alongside the picture.
+      // A witness for the same reason as the audio ones below — that a bed is
+      // sounding is not observable from a test — and the one that says the
+      // preview and the export agree about what is playing.
+      data-live-layer-count={liveLayers.length}
       // Which clip's frame the pane is drawing INSTEAD of the clock's, if any.
       // A witness, because the alternative is unobservable: whether a canvas
       // holds one decoded frame or another is not something a test can read
