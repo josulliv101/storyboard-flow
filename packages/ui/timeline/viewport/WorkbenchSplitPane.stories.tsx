@@ -826,3 +826,65 @@ export const ARealisticSixteenNineSource: Story = {
     expect(isBlue(await pixelAt(canvasElement, 0.5, 0.5))).toBe(false);
   },
 };
+
+const GREEN =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOQ22cDAAIWARkpb7gwAAAAAElFTkSuQmCC";
+
+/**
+ * TWO LAYERS, OVERLAPPING: the LOWEST lane ends up on top.
+ *
+ * The same rule as everywhere else here — `getContainingClip` prefers the
+ * lowest lane, the ffmpeg overlay chain draws the highest lane first — so the
+ * canvas has to agree or the preview and the render disagree about which of
+ * two insets is in front.
+ */
+export const TheLowestLaneDrawsOnTop: Story = {
+  render: () => (
+    <LayeredFixture
+      time={4}
+      clips={[
+        PICTURE,
+        // Same rectangle on both, so whichever is drawn LAST wins the pixels.
+        laneClip("under", 0, 10, 2, { src: GREEN, poster: GREEN, layerFrame: PIP_FRAME }),
+        laneClip("over", 0, 10, 1, { src: BLUE, poster: BLUE, layerFrame: PIP_FRAME }),
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(async () => expect(isRed(await pixelAt(canvasElement, 0.5, 0.5))).toBe(true));
+    // Lane 1 over lane 2: blue, not green.
+    await waitFor(async () => expect(isBlue(await pixelAt(canvasElement, 0.8, 0.68))).toBe(true));
+    const pixel = await pixelAt(canvasElement, 0.8, 0.68);
+    expect(Number(pixel.split(",")[1])).toBeLessThan(150);
+  },
+};
+
+/**
+ * A DISABLED PICTURE is drawn grayed — and the inset over it is NOT.
+ *
+ * `drawDrawable` sets `context.filter` for the disabled treatment, and the
+ * composite runs in the same function. Resetting the filter BEFORE compositing
+ * rather than only after is what keeps a perfectly ordinary layer from being
+ * grayed for the picture's sake; nothing but a pixel can prove it.
+ */
+export const ADisabledPictureDoesNotGrayItsInset: Story = {
+  render: () => (
+    <LayeredFixture
+      time={4}
+      clips={[
+        laneClip("picture", 0, 10, 0, { src: RED, poster: RED, disabled: true }),
+        PIP,
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    // The picture is grayed, so its red is washed out — no longer "red" by the
+    // saturation test the other stories use.
+    await waitFor(async () =>
+      expect(await pixelAt(canvasElement, 0.5, 0.5)).not.toBe("5,5,5"),
+    );
+    expect(isRed(await pixelAt(canvasElement, 0.5, 0.5))).toBe(false);
+    // The inset keeps its own colour at full strength.
+    await waitFor(async () => expect(isBlue(await pixelAt(canvasElement, 0.8, 0.68))).toBe(true));
+  },
+};
