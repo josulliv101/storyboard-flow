@@ -1561,7 +1561,11 @@ export function GraphBoard({
     // The snapshot's type widens `DetailsById`'s values to `| undefined`;
     // every read below already treats a missing entry as absent.
     const model = splitLaneRows(graph, detailsSnapshot as DetailsById, focusedId);
-    if (model.layers.length === 0) return null;
+    // NOT gated on there being a layer. Supplying the clock is what turns
+    // placement on, and a board with nothing layered still needs somewhere to
+    // make the FIRST lane — otherwise the only route is a tool call. With an
+    // empty `layers` the strip draws no rows and its DOM is unchanged; it just
+    // offers a target while a drag is live.
     return {
       itemIds: model.pictureIds.map(parseNodeId),
       itemTimes: model.pictureTimes,

@@ -1099,6 +1099,15 @@ a ROW beats the strip container (it is the more specific answer), and CROSSING
 a row beats a card (dragging a bed up onto the picture has to work anywhere on
 that row). Within one row a card still wins, so reorder is untouched.
 
+While a node drag is live the strip also offers ONE MORE row below the last
+occupied lane, which drops onto the next free lane. It is what makes a first
+lane reachable at all: rows render only for occupied lanes, so without it the
+gesture assumed a state only the consumer's own tooling could produce. It
+appears only during a drag (permanent chrome for an occasional gesture is a
+bad trade) and it is `aria-hidden` with no cells, so the grid tree is
+unaffected. Supplying `itemTimes` is what turns placement on — `layers` may be
+empty.
+
 Dropping on the picture row resolves to lane 0, which CLEARS the placement —
 the clip rejoins the cut at its array position. There is no time to land at on
 a row that packs end to end, and a move plus a placement is not expressible as

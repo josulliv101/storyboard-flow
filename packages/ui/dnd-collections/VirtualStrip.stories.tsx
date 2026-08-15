@@ -2650,6 +2650,60 @@ export const DraggingBetweenLanesPlacesTheClip: Story = {
   },
 };
 
+/** A board with NOTHING layered — the state the first lane has to be made from. */
+function NoLanesYetHarness() {
+  return (
+    <DndCollections initialGraph={laneGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-2">
+        <PlacementReadout id="shot3" />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemIds={PICTURE_IDS}
+          itemTimes={PICTURE_TIMES}
+          layers={[]}
+          pixelsPerSecond={LANE_PPS}
+        />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const AFirstLaneCanBeMadeByDragging: Story = {
+  // The dead end this closes: rows render only for OCCUPIED lanes, so with
+  // none there was nowhere to drop and the first lane could only be made by a
+  // tool call. The gesture assumed a state it could not produce.
+  render: () => <NoLanesYetHarness />,
+  play: async ({ canvasElement }) => {
+    const shot3 = nodeCard(canvasElement, "shot3");
+    await waitForLayout(shot3);
+    const newLaneRow = () =>
+      canvasElement.querySelector<HTMLElement>("[data-strip-new-lane]");
+    const readout = () =>
+      canvasElement.querySelector("[data-placement]")?.getAttribute("data-placement");
+
+    // AT REST there is no band — it would be permanent chrome on every board.
+    expect(newLaneRow()).toBeNull();
+    expect(readout()).toBe("-1@-1");
+
+    // Hold a shot mid-drag: the target appears, offering lane 1.
+    const shot1Box = nodeCard(canvasElement, "shot1").getBoundingClientRect();
+    await dragHoldAt(nodeHandle(canvasElement, "shot3"), {
+      x: shot1Box.left + 4,
+      y: shot1Box.bottom + 20,
+    });
+    await waitFor(() => expect(newLaneRow()).not.toBeNull());
+    expect(newLaneRow()!.getAttribute("data-strip-new-lane")).toBe("1");
+
+    // Release on it: the shot leaves the cut for a lane that did not exist.
+    const rowBox = newLaneRow()!.getBoundingClientRect();
+    await releaseAt({ x: rowBox.left + 4, y: rowBox.top + rowBox.height / 2 });
+    await waitFor(() => expect(readout()).toBe("1@0"));
+
+    // And it is gone again once the drag ends.
+    await waitFor(() => expect(newLaneRow()).toBeNull());
+  },
+};
+
 export const PlacementPreviewSnapsToACut: Story = {
   // The preview is the whole reason snapping is discoverable: without it a
   // user cannot tell that releasing here lands on the cut rather than 3px off.

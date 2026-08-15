@@ -155,7 +155,8 @@ function LaneRowDroppable({
   lane: number;
   resolveTime: (point: Readonly<{ x: number; y: number }>) => number;
   style: CSSProperties;
-  children: ReactNode;
+  /** Optional: the new-lane target is an empty band, not a row of cards. */
+  children?: ReactNode;
 }> &
   Readonly<Record<string, unknown>>) {
   // Read through a ref so the droppable's data closure never goes stale as the
@@ -409,6 +410,13 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const laneRows = layers !== undefined && layers.length > 0 && itemTimes !== undefined
       ? layers
       : null;
+    // The MACHINERY — the time map and the placement droppables — is separate
+    // from the visible ROWS, and it has to be, or lanes are a dead end: with
+    // no lane yet there is no row, with no row there is nowhere to drop, and
+    // the first lane could only ever be made by a tool call. A consumer that
+    // supplies a clock is opting into placement whether or not anything is
+    // layered yet.
+    const canPlace = itemTimes !== undefined && layers !== undefined;
     const layerHeight = finitePositiveOr(
       layerHeightOption,
       Math.max(MIN_LANE_ROW_HEIGHT, itemHeight * LANE_ROW_HEIGHT_FRACTION),
@@ -786,7 +794,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // it repacks — so a layer card downstream of a live trim lags by the trim
     // delta until the commit lands. Sub-second, and exact from then on.
     const laneTimeMap = useMemo(() => {
-      if (!laneRows || !itemTimes) return null;
+      if (!canPlace || !itemTimes) return null;
       const slots: LanePictureSlot[] = [];
       let x = firstItemGutter;
       for (let index = 0; index < childIds.length; index += 1) {
@@ -818,7 +826,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       // it closes over the current render's functions, so it cannot go stale.
       // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
     }, [
-      laneRows,
+      canPlace,
       itemTimes,
       childIds,
       firstItemGutter,
@@ -868,6 +876,15 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       draggedId: (activeId as string | null) ?? "",
     };
 
+    // The NEXT free lane, offered as a drop target while a node drag is live.
+    // Only while dragging: at rest it would be a permanent empty band on every
+    // board, which is a lot of chrome to carry for an occasional gesture.
+    // Gated on a dragged NODE rather than `isDragging` alone — a palette drag
+    // is creating something that does not exist yet, and a placement command
+    // needs a node to name.
+    const newLane = (laneRows?.length ?? 0) + 1;
+    const showNewLaneRow = canPlace && activeId !== null;
+
     // Row 0 is the picture, then each layer in order — the shape the roving
     // resolver navigates. Empty without lanes, which is what keeps the plain
     // strip on its original 1D path.
@@ -900,7 +917,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const exactRef = useRef(false);
     const isDragging = useCollectionsSelector((s) => s.interaction.isDragging);
     useEffect(() => {
-      if (!isDragging || !laneRows) return;
+      if (!isDragging || !canPlace) return;
       const sync = (event: KeyboardEvent) => {
         exactRef.current = event.shiftKey;
       };
@@ -911,7 +928,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         window.removeEventListener("keydown", sync);
         window.removeEventListener("keyup", sync);
       };
-    }, [isDragging, laneRows]);
+    }, [isDragging, canPlace]);
 
     // Pointer -> a start time on the CONSUMER'S clock, for one row.
     //
@@ -1429,9 +1446,16 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   virtualizer.getTotalSize() + (trailingSlot ? itemWidth + gap : 0),
                   layerPlacements.right,
                 ),
-                height: laneRows
-                  ? laneStackHeight(itemHeight, layerHeight, layerGap, laneRows.length)
-                  : itemHeight,
+                // Grows to hold the new-lane row while one is offered. Rows
+                // are positioned from the TOP, so nothing already on screen
+                // moves — the strip just gets taller for the length of the
+                // drag, which is also what makes room to aim at.
+                height: laneStackHeight(
+                  itemHeight,
+                  layerHeight,
+                  layerGap,
+                  (laneRows?.length ?? 0) + (showNewLaneRow ? 1 : 0),
+                ),
                 position: "relative",
                 // The left-handle "grows left" anchor (0 unless a left trim is
                 // in flight). Shifts the whole content layer so clips move
@@ -1493,6 +1517,28 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 pictureCells
               )}
               {laneRowElements}
+              {/* SOMEWHERE TO MAKE THE FIRST LANE. Without this the gesture
+                  assumes a state only a tool call could produce: rows render
+                  for occupied lanes, so with none there was nothing to drop
+                  on. Dashed and unlabelled — it is a target, not content, and
+                  it carries no cells, so it stays out of the grid tree. */}
+              {showNewLaneRow && (
+                <LaneRowDroppable
+                  collectionId={collectionId}
+                  lane={newLane}
+                  resolveTime={resolveTimeFor(newLane)}
+                  aria-hidden="true"
+                  data-strip-new-lane={newLane}
+                  className="rounded-sm border border-dashed border-border/70"
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    top: laneRowTop(newLane, itemHeight, layerHeight, layerGap),
+                    height: layerHeight,
+                  }}
+                />
+              )}
               {trailingSlot && (
                 <div
                   data-virtual-trailing-slot
