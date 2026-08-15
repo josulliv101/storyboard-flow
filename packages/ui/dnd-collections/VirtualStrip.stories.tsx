@@ -2726,10 +2726,16 @@ export const PlacementPreviewSnapsToACut: Story = {
 
     await waitFor(() => expect(marker()).not.toBeNull());
     expect(marker()!.getAttribute("data-place-indicator")).toBe("2");
-    // Snapped: the marker sits ON the cut, not 3px past it. Compared against
-    // shot 2's own left edge so this holds whatever the container's offset is.
-    const markerX = marker()!.getBoundingClientRect().left;
-    expect(Math.abs(markerX - shot2Box.left)).toBeLessThanOrEqual(1.5);
+    // The LANE is said by the row highlight, because the time indicator now
+    // spans the whole stack so the drag ghost cannot cover it.
+    expect(
+      canvasElement.querySelector('[data-strip-lane="2"][data-place-target="true"]'),
+    ).not.toBeNull();
+    // Snapped: the marker sits ON the cut, not 3px past it. Measured at its
+    // CENTRE, because the bar is centred on the time it marks — comparing its
+    // left edge would move with the bar's own width.
+    const box = marker()!.getBoundingClientRect();
+    expect(Math.abs(box.left + box.width / 2 - shot2Box.left)).toBeLessThanOrEqual(1.5);
 
     await releaseAt(near);
   },
