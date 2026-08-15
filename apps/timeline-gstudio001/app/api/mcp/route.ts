@@ -12,6 +12,7 @@ import type { ToolResult } from "@/lib/webmcp/types";
 import { attachMedia, createUploadTickets } from "@/lib/mcp/upload";
 import { createCollection } from "@/lib/mcp/create-collection";
 import { handleReadTimeline } from "@/lib/mcp/read-timeline";
+import { handleRenderStatus, handleRenderTimeline } from "@/lib/mcp/render";
 import {
   intoField,
   nameField,
@@ -297,6 +298,45 @@ const handler = createMcpHandler(
         const uid = uidFrom(extra);
         if (!uid) return errorResult(NO_IDENTITY);
         return fromToolResult(await handleRemoveClip(args, { requesterUid: uid }));
+      },
+    );
+
+    // --- Render tools -------------------------------------------------------
+    //
+    // These edit nothing. `render_timeline` compiles a SNAPSHOT of the
+    // timeline and queues it, so editing afterwards does not change what
+    // renders. Two tools rather than one because an encode is not instant and
+    // a single blocking tool would sit on an MCP request for its whole length.
+
+    server.tool(
+      "render_timeline",
+      "Export a timeline as a single mp4: its complete nested contents, flattened, with the board's clip gaps closed and disabled clips skipped. Returns immediately with a render id — the encode happens on a render worker. Poll it with `render_status`. Note: layered audio is not supported yet; clips render in sequence.",
+      {
+        timelineId: z
+          .string()
+          .min(1)
+          .describe("The timeline to export. Its whole nested closure is included."),
+        width: z.number().int().positive().optional().describe("Output width. Defaults to 1152."),
+        height: z.number().int().positive().optional().describe("Output height. Defaults to 480."),
+        fps: z.number().int().positive().optional().describe("Frame rate. Defaults to 24."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleRenderTimeline(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "render_status",
+      "Where a render got to, and the finished file's URL once it succeeds. A render sits `queued` until a worker picks it up — with no worker running, that is where it stays.",
+      {
+        renderId: z.string().min(1).describe("The id returned by `render_timeline`."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleRenderStatus(args, { requesterUid: uid }));
       },
     );
 

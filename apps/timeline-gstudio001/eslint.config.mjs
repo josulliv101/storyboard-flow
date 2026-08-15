@@ -71,6 +71,16 @@ export default defineConfig([
             // flagged anyway. Every Next dynamic segment in this app has the
             // same shape, so any future entry needs the same treatment.
             "app/api/timelines/\\[id\\]/preview-manifest/route.ts",
+            // Reads the root raw, then derives explicitly via loadTimelineClosure
+            // + deriveClosureSummaries — this IS that sequence, extracted from
+            // the preview route above so export and preview cannot diverge on
+            // the repair.
+            "lib/compile-timeline-manifest.ts",
+            // Existence check ("does this project have a Renders collection")
+            // plus the root's title. Reads no summary field, and deriving here
+            // would load the whole closure to answer a question the stored
+            // document answers directly.
+            "lib/render/attach-output.ts",
         ],
         rules: {
             "no-restricted-imports": [
@@ -85,6 +95,24 @@ export default defineConfig([
                             ],
                             message:
                                 "Stored collection summaries (itemCount, previewItems, duration) are stale by design. Use serveTimelineDocument from @/lib/serve-timeline for anything served to a reader. If this is a write round-trip, an existence check, or a revision read, add the file to the allowlist in eslint.config.mjs with a reason.",
+                        },
+                        // THE SAME MODULE BY ITS RELATIVE PATH. Without this the
+                        // guard was one keystroke wide: `from "./firebase-timeline-store"`
+                        // inside lib/ resolves to the identical module and matched
+                        // nothing, so a file could take the restricted import
+                        // without ever being asked for a reason — which is exactly
+                        // how compile-timeline-manifest.ts got in.
+                        //
+                        // Only lib/ siblings can spell it this way; app/ and
+                        // components/ are too far down to reach it relatively.
+                        {
+                            name: "./firebase-timeline-store",
+                            importNames: [
+                                "readStoredTimelineDocument",
+                                "readStoredTimelineEntry",
+                            ],
+                            message:
+                                "Same restriction as @/lib/firebase-timeline-store — a relative path is the same module. See that entry.",
                         },
                     ],
                 },

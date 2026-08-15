@@ -162,7 +162,21 @@ export async function claimNextRenderJob(
 }
 
 export type ReportResult =
-  | Readonly<{ ok: true; job: StoredRenderJob }>
+  | Readonly<{
+      ok: true;
+      job: StoredRenderJob;
+      /**
+       * Whether this report MOVED the job, as opposed to being an idempotent
+       * re-report of a state it was already in.
+       *
+       * The caller needs the difference for anything with a side effect. A
+       * worker whose success landed but whose response timed out will retry,
+       * and filing the finished render twice — two cards in the collection for
+       * one encode — is exactly the kind of duplicate that looks like a bug in
+       * the renderer rather than in the retry.
+       */
+      changed: boolean;
+    }>
   | Readonly<{ ok: false; reason: "not-found" | "not-holder" | "terminal" | "out-of-order" | "invalid" }>;
 
 /**
@@ -194,6 +208,11 @@ export async function reportRenderProgress(
     if (!transition.ok) return { ok: false, reason: transition.reason };
 
     const next = transition.next;
+    // A no-op transition is the state machine's idempotent branch: the job was
+    // already terminal and this report agrees with it. Compared by state
+    // rather than by object identity so the answer does not depend on whether
+    // the machine happened to return the same reference.
+    const changed = next.state !== current.progress.state;
     tx.set(
       ref,
       {
@@ -208,6 +227,6 @@ export async function reportRenderProgress(
       },
       { merge: true },
     );
-    return { ok: true, job: { ...current, progress: next, updatedAt: nowIso } };
+    return { ok: true, changed, job: { ...current, progress: next, updatedAt: nowIso } };
   });
 }
