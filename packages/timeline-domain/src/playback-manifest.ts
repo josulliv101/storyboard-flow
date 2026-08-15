@@ -63,6 +63,17 @@ export type PlaybackLeaf = Readonly<{
    * inset inside a layered collection is not inherited, it is its own.
    */
   layerFrame?: Readonly<{ x: number; y: number; width: number }>;
+  /**
+   * The clip's own shape, so an inset drawn from `layerFrame` is never
+   * stretched.
+   *
+   * Optional only for payloads written before it existed — everything the
+   * compiler emits has one. Absent means widescreen, which is what
+   * `manifestToClips` assumed for EVERY leaf before this: the preview shaped
+   * every inset 16:9 no matter what the clip was, and the export would have
+   * disagreed with it the moment a portrait clip went on a lane.
+   */
+  aspect?: number;
   /** Skipped by the PLAYER, not by this compiler. A disabled leaf keeps its
    *  full span on the timeline — that span is what the playhead jumps over
    *  while playing and what a scrub can land inside. Set when the leaf's own
@@ -137,6 +148,7 @@ function addMediaLeaf(
     sourceStart: clip.trimIn + clipProgress * sourceRange,
     playbackRate: (sourceRange / Math.max(0.001, clip.duration)) / outputScale,
     trackIndex,
+    aspect: clip.aspect > 0 ? clip.aspect : 16 / 9,
     // Only where it actually runs under the picture. A frame left behind on a
     // clip that has since been moved back onto the cut is stale authoring, not
     // an instruction — and lane 0 has nothing to be inset within.
@@ -286,7 +298,9 @@ export function manifestToClips(manifest: PlaybackManifest): TimelineClip[] {
       id: `${leaf.collectionPath.join("/")}:${leaf.id}`,
       index,
       alt: leaf.id,
-      aspect: 16 / 9,
+      // The leaf's REAL shape. Hardcoded 16/9 here previously, which made
+      // every inset widescreen in the preview whatever the clip was.
+      aspect: leaf.aspect !== undefined && leaf.aspect > 0 ? leaf.aspect : 16 / 9,
       // The leaf's REAL lane, so the player lays simultaneous leaves out the
       // way the board does rather than stacking them all on the picture.
       trackIndex: leaf.trackIndex,

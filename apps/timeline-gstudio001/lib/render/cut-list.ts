@@ -148,5 +148,20 @@ function cutFromLeaf(leaf: PlaybackLeaf, outputStart: number): RenderCut {
     // omitted so every cut has one shape.
     playbackRate: leaf.kind === "image" ? 1 : leaf.playbackRate,
     outputStart,
+    // COMPOSITING FACTS, and only when there is something to composite. Both
+    // are dropped for lane 0 and for an unframed layer, so `layers.some(has a
+    // frame)` stays an honest test of "does this render need a re-encode".
+    //
+    // Audio can carry a frame in a stored document (nothing stops a writer),
+    // and it must not reach the overlay: a normalised audio segment has a
+    // SYNTHESISED BLACK video stream, so compositing one paints a black
+    // rectangle over the picture for the length of the voiceover.
+    ...(leaf.trackIndex !== 0 && leaf.layerFrame !== undefined && leaf.kind !== "audio"
+      ? {
+          trackIndex: leaf.trackIndex,
+          layerFrame: leaf.layerFrame,
+          aspect: leaf.aspect !== undefined && leaf.aspect > 0 ? leaf.aspect : 16 / 9,
+        }
+      : {}),
   };
 }

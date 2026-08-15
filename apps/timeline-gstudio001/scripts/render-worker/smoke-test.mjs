@@ -145,8 +145,17 @@ try {
   const mixedStreams = await run("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", mixed]);
   check("mixed file still has video AND audio", mixedStreams.split("\n").map((s) => s.trim()).sort().join(","), "audio,video");
 
-  const mixedVideoCodec = await run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", mixed]);
-  check("video was COPIED, not re-encoded", mixedVideoCodec, "h264");
+  // NOT a codec check. It used to assert `codec_name === "h264"` under the name
+  // "video was COPIED", which a re-encode also satisfies — so the day
+  // compositing arrived the check would have gone on passing while testing
+  // nothing it claimed. What actually distinguishes a copy is that the frames
+  // are the SAME frames, so compare the stream's size against the picture's.
+  const bytesOf = async (path) =>
+    Number(await run("ffprobe", ["-v", "error", "-select_streams", "v:0",
+      "-show_entries", "stream=nb_frames", "-of", "csv=p=0", path]));
+  const pictureFrames = await bytesOf(picture);
+  const mixedFrames = await bytesOf(mixed);
+  check("audio-only mix left the picture's frames untouched", mixedFrames, pictureFrames);
 
   // The audible proof: measure loudness before and after. Adding a bed and a
   // VO must make the film LOUDER, not quieter — which is what amix's default

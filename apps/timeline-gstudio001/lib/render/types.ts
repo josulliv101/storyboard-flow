@@ -41,6 +41,32 @@ export type RenderCut = Readonly<{
   /** Where the cut begins in the OUTPUT — the running total of everything
    *  before it, with gaps closed. */
   outputStart: number;
+  /**
+   * Which lane this came off. 0 is the picture; anything above ran under it.
+   *
+   * Only meaningful on `layers`, and only for DRAW ORDER between two layers
+   * live at the same instant — the compiler has already used it to decide
+   * which list a leaf belongs in. Carried because `layers` is sorted by time
+   * across every lane at once, so without it two simultaneous layers have no
+   * recoverable stacking order at all.
+   */
+  trackIndex?: number;
+  /**
+   * Where this draws inside the output frame, normalized 0..1, when it is
+   * composited rather than only mixed.
+   *
+   * ABSENT MEANS SOUND ONLY — a voiceover, a music bed, and every layer
+   * written before compositing existed. It is also what keeps the fast path:
+   * a mix with no framed layer copies the picture instead of re-encoding it.
+   *
+   * Height is not carried for the same reason it is not stored: it follows
+   * from the clip's shape, and the worker resolves it once when it decides
+   * what size to normalise the layer at.
+   */
+  layerFrame?: Readonly<{ x: number; y: number; width: number }>;
+  /** The clip's own aspect, needed to turn `layerFrame` into a rectangle
+   *  without stretching it. Present exactly when `layerFrame` is. */
+  aspect?: number;
 }>;
 
 /** Output format. Fixed per job rather than per cut: the worker normalises
