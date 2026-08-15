@@ -29,7 +29,12 @@ import { useTimelineDocuments } from "../timeline-document-store";
 
 import { createAudioMixer, type AudioMixer } from "./audio-graph";
 
-import { layerFrameOf, layerFrameRect, type LayerFrame } from "@storyboard/timeline-model/layer-frame";
+import {
+  layerFrameOf,
+  layerFrameRect,
+  outputFrameRect,
+  type LayerFrame,
+} from "@storyboard/timeline-model/layer-frame";
 import type { CollectionTimelineClip, TimelineClip } from "../types";
 import { formatSeconds } from "../utils";
 import {
@@ -142,6 +147,21 @@ type WorkbenchDisplaySurfaceProps = {
    * A consumer cannot move the playhead through this prop, by construction.
    */
   frameOverride?: Readonly<{ src: string; poster?: string; sourceTime: number }> | null;
+  /**
+   * The RENDER's frame shape (width / height), for placing under-layer insets.
+   *
+   * A layer's rectangle is normalized to the OUTPUT frame, not to the picture,
+   * and the two differ whenever the source's shape differs from the render's —
+   * the export fits the source in and pads the rest. Without this the preview
+   * composes against the picture box and puts the inset somewhere the finished
+   * file will not: for the default bottom-right inset, 22px and 68px of margin
+   * against a 16:9 picture where the render gives 40px and 40px.
+   *
+   * Optional because the surface is generic and a consumer with no render
+   * target has no answer; absent means compose against the picture, which is
+   * the best available guess and what this did before.
+   */
+  outputAspect?: number;
 };
 
 const BUFFER_WINDOW_SIZE = 4;
@@ -688,6 +708,7 @@ export function WorkbenchDisplaySurface({
   onMutedChange,
   onClose,
   frameOverride = null,
+  outputAspect,
 }: WorkbenchDisplaySurfaceProps) {
   const { getCollectionClipFramePreview } = useTimelineDocuments();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -698,6 +719,10 @@ export function WorkbenchDisplaySurface({
   // The under-layers audible right now. The picture is `activeMediaRef`; these
   // play alongside it and, in this phase, are heard and not seen.
   const liveLayerMediaRef = useRef<LiveLayer[]>([]);
+  // A ref, so `drawDrawable` keeps its stable identity — it is reached from a
+  // dozen async media listeners that would be orphaned if it were rebuilt.
+  const outputAspectRef = useRef(outputAspect);
+  outputAspectRef.current = outputAspect;
   const animationFrameRef = useRef<number | null>(null);
   const timeoutFrameRef = useRef<number | null>(null);
   // PER ELEMENT, keyed by media key. This was a single slot, which was correct
@@ -936,7 +961,15 @@ export function WorkbenchDisplaySurface({
     // close enough to position by eye and exact in x and in size.
     const picture = playbackSurfaceRectRef.current;
     if (picture === null) return;
-    const frameAspect = picture.height > 0 ? picture.width / picture.height : 1;
+    // THE OUTPUT FRAME, not the picture. See `outputAspect` — an inset near an
+    // edge can legitimately land over where the render's padding will be, and
+    // showing that is the point rather than a glitch.
+    const aspect = outputAspectRef.current;
+    const frame =
+      aspect === undefined || !(aspect > 0)
+        ? { left: picture.left, top: picture.top, width: picture.width, height: picture.height }
+        : outputFrameRect(picture, aspect);
+    const frameAspect = frame.height > 0 ? frame.width / frame.height : 1;
     for (const layer of liveLayerMediaRef.current) {
       if (layer.frame === undefined) continue;
       const cached = cacheRef.current.get(layer.media.key);
@@ -958,10 +991,10 @@ export function WorkbenchDisplaySurface({
       const rect = layerFrameRect(layer.frame, layer.aspect, frameAspect);
       context.drawImage(
         element,
-        picture.left + rect.x * picture.width,
-        picture.top + rect.y * picture.height,
-        rect.width * picture.width,
-        rect.height * picture.height,
+        frame.left + rect.x * frame.width,
+        frame.top + rect.y * frame.height,
+        rect.width * frame.width,
+        rect.height * frame.height,
       );
     }
   }, []);
