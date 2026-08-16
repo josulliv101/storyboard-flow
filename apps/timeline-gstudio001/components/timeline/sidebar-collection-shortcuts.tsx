@@ -131,7 +131,26 @@ function ShortcutsHeading({
       data-sidebar-section="collections"
       data-sidebar-section-state={inline ? "heading" : "rule"}
       className={cn(
-        "mx-4 my-2 shrink-0 overflow-hidden truncate text-[10px] font-semibold uppercase tracking-wider",
+        // THE RULE IS AS LONG AS THE WORDS, and `w-fit` alone does not get
+        // there. The rail is a column flex with `items-stretch`, so it was
+        // stretching this box to the full 207px gutter while the lettering is
+        // 125px — and the rule state paints the BOX, not the text. Collapsing
+        // therefore drew a bar 82px longer than the label it replaces, which
+        // is the "divider starts at the full width of the sidebar" it kept
+        // looking like. It was not starting wide and shrinking; it was always
+        // that long, and only the collapse made it obvious.
+        //
+        // `self-start` is the half that matters — measured: 207px stretched,
+        // 125px once the stretch is off, which is exactly `max-content`.
+        //
+        // The max-width is the OTHER half, and `w-fit` cannot do it alone.
+        // `fit-content` never goes below `min-content`, and `truncate` sets
+        // `white-space: nowrap`, so min-content IS max-content here: the rule
+        // stayed 125px all the way down and hung 85px out of a 40px gutter.
+        // Capping at the gutter (100% less the 2rem of `mx-4`) gives the two
+        // ends the behaviour they each need — the words decide the length
+        // while there is room for them, the gutter decides once there is not.
+        "mx-4 my-2 w-fit max-w-[calc(100%-2rem)] shrink-0 self-start overflow-hidden truncate text-[10px] font-semibold uppercase tracking-wider",
         // Height, colour and background are the morph. Not `transition-all`:
         // that would also animate the margins, and a divider whose gaps grow
         // as it becomes a word reads as the rail breathing rather than as a
