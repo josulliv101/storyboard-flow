@@ -329,7 +329,13 @@ export function AddItemButton({
         // the last thing to break that was a single stray height on a labelled
         // button. `whitespace-nowrap` so the label cannot wrap and take the
         // row's height with it when the viewport tightens.
-        className="flex h-8 shrink-0 cursor-grab items-center gap-1 rounded-md pr-2 pl-1 text-[11px] font-medium whitespace-nowrap text-zinc-400 transition-colors hover:bg-sky-950/30 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        //
+        // `gap-2` between the grip and the label, wider than the `gap-1` it
+        // started at. The grip is a column of dots roughly 4px wide sitting in
+        // a 14px icon box, so the box edge the gap measures from is not where
+        // the mark ends — 4px of gap read as almost none, and the label looked
+        // stuck to it.
+        className="flex h-8 shrink-0 cursor-grab items-center gap-2 rounded-md pr-2 pl-1 text-[11px] font-medium whitespace-nowrap text-zinc-400 transition-colors hover:bg-sky-950/30 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
       >
         <GripVertical aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
         Add item
