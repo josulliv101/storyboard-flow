@@ -20,7 +20,8 @@
     "audit:review-findings": "node --env-file=.env scripts/audit-review-findings.mjs",
     "inspect:squatted": "node --env-file=.env scripts/inspect-squatted-fixtures.mjs",
     "stamp:ownership": "node --env-file=.env scripts/stamp-ownerless-timelines.mjs",
-    "bin:orphans": "node --env-file=.env scripts/bin-unreachable-timelines.mjs"
+    "bin:orphans": "node --env-file=.env scripts/bin-unreachable-timelines.mjs",
+    "correct:aspects": "node --env-file=.env scripts/correct-clip-aspects.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1094.0",

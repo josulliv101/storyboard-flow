@@ -141,6 +141,11 @@ function toSnapshotEntry(data) {
       childTimelineId: clip?.childTimelineId ?? null,
       src: srcOf(clip),
       duration: typeof clip?.duration === "number" ? clip.duration : null,
+      // Carried so `correct:aspects` can dry-run offline. A snapshot taken
+      // before this line has no `aspect` KEY at all, which is why that script
+      // tests for the key rather than for undefined — "the snapshot cannot
+      // answer this" and "the clip stores nothing" are different answers.
+      ...(typeof clip?.aspect === "number" ? { aspect: clip.aspect } : {}),
     })),
   };
 }

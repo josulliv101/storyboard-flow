@@ -5,6 +5,10 @@ export type TimelineMediaUploadResult = {
   thumbnailUrl?: string;
   providerId?: string;
   assetId?: string;
+  /** The source's real pixel size, for minting `aspect`. Absent for audio, and
+   *  for any server that does not report it. */
+  width?: number;
+  height?: number;
 };
 
 // A `Promise<TimelineMediaUploadResult>` annotation on a function that returns
@@ -27,6 +31,14 @@ function parseUploadResult(value: unknown): TimelineMediaUploadResult | null {
   for (const key of ["thumbnailPathname", "thumbnailUrl", "providerId", "assetId"] as const) {
     if (candidate[key] !== undefined && !nonEmptyString(candidate[key])) return null;
   }
+  // Dimensions are DROPPED rather than rejected when malformed, unlike the
+  // strings above. A bad thumbnail url is a server bug worth surfacing; a bad
+  // width just means the clip keeps its default shape, and refusing the whole
+  // upload over it would lose the file for a cosmetic field.
+  const dimension = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+  const width = dimension(candidate.width);
+  const height = dimension(candidate.height);
   return {
     pathname: candidate.pathname,
     url: candidate.url,
@@ -40,6 +52,8 @@ function parseUploadResult(value: unknown): TimelineMediaUploadResult | null {
       ? { providerId: candidate.providerId as string }
       : {}),
     ...(candidate.assetId !== undefined ? { assetId: candidate.assetId as string } : {}),
+    ...(width === undefined ? {} : { width }),
+    ...(height === undefined ? {} : { height }),
   };
 }
 

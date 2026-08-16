@@ -15,3 +15,7 @@ mcp-app/dist/
 # Written by `npm run audit:orphans` so --offline can re-answer questions
 # without re-reading the collection. Local cache; never committed.
 .orphan-snapshot.json
+
+# Written by `npm run correct:aspects` — one ffprobe reading per source URL, so
+# a re-run does not hit the media host again. Local cache; never committed.
+.aspect-probe-cache.json

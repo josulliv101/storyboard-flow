@@ -267,3 +267,27 @@ export function getFolderPathFromTimelineId(id: string, userId: string): string 
   }
   return "";
 }
+
+/**
+ * A clip's shape from its source's real pixel dimensions.
+ *
+ * `undefined` when they cannot be trusted, so every caller falls back to its
+ * own default rather than storing the answer. That matters more than it looks:
+ * `aspect` is a DIVISOR in layout and in inset geometry, so a zero is an
+ * infinity waiting to happen and a negative one inverts the box — which is why
+ * `validate` already demands `aspect > 0`.
+ *
+ * This exists because the field was never measured at all. Every clip was
+ * minted at 16/9 regardless of its source, and the value only stopped being
+ * decorative when compositing began deriving an inset's HEIGHT from it. It had
+ * already produced one wrong conclusion by then: a whole project read as "16:9
+ * throughout" off this field while its media was 2.379, 2.333, 2.400 and 1.733.
+ */
+export function aspectFromDimensions(
+  width: unknown,
+  height: unknown,
+): number | undefined {
+  if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) return undefined;
+  if (typeof height !== "number" || !Number.isFinite(height) || height <= 0) return undefined;
+  return width / height;
+}

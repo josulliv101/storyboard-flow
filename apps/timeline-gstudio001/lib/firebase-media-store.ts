@@ -10,6 +10,11 @@ export type StoredMedia = {
   bucketName?: string;
   contentType?: string;
   size?: number;
+  /** The source's real pixel size, when the store reports it — Cloudinary does
+   *  for images and video, and there is nothing to report for audio. Used to
+   *  mint a clip's `aspect`; absent means the caller keeps its default. */
+  width?: number;
+  height?: number;
 };
 
 const ALLOWED_MEDIA_PREFIXES = [
