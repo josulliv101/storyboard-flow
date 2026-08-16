@@ -14,17 +14,28 @@ import { SidebarLabelsInlineContext } from "./sidebar-tooltip-label";
 // documents gateway, which is a module singleton a story could only exercise
 // by seeding global state.
 //
-// A 1x1 gif rather than a remote URL — deterministic fake data only, and a
-// broken <img> would make the "has a thumbnail" and "has none" cases render
-// identically, which is exactly the distinction two of these stories are about.
-const PIXEL =
-  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+// A VISIBLE frame, inline — deterministic fake data only, and no network.
+//
+// It was a 1x1 transparent gif, which satisfied "an <img> is present" and
+// showed nothing at all: the thumbnail case and the empty case looked
+// identical on screen, which is exactly the distinction two of these stories
+// exist to demonstrate. A story you cannot tell apart by looking is not
+// covering the thing it claims to.
+const FRAME =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="36">` +
+      `<rect width="64" height="36" fill="#3f6212"/>` +
+      `<circle cx="20" cy="14" r="9" fill="#a3e635"/>` +
+      `<rect y="26" width="64" height="10" fill="#1a2e05"/>` +
+      `</svg>`,
+  );
 
 const shortcut = (over: Partial<CollectionShortcut> = {}): CollectionShortcut => ({
   nodeId: "scenes",
   title: "Scenes",
   itemCount: 3,
-  thumbnail: PIXEL,
+  thumbnail: FRAME,
   thumbnailAlt: "first shot",
   ...over,
 });
@@ -38,11 +49,19 @@ function Rail({
 }: Readonly<{ open?: boolean; children: React.ReactNode }>) {
   return (
     <SidebarLabelsInlineContext.Provider value={open === true}>
-      <div
-        className={`${RAIL_CLASS} flex flex-col items-stretch bg-zinc-900/50 py-2`}
-        style={{ width: open ? RAIL_OPEN_WIDTH_PX : RAIL_WIDTH_PX }}
-      >
-        {children}
+      {/* On a DARK page, opaque. The rail's own fill is `bg-zinc-900/50`,
+          which is correct in the app because it sits over a near-black
+          document — and over Storybook's white default it resolved to a mid
+          grey that made every label and glyph illegible. Matching the app's
+          ground is what makes this story reviewable by looking at it, which is
+          the only reason it exists. Same wrapper `RenderFormatMenu` uses. */}
+      <div className="graph-view-theme flex min-h-[320px] items-start bg-zinc-950 p-4">
+        <div
+          className={`${RAIL_CLASS} flex flex-col items-stretch rounded-md bg-zinc-900 py-2`}
+          style={{ width: open ? RAIL_OPEN_WIDTH_PX : RAIL_WIDTH_PX }}
+        >
+          {children}
+        </div>
       </div>
     </SidebarLabelsInlineContext.Provider>
   );
