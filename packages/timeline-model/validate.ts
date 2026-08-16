@@ -8,6 +8,7 @@
 // numeric must be a finite number (NaN/Infinity poison packing).
 
 import { layerFrameOf } from "./layer-frame";
+import { isPreviewItem } from "./preview-items";
 import { renderFormatOf } from "./render-format";
 import { areTagsValid } from "./tags";
 import type { TimelineClip, TimelineDocument } from "./types";
@@ -184,19 +185,15 @@ export function isTimelineClip(value: unknown): value is TimelineClip {
     }
     if (clip.previewItems == null) return true;
     if (!Array.isArray(clip.previewItems)) return false;
-    return clip.previewItems.every((item) => {
-      if (!item || typeof item !== "object") return false;
-      const preview = item as Record<string, unknown>;
-      return (
-        typeof preview.id === "string" &&
-        (preview.kind === "image" || preview.kind === "video") &&
-        typeof preview.src === "string" &&
-        typeof preview.alt === "string" &&
-        isOptionalString(preview.poster) &&
-        // A source offset, so the same rule its clip-level twin follows.
-        isOptionalNonNegative(preview.trimIn)
-      );
-    });
+    // Delegated for the same reason `layerFrame` and `renderFormat` are: the
+    // WRITE gate and the READ normalizer must agree about which stored frames
+    // are real. They did not, and the disagreement was unrecoverable — a
+    // legacy AUDIO frame failed here while `previewItemsOf` did not yet exist
+    // to drop it, so the document could not be rewritten and every batch
+    // carrying it 400ed forever. Still a REFUSAL rather than a filter: a bad
+    // frame arriving at this gate means a writer skipped the normalizer, and
+    // waving it through is how one spreads.
+    return clip.previewItems.every(isPreviewItem);
   }
 
   return false;
