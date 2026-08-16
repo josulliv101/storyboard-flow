@@ -35,6 +35,7 @@ import { tagsField } from "@storyboard/timeline-model/tags";
 // answers to "which lane is this clip on" would move layered clips on save.
 import { placedStartOf, trackIndexOf } from "@storyboard/timeline-model/documents";
 import { layerFrameOf } from "@storyboard/timeline-model/layer-frame";
+import { previewItemsOf } from "@storyboard/timeline-model/preview-items";
 import type {
   AssetSourceRef,
   CollectionTimelineClip,
@@ -816,9 +817,21 @@ export function graphChildrenToClips(
     // Hydrated collections DERIVE their preview frames from live children (see
     // hydratedCollectionPreviewItems) — same stale-summary rule duration and
     // itemCount already follow; placeholders keep the stored summary.
+    //
+    // The stored summary is DEFENDED before either branch reads it, because
+    // this is where it re-enters a write. A placeholder's frames are carried
+    // through verbatim (there are no live children to re-derive from) and the
+    // hydrated branch can still fall back to them, so both paths could put a
+    // stored frame back on the wire. One legacy AUDIO frame — written before
+    // either deriver learned to skip audio — is refused by the write gate, and
+    // because it was on a collection sitting in the TRASH BIN, which every
+    // delete rewrites, it made deleting anything fail with a 400 that named
+    // three innocent documents. Dropping it here lets the next write heal the
+    // document instead of failing on it forever.
+    const storedPreviewItems = previewItemsOf(detail?.previewItems);
     const previewItems = detail?.hydrated
-      ? hydratedCollectionPreviewItems(graph, details, node.id, detail.previewItems)
-      : detail?.previewItems;
+      ? hydratedCollectionPreviewItems(graph, details, node.id, storedPreviewItems)
+      : storedPreviewItems;
     // The playable READOUT beside the layout duration above, derived live for
     // the same self-healing reason. Omitted when it equals the layout span, so
     // a closure with nothing disabled never grows the field.
@@ -827,12 +840,36 @@ export function graphChildrenToClips(
       : detail?.playableDuration;
     const playableDuration = playable === duration ? undefined : playable;
     advance(trackIndex, startTime + duration + CLIP_GAP_SECONDS);
+    const childTimelineId = detail?.duplicateOfTimelineId ?? (node.id as string);
+    const storedClipId = detail?.sourceClipId ?? (node.id as string);
     return {
-      id: detail?.sourceClipId ?? (node.id as string),
+      // OWNERSHIP IS SPELT `id === childTimelineId`, so a demoted duplicate
+      // must not be spelt that way.
+      //
+      // Reading one already demotes it to a non-navigable reference card, but
+      // that demotion lived only in memory: `sourceClipId` round-tripped the
+      // stored clip id back out, and a duplicate's stored id normally IS its
+      // child pointer (both minting paths make them equal). So the write
+      // faithfully reproduced two owning placements of one collection — which
+      // is what the batch endpoint's duplicate-owner guard exists to refuse:
+      //
+      //   409 Refusing to give <id> a second owning placement.
+      //
+      // Faithful round-tripping was right before that guard existed. Now it
+      // makes the document permanently unwritable, and a trash bin holding one
+      // (an item trashed, restored, and trashed again) blocked every delete in
+      // every project, because the bin is per-user and every delete rewrites
+      // it. The synthetic node id is what this card is already identified by
+      // here, it is stable across reads of the same document, and re-reading it
+      // demotes to the same id again — so the repair is idempotent rather than
+      // minting a fresh id on every save.
+      id: detail?.duplicateOfTimelineId !== undefined && storedClipId === childTimelineId
+        ? (node.id as string)
+        : storedClipId,
       index,
       kind: "collection",
       title: node.name,
-      childTimelineId: detail?.duplicateOfTimelineId ?? (node.id as string),
+      childTimelineId,
       // Hydrated collections report their LIVE child count (nesting a clip
       // into one must not persist the stale stored count); placeholders keep
       // the stored count — their emptiness is unhydrated, not real.
