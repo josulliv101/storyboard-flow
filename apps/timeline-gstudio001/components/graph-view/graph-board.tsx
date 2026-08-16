@@ -1815,17 +1815,22 @@ export function GraphBoard({
                   zoom slider all went down with the filter. What remains up
                   here is the row's original job: where you are, what you have
                   picked, and what you can do to it. */}
-              <SelectModeButton />
-              {/* PREVIEW, beside Select. It was a tile in the icon rail, which
-                  gave it prominence but put it a long way from the board it
-                  opens over — and it is a VIEW toggle, which is what this end
-                  of the row is for. Ungated by surface deliberately: the pane
-                  plays the focused timeline in grid as well as strip, so
-                  hiding it in grid would remove a working control.
+              {/* PREVIEW LEADS, Select follows. It was a tile in the icon
+                  rail, which gave it prominence but put it a long way from the
+                  board it opens over — and it is a VIEW toggle, which is what
+                  this end of the row is for. Ungated by surface deliberately:
+                  the pane plays the focused timeline in grid as well as strip,
+                  so hiding it in grid would remove a working control.
 
                   Inside the fence with Select rather than out with the ruler
                   pair, because those two are flat-mode only and come and go;
-                  these two are always here. */}
+                  these two are always here.
+
+                  Preview first because it is the icon in a pair whose other
+                  half carries a WORD: leading with the labelled control pushed
+                  the icon out to the fence, away from the icon toggles beyond
+                  it, so the row read as a button with an ornament rather than
+                  as one run of controls. */}
               <HeaderToggle
                 active={previewOn}
                 onToggle={onPreviewToggle}
@@ -1833,6 +1838,7 @@ export function GraphBoard({
                 label={previewOn ? "Hide preview" : "Show preview"}
                 title="Preview — play the focused timeline"
               />
+              <SelectModeButton />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* Ruler and waveform stay: they draw ONTO the strip rather than
                   changing what is on it, they are flat-mode only, and pairing
