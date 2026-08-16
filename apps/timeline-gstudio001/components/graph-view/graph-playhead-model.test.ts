@@ -26,6 +26,7 @@ import {
   type PreviewCardSpans,
   type RulerTick,
 } from "./graph-playhead-model";
+import { TIMELINE_LEADING_PADDING_SECONDS } from "@storyboard/timeline-model/constants";
 import { at } from "../../lib/test-support/at";
 
 const media = (
@@ -60,15 +61,16 @@ function leaf(
   collectionPath: readonly string[],
   timelineStart: number,
   timelineDuration: number,
+  // Lane 0 — the picture — unless a test says otherwise. Most of these
+  // fixtures predate lanes and do not exercise layering.
+  trackIndex = 0,
 ): PlaybackLeaf {
   return {
     id,
     collectionPath,
     kind: "image",
     src: `https://cdn.test/${id}.jpg`,
-    // Lane 0 — the picture. These fixtures predate lanes and none of them
-    // exercise layering.
-    trackIndex: 0,
+    trackIndex,
     timelineStart,
     timelineDuration,
     sourceStart: 0,
@@ -418,6 +420,52 @@ describe("flatCardSpans", () => {
   });
 });
 
+describe("flatCardSpans lanes", () => {
+  // A cut with a bed running under the whole of it — the shape the lane work
+  // exists for, seen through the FLAT view.
+  const withBed = () =>
+    graphOf([collection("root", [media("s1", 4), media("s2", 4), media("bed", 8.12)])]);
+  const items = () => [
+    { nodeId: parseNodeId("s1"), collectionPath: [] },
+    { nodeId: parseNodeId("s2"), collectionPath: [] },
+    { nodeId: parseNodeId("bed"), collectionPath: [] },
+  ];
+  const spans: PreviewCardSpans = new Map([
+    [mediaSpanKey("root", "s1"), { start: 0, end: 4 }],
+    [mediaSpanKey("root", "s2"), { start: 4.12, end: 8.12 }],
+    [mediaSpanKey("root", "bed"), { start: 0, end: 8.12, lane: 1 }],
+  ]);
+  const width = (seconds: number) => seconds * 10;
+
+  it("carries the lane onto the card", () => {
+    const cards = flatCardSpans(withBed(), items(), "root", spans, width);
+    expect(cards.map((card) => card.lane)).toEqual([undefined, undefined, 1]);
+  });
+
+  // THE BUG THIS FIXES. `playableSpanSeconds` groups by lane and takes the
+  // longest, and its own comment says why: "Summing would claim a 4s bed under
+  // a 4s shot makes an 8s timeline". Flat mode did exactly that, because no
+  // card carried a lane and every one of them fell to `lane ?? 0`.
+  it("does not let a bed LENGTHEN the flat readout", () => {
+    const cards = flatCardSpans(withBed(), items(), "root", spans, width);
+    // The picture is two 4s shots plus one gap; the bed runs under all of it.
+    // Either way the answer is the same 8.12s the collapsed view reports —
+    // not 8.12 + 8.12 summed into one lane.
+    expect(playableSpanSeconds(cards)).toBeCloseTo(
+      TIMELINE_LEADING_PADDING_SECONDS + 8.12,
+      6,
+    );
+  });
+
+  it("still packs its own run when no manifest has landed, lanes and all", () => {
+    // No manifest means no lane source either, so a flat run falls back to the
+    // single sequence it always was. Worth pinning: the fallback must not
+    // start inventing lanes from array position.
+    const cards = flatCardSpans(withBed(), items(), "root", null, width);
+    expect(cards.every((card) => card.lane === undefined)).toBe(true);
+  });
+});
+
 describe("buildStripOverlay", () => {
   const cards: ChildSpan[] = [
     { startTime: 0, endTime: 4, width: 100 },
@@ -507,6 +555,30 @@ describe("cardSpansOf", () => {
     expect(spans.get("sceneA")).toEqual({ start: 0, end: 7.12 });
     expect(spans.get("root")).toEqual({ start: 0, end: 12.24 });
     expect(spans.get(mediaSpanKey("root", "m3"))).toEqual({ start: 7.24, end: 12.24 });
+  });
+
+  it("keeps a leaf's LANE, which is the only lane source a flat run has", () => {
+    // In a flat run a card can come from any depth, so its lane is not the
+    // local detail entry's `trackIndex` — it is the manifest's lane-from-root,
+    // which is what `leaf.trackIndex` already holds.
+    const spans = cardSpansOf(
+      manifestOf([leaf("shot", ["root"], 0, 4), leaf("bed", ["root"], 0, 12, 1)]),
+    );
+    expect(spans.get(mediaSpanKey("root", "bed"))).toEqual({ start: 0, end: 12, lane: 1 });
+  });
+
+  it("leaves lane ABSENT on the picture, the convention everywhere else here", () => {
+    const spans = cardSpansOf(manifestOf([leaf("shot", ["root"], 0, 4)]));
+    expect(spans.get(mediaSpanKey("root", "shot"))).toEqual({ start: 0, end: 4 });
+  });
+
+  it("puts no lane on a COLLECTION entry, which spans several of them", () => {
+    // A collection key folds in every leaf beneath it, so there is no one lane
+    // to report — picking either would be a claim the data does not support.
+    const spans = cardSpansOf(
+      manifestOf([leaf("shot", ["root", "scene"], 0, 4), leaf("bed", ["root", "scene"], 0, 12, 1)]),
+    );
+    expect(spans.get("scene")).toEqual({ start: 0, end: 12 });
   });
 
   // Leaf ids repeat across documents (one clip referenced from two

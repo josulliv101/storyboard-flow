@@ -39,7 +39,28 @@ export const STRIP_GAP_PX = 8;
  * children here (media by id, nested collections by their aggregated window)
  * and maps the same channel time onto its own layout.
  */
-export type PreviewCardSpans = ReadonlyMap<string, Readonly<{ start: number; end: number }>>;
+export type PreviewCardSpans = ReadonlyMap<
+  string,
+  Readonly<{
+    start: number;
+    end: number;
+    /**
+     * The leaf's lane, ABSENT for the picture — the convention every other
+     * lane-bearing field here follows.
+     *
+     * Only on MEDIA keys. A collection entry folds every leaf beneath it into
+     * one window, and those leaves can be on different lanes, so there is no
+     * single lane to report and picking one would be a claim the data does not
+     * support.
+     *
+     * It exists because a FLAT run has no other lane source. The nested board
+     * reads `trackIndexOf` off the local detail entry, but a flat card can come
+     * from any depth, so its lane is the manifest's lane-from-root — which the
+     * leaf already carries and this used to discard.
+     */
+    lane?: number;
+  }>
+>;
 
 /**
  * A media leaf's span key, qualified by its parent collection. Leaf ids can
@@ -57,20 +78,35 @@ export function mediaSpanKey(parentId: string, leafId: string): string {
 }
 
 export function cardSpansOf(manifest: PlaybackManifest): PreviewCardSpans {
-  const spans = new Map<string, { start: number; end: number }>();
-  const widen = (key: string, start: number, end: number) => {
+  const spans = new Map<string, { start: number; end: number; lane?: number }>();
+  const widen = (key: string, start: number, end: number, lane?: number) => {
     const current = spans.get(key);
     spans.set(
       key,
       current
-        ? { start: Math.min(current.start, start), end: Math.max(current.end, end) }
-        : { start, end },
+        ? {
+            start: Math.min(current.start, start),
+            end: Math.max(current.end, end),
+            // A widened entry keeps whatever lane it had. Collection keys are
+            // the only ones widened across leaves and they carry none, so this
+            // never has to choose between two.
+            ...(current.lane === undefined ? {} : { lane: current.lane }),
+          }
+        : { start, end, ...(lane === undefined ? {} : { lane }) },
     );
   };
   for (const leaf of manifest.leaves) {
     const end = leaf.timelineStart + leaf.timelineDuration;
     const parentId = leaf.collectionPath[leaf.collectionPath.length - 1] ?? "";
-    widen(mediaSpanKey(parentId, leaf.id), leaf.timelineStart, end);
+    // `trackIndex` on a manifest leaf is already the OUTERMOST non-zero lane on
+    // its path (see playback-manifest), which is exactly what a flat run needs:
+    // where the clip sits relative to the root, not inside its own collection.
+    widen(
+      mediaSpanKey(parentId, leaf.id),
+      leaf.timelineStart,
+      end,
+      leaf.trackIndex === 0 ? undefined : leaf.trackIndex,
+    );
     // Every collection ANCESTOR on the path gets this leaf folded into its
     // window (collectionPath[0] is the focused root; deeper entries are the
     // nested collections whose sub-rows need their own window).
@@ -369,6 +405,15 @@ export function flatCardSpans(
       width: widthForSeconds(seconds),
       startTime,
       endTime,
+      // THE LANE, and only from the manifest. A flat card can come from any
+      // depth, so its lane is where it sits relative to the ROOT — which the
+      // local detail entry cannot say and the manifest already resolved.
+      //
+      // The fallback path (no manifest) deliberately carries none: with no
+      // manifest there is no lane source either, and inventing one from array
+      // position would put a bed on a lane nothing agreed to. `playableSpanSeconds`
+      // then reads every card as lane 0, which is what the fallback already was.
+      ...(span?.lane === undefined ? {} : { lane: span.lane }),
       ...(disabled ? { disabled: true } : {}),
     };
   });
