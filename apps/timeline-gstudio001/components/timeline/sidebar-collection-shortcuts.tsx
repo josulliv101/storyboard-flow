@@ -97,7 +97,7 @@ const THUMBNAIL_IMAGE_CLASS =
 /**
  * The section's heading and its divider are ONE ELEMENT that changes shape.
  *
- * Wide it is "TOP LEVEL COLLECTIONS"; narrow it is the hairline those words
+ * Wide it is "COLLECTION SHORTCUTS"; narrow it is the hairline those words
  * cannot fit into. Because it is a single element the whole way through, the
  * change between them is an ordinary CSS transition on height, colour and
  * background — a real morph, not two things swapped and animated to look like
@@ -163,7 +163,7 @@ function ShortcutsHeading({
             "h-px bg-zinc-500 text-transparent",
       )}
     >
-      Top level collections
+      Collection shortcuts
     </h2>
   );
 }

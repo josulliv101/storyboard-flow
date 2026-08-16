@@ -104,7 +104,7 @@ export const CollapsedShowsThumbnails: Story = {
     expect(heading).toHaveAttribute("data-sidebar-section-state", "rule");
     // Still real text, so the group is named for a screen reader even when the
     // words are only one pixel tall.
-    expect(heading).toHaveTextContent("Top level collections");
+    expect(heading).toHaveTextContent("Collection shortcuts");
   },
 };
 
