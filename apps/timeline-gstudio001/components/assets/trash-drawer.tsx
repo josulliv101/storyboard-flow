@@ -87,6 +87,27 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   const [error, setError] = useState<string | null>(null);
   const isMounted = useIsMounted();
 
+  // THE BIN IS USUALLY ALREADY LOADED, and this is what stops the drawer
+  // opening twice.
+  //
+  // It used to open, show a spinner in a 128px block, and then GROW to its
+  // real height when the fetch answered — the panel's height is its content's,
+  // so the spinner was literally shorter than the list it stood in for. Two
+  // motions for one press.
+  //
+  // The graph view's boot already calls `ensure(trashDocumentId)`, so on any
+  // board the document is in this cache before the drawer is ever opened. The
+  // drawer was fetching it a SECOND time and staggering itself while it
+  // waited. Reading the cache removes that duplicate request as well as the
+  // stagger.
+  const documents = useSyncExternalStore(
+    graphDocumentsGateway.subscribe,
+    graphDocumentsGateway.read,
+    graphDocumentsGateway.read,
+  );
+  const trashId = user ? `trash-${user.uid}` : null;
+  const cachedClips = trashId ? documents[trashId]?.clips : undefined;
+
   // Opening resets the loading/error surface DURING the render that opens
   // (the documented adjust-state-on-prop-change pattern), so the spinner is
   // up before the fetch below even starts — the effect itself then only
@@ -95,7 +116,14 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   if (isOpen !== prevOpen) {
     setPrevOpen(isOpen);
     if (isOpen && user) {
-      setIsLoading(true);
+      // A SPINNER ONLY WHEN THERE IS NOTHING TO SHOW. With the document
+      // cached the list is right there, so the drawer opens once, at the
+      // height it means to keep. The request below still runs — the cache can
+      // be a few seconds stale — but as a silent revalidation: showing the
+      // spinner over content we already have would collapse the panel and
+      // reintroduce the second motion this exists to remove.
+      if (cachedClips) setClips(cachedClips);
+      setIsLoading(!cachedClips);
       setError(null);
     }
   }
