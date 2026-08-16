@@ -40,6 +40,7 @@ import {
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
 } from "./sidebar-icon-styles";
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 import { withViewTransition } from "@/lib/view-transition";
@@ -699,6 +700,24 @@ export function TimelineSidebar() {
           const handleClick = () =>
             void withViewTransition(() => setIsTrashOpen(!isTrashOpen));
 
+            // WARM THE BIN ON INTENT, so the drawer opens at its final height
+            // rather than growing when the fetch lands.
+            //
+            // On a board this does nothing — the graph's boot already ensures
+            // the document. It is for everywhere else, where the drawer would
+            // otherwise open short, spin, and grow.
+            //
+            // On HOVER and FOCUS rather than on mount: a speculative read for
+            // every visitor who never opens the bin is a Firestore read spent
+            // on nothing, and this project has already run its daily quota out
+            // once. Approaching the control is the cheapest honest signal of
+            // intent, and the gateway dedupes, so leaning on the tile costs one
+            // request at most.
+            const warmTrash = () => {
+              if (item.id !== "trash" || !user) return;
+              void graphDocumentsGateway.ensure(`trash-${user.uid}`);
+            };
+
             return (
               <button
                 key={item.id}
@@ -707,6 +726,8 @@ export function TimelineSidebar() {
                 aria-describedby={tooltipId}
                 aria-pressed={isPressed}
                 onClick={handleClick}
+                onPointerEnter={warmTrash}
+                onFocus={warmTrash}
                 className={cn(
                   SIDEBAR_ICON_BASE,
                   // Trash opens a DRAWER over the board; it does not take you
