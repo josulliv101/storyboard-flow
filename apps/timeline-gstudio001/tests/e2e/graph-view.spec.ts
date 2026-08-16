@@ -400,10 +400,32 @@ async function openGraph(page: Page): Promise<void> {
   await strip(page, PROJECT_ID)
     .locator('[data-node-id="alpha"]')
     .waitFor({ state: "visible", timeout: 30000 });
+  await leaveFlatMode(page);
   // Children timelines are OFF by default now; this suite predates that
   // and reads the tree throughout, so reveal it through the real control
   // (the sidebar's children icon).
   await page.getByRole("button", { name: "Show children timelines" }).click();
+}
+
+/**
+ * Put the board back into its NESTED reading.
+ *
+ * The strip opens FLAT, and a flat run has no collection cards — it replaces
+ * every collection with its leaves — so a test about drilling in, dropping,
+ * or reordering is asking about a shape that is not on screen. Flat also
+ * refuses `move-nodes` outright (see `commandPolicy`), so a drag still runs,
+ * still animates, and is then declined: the card returns and nothing says why
+ * except a toast the test never reads.
+ *
+ * Separate from `openGraph` because several tests navigate themselves — they
+ * are about what a bare URL does — and still need the nested board afterwards.
+ *
+ * The control is named for the state it moves you TO, so it reads "Show
+ * collections" while flat. Leaving restores "Show all items in order", which
+ * is what the flat-specific tests click to go back.
+ */
+async function leaveFlatMode(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Show collections" }).click();
 }
 
 /** A collection card's metadata row in the project strip, which carries
@@ -1290,7 +1312,16 @@ test.describe("graph view E2E", () => {
     expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   });
 
-  test("focused strip and grid surfaces have no outer shell padding", async ({ page }) => {
+  // The surfaces still carry NO padding or border of their own — that half is
+  // unchanged and is what stops a shell quietly growing one. What moved is
+  // what they line up WITH. They used to match the full-bleed breadcrumb bar,
+  // because the board had no frame and the bar was the only edge to agree
+  // with. The board is a panel now, so the surface lines up with the panel's
+  // gutter — the same gutter its header row uses — and matching the bar would
+  // instead mean cards flush against the panel's ring.
+  test("focused strip and grid surfaces sit in the panel's gutter, with no shell padding of their own", async ({
+    page,
+  }) => {
     await installGraphApi(page);
     await openGraph(page);
 
@@ -1317,21 +1348,37 @@ test.describe("graph view E2E", () => {
         };
       });
 
-    const headerBox = await boxStyles("[data-graph-board-header]");
     await expect(page.locator("[data-board-header-edge-occluder]")).toHaveCount(2);
+    // The panel's content box IS the gutter. Measured rather than asserted
+    // against a number, so changing the gutter moves both sides together and
+    // this keeps testing alignment rather than a constant.
+    const gutterBox = await boxStyles("[data-board-panel-content]");
+    // Its CONTENT edges, not its border-box edges — the gutter IS that
+    // padding, so comparing to the outer rect would assert the surface
+    // overlaps the very inset being tested.
+    const gutter = {
+      left: gutterBox.left + Number.parseFloat(gutterBox.padding[3]!),
+      right: gutterBox.right - Number.parseFloat(gutterBox.padding[1]!),
+    };
     const stripBox = await boxStyles(`[data-virtual-strip="${PROJECT_ID}"]`);
     expect(stripBox.padding).toEqual(["0px", "0px", "0px", "0px"]);
     expect(stripBox.border).toEqual(["0px", "0px", "0px", "0px"]);
-    expect(stripBox.left).toBeCloseTo(headerBox.left, 1);
-    expect(stripBox.right).toBeCloseTo(headerBox.right, 1);
+    expect(stripBox.left).toBeCloseTo(gutter.left, 1);
+    expect(stripBox.right).toBeCloseTo(gutter.right, 1);
 
     await surfaceButton(page, "grid").click();
     await expect(page.locator('[data-focused-surface-shell="grid"]')).toBeVisible();
     const gridBox = await boxStyles(`[data-virtual-grid="${PROJECT_ID}"]`);
     expect(gridBox.padding).toEqual(["0px", "0px", "0px", "0px"]);
     expect(gridBox.border).toEqual(["0px", "0px", "0px", "0px"]);
-    expect(gridBox.left).toBeCloseTo(headerBox.left, 1);
-    expect(gridBox.right).toBeCloseTo(headerBox.right, 1);
+    expect(gridBox.left).toBeCloseTo(gutter.left, 1);
+    expect(gridBox.right).toBeCloseTo(gutter.right, 1);
+
+    // And the surfaces sit INSIDE the panel, which is the point of the change:
+    // flush against the ring they read as overflowing it.
+    const panelBox = await boxStyles("[data-board-panel]");
+    expect(gutter.left).toBeGreaterThan(panelBox.left);
+    expect(gutter.right).toBeLessThan(panelBox.right);
   });
 
   test("selected borders stay inside left and right grid edges", async ({ page }) => {
@@ -1403,17 +1450,14 @@ test.describe("graph view E2E", () => {
     ).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
 
-    // Strip icon → strip layout. The ruler toggle is scoped to FLAT mode, so
-    // a plain strip still shows no ruler control.
+    // Strip icon → strip layout, which OPENS FLAT. The ruler is scoped to a
+    // single continuous time axis, which only the flat run is — so the toggle
+    // arrives with the strip rather than needing a second control first. It
+    // used to take entering flat by hand; the default moved, and this is the
+    // half of the claim that changed.
     await surfaceButton(page, "strip").click();
     await expect(strip(page, PROJECT_ID)).toBeVisible();
     await expect(surfaceButton(page, "strip")).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("button", { name: /show time ruler/i })).toHaveCount(0);
-
-    // Flat mode is what mints a single continuous time axis, and only then
-    // does the ruler toggle appear — below the flat icon in the rail.
-    const flatToggle = page.getByRole("button", { name: "Show all items in order" });
-    await flatToggle.click();
     const rulerToggle = page.getByRole("button", { name: /show time ruler/i });
     await expect(rulerToggle).toBeVisible();
 
@@ -1799,6 +1843,12 @@ test.describe("graph view E2E", () => {
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
+    // This test navigates itself (it checks what a bare URL does at the root),
+    // so it does not go through `openGraph` and has to leave flat on its own.
+    // Flat refuses `move-nodes`, so the drag below would run, animate, and be
+    // declined — the card returning to where it started, with the reason only
+    // in a toast.
+    await leaveFlatMode(page);
     expect(await stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
     const projectCrumb = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
     await expect(projectCrumb).toHaveCount(1);
@@ -1850,6 +1900,9 @@ test.describe("graph view E2E", () => {
     await strip(page, GRANDCHILD_ID)
       .locator('[data-node-id="g1"]')
       .waitFor({ state: "visible", timeout: 30000 });
+    // Deep-linked rather than opened through `openGraph`, so flat is still on
+    // and would refuse the move below. See `leaveFlatMode`.
+    await leaveFlatMode(page);
 
     // BOTH ancestors are drop targets — the project (root) and Scene A (parent).
     await expect(page.locator("[data-graph-ancestor-drop]")).toHaveCount(2);
@@ -6257,7 +6310,14 @@ test.describe("graph view E2E", () => {
     const rail = page.locator("aside");
     await expect(rail.getByRole("button", { name: "Grid layout" })).toBeVisible();
     await expect(rail.getByRole("button", { name: "Strip layout" })).toBeVisible();
-    await expect(rail.getByRole("button", { name: /preview/i })).toBeVisible();
+    // The PREVIEW toggle is no longer one of the rail's — it moved to the
+    // breadcrumb row, beside Select. What this test is about survives the
+    // move: the point was never WHERE the view controls live, it was that
+    // selecting must not replace them with item actions, so you can select
+    // clips and then go look at them another way. So it is asserted where it
+    // now lives, still reachable with a selection active.
+    await expect(rail.getByRole("button", { name: /preview/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /preview/i })).toBeVisible();
     // And the actions are NOT there — they live on the card now (R3.5).
     await expect(rail.getByRole("button", { name: /Delete|Copy|Cut|Duplicate/ })).toHaveCount(0);
   });
@@ -8421,13 +8481,26 @@ test.describe("graph view E2E", () => {
     const api = await installGraphApi(page);
     await openGraph(page);
 
+    // IT LIVES IN THE BOARD'S SETTINGS MENU NOW, and is not a menu itself: the
+    // presets are badges in one row, all four visible the moment the menu
+    // opens. So this opens the settings menu once and picks, where it used to
+    // open a dropdown of its own from the header.
+    const openSettings = async () => {
+      await page.getByRole("button", { name: "Board options" }).click();
+      await expect(page.locator("[data-render-format]")).toBeVisible();
+    };
     const control = page.locator("[data-render-format]");
+
+    await openSettings();
     // A project that has never chosen still says what it will export as.
     await expect(control).toHaveAttribute("data-render-format", "1280x720");
     await expect(control).toContainText("16:9");
 
-    await control.click();
     await page.locator('[data-render-format-option="scope"]').click();
+    // Choosing CLOSES the menu (a radio item does), so the readout has to be
+    // re-opened to be read — which is also the honest check that the choice
+    // survived the menu rather than living in it.
+    await openSettings();
     await expect(control).toHaveAttribute("data-render-format", "1152x480");
 
     // And it REACHES THE DOCUMENT, which is the half that matters — the
