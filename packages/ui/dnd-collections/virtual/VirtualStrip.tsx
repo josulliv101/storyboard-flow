@@ -710,6 +710,24 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       const s = trimStateRef.current;
       const index = s.indexById.get(nodeId) ?? -1;
 
+      // A LANE CARD IS NOT IN THE VIRTUALIZER'S INDEX SPACE. Layer cards are
+      // deliberately not virtualized (see `StripLayer`), so `indexById` — built
+      // from the picture row's `childIds` — does not know them, and this used
+      // to fall into the abort branch below on every pointer move. The trim
+      // still committed correctly on release, so the gesture LOOKED wired: you
+      // dragged a handle, nothing moved, and the card jumped when you let go.
+      //
+      // It has no virtualizer slot to resize, so its live width comes from
+      // `layerPlacements` reading `liveTrim` instead. Everything else — the
+      // duration readout, the commit effect's gesture identity — is the same.
+      if (live !== null && index === -1) {
+        if (gestureNodeRef.current?.nodeId !== nodeId) {
+          gestureNodeRef.current = { nodeId, node: s.nodesById.get(nodeId) ?? null };
+        }
+        setLiveTrim({ nodeId, trim: live });
+        return;
+      }
+
       if (live === null || index === -1) {
         // Abort/no-op: snap the item back to its committed size; clearing the
         // live split resets the anchor transform to 0 (scroll untouched, so
@@ -847,20 +865,33 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     // Every layer card's box, plus the furthest right edge any of them reach —
     // the spacer has to cover a bed that outlasts the picture.
+    // The picture row gets its live trim width from `virtualizer.resizeItem`;
+    // a lane card has no slot to resize, so ITS live width is applied here.
+    //
+    // Only the DURATION moves. A lane clip is pinned by its placed start, so
+    // trimming either edge holds the left and shrinks the width — measured,
+    // both sides, and the same on commit. That is what keeps this preview
+    // equal to the commit outcome, which the package requires of every
+    // preview.
     const layerPlacements = useMemo(() => {
       const byId = new Map<NodeId, Readonly<{ left: number; width: number }>>();
       let right = 0;
       if (laneRows && laneTimeMap) {
         for (const layer of laneRows) {
           for (const item of layer.items) {
-            const placement = laneItemPlacement(laneTimeMap, item);
+            const placement = laneItemPlacement(
+              laneTimeMap,
+              liveTrim?.nodeId === item.id
+                ? { ...item, durationSeconds: liveTrim.trim.effectiveSeconds }
+                : item,
+            );
             byId.set(item.id, placement);
             right = Math.max(right, placement.left + placement.width);
           }
         }
       }
       return { byId, right };
-    }, [laneRows, laneTimeMap]);
+    }, [laneRows, laneTimeMap, liveTrim]);
 
     // What snapping measures against: the picture's cuts, each lane's own
     // clips, and which clip is being dragged (it must not snap to itself).
