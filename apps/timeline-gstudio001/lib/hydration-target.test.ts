@@ -1,32 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { hydrationDocumentId, isFetchableTimelineId } from "./hydration-target";
+import { hydrationDocumentId } from "./hydration-target";
 
 // The real id from the network log, decoded. `dup:<parent>:<clip>` is a node in
 // the graph and a document nowhere.
 const DUP_NODE = "dup:timeline-msdyfi6tpueex2:timeline-msdw9kbuz52eel";
 const REFERENCED = "timeline-msdw9kbuz52eel";
-
-describe("isFetchableTimelineId", () => {
-  it.each([
-    ["an ordinary timeline", "timeline-msrisjr4yjpa1h"],
-    ["a project", "project-1785765266842-92sagu"],
-    ["a trash bin", "trash-LIdEO2P4EwWsn0ux1WmRAOvTDXu2"],
-  ])("accepts %s", (_name, id) => {
-    expect(isFetchableTimelineId(id)).toBe(true);
-  });
-
-  it.each([
-    ["a duplicate node id (colons)", DUP_NODE],
-    ["a media clip id (slashes)", "clip-timeline-gstudio001/uid/project/loc_van-1786244080409"],
-    ["an empty string", ""],
-    ["a url-ish id", "https://example.test/x"],
-  ])("rejects %s", (_name, id) => {
-    // Mirrors the route's own `^[a-zA-Z0-9_-]+$`. The point is to not SEND a
-    // request the server will reject.
-    expect(isFetchableTimelineId(id)).toBe(false);
-  });
-});
 
 describe("hydrationDocumentId", () => {
   it("loads a duplicate from the timeline it REFERENCES", () => {
@@ -53,9 +32,32 @@ describe("hydrationDocumentId", () => {
     expect(hydrationDocumentId({}, DUP_NODE)).toBeNull();
   });
 
-  it("returns null when the RECORDED reference is itself unfetchable", () => {
-    // Stored data is not a promise. A reference that cannot be a document id
-    // is still not worth a request.
+  it("returns null when the RECORDED reference is itself synthetic", () => {
+    // Stored data is not a promise. A reference that names another node rather
+    // than a document is still nothing to ask the server for.
     expect(hydrationDocumentId({ duplicateOfTimelineId: "dup:a:b" }, DUP_NODE)).toBeNull();
+  });
+
+  // AN ID IS NOT VALIDATED BY ITS CHARACTERS, and this is the regression that
+  // taught it. The first version of this rule mirrored the route's
+  // `^[a-zA-Z0-9_-]+$` — sound reasoning about the SERVER, wrong question
+  // here. A NodeId may contain any non-whitespace character, so the mirror
+  // also refused these: real collections, with real documents, which then
+  // announced themselves as a missing reference and never hydrated. The e2e
+  // suite has a test per shape; both failed, and neither is exotic.
+  it.each([
+    ["a slash", "scene/a"],
+    ["a comma", "timeline-e2e,comma"],
+    ["a space", "scene a"],
+    ["a colon that is not the dup prefix", "scene:a"],
+    ["unicode", "scène-á"],
+  ])("hydrates an ordinary collection whose id contains %s", (_name, id) => {
+    expect(hydrationDocumentId(undefined, id)).toBe(id);
+  });
+
+  it("follows a REFERENCE whose target contains exotic characters", () => {
+    // Same rule on the other side of the resolution: the referenced document
+    // is a document whatever it is called.
+    expect(hydrationDocumentId({ duplicateOfTimelineId: "scene/a" }, DUP_NODE)).toBe("scene/a");
   });
 });

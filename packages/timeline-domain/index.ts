@@ -8,6 +8,10 @@ export {
   collectAffectedCollectionIds,
   collectUnhydratedDropTargets,
   graphChildrenToClips,
+  // The adapter MINTS these ids, so it is the only honest place to ask whether
+  // one is synthetic — the hydration path decides whether to fetch on it.
+  isDuplicateNodeId,
+  DUPLICATE_NODE_ID_PREFIX,
   hydratedCollectionDuration,
   hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
