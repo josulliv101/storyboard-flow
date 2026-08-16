@@ -165,6 +165,14 @@ function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): v
  *
  * `overflow-hidden` on the inner span is what does the hiding; the outer grid
  * only owns the width.
+ *
+ * LIGHTER THAN THE INITIALS. The link is `font-black` (900), and the S and W
+ * keep it — they are the mark, and they are all that survives the collapse.
+ * The letters that grow out of them are the word, so they step down to
+ * `semibold` (600): the contrast is what makes "SW" read as an abbreviation OF
+ * the name rather than as its first and ninth characters. 700 was tried and
+ * sits too close to 900 — the difference stops reading as deliberate. Weight is
+ * not animated, so a collapsing group stays light the whole way in.
  */
 function RevealedLetters({
   show,
@@ -178,7 +186,7 @@ function RevealedLetters({
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
     >
-      <span className="overflow-hidden">{children}</span>
+      <span className="overflow-hidden font-semibold">{children}</span>
     </span>
   );
 }

@@ -103,8 +103,8 @@ export const CollapsedShowsThumbnails: Story = {
     expect(heading).not.toBeNull();
     expect(heading).toHaveAttribute("data-sidebar-section-state", "rule");
     // Still real text, so the group is named for a screen reader even when the
-    // word is only one pixel tall.
-    expect(heading).toHaveTextContent("Collections");
+    // words are only one pixel tall.
+    expect(heading).toHaveTextContent("Top level collections");
   },
 };
 
@@ -186,7 +186,7 @@ export const SameNameStaysTwoTargets: Story = {
     );
   },
   play: async ({ canvasElement }) => {
-    // Real: this project has two root collections both called "Cold Open".
+    // Real: this project has two top-level collections both called "Cold Open".
     const user = userEvent.setup();
     const buttons = within(canvasElement).getAllByRole("button");
     await user.click(buttons[1]!);

@@ -52,13 +52,52 @@ import {
  * contains, and a thumbnail that lies about its exposure is worse than a dim
  * one.
  */
+// `block` IS LOAD-BEARING now that this dresses a <span> rather than the <img>.
+// An <img> is replaced content and takes a width and height as given; a span is
+// `display: inline` by default, where `h-8 w-8` are simply ignored — the frame
+// then sized to the image and a 32px tile painted at 640px, pushing the rail's
+// whole column aside. (The empty-state variant escaped it by adding `grid`.)
 const THUMBNAIL_CLASS =
-  "relative h-8 w-8 shrink-0 rounded-md object-cover ring-1 ring-white/15";
+  "relative block h-8 w-8 shrink-0 overflow-hidden rounded-md ring-1 ring-white/15";
+
+/**
+ * The frame is PUNCHED IN, and the crop is the point.
+ *
+ * `object-cover` alone already fills the square — a 16:9 still loses 44% of its
+ * width to the sides before anything here happens. What it does not do is make
+ * the SUBJECT any bigger: a face that sits small in a wide frame is still small
+ * once the frame is square, and at 32px small means unrecognisable. The rail's
+ * whole job is telling three collections apart at a glance, and a shrunken
+ * establishing shot cannot do that.
+ *
+ * So the image is scaled past cover and the overflow is thrown away. The tile
+ * does not grow — only the picture inside it does, which is the difference
+ * between "make the thumbnails bigger" (they would stop fitting the icon
+ * column) and "show me more of what is in them".
+ *
+ * THE ORIGIN SITS ABOVE CENTRE, and that is not a taste call — a centred zoom
+ * decapitated one of these. Subjects in this project's frames sit high (a
+ * character plate is a head and shoulders with air above), so scaling about the
+ * middle throws away the face and keeps the chest: the punch-in made the tile
+ * LESS identifiable, which is the opposite of the point. Pulling the origin to
+ * 32% keeps roughly a third more of the top for the same zoom.
+ *
+ * It is still a compromise, not a solution. The right answer for a frame whose
+ * subject sits somewhere unusual is a per-collection crop stored beside the
+ * frame; a rail-wide constant can only be right on average, and this is the
+ * average that suits heads.
+ *
+ * The number is the dial. 1.4 is a visible punch-in that still leaves a
+ * recognisable amount of frame; much past 1.6 and a wide shot becomes an
+ * abstract patch of colour, which is worse than small.
+ */
+const THUMBNAIL_IMAGE_CLASS =
+  "h-full w-full origin-[50%_32%] scale-[1.4] object-cover";
 
 /**
  * The section's heading and its divider are ONE ELEMENT that changes shape.
  *
- * Wide it is the word "COLLECTIONS"; narrow it is the hairline that word
+ * Wide it is "TOP LEVEL COLLECTIONS"; narrow it is the hairline those words
  * cannot fit into. Because it is a single element the whole way through, the
  * change between them is an ordinary CSS transition on height, colour and
  * background — a real morph, not two things swapped and animated to look like
@@ -105,7 +144,7 @@ function ShortcutsHeading({
             "h-px bg-zinc-500 text-transparent",
       )}
     >
-      Collections
+      Top level collections
     </h2>
   );
 }
@@ -120,7 +159,7 @@ export function CollectionShortcutsGroup({
   // The same signal the labels use — "is the rail wide enough for words".
   const inline = useContext(SidebarLabelsInlineContext);
   const headingId = "sidebar-section-collections";
-  // NOTHING AT ALL when the root holds no collections — not an empty group,
+  // NOTHING AT ALL when there are no top-level collections — not an empty group,
   // and the caller draws no separator either. A new project has none, and a
   // rule with nothing under it reads as something that failed to load.
   if (shortcuts.length === 0) return null;
@@ -160,19 +199,26 @@ export function CollectionShortcutsGroup({
                 className={cn("relative shrink-0", SIDEBAR_AVATAR_INSET)}
               >
                 {shortcut.thumbnail ? (
-                  // A plain <img>, warned about by @next/next/no-img-element
-                  // and left that way on purpose: these are remote provider
-                  // URLs the app does not own, and the avatar two groups down
-                  // is an <img> for the same reason.
-                  <img
-                    src={shortcut.thumbnail}
-                    // Decorative: the button already says "Open <title>", and a
-                    // second reading of the same collection would be noise.
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className={THUMBNAIL_CLASS}
-                  />
+                  // The frame CLIPS and the picture fills it, rather than the
+                  // <img> being the frame. Two elements because the scale has
+                  // to be thrown away by something, and it cannot be the parent
+                  // here: the badge hangs outside the box on purpose, so an
+                  // `overflow-hidden` up there would cut the corner off it.
+                  <span className={THUMBNAIL_CLASS}>
+                    {/* A plain <img>, warned about by @next/next/no-img-element
+                        and left that way on purpose: these are remote provider
+                        URLs the app does not own, and the avatar two groups
+                        down is an <img> for the same reason. */}
+                    <img
+                      src={shortcut.thumbnail}
+                      // Decorative: the button already says "Open <title>", and
+                      // a second reading of the same collection would be noise.
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className={THUMBNAIL_IMAGE_CLASS}
+                    />
+                  </span>
                 ) : (
                   // A collection with nothing in it yet still needs a target
                   // the same size as its neighbours, or the column develops a
