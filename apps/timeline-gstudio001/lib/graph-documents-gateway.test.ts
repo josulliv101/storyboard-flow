@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
-import { createGraphDocumentsGateway } from "./graph-documents-gateway";
+import { createGraphDocumentsGateway as createGateway } from "./graph-documents-gateway";
 import { at } from "../lib/test-support/at";
 
 const SAVE_DEBOUNCE_MS = 900;
@@ -63,24 +63,70 @@ type FetchCall = {
   bodyBytes?: number;
 };
 
-/** Stubs global fetch; returns the recorded calls for assertions. */
+/**
+ * Every gateway in this file batches its reads on a MICROTASK rather than the
+ * production 12ms timer. The window has to be a real delay to coalesce reads at
+ * all (see `fetchDocument`), and a real delay deadlocks the many tests here
+ * that `await gateway.ensure(...)` under fake timers. Timing is not what this
+ * suite is for — protocol, dedupe, revisions and the write path are.
+ */
+const createGraphDocumentsGateway = () => createGateway({ scheduleBatch: queueMicrotask });
+
+/**
+ * Stubs global fetch; returns the recorded calls for assertions.
+ *
+ * READS ARE BATCHED at the transport now (`POST /api/timelines/batch-get`), and
+ * this adapter is what keeps that from rewriting every test in the file. A
+ * handler still answers ONE document at a time — it is called once per id in
+ * the batch, with `{ method: "GET", id }`, exactly as it was when each read was
+ * its own request — and the stub assembles the `{ results }` envelope the
+ * gateway now expects.
+ *
+ * The recorded `calls` keep the same meaning too: one `GET` entry per document
+ * READ REQUESTED, so `getsOf` still counts document reads rather than HTTP
+ * round trips, and `batchesOf` still means WRITE batches. Read batches are
+ * recorded as `READ` so they cannot be mistaken for either.
+ */
 function installFetch(handler: (call: FetchCall) => Promise<MockResponse> | MockResponse) {
   const calls: FetchCall[] = [];
-  const impl = (input: RequestInfo | URL, init?: RequestInit) => {
+  const impl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const body = typeof init?.body === "string" ? init.body : undefined;
+
+    if (url.includes("/api/timelines/batch-get")) {
+      const ids = (JSON.parse(body ?? "{}") as { ids?: string[] }).ids ?? [];
+      calls.push({ method: "READ", id: ids.join(","), bodyBytes: body?.length });
+      const results = [];
+      for (const id of ids) {
+        const call: FetchCall = { method: "GET", id };
+        calls.push(call);
+        const response = await handler(call);
+        // A handler that refuses this id answers as the endpoint does: an entry
+        // carrying its own error, not a failure of the whole batch.
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          results.push({ id, error: payload.error ?? "failed", status: response.status });
+          continue;
+        }
+        const payload = (await response.json().catch(() => ({}))) as {
+          document?: TimelineDocument;
+          revision?: number;
+        };
+        results.push({ id, document: payload.document, revision: payload.revision });
+      }
+      return jsonResponse({ results });
+    }
+
     const call: FetchCall = {
       method: init?.method ?? "GET",
-      id: decodeURIComponent(String(input).split("/").pop() ?? ""),
-      writes:
-        typeof init?.body === "string"
-          ? (JSON.parse(init.body) as { writes: BatchWrite[] }).writes
-          : undefined,
+      id: decodeURIComponent(url.split("/").pop() ?? ""),
+      writes: body ? (JSON.parse(body) as { writes: BatchWrite[] }).writes : undefined,
       keepalive: init?.keepalive,
       signal: init?.signal ?? undefined,
-      bodyBytes:
-        typeof init?.body === "string" ? new TextEncoder().encode(init.body).length : undefined,
+      bodyBytes: body ? new TextEncoder().encode(body).length : undefined,
     };
     calls.push(call);
-    return Promise.resolve(handler(call));
+    return handler(call);
   };
   vi.stubGlobal("fetch", impl as unknown as typeof fetch);
   return calls;

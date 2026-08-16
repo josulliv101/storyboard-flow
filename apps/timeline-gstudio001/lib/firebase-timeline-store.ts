@@ -521,6 +521,30 @@ export async function collectOwnedTimelineClips(
 }
 
 /**
+ * A running count of document reads, for diagnosing read VOLUME.
+ *
+ * Off unless `GSTUDIO_COUNT_READS` is set, and dev-only in practice. It exists
+ * because this is the one place every read passes through, and the question
+ * "why are we making 50,000 of these a day" cannot be answered from the
+ * Firebase console — that reports totals, not which page load caused them.
+ *
+ * How it was used, so the next person does not have to reinvent it: point
+ * `GSTUDIO_FIXTURE_TIMELINES` at a synthetic project of known shape
+ * (`scripts/make-scale-probe.mjs`), load a board, and read the last total off
+ * the server log. That measured the batch-read endpoint at 430 reads down to
+ * 250 for one page load of a 151-document project.
+ *
+ * The count lives on `globalThis` so it survives the dev server's module
+ * re-evaluation, which would otherwise reset it on every file save.
+ */
+function countRead(): void {
+  if (!process.env.GSTUDIO_COUNT_READS) return;
+  const scope = globalThis as unknown as { __gstudioReads?: number };
+  scope.__gstudioReads = (scope.__gstudioReads ?? 0) + 1;
+  console.log(`[READTOTAL ${scope.__gstudioReads}]`);
+}
+
+/**
  * ONE stored record, EXACTLY as written — collection summaries and all.
  *
  * "Stored" is the load-bearing word, and the counterpart to `serveTimelineDocument`.
@@ -549,6 +573,7 @@ export async function readStoredTimelineEntry(
   id: string,
   requesterUid: string,
 ): Promise<TimelineEntry | null> {
+  countRead();
   // OFFLINE MODE. Dev-only, refused outright in production — see
   // `fixture-timeline-store`. Intercepted HERE rather than per route because
   // this is the single read seam: `serveTimelineDocument`, `serveTrashDocument`,

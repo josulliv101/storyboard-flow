@@ -19,3 +19,4 @@ mcp-app/dist/
 # Written by `npm run correct:aspects` — one ffprobe reading per source URL, so
 # a re-run does not hit the media host again. Local cache; never committed.
 .aspect-probe-cache.json
+fixtures/scale-probe.json
