@@ -244,6 +244,10 @@ export async function POST(request: Request) {
       url: storedMedia.url,
       thumbnailPathname,
       thumbnailUrl,
+      // The source's real pixel size, so the client can mint a clip's `aspect`
+      // from it rather than assuming 16:9. Absent for audio.
+      width: storedMedia.width,
+      height: storedMedia.height,
     });
   } catch (error) {
     if (error instanceof ProjectAssetScopeError) {

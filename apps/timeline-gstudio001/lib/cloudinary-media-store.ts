@@ -13,6 +13,10 @@ export type CloudinaryMediaUpload = {
   thumbnailUrl?: string;
   contentType?: string;
   size?: number;
+  /** The source's real pixel size, for minting a clip's `aspect`. Absent for
+   *  audio. Dropped here until now, which is why every clip claimed 16:9. */
+  width?: number;
+  height?: number;
 };
 
 export class CloudinaryUploadError extends Error {
@@ -58,6 +62,10 @@ type CloudinaryUploadResponse = {
   public_id: string;
   resource_type: "image" | "video" | "raw";
   secure_url: string;
+  /** Returned on every image and video upload. Absent for audio, which has no
+   *  dimensions — and for a chunked upload's non-final chunk. */
+  width?: number;
+  height?: number;
 };
 
 type CloudinaryUploadApiResponse = Partial<CloudinaryUploadResponse> & {
@@ -548,6 +556,12 @@ export async function uploadCloudinaryMedia(
     thumbnailUrl,
     contentType,
     size: body.bytes ?? data.byteLength,
+    // The source's REAL pixel size, which Cloudinary returns on every upload
+    // and this dropped on the floor. Without it the caller has nothing to mint
+    // a clip's `aspect` from and defaults to 16:9 — which is how every clip in
+    // every project came to claim a shape it did not have.
+    width: body.width,
+    height: body.height,
   };
 }
 

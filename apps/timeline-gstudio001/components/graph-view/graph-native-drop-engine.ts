@@ -1,5 +1,6 @@
 "use client";
 
+import { aspectFromDimensions } from "@storyboard/timeline-model/documents";
 import {
   createContext,
   useCallback,
@@ -247,7 +248,7 @@ export function useNativeDrop(collectionId: string, projectId: string) {
                 node,
                 detail: {
                   alt: file.name,
-                  aspect: 16 / 9,
+                  aspect: aspectFromDimensions(hosted.width, hosted.height) ?? 16 / 9,
                   poster: hosted.thumbnailUrl,
                   ...(sourceAsset === undefined ? {} : { sourceAsset }),
                 },
@@ -266,7 +267,7 @@ export function useNativeDrop(collectionId: string, projectId: string) {
               node,
               detail: {
                 alt: file.name,
-                aspect: 16 / 9,
+                aspect: aspectFromDimensions(hosted.width, hosted.height) ?? 16 / 9,
                 sourceDuration: IMAGE_CLIP_SECONDS,
                 trimIn: 0,
                 trimOut: 0,

@@ -1,3 +1,4 @@
+import { aspectFromDimensions } from "@storyboard/timeline-model/documents";
 import { randomUUID } from "node:crypto";
 
 import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/collections-core";
@@ -223,7 +224,11 @@ export async function attachMedia(
       // It matters most for AUDIO: an audio card has no thumbnail, so the title
       // is the only thing distinguishing one take from another.
       ...(item.name?.trim() ? { title: item.name.trim() } : {}),
-      aspect: 16 / 9,
+      // MEASURED, not assumed. The listing has carried `width`/`height` all
+      // along; this asked for neither and stamped 16:9 on everything.
+      // Audio has no dimensions, so it keeps the default — nothing reads a
+      // sound's aspect, and a card still needs a box.
+      aspect: aspectFromDimensions(asset.width, asset.height) ?? 16 / 9,
       trackIndex: 0,
       sourceAsset: { providerId: CLOUDINARY_PROVIDER_ID, assetId: asset.pathname },
       // Tagged at mint time so agent-uploaded media arrives filed. This is the

@@ -45,6 +45,45 @@ describe("uploadTimelineMedia", () => {
     });
   });
 
+  // 2864x1204 is a real source in this project — 2.379:1, not the 16:9 every
+  // clip used to claim. A .png name to stay off the local video-probe branch,
+  // which the block below covers; the parse is the same either way.
+  it("keeps the source DIMENSIONS, which a clip's aspect is minted from", async () => {
+    stubUpload(
+      response({ pathname: "m/a.png", url: "https://cdn.test/a.png", width: 2864, height: 1204 }),
+    );
+    await expect(uploadTimelineMedia("a.png", png(), "project-a")).resolves.toEqual({
+      pathname: "m/a.png",
+      url: "https://cdn.test/a.png",
+      width: 2864,
+      height: 1204,
+    });
+  });
+
+  it("DROPS a malformed dimension rather than failing the upload", async () => {
+    // Unlike the strings above, which reject the whole payload — a bad
+    // thumbnail url is a server bug worth surfacing, but a bad width only
+    // means the clip keeps its default shape, and losing the file over a
+    // cosmetic field would be the worse trade.
+    stubUpload(
+      response({ pathname: "m/a.png", url: "https://cdn.test/a.png", width: -1, height: "tall" }),
+    );
+    await expect(uploadTimelineMedia("a.png", png(), "project-a")).resolves.toEqual({
+      pathname: "m/a.png",
+      url: "https://cdn.test/a.png",
+    });
+  });
+
+  it("is ABSENT rather than zero when the provider reports no dimensions", async () => {
+    // Audio is the everyday case. Absent has to survive as absent: a stored
+    // `aspect` of 0 would be a divisor of zero in layout, and `aspectFromDimensions`
+    // is only able to decline because nothing invented a number on the way here.
+    stubUpload(response({ pathname: "m/vo.wav", url: "https://cdn.test/vo.wav" }));
+    const result = await uploadTimelineMedia("vo.wav", png(), "project-a");
+    expect("width" in result).toBe(false);
+    expect("height" in result).toBe(false);
+  });
+
   it("keeps optional thumbnail fields when they are present and valid", async () => {
     stubUpload(
       response({
