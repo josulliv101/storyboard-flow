@@ -100,37 +100,44 @@ function writeRailExpanded(next: boolean): void {
 
 /**
  * After a POINTER press on a rail tile, keep that tile's tooltip shut until
- * the pointer leaves it.
+ * the pointer LEAVES AND COMES BACK.
  *
- * Clicking a tile leaves the pointer sitting on it, so its tooltip faded up
- * the moment the thing you pressed finished happening — captioning a control
- * you are still touching and have just used. Leaving and coming back shows it
- * again, which is the case where you might actually want it.
+ * Clicking a tile leaves the pointer sitting on it, so its tooltip faded up the
+ * moment the thing you pressed finished happening — captioning a control you
+ * are still touching and have just used.
+ *
+ * CLEARED ON RE-ENTRY, not on leaving, and the difference is the whole fix.
+ * Pressing the collapse toggle by its LABEL puts the pointer ~150px out, and
+ * the rail then shrinks to 72px — so the tile is pulled out from under a
+ * pointer that never moved. That fires `pointerleave`, which cleared the flag,
+ * while `:hover` stayed stale-true (browsers recompute hover on pointer
+ * movement, not on layout). Flag off plus hover still on is exactly the flash:
+ * a tooltip for a control that had just slid away. Waiting for `pointerenter`
+ * cannot be tricked by geometry moving, because nothing enters an element the
+ * pointer never left.
  *
  * Delegated on the rail rather than added to seven call sites, and the flag is
  * a DOM attribute rather than React state: it must not re-render the rail, and
  * nothing else needs to know.
  *
- * `detail > 0` is what keeps this to real pointer presses. A keyboard Enter
- * also fires click, with no pointer anywhere near the tile — so no
- * `pointerleave` would ever arrive to clear the flag, and that tile's tooltip
- * would be suppressed for good.
+ * `detail > 0` keeps this to real pointer presses. A keyboard Enter also fires
+ * click with no pointer anywhere near the tile, so no `pointerenter` would ever
+ * arrive to clear the flag and that tile would go quiet for good.
  */
-function suppressTipAfterPointerPress(
-  event: React.MouseEvent<HTMLElement>,
-): void {
+function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): void {
   if (event.detail === 0) return;
   const tile = (event.target as HTMLElement | null)?.closest("button, a");
   if (!(tile instanceof HTMLElement)) return;
   tile.dataset.tipSuppressed = "";
   tile.addEventListener(
-    "pointerleave",
+    "pointerenter",
     () => {
       delete tile.dataset.tipSuppressed;
     },
     { once: true },
   );
 }
+
 
 /** The avatar letter. Written once because the same nested ternary appeared in
  *  two places, and an empty name string made `name[0]` undefined in both. */
@@ -556,7 +563,7 @@ export function TimelineSidebar() {
       <aside
         ref={railRef}
         data-sidebar-expanded={railExpanded}
-        onClickCapture={suppressTipAfterPointerPress}
+        onClickCapture={suppressTipUntilPointerReturns}
         // No horizontal padding and `items-stretch`: the tiles ARE the rail's
         // width, which is what makes them full-width squares. Vertical padding
         // stays — it separates the rail's contents from the screen edges, which
