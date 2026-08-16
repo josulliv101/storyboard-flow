@@ -43,6 +43,7 @@ import {
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 
+import { SidebarCollectionShortcuts } from "./sidebar-collection-shortcuts";
 import {
   SidebarLabelsInlineContext,
   SidebarTooltipLabel,
@@ -594,18 +595,22 @@ export function TimelineSidebar() {
           </div>
         )}
 
-        {/* NO TOOL GROUP HERE ANY MORE — the separator went with its
-            contents.
+        {/* SHORTCUTS into this project's top-level collections.
+            
+            The tool group that used to sit here is gone — preview moved to the
+            board's breadcrumb row and flat mode to the controls row under it,
+            both being view toggles that belong beside the board they change.
+            What took its place answers the rail's own question, "where", one
+            level further in than the layout switch above.
 
-            Preview moved to the board's breadcrumb row beside Select; flat
-            mode moved to the controls row under it, leading the group that
-            already carried the filter, the tree and the zoom. Both were here
-            for prominence, and both are VIEW toggles that belong next to the
-            board they change — flat mode especially, since it rewrites the
-            very count and duration it now sits beside.
-
-            What the rail keeps is what says WHERE you are: the layout switch
-            at the top, the trash and the account at the bottom. */}
+            It draws its OWN separator, or nothing at all. A new project has no
+            top-level collections, and a rule with nothing under it reads as
+            something that failed to load — so the group and its rule arrive
+            and leave together, which is only reliable while one component
+            owns both. */}
+        {activeProjectId && onGraphRoute && (
+          <SidebarCollectionShortcuts projectId={activeProjectId} />
+        )}
 
         <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
           {UTILITY_ITEMS.map((item) => {
@@ -716,7 +721,10 @@ export function TimelineSidebar() {
                 src={user.picture}
                 alt={user.name || user.email || "Profile"}
                 className={cn(
-                  "h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
+                  // `relative` for the same reason the glyphs carry it: the tile's pill is
+                // an absolute ::before and would otherwise paint a 40% black veil over
+                // this face. Same bug the collection thumbnails had.
+                "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
                   SIDEBAR_AVATAR_INSET,
                 )}
               />
