@@ -8,7 +8,9 @@ import {
   cellFollowingPointer,
   gridDropAnchor,
   gridIndicatorGeometry,
+  ADD_ITEM_TOOL,
   indexOfChildId,
+  isAddItemTool,
   isSidebarTool,
   neighborsAt,
   resolveAnchorIndex,
@@ -64,6 +66,40 @@ describe("isSidebarTool", () => {
     expect(isSidebarTool("collection")).toBe(true);
     expect(isSidebarTool("image")).toBe(false);
     expect(isSidebarTool("")).toBe(false);
+  });
+});
+
+describe("isAddItemTool", () => {
+  it("admits the add-item payload only", () => {
+    expect(isAddItemTool(ADD_ITEM_TOOL)).toBe(true);
+    expect(isAddItemTool("collection")).toBe(false);
+    expect(isAddItemTool("")).toBe(false);
+  });
+
+  // THE POINT OF TWO PREDICATES. `commitDrop` branches on these in order, and
+  // a payload matching both would insert a collection immediately AND open the
+  // menu asking which kind to insert. Pinned as a test rather than left to
+  // reading, because the two live in different files from their caller.
+  it("is disjoint from isSidebarTool, both ways round", () => {
+    expect(isSidebarTool(ADD_ITEM_TOOL)).toBe(false);
+    expect(isAddItemTool("collection")).toBe(false);
+  });
+
+  // The value travels through the DOM as a `DataTransfer` string, so it is
+  // part of the wire format: an e2e that sets this payload by hand, and any
+  // drag begun before a deploy and dropped after it, both depend on the exact
+  // spelling.
+  it("has the spelling the drag payload carries", () => {
+    expect(ADD_ITEM_TOOL).toBe("add-item");
+  });
+});
+
+describe("acceptsDragTypes, for the add-item payload", () => {
+  // It rides the SAME mime as the collection tool, which is what lets every
+  // drop surface accept it, draw its indicator, and resolve its anchor without
+  // a single change. Only the commit differs.
+  it("is accepted by the surfaces without a new mime", () => {
+    expect(acceptsDragTypes([TOOL_MIME])).toBe(true);
   });
 });
 

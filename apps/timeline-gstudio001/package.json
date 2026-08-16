@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "fixture:build": "node scripts/make-dev-fixture.mjs",
     "audit:ownership": "node --env-file=.env scripts/audit-ownerless-timelines.mjs",
     "audit:orphans": "node --env-file=.env scripts/audit-orphaned-timelines.mjs",
     "prune:orphans": "node --env-file=.env scripts/prune-empty-orphans.mjs",

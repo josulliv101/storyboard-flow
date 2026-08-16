@@ -23,6 +23,7 @@ import { resolveFlatDropTarget, type ClipDetail } from "@storyboard/timeline-dom
 
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 import { probeVideoFile, uploadTimelineMedia } from "@/lib/timeline-media-client";
+import { GRAPH_ADD_ITEM_EVENT, type GraphAddItemDetail } from "@/lib/graph-view-events";
 
 import { useFlatItems } from "./graph-preview";
 import { classifyDroppedMedia, type DroppedMediaKind } from "./graph-dropped-media";
@@ -34,12 +35,30 @@ import {
   MAX_CONCURRENT_MEDIA,
   TOOL_MIME,
   aggregateDropStatus,
+  isAddItemTool,
   isSidebarTool,
   resolveAnchorIndex,
   type DropAnchor,
   type DropStatus,
   type DropSummary,
 } from "./graph-native-drop-model";
+
+/**
+ * A drop that has landed but not decided: WHERE it landed, and where on screen
+ * to ask WHAT it should be.
+ *
+ * The anchor is the same id-based `DropAnchor` a file drop carries, and for the
+ * same reason — it names its gap by the cards either side of it, so it still
+ * points at the place you dropped even if the board changes while the menu is
+ * open. That property was built for uploads finishing late; a menu waiting on a
+ * human is the same shape of wait, only longer and more likely.
+ */
+export type PendingAddChoice = Readonly<{
+  anchor: DropAnchor;
+  /** Viewport coordinates of the drop, for positioning the menu. */
+  clientX: number;
+  clientY: number;
+}>;
 
 /**
  * The surface-agnostic native-drop ENGINE: sidebar TOOL insertion, OS FILE
@@ -351,8 +370,14 @@ export function useNativeDrop(collectionId: string, projectId: string) {
     [addNodes, resolveAnchoredTarget, setDropStatus, projectId],
   );
 
+  // A dropped ADD ITEM, waiting on the user to say which kind. Null the rest
+  // of the time, which is what the surfaces render nothing from.
+  const [pendingChoice, setPendingChoice] = useState<PendingAddChoice | null>(null);
+  const cancelChoice = useCallback(() => setPendingChoice(null), []);
+
   /** Commit a drop whose insert boundary the surface already resolved. Tools
-   *  land synchronously; files hand the anchor over to the async upload. */
+   *  land synchronously; files hand the anchor over to the async upload; an
+   *  ADD ITEM drop lands nothing yet and opens its menu instead. */
   const commitDrop = useCallback(
     (event: DragEvent<HTMLElement>, anchor: DropAnchor) => {
       const tool = event.dataTransfer.getData(TOOL_MIME);
@@ -360,10 +385,61 @@ export function useNativeDrop(collectionId: string, projectId: string) {
         insertTool(tool, anchor.index);
         return;
       }
+      if (tool && isAddItemTool(tool)) {
+        // Park the position and ASK. Nothing is dispatched here — the graph is
+        // untouched until the menu is answered, so dismissing it leaves no
+        // trace, which is what makes Escape a real cancel rather than an undo.
+        setPendingChoice({ anchor, clientX: event.clientX, clientY: event.clientY });
+        return;
+      }
       const files = [...event.dataTransfer.files];
       if (files.length > 0) void dropFiles(files, anchor);
     },
     [insertTool, dropFiles],
+  );
+
+  /**
+   * Answer a pending choice with COLLECTION, at the position it was dropped.
+   *
+   * Re-resolves the anchor through `resolveAnchoredTarget` rather than reusing
+   * `anchor.index` the way the immediate tool path does. Both halves matter and
+   * neither is optional here:
+   *
+   * - TIME PASSED. A menu sat open while the board stayed live; a raw index
+   *   captured at drop time can name a different gap by the time it is used.
+   * - FLAT MODE. A flat boundary is not a parent-relative index, and
+   *   `resolveAnchoredTarget` is what converts it (see its own note). The
+   *   immediate path skipping that step is pre-existing behaviour this does not
+   *   touch — but a NEW path has no reason to inherit it.
+   *
+   * The insert runs OUTSIDE the state updater, reading the current choice from
+   * the closure. An updater must be pure — React calls it twice in StrictMode —
+   * and inserting from inside one adds two collections for one click.
+   */
+  const chooseCollection = useCallback(() => {
+    if (pendingChoice === null) return;
+    const target = resolveAnchoredTarget(pendingChoice.anchor);
+    setPendingChoice(null);
+    insertTool("collection", target.index, target.parentId);
+  }, [pendingChoice, insertTool, resolveAnchoredTarget]);
+
+  /**
+   * Answer a pending choice with MEDIA: the files go through the very same
+   * `dropFiles` an OS drop uses, at the parked anchor. One decode per video,
+   * bounded concurrency, per-file failure reporting, and ONE undoable commit
+   * all come along — none of it is reimplemented for this route.
+   *
+   * Outside the updater for the same reason as above: a StrictMode double-call
+   * would upload and insert every chosen file twice.
+   */
+  const chooseMedia = useCallback(
+    (files: readonly File[]) => {
+      if (pendingChoice === null) return;
+      const { anchor } = pendingChoice;
+      setPendingChoice(null);
+      if (files.length > 0) void dropFiles(files, anchor);
+    },
+    [pendingChoice, dropFiles],
   );
 
   /**
@@ -393,7 +469,43 @@ export function useNativeDrop(collectionId: string, projectId: string) {
     [dropFiles, store, collectionId],
   );
 
-  return { commitDrop, upload, appendFiles };
+  /**
+   * Append a collection to the end — the click half of "Add item".
+   *
+   * Reads the child count LIVE rather than taking an index from the caller: the
+   * button is in the controls row, several components away, and "the end" it
+   * meant when it rendered is not necessarily the end by the time it is
+   * pressed.
+   */
+  const appendCollection = useCallback(() => {
+    const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+    insertTool("collection", children.length);
+  }, [store, collectionId, insertTool]);
+
+  // The controls row's Add item button, reaching down into this engine. See
+  // GRAPH_ADD_ITEM_EVENT for why it is ADDRESSED and not broadcast: every
+  // sub-timeline row mounts one of these, and an unaddressed event would add
+  // one item per row on screen.
+  useEffect(() => {
+    const onAddItem = (event: Event) => {
+      const detail = (event as CustomEvent<GraphAddItemDetail>).detail;
+      if (!detail || detail.collectionId !== collectionId) return;
+      if (detail.kind === "collection") appendCollection();
+      else appendFiles(detail.files);
+    };
+    window.addEventListener(GRAPH_ADD_ITEM_EVENT, onAddItem);
+    return () => window.removeEventListener(GRAPH_ADD_ITEM_EVENT, onAddItem);
+  }, [collectionId, appendCollection, appendFiles]);
+
+  return {
+    commitDrop,
+    upload,
+    appendFiles,
+    pendingChoice,
+    chooseCollection,
+    chooseMedia,
+    cancelChoice,
+  };
 }
 
 /**

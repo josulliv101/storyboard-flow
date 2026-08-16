@@ -33,6 +33,31 @@ export const TOOL_LABELS: Readonly<Record<SidebarTool, string>> = {
   collection: "collection",
 };
 
+/**
+ * The ADD ITEM payload: a drag that asks a QUESTION rather than carrying an
+ * answer. Dropping it does not insert anything — it parks the drop position and
+ * opens a menu there, and what you pick is inserted at that position.
+ *
+ * Same MIME as the tool above, so every drop surface already accepts it
+ * (`acceptsDragTypes`), already draws its indicator, and already resolves its
+ * anchor. Only the commit differs, and that is one branch in `commitDrop`.
+ *
+ * DELIBERATELY NOT a member of `SidebarTool`. Every consumer of that union
+ * assumes its members are insertable — `TOOL_LABELS` names the thing that
+ * landed and `insertTool` mints a timeline for it — and "ask me which" is
+ * neither. Widening the union would have compiled and then quietly minted a
+ * collection for a payload whose entire purpose is that the kind is not yet
+ * known.
+ */
+export const ADD_ITEM_TOOL = "add-item";
+
+export function isAddItemTool(value: string): boolean {
+  return value === ADD_ITEM_TOOL;
+}
+
+/** What an add-item drop can resolve to, once the user picks. */
+export type AddItemKind = "collection" | "media";
+
 /** How many dropped files are decoded/uploaded at once. `Promise.all` over the
  *  whole drop meant N video decoders, canvases, blobs, and uploads existing
  *  simultaneously — dropping a folder of large videos produced a burst that

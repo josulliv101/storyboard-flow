@@ -5,6 +5,14 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
 import { getFirebaseDb } from "./firebase-admin";
 import { firstFrameUrl } from "./project-thumbnail";
+import {
+  fixtureCreateProject,
+  fixtureDeleteDocument,
+  fixtureListProjects,
+  fixtureReadEntry,
+  fixtureStoreEnabled,
+  fixtureWriteDocuments,
+} from "./fixture-timeline-store";
 import { resolveOwnership, TimelineAccessDeniedError } from "./timeline-ownership";
 import {
   describeFirestoreFailure,
@@ -398,6 +406,8 @@ async function ownedProjectDocs(requesterUid: string) {
 }
 
 export async function listFirebaseTimelineProjects(requesterUid: string) {
+  if (fixtureStoreEnabled()) return fixtureListProjects();
+
   const docs = await ownedProjectDocs(requesterUid);
 
   // Listing is READ ONLY. It used to stamp `ownerUid` onto every ownerless
@@ -539,6 +549,13 @@ export async function readStoredTimelineEntry(
   id: string,
   requesterUid: string,
 ): Promise<TimelineEntry | null> {
+  // OFFLINE MODE. Dev-only, refused outright in production — see
+  // `fixture-timeline-store`. Intercepted HERE rather than per route because
+  // this is the single read seam: `serveTimelineDocument`, `serveTrashDocument`,
+  // the RSC focus-path loader and the closure walker all come through it, so
+  // one branch covers every reader and none of them can drift.
+  if (fixtureStoreEnabled()) return fixtureReadEntry(id);
+
   const snapshot = await withFirebaseTimeout(
     collection().doc(id).get(),
     "Loading timeline document",
@@ -625,6 +642,15 @@ export async function saveFirebaseTimelineEntry(
   }
 
   const normalizedDocument = normalizeDocument(document);
+
+  // OFFLINE MODE — see readStoredTimelineEntry. Last-write-wins, which is what
+  // this path already is, so nothing is lost by not modelling the transaction.
+  if (fixtureStoreEnabled()) {
+    fixtureWriteDocuments([normalizedDocument]);
+    const entry = fixtureReadEntry(normalizedDocument.id);
+    return entry ?? { document: normalizedDocument, revision: 1 };
+  }
+
   const ref = collection().doc(normalizedDocument.id);
 
   // ONE TRANSACTION for read, checks and write.
@@ -778,6 +804,21 @@ export async function saveFirebaseTimelineDocumentsAtomic(
   const ids = writes.map((write) => write.document.id);
   if (new Set(ids).size !== ids.length) {
     throw new Error("A batch write must not repeat a timeline id.");
+  }
+
+  // OFFLINE MODE. The two guards above still run — they are pure argument
+  // checks and catching a malformed batch offline is strictly better than
+  // discovering it later against the real store. What is NOT modelled below is
+  // everything the transaction does: revision compare-and-set, the orphan
+  // guard, the duplicate-owner guard. Offline writes always succeed, so a
+  // conflict or an orphan is invisible here BY CONSTRUCTION and has to be
+  // verified against Firestore.
+  if (fixtureStoreEnabled()) {
+    fixtureWriteDocuments(writes.map((write) => write.document));
+    return writes.map((write) => ({
+      id: write.document.id,
+      revision: (write.expectedRevision ?? 0) + 1,
+    }));
   }
 
   return withFirebaseTimeout(
@@ -957,7 +998,8 @@ export async function createFirebaseTimelineProject(requesterUid: string, title?
     description: "Custom timeline project.",
     clips: [],
   };
-  await saveFirebaseTimelineDocument(document, requesterUid, { isProject: true });
+  if (fixtureStoreEnabled()) fixtureCreateProject(id, cleanTitle);
+  else await saveFirebaseTimelineDocument(document, requesterUid, { isProject: true });
   return document;
 }
 
@@ -1008,6 +1050,14 @@ const CASCADE_READ_CONCURRENCY = 12;
 const FIRESTORE_BATCH_LIMIT = 500;
 
 export async function deleteFirebaseTimelineDocument(id: string, requesterUid: string) {
+  // OFFLINE MODE. The real path cascades through children with a size ceiling;
+  // this removes the one document and nothing else, so an offline delete leaves
+  // orphans the real one would have taken with it.
+  if (fixtureStoreEnabled()) {
+    fixtureDeleteDocument(id);
+    return;
+  }
+
   const visited = new Set<string>([id]);
   // Root-first, so reversing it deletes the deepest documents first and the
   // root last — relevant only in the multi-batch path below, where a failure

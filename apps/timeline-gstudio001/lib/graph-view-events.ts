@@ -8,31 +8,36 @@ export function isGraphViewRoute(pathname: string): boolean {
   return /^\/timeline\/[^/]+\/graph(\/|$)/.test(pathname);
 }
 
-// The sidebar's tool palette hands off the same way. Dragging a tool onto a
-// strip is a POINTER-only gesture (native HTML5 drag carrying a custom
-// DataTransfer), which left keyboard and assistive-tech users — and touch —
-// with no way to insert anything at all. Activating the tool now appends it
-// to the open timeline through this event; the drag stays as the way to
-// choose a POSITION.
+// ── Add item, appended to the end ───────────────────────────────────────────
+//
+// The controls row's "Add item" button sits ABOVE the drop surfaces in the
+// tree, and the machinery that adds things — the mint-and-insert, and the
+// upload pipeline with its bounded concurrency, per-file errors and single
+// undoable commit — lives INSIDE them (`useNativeDrop`). React context only
+// flows downward, so this event is how the button reaches it.
+//
+// Deliberately NOT a broadcast. Every sub-timeline row mounts its own drop
+// surface, so an unaddressed event would be handled once per mounted surface
+// and add one item per row on screen. `collectionId` is the address; a surface
+// ignores anything not aimed at it. The focused collection cannot also be one
+// of the rows below it — those render its CHILDREN, and the graph forbids a
+// cycle — so exactly one surface ever answers.
 
-export const GRAPH_INSERT_TOOL_EVENT = "graph-view:insert-tool";
+export const GRAPH_ADD_ITEM_EVENT = "graph-view:add-item";
 
-/** The palette tools, mirrored by `isSidebarTool` on the graph side.
- *  Collection only: the old image/video placeholder tools were removed —
- *  media enters through the Assets drawer or OS file drops. */
-export type GraphInsertTool = "collection";
+export type GraphAddItemDetail = Readonly<
+  { collectionId: string } & (
+    | { kind: "collection" }
+    /** Already-picked files. The button owns its own file input so the picker
+     *  opens inside the click that opened it — carrying the FILES rather than a
+     *  request to ask for them keeps user activation out of the question. */
+    | { kind: "media"; files: readonly File[] }
+  )
+>;
 
-export type GraphInsertToolDetail = Readonly<{ tool: GraphInsertTool }>;
-
-export function isGraphInsertTool(value: string): value is GraphInsertTool {
-  return value === "collection";
-}
-
-/** Ask the graph view to append a palette tool to the focused collection. */
-export function requestGraphToolInsert(tool: GraphInsertTool): void {
-  window.dispatchEvent(
-    new CustomEvent<GraphInsertToolDetail>(GRAPH_INSERT_TOOL_EVENT, { detail: { tool } }),
-  );
+/** Ask the surface showing `collectionId` to append an item to its end. */
+export function requestGraphAddItem(detail: GraphAddItemDetail): void {
+  window.dispatchEvent(new CustomEvent<GraphAddItemDetail>(GRAPH_ADD_ITEM_EVENT, { detail }));
 }
 
 // The sidebar's top two icons ARE the graph's layout switch (grid first —
