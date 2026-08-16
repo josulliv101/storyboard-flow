@@ -151,6 +151,37 @@ function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): v
 }
 
 
+/**
+ * Letters that grow from nothing to their natural width, and back.
+ *
+ * A GRID, not a `max-width`, and the difference is the whole reason this looks
+ * right. Text has no width you can name in advance, so a max-width transition
+ * has to guess a number bigger than the word — and then the visible growth
+ * finishes early, at the word's real width, while the property keeps
+ * animating. The letters appear to arrive and then wait. `0fr` to `1fr`
+ * animates to exactly the content's own size, so the S and the W part at the
+ * speed the word actually needs.
+ *
+ * `overflow-hidden` on the inner span is what does the hiding; the outer grid
+ * only owns the width.
+ */
+function RevealedLetters({
+  show,
+  children,
+}: Readonly<{ show: boolean; children: React.ReactNode }>) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "grid transition-[grid-template-columns] duration-200 motion-reduce:transition-none",
+        show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
+      )}
+    >
+      <span className="overflow-hidden">{children}</span>
+    </span>
+  );
+}
+
 /** The avatar letter. Written once because the same nested ternary appeared in
  *  two places, and an empty name string made `name[0]` undefined in both. */
 function initialOf(
@@ -577,12 +608,25 @@ export function TimelineSidebar() {
         <Link
           href="/"
           aria-label="Storyboard Workbench home"
-          // Pinned to the icon column's width. Everything else here widens
-          // because it gains a label; the mark has none, and a 232px-wide "SW"
-          // centred over the rail would read as a banner.
-          className="flex w-full aspect-square items-center justify-center text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500 [.rail_&]:w-[72px]"
+          // LEADING, at the glyph column's inset, in both states. Centring "SW"
+          // in the 72px rail already put it within a pixel of 22px, so pinning
+          // it there costs nothing closed and is what lets the name grow to the
+          // right rather than the whole mark sliding.
+          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
-          SW
+          {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
+              nothing, so closing slides the S and the W together into "SW"
+              rather than swapping one piece of text for another. The letters
+              you keep are the same letters throughout — same size, same font,
+              same position — which is the whole reason this reads as the mark
+              contracting instead of a label being replaced by an abbreviation.
+
+              The accessible name comes from `aria-label` on the link, so the
+              split spans are never read out letter by letter. */}
+          S
+          <RevealedLetters show={railExpanded}>toryboard&nbsp;</RevealedLetters>
+          W
+          <RevealedLetters show={railExpanded}>orkbench</RevealedLetters>
         </Link>
 
         {activeProjectId && (

@@ -17,12 +17,18 @@ export const RAIL_WIDTH_PX = 72;
 /**
  * The rail's width with labels showing.
  *
- * 232px = the 72px icon column, the label's 16px gutter, and room for the
- * longest label the rail carries ("All items in order") without truncating.
- * Labels truncate rather than wrap, so a longer one added later degrades to an
- * ellipsis instead of shoving the rail's rhythm out of line.
+ * THE WORDMARK SETS THIS, not the labels. It was 232px, sized for the longest
+ * label the rail then carried ("All items in order") — and that control has
+ * since moved to the board's controls row, while the mark grew from "SW" to
+ * "Storyboard Workbench". Measured, the mark ends 229px in, which fit 232 by
+ * three pixels: enough today and not enough to survive a font fallback
+ * rendering a fraction wider.
+ *
+ * Collection names are the other tenant here and they are user-authored, so no
+ * width could ever be "enough" for them; they truncate, which degrades to an
+ * ellipsis rather than shoving the rail's rhythm out of line.
  */
-export const RAIL_OPEN_WIDTH_PX = 232;
+export const RAIL_OPEN_WIDTH_PX = 240;
 
 /**
  * On the rail ALWAYS, open or closed — and the hook every tile style below
@@ -74,7 +80,7 @@ export const RAIL_OPEN_CLASS = "rail-open";
  */
 export const RAIL_WIDTH_CLASS = {
   collapsed: "w-[72px]",
-  open: "w-[232px]",
+  open: "w-[240px]",
 } as const;
 
 /**
