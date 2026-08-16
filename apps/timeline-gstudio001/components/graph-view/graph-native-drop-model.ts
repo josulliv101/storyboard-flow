@@ -34,29 +34,28 @@ export const TOOL_LABELS: Readonly<Record<SidebarTool, string>> = {
 };
 
 /**
- * The ADD ITEM payload: a drag that asks a QUESTION rather than carrying an
- * answer. Dropping it does not insert anything — it parks the drop position and
- * opens a menu there, and what you pick is inserted at that position.
+ * The MEDIA payload: a drag that carries an INTENT rather than an item.
  *
- * Same MIME as the tool above, so every drop surface already accepts it
- * (`acceptsDragTypes`), already draws its indicator, and already resolves its
- * anchor. Only the commit differs, and that is one branch in `commitDrop`.
+ * Dropping it adds nothing on its own — there is no media yet. It parks the
+ * drop position and opens the file picker, and whatever is chosen lands at that
+ * position. The `collection` payload beside it is the opposite: a collection can
+ * be minted from nothing, so its drop commits immediately.
+ *
+ * Same MIME as the collection tool, so every drop surface already accepts it,
+ * already draws its indicator and already resolves its anchor. Only the commit
+ * differs, which is one branch in `commitDrop`.
  *
  * DELIBERATELY NOT a member of `SidebarTool`. Every consumer of that union
  * assumes its members are insertable — `TOOL_LABELS` names the thing that
- * landed and `insertTool` mints a timeline for it — and "ask me which" is
+ * landed and `insertTool` mints a timeline for it — and "ask for files" is
  * neither. Widening the union would have compiled and then quietly minted a
- * collection for a payload whose entire purpose is that the kind is not yet
- * known.
+ * collection for a payload whose whole purpose is that there is nothing to mint.
  */
-export const ADD_ITEM_TOOL = "add-item";
+export const MEDIA_TOOL = "media";
 
-export function isAddItemTool(value: string): boolean {
-  return value === ADD_ITEM_TOOL;
+export function isMediaTool(value: string): boolean {
+  return value === MEDIA_TOOL;
 }
-
-/** What an add-item drop can resolve to, once the user picks. */
-export type AddItemKind = "collection" | "media";
 
 /** How many dropped files are decoded/uploaded at once. `Promise.all` over the
  *  whole drop meant N video decoders, canvases, blobs, and uploads existing

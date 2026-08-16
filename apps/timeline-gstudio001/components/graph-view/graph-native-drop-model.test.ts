@@ -8,9 +8,9 @@ import {
   cellFollowingPointer,
   gridDropAnchor,
   gridIndicatorGeometry,
-  ADD_ITEM_TOOL,
+  MEDIA_TOOL,
   indexOfChildId,
-  isAddItemTool,
+  isMediaTool,
   isSidebarTool,
   neighborsAt,
   resolveAnchorIndex,
@@ -69,32 +69,31 @@ describe("isSidebarTool", () => {
   });
 });
 
-describe("isAddItemTool", () => {
-  it("admits the add-item payload only", () => {
-    expect(isAddItemTool(ADD_ITEM_TOOL)).toBe(true);
-    expect(isAddItemTool("collection")).toBe(false);
-    expect(isAddItemTool("")).toBe(false);
+describe("isMediaTool", () => {
+  it("admits the media payload only", () => {
+    expect(isMediaTool(MEDIA_TOOL)).toBe(true);
+    expect(isMediaTool("collection")).toBe(false);
+    expect(isMediaTool("")).toBe(false);
   });
 
-  // THE POINT OF TWO PREDICATES. `commitDrop` branches on these in order, and
-  // a payload matching both would insert a collection immediately AND open the
-  // menu asking which kind to insert. Pinned as a test rather than left to
-  // reading, because the two live in different files from their caller.
+  // THE POINT OF TWO PREDICATES. `commitDrop` branches on these in order, and a
+  // payload matching both would mint a collection AND open the file picker for
+  // one drop. Pinned as a test rather than left to reading, because the two live
+  // in a different file from their caller.
   it("is disjoint from isSidebarTool, both ways round", () => {
-    expect(isSidebarTool(ADD_ITEM_TOOL)).toBe(false);
-    expect(isAddItemTool("collection")).toBe(false);
+    expect(isSidebarTool(MEDIA_TOOL)).toBe(false);
+    expect(isMediaTool("collection")).toBe(false);
   });
 
-  // The value travels through the DOM as a `DataTransfer` string, so it is
-  // part of the wire format: an e2e that sets this payload by hand, and any
-  // drag begun before a deploy and dropped after it, both depend on the exact
-  // spelling.
+  // The value travels through the DOM as a `DataTransfer` string, so it is part
+  // of the wire format: an e2e that sets this payload by hand, and any drag
+  // begun before a deploy and dropped after it, both depend on the spelling.
   it("has the spelling the drag payload carries", () => {
-    expect(ADD_ITEM_TOOL).toBe("add-item");
+    expect(MEDIA_TOOL).toBe("media");
   });
 });
 
-describe("acceptsDragTypes, for the add-item payload", () => {
+describe("acceptsDragTypes, for the media payload", () => {
   // It rides the SAME mime as the collection tool, which is what lets every
   // drop surface accept it, draw its indicator, and resolve its anchor without
   // a single change. Only the commit differs.

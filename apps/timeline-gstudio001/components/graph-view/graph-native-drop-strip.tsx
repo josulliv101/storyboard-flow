@@ -6,7 +6,7 @@ import { getChildren, parseNodeId, useCollectionsStore } from "@storyboard/ui/dn
 
 import { useFlatItems } from "./graph-preview";
 import { useNativeDragArmed } from "./graph-native-drag-signal";
-import { AddItemDropMenu } from "./graph-add-item-menu";
+import { MediaDropTarget } from "./graph-tool-buttons";
 import { AppendFilesContext, useNativeDrop } from "./graph-native-drop-engine";
 import {
   DROP_INDICATOR_CLASS,
@@ -51,10 +51,9 @@ export function NativeDropStrip({
     commitDrop,
     upload,
     appendFiles,
-    pendingChoice,
-    chooseCollection,
-    chooseMedia,
-    cancelChoice,
+    pendingMedia,
+    resolveMediaDrop,
+    cancelMediaDrop,
   } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicatorX, setIndicatorX] = useState<number | null>(null);
@@ -207,13 +206,13 @@ export function NativeDropStrip({
           behaviour from the identical code — the exact drift #30 was that only
           the strip ever wired a drop target, and grid mode silently accepted
           nothing. */}
-      {pendingChoice !== null && (
-        <AddItemDropMenu
-          clientX={pendingChoice.clientX}
-          clientY={pendingChoice.clientY}
-          onCollection={chooseCollection}
-          onFiles={chooseMedia}
-          onDismiss={cancelChoice}
+      {pendingMedia !== null && (
+        <MediaDropTarget
+          hadUserActivation={pendingMedia.hadUserActivation}
+          clientX={pendingMedia.clientX}
+          clientY={pendingMedia.clientY}
+          onFiles={resolveMediaDrop}
+          onDismiss={cancelMediaDrop}
         />
       )}
       {indicatorX !== null && (

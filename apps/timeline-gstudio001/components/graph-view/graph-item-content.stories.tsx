@@ -311,12 +311,12 @@ export const CollectionMarkSitsOnATranslucentDisc: Story = {
 
     const style = getComputedStyle(disc!);
     // The ALPHA, parsed out of whatever colour space the toolchain serialises
-    // in — Tailwind v4 resolves this to `oklab(0 0 0 / 0.25)`, not the
-    // `rgba(0, 0, 0, 0.25)` the utility name suggests, and pinning either
+    // in — Tailwind v4 resolves this to `oklab(0 0 0 / 0.45)`, not the
+    // `rgba(0, 0, 0, 0.45)` the utility name suggests, and pinning either
     // literal makes this story a test of the build rather than of the design.
     // Both spellings put the alpha last, which is the part worth pinning.
     const alpha = Number.parseFloat(/([\d.]+)\s*\)\s*$/.exec(style.backgroundColor)?.[1] ?? "1");
-    await expect(alpha).toBeCloseTo(0.25, 2);
+    await expect(alpha).toBeCloseTo(0.45, 2);
     await expect(style.opacity).toBe("1");
 
     // A CIRCLE, which is a square box plus a radius — checking the radius
@@ -335,20 +335,29 @@ export const CollectionMarkSitsOnATranslucentDisc: Story = {
 };
 
 /**
- * …and NOT over the empty state, which draws its own placeholder glyph. Two
- * glyphs stacked in the middle of one card just reads as a bug.
+ * …and over the EMPTY state too, which is a reversal worth recording.
+ *
+ * The mark used to be withheld here, because the empty slot drew an academy
+ * leader — a ring and a crosshair — and two glyphs stacked in one centre read
+ * as a bug. That placeholder is a flat gradient now, so the reason is gone and
+ * the opposite rule applies: a collection wears its mark whether or not it has
+ * anything in it, because that mark is the only thing on the card saying what
+ * KIND of thing it is.
  */
-export const EmptyCollectionHasNoCollectionMark: Story = {
+export const EmptyCollectionAlsoWearsTheCollectionMark: Story = {
   args: baseArgs,
   decorators: [renderWithDetail([])],
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelector("[data-empty-collection-preview]")).not.toBeNull();
-    await expect(canvasElement.querySelector("[data-collection-mark]")).toBeNull();
+    const mark = canvasElement.querySelector("[data-collection-mark]");
+    await expect(mark).not.toBeNull();
+    // The same disc-and-glyph a populated card gets, not a second treatment.
+    await expect(mark!.querySelector("svg")).not.toBeNull();
   },
 };
 
-/** An empty or unresolved collection shows only the collection affordance;
- * no fallback copy is allowed to bleed through behind the folder glyph. */
+/** An empty or unresolved collection shows a bare graded panel: no fallback
+ * copy is allowed to bleed through behind the centred collection mark. */
 export const EmptyCardUsesCleanIconFallback: Story = {
   args: baseArgs,
   decorators: [renderWithDetail([])],
@@ -361,12 +370,13 @@ export const EmptyCardUsesCleanIconFallback: Story = {
     await expect(previewImages(canvasElement)).toHaveLength(0);
     await expect(canvasElement).not.toHaveTextContent(/open to load|empty|no media preview/i);
 
-    // What the card shows INSTEAD: the leader glyph, drawn into the empty
-    // frame. This used to check for the corner drill button on the same
-    // reasoning — "an empty card still says collection" — but that button is
-    // gone (a plain click opens the card now), and the glyph was always the
-    // part of the answer that belongs to this story.
-    await expect(fallback!.querySelector("svg")).not.toBeNull();
+    // The empty slot itself draws NOTHING now — it is a bare gradient panel,
+    // which is what lets the centred collection mark be the single thing
+    // saying "collection" on every card. The glyph is therefore a SIBLING of
+    // this element rather than a child of it; asserting it here would have
+    // quietly kept passing on the old leader drawing.
+    await expect(fallback!.querySelector("svg")).toBeNull();
+    await expect(canvasElement.querySelector("[data-collection-mark] svg")).not.toBeNull();
   },
 };
 
@@ -384,7 +394,7 @@ export const EmptyCardUsesCleanIconFallback: Story = {
  * A collection that LEADS WITH AUDIO shows the music glyph, not the leader.
  *
  * The thumbnail is the first child's frame and audio has none, so a collection
- * of voice takes fell through to `CollectionLeaderPlaceholder` — the film
+ * of voice takes fell through to `EmptyCollectionPlaceholder` — the film
  * crosshair, which means "no picture here". For sound that is the wrong
  * sentence, and the audio media card already had the right glyph.
  */
