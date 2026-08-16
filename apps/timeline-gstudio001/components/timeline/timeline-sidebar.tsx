@@ -63,8 +63,9 @@ const RAIL_EXPANDED_STORAGE_KEY = "sw:sidebar-expanded";
  */
 const RAIL_WIDTH_VAR = "--sw-rail-width";
 
-/** Fires when THIS tab toggles the rail. `storage` only notifies other tabs,
- *  so without this the toggle would not re-render the tab that pressed it. */
+/** Fires when THIS window toggles the rail — the only notification there is,
+ *  see below. Without it the toggle would not re-render the window that
+ *  pressed it. */
 const RAIL_EXPANDED_EVENT = "sw:sidebar-expanded-changed";
 
 function readRailExpanded(): boolean {
@@ -76,11 +77,25 @@ function readRailExpanded(): boolean {
   }
 }
 
+/**
+ * THIS WINDOW ONLY. Deliberately NOT subscribed to `storage`.
+ *
+ * It was, on the reasoning that two tabs should agree about the rail. That is
+ * wrong, and the way it was wrong is worth keeping: `storage` fires in every
+ * OTHER tab on the origin, so opening the rail in one window silently
+ * collapsed it in every other one. With the width animated, the far window
+ * did not read as "something else changed this" — it read as a toggle that
+ * stuttered and fell back, because the layout started moving and then went the
+ * other way.
+ *
+ * The rail's width is a property of a WINDOW, not of the account. Two windows
+ * side by side are the case where you most want one wide and one narrow.
+ * localStorage still carries the preference across a RELOAD, which is the part
+ * that was actually wanted; a live window is simply never yanked by another.
+ */
 function subscribeRailExpanded(onChange: () => void): () => void {
-  window.addEventListener("storage", onChange);
   window.addEventListener(RAIL_EXPANDED_EVENT, onChange);
   return () => {
-    window.removeEventListener("storage", onChange);
     window.removeEventListener(RAIL_EXPANDED_EVENT, onChange);
   };
 }
