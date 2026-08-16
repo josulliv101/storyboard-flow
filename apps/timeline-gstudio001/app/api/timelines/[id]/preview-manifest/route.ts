@@ -4,6 +4,7 @@ import { compileTimelineManifest } from "@/lib/compile-timeline-manifest";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import { TimelineClosureTooLargeError } from "@/lib/load-timeline-closure";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
+import { clientFacingStorageMessage } from "@/lib/firestore-failure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,12 +61,7 @@ export async function GET(
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
 
-    const message =
-      error instanceof Error &&
-      (error.message.startsWith("Firebase Storage is not configured") ||
-        error.message.includes("timed out"))
-        ? error.message
-        : "Unable to compile the preview manifest.";
+    const message = clientFacingStorageMessage(error, "Unable to compile the preview manifest.");
 
     console.error("[GSTUDIO_TIMELINE_STORAGE_ERROR]", error);
     return NextResponse.json({ error: message }, { status: 500 });

@@ -6,6 +6,10 @@ import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/
 import { getFirebaseDb } from "./firebase-admin";
 import { firstFrameUrl } from "./project-thumbnail";
 import { resolveOwnership, TimelineAccessDeniedError } from "./timeline-ownership";
+import {
+  describeFirestoreFailure,
+  firestoreTimeoutFailure,
+} from "./firestore-failure";
 
 type TimelineDocumentRecord = {
   id: string;
@@ -188,6 +192,20 @@ const FIREBASE_TIMEOUT_MS = 8_000;
  */
 const PROJECT_LIST_LIMIT = 200;
 
+/**
+ * Bound the wait, and SAY WHAT ACTUALLY WENT WRONG.
+ *
+ * The timeout used to reject with "Check the Firebase project credentials and
+ * network access", which the routes forward to the browser. That sentence is a
+ * guess — at the instant the timer fires the call is still in flight — and it
+ * was wrong in the case that mattered: a spent daily read quota, which is
+ * neither the credentials nor the network. It sent its reader to re-check two
+ * things that were fine.
+ *
+ * So the timeout now claims nothing beyond having waited, and a rejection that
+ * DOES carry a gRPC code is named from it. Firestore was saying "8
+ * RESOURCE_EXHAUSTED" the whole time; this stops throwing that away.
+ */
 async function withFirebaseTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -195,15 +213,17 @@ async function withFirebaseTimeout<T>(operation: Promise<T>, label: string): Pro
     return await Promise.race([
       operation,
       new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            new Error(
-              `${label} timed out. Check the Firebase project credentials and network access.`,
-            ),
-          );
-        }, FIREBASE_TIMEOUT_MS);
+        timeoutId = setTimeout(
+          () => reject(firestoreTimeoutFailure(label, FIREBASE_TIMEOUT_MS)),
+          FIREBASE_TIMEOUT_MS,
+        );
       }),
     ]);
+  } catch (error) {
+    // Unrecognised errors are rethrown UNTOUCHED: the caller's own fallback
+    // message is more specific than anything a classifier could invent about
+    // an error it does not know.
+    throw describeFirestoreFailure(error, label) ?? error;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }

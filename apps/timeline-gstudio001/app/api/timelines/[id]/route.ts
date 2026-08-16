@@ -18,6 +18,7 @@ import {
 import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
 import { serveTimelineDocument, serveTrashDocument } from "@/lib/serve-timeline";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
+import { clientFacingStorageMessage } from "@/lib/firestore-failure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,12 +42,7 @@ function storageErrorResponse(error: unknown, fallback: string) {
   if (error instanceof TimelineAccessDeniedError) {
     return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
   }
-  const message =
-    error instanceof Error &&
-    (error.message.startsWith("Firebase Storage is not configured") ||
-      error.message.includes("timed out"))
-      ? error.message
-      : fallback;
+  const message = clientFacingStorageMessage(error, fallback);
 
   console.error("[GSTUDIO_TIMELINE_STORAGE_ERROR]", error);
   return NextResponse.json({ error: message }, { status: 500 });
