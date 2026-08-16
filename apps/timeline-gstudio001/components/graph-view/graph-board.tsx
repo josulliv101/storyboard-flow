@@ -542,7 +542,12 @@ function HeaderToggle({
       aria-busy={busy === undefined ? undefined : busy}
       title={title}
       onClick={onToggle}
-      className={cn("h-8 w-8", active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE)}
+      // `shrink-0` because `h-8 w-8` is a REQUEST, not a floor: a flex item
+      // shrinks below its width by default. It also makes the cluster's
+      // `min-content` the real width of its controls, which is what the
+      // header row's right column now sizes itself against — a squeezable
+      // icon would report a smaller minimum and let the column collapse again.
+      className={cn("h-8 w-8 shrink-0", active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE)}
     >
       <Icon aria-hidden className={cn("h-4 w-4", busy && "motion-safe:animate-pulse")} />
     </Button>
@@ -1737,7 +1742,27 @@ export function GraphBoard({
               // grid with two empty tracks.
               selectModeRow
                 ? "flex"
-                : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+                // The RIGHT column may not shrink below its content.
+                //
+                // Equal `1fr` sides are what centre the middle cluster, and
+                // `minmax(0,1fr)` lets both collapse to nothing to keep them
+                // equal. The right column holds real controls, so collapsing
+                // it does not shrink them — with `justify-end` its content
+                // overflows LEFTWARD, out of the column and underneath the
+                // breadcrumb, which then takes the pointer. At 420px the
+                // cluster's leading control sat under "Rename E2E Project":
+                // visible, enabled, and unclickable.
+                //
+                // `min-content` as the floor buys symmetry where there is room
+                // for it — both columns are 1fr at any ordinary width — and
+                // gives it up only when the alternative is a control nobody
+                // can press. The breadcrumb absorbs the difference, which is
+                // what its `min-w-0` and `truncate` are for.
+                //
+                // Long latent, and only ever fatal to whichever control leads
+                // the cluster, so it surfaced when the preview toggle moved to
+                // the front of it.
+                : "grid grid-cols-[minmax(0,1fr)_auto_minmax(min-content,1fr)]",
             )}
           >
             {/* Seek thumbs are centered on the timeline edge and intentionally
@@ -1815,17 +1840,22 @@ export function GraphBoard({
                   zoom slider all went down with the filter. What remains up
                   here is the row's original job: where you are, what you have
                   picked, and what you can do to it. */}
-              <SelectModeButton />
-              {/* PREVIEW, beside Select. It was a tile in the icon rail, which
-                  gave it prominence but put it a long way from the board it
-                  opens over — and it is a VIEW toggle, which is what this end
-                  of the row is for. Ungated by surface deliberately: the pane
-                  plays the focused timeline in grid as well as strip, so
-                  hiding it in grid would remove a working control.
+              {/* PREVIEW LEADS, Select follows. It was a tile in the icon
+                  rail, which gave it prominence but put it a long way from the
+                  board it opens over — and it is a VIEW toggle, which is what
+                  this end of the row is for. Ungated by surface deliberately:
+                  the pane plays the focused timeline in grid as well as strip,
+                  so hiding it in grid would remove a working control.
 
                   Inside the fence with Select rather than out with the ruler
                   pair, because those two are flat-mode only and come and go;
-                  these two are always here. */}
+                  these two are always here.
+
+                  Preview first because it is the icon in a pair whose other
+                  half carries a WORD: leading with the labelled control pushed
+                  the icon out to the fence, away from the icon toggles beyond
+                  it, so the row read as a button with an ornament rather than
+                  as one run of controls. */}
               <HeaderToggle
                 active={previewOn}
                 onToggle={onPreviewToggle}
@@ -1833,6 +1863,7 @@ export function GraphBoard({
                 label={previewOn ? "Hide preview" : "Show preview"}
                 title="Preview — play the focused timeline"
               />
+              <SelectModeButton />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* Ruler and waveform stay: they draw ONTO the strip rather than
                   changing what is on it, they are flat-mode only, and pairing

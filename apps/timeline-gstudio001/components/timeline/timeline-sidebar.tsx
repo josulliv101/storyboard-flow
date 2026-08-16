@@ -166,13 +166,19 @@ function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): v
  * `overflow-hidden` on the inner span is what does the hiding; the outer grid
  * only owns the width.
  *
- * LIGHTER THAN THE INITIALS. The link is `font-black` (900), and the S and W
- * keep it — they are the mark, and they are all that survives the collapse.
- * The letters that grow out of them are the word, so they step down to
- * `semibold` (600): the contrast is what makes "SW" read as an abbreviation OF
- * the name rather than as its first and ninth characters. 700 was tried and
- * sits too close to 900 — the difference stops reading as deliberate. Weight is
- * not animated, so a collapsing group stays light the whole way in.
+ * LIGHTER THAN THE INITIALS, in weight AND in ink. The link is `font-bold`
+ * (700) and the S and W keep it — they are the mark, and they are all that
+ * survives the collapse. The letters that grow out of them are the word, so
+ * they step down to `semibold` (600) at 90% opacity.
+ *
+ * The opacity is carrying most of the distinction now. It used to be weight
+ * alone, against a `font-black` (900) mark — a 300-point gap that read on its
+ * own. The mark came down to 700 because 900 was too heavy, which left the
+ * word one step below it, and one step of weight is not a difference anyone
+ * sees. Dropping the ink instead keeps "SW" reading as an abbreviation OF the
+ * name rather than as its first and ninth characters.
+ *
+ * Neither is animated, so a collapsing group stays light the whole way in.
  */
 function RevealedLetters({
   show,
@@ -186,7 +192,7 @@ function RevealedLetters({
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
     >
-      <span className="overflow-hidden font-semibold">{children}</span>
+      <span className="overflow-hidden font-semibold opacity-90">{children}</span>
     </span>
   );
 }
@@ -621,7 +627,7 @@ export function TimelineSidebar() {
           // in the 72px rail already put it within a pixel of 22px, so pinning
           // it there costs nothing closed and is what lets the name grow to the
           // right rather than the whole mark sliding.
-          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
+          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-lg font-bold text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
           {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
               nothing, so closing slides the S and the W together into "SW"
