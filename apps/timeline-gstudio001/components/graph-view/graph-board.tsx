@@ -150,9 +150,13 @@ export type { FocusSurface, ItemSize };
 function BoardMenu({
   itemSize,
   onItemSizeChange,
+  projectId,
 }: Readonly<{
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
+  /** Whose render format this menu edits. The section reads and writes the
+   *  document itself, so the menu only has to say WHICH one. */
+  projectId: string;
 }>) {
   return (
     <DropdownMenu>
@@ -201,6 +205,14 @@ function BoardMenu({
             ))}
           </DropdownMenuRadioGroup>
         </DropdownMenuGroup>
+        {/* RENDER FORMAT, moved in from the header row.
+            It read "16:9 · 720p" beside the breadcrumbs — a standing fact
+            about the project, permanently on screen, competing with the
+            controls you use while working. It belongs with the settings you
+            set once, which is what this menu is for. Below thumbnail size
+            because that is the one you reach for oftener. */}
+        <DropdownMenuSeparator className="-mx-2 my-2.5" />
+        <GraphRenderFormat timelineId={projectId} />
         {/* Zoom used to be a row here. It is a real slider in the header's
             view group now (see HeaderZoomControl) — this menu keeps the
             settings you set once, not the axis you ride while reading. */}
@@ -517,7 +529,17 @@ function HeaderToggle({
       size="icon"
       aria-label={label}
       aria-pressed={active}
-      aria-busy={busy || undefined}
+      // PUBLISHED IN BOTH STATES, for the toggles that have a busy concept at
+      // all. `busy || undefined` dropped the attribute when idle, so there was
+      // no way to tell "finished loading" from "never loads" — anything
+      // waiting for the closure to settle waited forever. It moved here from
+      // the sidebar, which passed the boolean straight through and so rendered
+      // aria-busy="false"; losing that on the way was silent.
+      //
+      // Still absent for toggles that never pass `busy`: a permanent
+      // aria-busy="false" on a control with nothing to load is noise a screen
+      // reader has to step over.
+      aria-busy={busy === undefined ? undefined : busy}
       title={title}
       onClick={onToggle}
       className={cn("h-8 w-8", active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE)}
@@ -1759,14 +1781,12 @@ export function GraphBoard({
                   without this the only sign one had finished was a card
                   appearing in Renders. */}
               <GraphRenderStatus timelineId={projectId} />
-              {/* The SHAPE the project exports at. Beside the render status
-                  because it answers the question that one raises — a render
-                  finished, at what size? — and because there is no render
-                  dialog in this app to put it in: renders start from the MCP
-                  tools. Unlike its two neighbours it is always present, since
-                  "what will this export as" is a standing fact rather than a
-                  transient status. */}
-              <GraphRenderFormat timelineId={projectId} />
+              {/* The render FORMAT used to sit here too, reading "16:9 · 720p".
+                  It moved into the board's settings menu: its neighbours above
+                  are transient — they appear when there is something to say and
+                  take no room otherwise — while the format is a standing fact,
+                  so it was the one thing in this row permanently occupying
+                  space for a setting you change once a project. */}
             </div>
             {/* Middle summary and the right-hand controls fade out under the
                 drag readout that overlays this row, and fade back on drop. The
@@ -1902,30 +1922,56 @@ export function GraphBoard({
               surface below is the thing that matters. It is a plain opacity
               wrapper keyed on `isDragging`, so it carries no positioning of
               its own and works as well here as in the header. */}
+          {/* ONE PANEL: the qualifying row and the surface it qualifies.
+              They were two boxes eight pixels apart — the row in a rounded,
+              ringed box of its own, the surface with no edge at all — so the
+              controls read as a floating strip and the board as loose cards
+              behind it, when the row describes exactly the thing below it.
+
+              The row keeps its padding but loses its own ring and fill; the
+              hairline under it is FULL-BLEED to the panel's edges, which is
+              what makes it read as a division WITHIN one surface rather than
+              as the top of a second one. Nothing here is sticky: the row is
+              part of the panel and scrolls with it (it was already not sticky
+              — the sticky budget belongs to the breadcrumb header above, which
+              the preview pane measures itself against).
+
+              HUGS ITS CONTENT rather than filling the viewport, so the bottom
+              edge closes under the last row of cards.
+
+              Child timeline rows stay OUTSIDE it. They are other timelines,
+              each already framed as its own section; pulling them in would
+              make one panel that claims to be the focused board and is not. */}
+          {/* LIGHTER than the page, not darker. `bg-black/20` was the first
+              try and it went the wrong way: the page is already zinc-950
+              (rgb 9,9,11), so darkening it further reads as a hole rather than
+              as a surface, and the ring ends up doing all the work. A raised
+              panel is how every other grouped surface in this app is drawn —
+              the rail, the menus — and it is what the mockup shows. */}
+          <div
+            data-board-panel
+            className="overflow-hidden rounded-xl bg-zinc-900/60 ring-1 ring-white/10"
+          >
           <DragChromeFade>
             {/* The marker sits here rather than on DragChromeFade, which takes
                 only `className` and `children` — it is a behaviour wrapper, not
                 a div with extra steps, and widening it to pass arbitrary props
                 through would invite exactly that. */}
-            {/* ITS OWN ROW, visually. Untreated it was transparent on the
-                board panel — the same zinc-950 as everything behind it — so
-                the totals and the controls read as loose objects floating
-                over the board rather than as a strip belonging to it.
+            {/* THE PANEL'S HEADER, not a box of its own.
+                It used to carry `rounded-md bg-black/40 ring-1 ring-white/5`
+                — a rounded, filled, ringed band, inset by its own padding,
+                sitting eight pixels above a surface with no edge. That treated
+                it as an object, which is precisely why it read as detached
+                from the thing it describes.
 
-                Darker, as asked, but the fill can only do part of the job:
-                the panel is already rgb(9,9,11), so even `black/40` moves it
-                about four values. The HAIRLINE is what actually draws the
-                edge. `white/5` rather than a zinc border because a solid
-                border at this contrast reads as a box around the controls;
-                a 5% wash reads as the lip of a recess, which is the shape
-                wanted — the row sitting slightly BELOW the board, not on it.
-
-                Rounded and inset by its own padding rather than full-bleed:
-                the surfaces below are edge-to-edge, so a band that ran to the
-                same edges would read as one of them. */}
+                Inside the panel it needs none of that: the panel supplies the
+                edge and the fill, so all this row owns is a FULL-BLEED
+                hairline beneath it. Full-bleed matters — a rule inset from the
+                panel's sides would draw a smaller box inside a bigger one and
+                put the seam back. */}
             <div
               data-board-controls-row
-              className="flex min-h-7 items-center gap-3 rounded-md bg-black/40 px-2.5 py-1 ring-1 ring-white/5"
+              className="flex min-h-7 items-center gap-3 border-b border-white/10 px-3 py-2"
             >
               <FocusedAggregate
                 focusedId={focusedId}
@@ -1990,7 +2036,11 @@ export function GraphBoard({
                     outlive the session, after the controls you actually ride
                     while working. Back from the icon rail (PL14-005); see the
                     note where BoardMenuSlot used to be. */}
-                <BoardMenu itemSize={itemSize} onItemSizeChange={onItemSizeChange} />
+                <BoardMenu
+                  itemSize={itemSize}
+                  onItemSizeChange={onItemSizeChange}
+                  projectId={projectId}
+                />
               </div>
             </div>
           </DragChromeFade>
@@ -2014,6 +2064,13 @@ export function GraphBoard({
               Only ever true for a beat. `skeletonCount` returns 0 the moment
               the children land, or immediately if the collection is stored as
               empty (whose own empty state is the correct thing to show). */}
+          {/* INSET, now that there is a panel to be inset from.
+              The surface used to run edge-to-edge so its sides lined up with
+              the full-bleed breadcrumb bar above it — correct while the board
+              had no frame of its own. The panel is that frame now, and cards
+              flush against its ring read as overflowing it, so the content
+              takes the same gutter the header row has. */}
+          <div data-board-panel-content className="p-3">
           {skeletonCount > 0 ? (
             <div data-focused-surface-shell={surface}>
               <SurfaceSkeleton
@@ -2174,6 +2231,9 @@ export function GraphBoard({
               )}
             </div>
           )}
+
+          </div>
+          </div>
 
           {/* Children render one size step below the focused timeline (flat —
               every descendant is this one size, see stepDownItemSize). The
