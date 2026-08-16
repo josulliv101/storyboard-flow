@@ -174,7 +174,14 @@ export const SameNameStaysTwoTargets: Story = {
           ]}
           onOpen={(nodeId) => setOpened((current) => [...current, nodeId])}
         />
-        <span data-opened>{opened.join(",")}</span>
+        {/* The story's own readout. Styled, because an unstyled span inherits
+            near-black on this dark ground and is invisible — the play function
+            could still read it, but a person opening the story to see WHICH
+            card they just clicked could not. A contrast sweep across these
+            stories flagged it at 1.1:1. */}
+        <span data-opened className="mt-3 block font-mono text-xs text-zinc-300">
+          opened: {opened.join(", ") || "nothing yet"}
+        </span>
       </Rail>
     );
   },
@@ -184,7 +191,11 @@ export const SameNameStaysTwoTargets: Story = {
     const buttons = within(canvasElement).getAllByRole("button");
     await user.click(buttons[1]!);
     await user.click(buttons[0]!);
-    expect(canvasElement.querySelector("[data-opened]")).toHaveTextContent("second,first");
+    // Order matters: the SECOND card was clicked first. Two collections may
+    // share a name, so this is what proves they do not share a target.
+    expect(canvasElement.querySelector("[data-opened]")).toHaveTextContent(
+      "opened: second, first",
+    );
   },
 };
 
