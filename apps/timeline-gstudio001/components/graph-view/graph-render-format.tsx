@@ -10,10 +10,10 @@ import {
 } from "@storyboard/timeline-model/render-format";
 
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioBadge,
+  DropdownMenuRadioGroup,
 } from "@/components/core/dropdown-menu";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { cn } from "@/lib/utils";
@@ -22,18 +22,28 @@ import { cn } from "@/lib/utils";
 //
 // The first render SETTING in the app, and the first render UI of any kind —
 // renders are still started from the MCP tools, and this board only reports
-// on them. It is here rather than in a dialog for that reason: there is no
-// render dialog to put it in, and the shape of the deliverable is a standing
-// fact about the project rather than a per-render choice.
+// on them.
 //
 // Stored on the DOCUMENT (`TimelineDocument.renderFormat`), so a render an
 // agent starts produces the same file as one started here, and the choice
 // survives a reload.
 //
-// Literal zinc/sky rather than token classes, matching its neighbours in this
-// header — and see the note in graph-layer-frame-picker.tsx for the way tokens
-// fail silently in a portaled surface. This one is not portaled, but the menu
-// CONTENT is.
+// IT LIVES IN THE BOARD'S SETTINGS MENU, and it is NOT a menu itself.
+//
+// It used to be a dropdown of its own, sitting in the header beside the
+// breadcrumbs and reading "16:9 · 720p" — a standing fact about the project,
+// permanently on screen, competing with the controls you actually use while
+// working. Inside the settings menu it is a setting among settings.
+//
+// A menu inside a menu is what it must not become: the presets are four short
+// tokens, so they show as BADGES in one wrapping row, exactly like the
+// thumbnail-size group above them. Every option is visible the moment the
+// menu opens, and choosing one is a single click rather than a hover, a
+// submenu, and a second aim.
+//
+// Literal zinc/blue rather than token classes, matching its neighbours in this
+// menu — see the note in graph-layer-frame-picker.tsx for the way tokens fail
+// silently in a portaled surface, which this one is.
 
 const RATIO_TOLERANCE = 0.01;
 
@@ -52,13 +62,16 @@ function describe(format: RenderFormat): string {
 }
 
 /**
- * The menu itself, with no idea where the format is stored.
+ * The option group, with no idea where the format is stored.
  *
  * Split from the connected wrapper below so it can be driven by a story: the
  * gateway is a module singleton, and a component that reached for it directly
  * could only be exercised by seeding global state.
+ *
+ * Returns a menu GROUP, not a menu. It is rendered inside the board's settings
+ * menu and owns no popover of its own.
  */
-export function RenderFormatMenu({
+export function RenderFormatOptions({
   format,
   onChange,
 }: Readonly<{
@@ -73,44 +86,53 @@ export function RenderFormatMenu({
   const current = renderFormatPresetOf(shown);
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        data-render-format={`${shown.width}x${shown.height}`}
-        title={`Renders at ${shown.width}×${shown.height} at ${shown.fps}fps. Click to change.`}
-        className={cn(
-          "rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums transition-colors",
-          "text-zinc-500 hover:bg-white/5 hover:text-zinc-300",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/70",
-        )}
+    <DropdownMenuGroup data-render-format={`${shown.width}x${shown.height}`}>
+      <DropdownMenuLabel className="px-0.5 pb-2 pt-0.5">
+        Render format
+        {/* THE PIXELS, always — a badge row can only say which PRESET is on,
+            and a project may hold a size no preset matches (the render tool
+            takes any width/height). Without this, a custom format showed as
+            no badge selected and no number anywhere, which reads as the
+            setting being broken rather than as "none of these four". */}
+        {/* `normal-case` because the label above is uppercased and a readout is
+            not a label: inherited, "720p" rendered as "720P", which is not a
+            resolution anyone writes. The margin is a real gap rather than a
+            space character — an uppercased heading butted against mono digits
+            reads as one word. */}
+        <span className="ml-2 font-mono text-[10px] font-normal normal-case tabular-nums text-zinc-500">
+          {describe(shown)}
+        </span>
+      </DropdownMenuLabel>
+      <DropdownMenuRadioGroup
+        className="flex flex-wrap gap-1 pt-0.5"
+        value={current?.id ?? ""}
+        onValueChange={(value) => {
+          const preset = RENDER_FORMAT_PRESETS.find((candidate) => candidate.id === value);
+          if (preset) onChange(preset.format);
+        }}
       >
-        {describe(shown)}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-44">
-        {RENDER_FORMAT_PRESETS.map((preset) => {
-          const active = current?.id === preset.id;
-          return (
-            <DropdownMenuItem
-              key={preset.id}
-              data-render-format-option={preset.id}
-              onSelect={() => onChange(preset.format)}
-              className={cn("gap-3 font-mono text-[11px]", active && "text-sky-300")}
-            >
-              <span className="w-10 shrink-0">{preset.ratio}</span>
-              <span className="flex-1">{preset.label}</span>
-              <span className="text-zinc-500">
-                {preset.format.width}×{preset.format.height}
-              </span>
-            </DropdownMenuItem>
-          );
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        {RENDER_FORMAT_PRESETS.map((preset) => (
+          <DropdownMenuRadioBadge
+            key={preset.id}
+            value={preset.id}
+            data-render-format-option={preset.id}
+            // The RATIO is the thing being chosen; the label ("720p") only
+            // distinguishes the two 16:9 sizes. Both fit a badge, so neither
+            // has to hide in a tooltip.
+            title={`${preset.ratio} — ${preset.format.width}×${preset.format.height} at ${preset.format.fps}fps`}
+            className={cn("min-w-[3.5rem] flex-none")}
+          >
+            {preset.label}
+          </DropdownMenuRadioBadge>
+        ))}
+      </DropdownMenuRadioGroup>
+    </DropdownMenuGroup>
   );
 }
 
-/** Reads and writes the project's own format, so the board only has to place
- *  this — the same shape as `GraphSaveStatus` and `GraphRenderStatus` beside
- *  it, both of which own their own source. */
+/** Reads and writes the project's own format, so the settings menu only has to
+ *  place this — the same shape as `GraphSaveStatus` and `GraphRenderStatus`,
+ *  both of which own their own source. */
 export function GraphRenderFormat({ timelineId }: Readonly<{ timelineId: string }>) {
   const documents = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
@@ -118,7 +140,7 @@ export function GraphRenderFormat({ timelineId }: Readonly<{ timelineId: string 
     graphDocumentsGateway.read,
   );
   return (
-    <RenderFormatMenu
+    <RenderFormatOptions
       format={documents[timelineId]?.renderFormat}
       onChange={(next) => void graphDocumentsGateway.setRenderFormat(timelineId, next)}
     />
