@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   getChildren,
+  hasSourceWindow,
   isVideoMedia,
   parseNodeId,
   type CollectionsStore,
@@ -250,10 +251,14 @@ function trimClipTool(ctx: GraphToolContext): ToolDef {
       const trimOut = readNumber(args, "trimOutSeconds");
       const duration = readNumber(args, "durationSeconds");
 
-      if (isVideoMedia(node)) {
+      // ANYTHING WINDOWED — video and audio both window into a longer source.
+      // This asked `isVideoMedia` while audio's trim was unshipped, which left
+      // a voiceover with no way to be topped and tailed at all.
+      if (hasSourceWindow(node)) {
+        const kindName = node.mediaKind === "audio" ? "Audio" : "Video";
         if (duration !== undefined) {
           return toolError(
-            "Video clips are trimmed with trimInSeconds / trimOutSeconds, not durationSeconds.",
+            `${kindName} clips are trimmed with trimInSeconds / trimOutSeconds, not durationSeconds.`,
           );
         }
         const nextIn = trimIn ?? node.trimInSeconds;
@@ -266,13 +271,13 @@ function trimClipTool(ctx: GraphToolContext): ToolDef {
         const result = ctx.store.dispatch({
           type: "update-media",
           nodeId,
-          update: { mediaKind: "video", trimInSeconds: nextIn, trimOutSeconds: nextOut },
+          update: { mediaKind: node.mediaKind, trimInSeconds: nextIn, trimOutSeconds: nextOut },
         });
         if (!result.ok) return toolError(describeDispatchRejection(result.error));
         const effective = Math.max(0, node.fullDurationSeconds - nextIn - nextOut);
         return toolOk(`Trimmed "${node.name}" to ${effective.toFixed(2)}s (in ${nextIn}s, out ${nextOut}s).`, {
           nodeId: nodeIdStr,
-          mediaKind: "video",
+          mediaKind: node.mediaKind,
           trimInSeconds: nextIn,
           trimOutSeconds: nextOut,
           effectiveDurationSeconds: effective,

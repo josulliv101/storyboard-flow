@@ -7,12 +7,14 @@ import { Redo2, Undo2, X } from "lucide-react";
 
 import {
   TrimOverviewStrip,
+  hasSourceWindow,
   isEditableKeyboardTarget,
   mediaDurationSeconds,
   parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
+  type AudioMediaNode,
   type CollectionItemNode,
   type MediaNode,
   type VideoMediaNode,
@@ -180,7 +182,15 @@ function TrimNumbers({
   trimIn,
   trimOut,
   disabled,
-}: Readonly<{ node: VideoMediaNode; trimIn: number; trimOut: number; disabled: boolean }>) {
+}: Readonly<{
+  /** Any WINDOWED node. The overview strip above this is video-only because it
+   *  paints frames; these are numbers, and a source window is a source window
+   *  whether or not it has a picture. */
+  node: VideoMediaNode | AudioMediaNode;
+  trimIn: number;
+  trimOut: number;
+  disabled: boolean;
+}>) {
   const store = useCollectionsStore();
   const full = node.fullDurationSeconds;
   const inPoint = trimIn;
@@ -206,7 +216,7 @@ function TrimNumbers({
     store.dispatch({
       type: "update-media",
       nodeId: node.id,
-      update: { mediaKind: "video", ...next },
+      update: { mediaKind: node.mediaKind, ...next },
     });
   };
 
@@ -291,13 +301,15 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
   const detail = useClipDetail(node.id as string);
   const history = useScopedHistory(node.id);
   const rename = useInlineRename(node.id, node.name, "item-details");
-  // A still has no source window to map, so the trim half of this view is
-  // video-only; everything else (name, duration, history, and whatever else
-  // an item grows later) applies to both.
+  // A still has no source window to map, so the trim half of this view belongs
+  // to WINDOWED media — video and audio both. `video` stays a separate,
+  // narrower question because the filmstrip and the frame readout need actual
+  // frames; the numbers do not.
+  const windowed = hasSourceWindow(node) ? node : null;
   const video = node.mediaKind === "video" ? node : null;
-  const trimIn = live ? live.trimInSeconds : (video?.trimInSeconds ?? 0);
-  const trimOut = live ? live.trimOutSeconds : (video?.trimOutSeconds ?? 0);
-  const fullDuration = video ? video.fullDurationSeconds : mediaDurationSeconds(node);
+  const trimIn = live ? live.trimInSeconds : (windowed?.trimInSeconds ?? 0);
+  const trimOut = live ? live.trimOutSeconds : (windowed?.trimOutSeconds ?? 0);
+  const fullDuration = windowed ? windowed.fullDurationSeconds : mediaDurationSeconds(node);
   const showing = Math.max(0, fullDuration - trimIn - trimOut);
   const rawTime = video ? previewTime(video, trimIn, trimOut, live?.side ?? null) : 0;
   // Gated on `video`: an image has no source window and no element to seek, so
@@ -490,18 +502,22 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
 
         {/* The whole source, with the showing window and its grips — the trim
             handles, at a width the board could never give them. */}
-        {video ? (
+        {windowed ? (
           <>
-            <div ref={stripSlot} className="w-full">
-              {stripWidth > 0 ? (
-                <TrimOverviewStrip
-                  node={video}
-                  width={stripWidth}
-                  trimInSeconds={trimIn}
-                  trimOutSeconds={trimOut}
-                />
-              ) : null}
-            </div>
+            {/* FRAMES, so video only — an audio clip has a source window but
+                nothing to paint in it. Its numbers below are the same. */}
+            {video && (
+              <div ref={stripSlot} className="w-full">
+                {stripWidth > 0 ? (
+                  <TrimOverviewStrip
+                    node={video}
+                    width={stripWidth}
+                    trimInSeconds={trimIn}
+                    trimOutSeconds={trimOut}
+                  />
+                ) : null}
+              </div>
+            )}
 
             {/* TYPED in/out (PL11-006). Dragging resolves to whatever a pixel
                 is worth — ~0.11s here, and coarser on the board — so an exact
@@ -509,13 +525,25 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
                 `update-media` command the grips dispatch, so undo, the live
                 channel and the write path all behave identically. */}
             <TrimNumbers
-              node={video}
+              node={windowed}
               trimIn={trimIn}
               trimOut={trimOut}
               disabled={live !== null}
             />
-            <div className="text-right font-mono text-[11px] text-zinc-500">
-              drag the amber edges to trim, the film to move the window
+            {/* Audio moved into this WINDOWED branch when its trim shipped,
+                which took away the "sound · …" line the still branch gave it —
+                so a voiceover stopped saying it was one. It says so here, and
+                still leads with its length, because "what is this and how long
+                is it" is the question this row answers. */}
+            <div className="flex items-center justify-between font-mono text-[11px] text-zinc-500">
+              <span className="text-blue-300/90">
+                {video ? "" : `sound · ${formatSeconds(showing)} long`}
+              </span>
+              <span>
+                {video
+                  ? "drag the amber edges to trim, the film to move the window"
+                  : "drag the card's edges on the strip, or type an exact in and out"}
+              </span>
             </div>
           </>
         ) : (

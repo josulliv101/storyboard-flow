@@ -2,7 +2,8 @@
 
 import { memo, useCallback, type PointerEvent as ReactPointerEvent } from "react";
 
-import { type MediaNode } from "../core/graph";
+import {
+  hasSourceWindow, type MediaNode } from "../core/graph";
 import {
   useCollectionsComponents,
   type CollectionTrimHandleContentProps,
@@ -64,7 +65,13 @@ export function TrimHandles({
     [beginDrag, node, pixelsPerSecond]
   );
 
-  const showLeft = node.mediaKind === "video";
+  // A START EDGE EXISTS FOR ANYTHING WINDOWED — video and audio both window
+  // into a longer source. An image has no source length, so its only edge is
+  // the right one, which sets the duration directly.
+  //
+  // This asked `mediaKind === "video"` while audio's trim was unshipped, which
+  // left an audio card drawing a right handle that did nothing.
+  const showLeft = hasSourceWindow(node);
 
   return (
     <>

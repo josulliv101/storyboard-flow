@@ -7,7 +7,12 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
-import { mediaDurationSeconds, type MediaNode, type VideoMediaNode } from "../core/graph";
+import {
+  hasSourceWindow,
+  mediaDurationSeconds,
+  type MediaNode,
+  type VideoMediaNode,
+} from "../core/graph";
 import { type MediaUpdate } from "../core/commands";
 import { useCollectionsStore } from "./collections-store";
 import { useLiveTrimPublisher } from "./live-trim";
@@ -49,7 +54,14 @@ export function resolveTrim(
   side: TrimSide,
   deltaSeconds: number
 ): { update: MediaUpdate; live: LiveTrim } {
-  if (node.mediaKind === "video") {
+  // ONE WINDOWED BRANCH for video and audio. They were separate while audio's
+  // trim affordance was unshipped, and the audio one resolved to the node's
+  // current window on purpose so the gesture was inert. Now that both trim,
+  // the arithmetic is identical and the only difference is which literal the
+  // update carries — so keeping two copies would only be two places for the
+  // clamping to drift apart.
+  if (hasSourceWindow(node)) {
+    const mediaKind = node.mediaKind;
     if (side === "left") {
       // Left edge inward (right, +delta) trims MORE off the start. Snap to the
       // 0.1s grid, then clamp — effective is DERIVED from the snapped value so
@@ -60,7 +72,7 @@ export function resolveTrim(
         node.fullDurationSeconds - node.trimOutSeconds
       );
       return {
-        update: { mediaKind: "video", trimInSeconds },
+        update: { mediaKind, trimInSeconds },
         live: {
           side,
           trimInSeconds,
@@ -76,32 +88,12 @@ export function resolveTrim(
       node.fullDurationSeconds - node.trimInSeconds
     );
     return {
-      update: { mediaKind: "video", trimOutSeconds },
+      update: { mediaKind, trimOutSeconds },
       live: {
         side,
         trimInSeconds: node.trimInSeconds,
         trimOutSeconds,
         effectiveSeconds: node.fullDurationSeconds - node.trimInSeconds - trimOutSeconds,
-      },
-    };
-  }
-  if (node.mediaKind === "audio") {
-    // Audio IS windowed and the command path can trim it, but the trim
-    // affordance is deliberately unshipped (#309 v1). Resolve to the node's
-    // CURRENT window so the gesture is inert: `applyMediaUpdate` sees no change
-    // and rejects with `same-position`. Falling through to the image branch
-    // below would instead set a `durationSeconds` the node does not have.
-    return {
-      update: {
-        mediaKind: "audio",
-        trimInSeconds: node.trimInSeconds,
-        trimOutSeconds: node.trimOutSeconds,
-      },
-      live: {
-        side,
-        trimInSeconds: node.trimInSeconds,
-        trimOutSeconds: node.trimOutSeconds,
-        effectiveSeconds: mediaDurationSeconds(node),
       },
     };
   }

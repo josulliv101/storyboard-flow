@@ -1,4 +1,5 @@
 import {
+  hasSourceWindow,
   type CollectionsGraph,
   type NodeId,
   type Result,
@@ -218,33 +219,30 @@ export function resolveTrimCommand(
   if (node.kind !== "media") return { ok: false, error: { reason: "not-media-node", nodeId } };
 
   const isStart = action === "trim-start-extend" || action === "trim-start-reduce";
-  if (isStart && node.mediaKind !== "video") {
+  // Only an IMAGE lacks a start edge now — audio windows into a source just as
+  // video does, so it has both.
+  if (isStart && !hasSourceWindow(node)) {
     return { ok: false, error: { reason: "no-start-edge", nodeId } };
   }
 
   let update: MediaUpdate;
-  if (node.mediaKind === "video") {
+  if (hasSourceWindow(node)) {
+    const mediaKind = node.mediaKind;
     // extend = less trimmed off that edge (longer); reduce = more trimmed.
     switch (action) {
       case "trim-end-extend":
-        update = { mediaKind: "video", trimOutSeconds: node.trimOutSeconds - stepSeconds };
+        update = { mediaKind, trimOutSeconds: node.trimOutSeconds - stepSeconds };
         break;
       case "trim-end-reduce":
-        update = { mediaKind: "video", trimOutSeconds: node.trimOutSeconds + stepSeconds };
+        update = { mediaKind, trimOutSeconds: node.trimOutSeconds + stepSeconds };
         break;
       case "trim-start-extend":
-        update = { mediaKind: "video", trimInSeconds: node.trimInSeconds - stepSeconds };
+        update = { mediaKind, trimInSeconds: node.trimInSeconds - stepSeconds };
         break;
       case "trim-start-reduce":
-        update = { mediaKind: "video", trimInSeconds: node.trimInSeconds + stepSeconds };
+        update = { mediaKind, trimInSeconds: node.trimInSeconds + stepSeconds };
         break;
     }
-  } else if (node.mediaKind === "audio") {
-    // Audio IS windowed and the command path supports trimming it, but the
-    // trim affordance is deliberately not shipped yet (#309 v1). Reject
-    // explicitly rather than falling through to the image branch, which would
-    // set a `durationSeconds` the node does not have.
-    return { ok: false, error: { reason: "no-start-edge", nodeId } };
   } else {
     // Image: only the end edge exists — it sets the duration directly.
     const delta = action === "trim-end-extend" ? stepSeconds : -stepSeconds;

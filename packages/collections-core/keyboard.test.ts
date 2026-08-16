@@ -198,7 +198,7 @@ describe("resolveGridRowMoveCommand", () => {
 });
 
 describe("resolveTrimCommand", () => {
-  // root: [img (4s image), vid (10s source, trimmed 2s in / 1s out -> 7s)]
+  // root: [img (4s image), vid + bed (10s source, trimmed 2s in / 1s out -> 7s)]
   const trimGraph = build([
     collection("root", [
       { kind: "media", id: "img", name: "img", durationSeconds: 4 },
@@ -207,6 +207,15 @@ describe("resolveTrimCommand", () => {
         mediaKind: "video",
         id: "vid",
         name: "vid",
+        fullDurationSeconds: 10,
+        trimInSeconds: 2,
+        trimOutSeconds: 1,
+      },
+      {
+        kind: "media",
+        mediaKind: "audio",
+        id: "bed",
+        name: "bed",
         fullDurationSeconds: 10,
         trimInSeconds: 2,
         trimOutSeconds: 1,
@@ -225,7 +234,37 @@ describe("resolveTrimCommand", () => {
     });
   });
 
-  test("image has no start edge", () => {
+  // AUDIO HAS BOTH EDGES. It used to be refused here with `no-start-edge` — a
+  // borrowed reason, since audio does have a start, it just had no shipped
+  // affordance. Nothing tested that refusal, which is why it survived as a
+  // comment rather than a decision.
+  test("audio steps BOTH edges, exactly as video does", () => {
+    expect(resolveTrimCommand(trimGraph, id("bed"), "trim-start-reduce", 1)).toEqual({
+      ok: true,
+      value: {
+        type: "update-media",
+        nodeId: "bed",
+        update: { mediaKind: "audio", trimInSeconds: 3 },
+      },
+    });
+    expect(resolveTrimCommand(trimGraph, id("bed"), "trim-end-reduce", 1)).toEqual({
+      ok: true,
+      value: {
+        type: "update-media",
+        nodeId: "bed",
+        update: { mediaKind: "audio", trimOutSeconds: 2 },
+      },
+    });
+  });
+
+  test("audio carries its OWN discriminant", () => {
+    // A "video" literal here would dispatch and be rejected as
+    // invalid-media-update rather than caught by the compiler.
+    const result = resolveTrimCommand(trimGraph, id("bed"), "trim-start-extend", 1);
+    expect(result.ok && result.value.update.mediaKind).toBe("audio");
+  });
+
+  test("image has no start edge — the ONLY kind that now lacks one", () => {
     expect(resolveTrimCommand(trimGraph, id("img"), "trim-start-extend", 1)).toEqual({
       ok: false,
       error: { reason: "no-start-edge", nodeId: "img" },
