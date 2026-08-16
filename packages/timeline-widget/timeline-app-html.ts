@@ -134,7 +134,7 @@ container holding the app. Specify either width or maxWidth, and either height o
 /*$vite$:1*/</style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
   </body>
 </html>
 `;

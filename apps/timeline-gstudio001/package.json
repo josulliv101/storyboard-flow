@@ -41,6 +41,7 @@
     "@storyboard/timeline-model": "*",
     "@storyboard/timeline-widget": "*",
     "@storyboard/ui": "*",
+    "@vercel/analytics": "^2.0.1",
     "autoprefixer": "^10.4.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
