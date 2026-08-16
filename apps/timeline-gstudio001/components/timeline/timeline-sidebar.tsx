@@ -1,6 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import {
   ChevronsLeftRightEllipsis,
   Film,
@@ -8,6 +13,8 @@ import {
   Image as ImageIcon,
   Layers,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   Trash2,
   TvMinimal,
 } from "lucide-react";
@@ -27,6 +34,12 @@ import {
   type GraphViewStateDetail,
 } from "@/lib/graph-view-events";
 import {
+  RAIL_CLASS,
+  RAIL_OPEN_CLASS,
+  RAIL_OPEN_WIDTH_PX,
+  RAIL_WIDTH_CLASS,
+  RAIL_WIDTH_PX,
+  SIDEBAR_AVATAR_INSET,
   SIDEBAR_GLYPH,
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
@@ -34,14 +47,98 @@ import {
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 
-import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
+import {
+  SidebarLabelsInlineContext,
+  SidebarTooltipLabel,
+} from "./sidebar-tooltip-label";
+
+/** Survives a reload — a rail that collapsed itself on every navigation would
+ *  be a preference in name only. */
+const RAIL_EXPANDED_STORAGE_KEY = "sw:sidebar-expanded";
+
+/**
+ * Published to the document so surfaces BESIDE the rail can be offset by it.
+ *
+ * The trash drawer hardcoded `ml-[72px]`, which is correct exactly while the
+ * rail cannot change width — so opening the rail would have slid it
+ * underneath. A variable is the seam: one writer here, and any number of
+ * readers that keep working when this number moves again.
+ */
+const RAIL_WIDTH_VAR = "--sw-rail-width";
+
+/** Fires when THIS tab toggles the rail. `storage` only notifies other tabs,
+ *  so without this the toggle would not re-render the tab that pressed it. */
+const RAIL_EXPANDED_EVENT = "sw:sidebar-expanded-changed";
+
+function readRailExpanded(): boolean {
+  try {
+    return window.localStorage.getItem(RAIL_EXPANDED_STORAGE_KEY) === "true";
+  } catch {
+    // Private mode or a blocked origin: the rail still works, it just forgets.
+    return false;
+  }
+}
+
+function subscribeRailExpanded(onChange: () => void): () => void {
+  window.addEventListener("storage", onChange);
+  window.addEventListener(RAIL_EXPANDED_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(RAIL_EXPANDED_EVENT, onChange);
+  };
+}
+
+function writeRailExpanded(next: boolean): void {
+  try {
+    window.localStorage.setItem(RAIL_EXPANDED_STORAGE_KEY, String(next));
+  } catch {
+    // A quota or private-mode failure costs the preference, not the toggle —
+    // the event still fires, so the rail still moves for this session.
+  }
+  window.dispatchEvent(new Event(RAIL_EXPANDED_EVENT));
+}
+
+/**
+ * After a POINTER press on a rail tile, keep that tile's tooltip shut until
+ * the pointer leaves it.
+ *
+ * Clicking a tile leaves the pointer sitting on it, so its tooltip faded up
+ * the moment the thing you pressed finished happening — captioning a control
+ * you are still touching and have just used. Leaving and coming back shows it
+ * again, which is the case where you might actually want it.
+ *
+ * Delegated on the rail rather than added to seven call sites, and the flag is
+ * a DOM attribute rather than React state: it must not re-render the rail, and
+ * nothing else needs to know.
+ *
+ * `detail > 0` is what keeps this to real pointer presses. A keyboard Enter
+ * also fires click, with no pointer anywhere near the tile — so no
+ * `pointerleave` would ever arrive to clear the flag, and that tile's tooltip
+ * would be suppressed for good.
+ */
+function suppressTipAfterPointerPress(
+  event: React.MouseEvent<HTMLElement>,
+): void {
+  if (event.detail === 0) return;
+  const tile = (event.target as HTMLElement | null)?.closest("button, a");
+  if (!(tile instanceof HTMLElement)) return;
+  tile.dataset.tipSuppressed = "";
+  tile.addEventListener(
+    "pointerleave",
+    () => {
+      delete tile.dataset.tipSuppressed;
+    },
+    { once: true },
+  );
+}
 
 /** The avatar letter. Written once because the same nested ternary appeared in
  *  two places, and an empty name string made `name[0]` undefined in both. */
-function initialOf(user: { name?: string | null; email?: string | null } | null | undefined): string {
+function initialOf(
+  user: { name?: string | null; email?: string | null } | null | undefined,
+): string {
   return (user?.name?.[0] ?? user?.email?.[0] ?? "U").toUpperCase();
 }
-
 
 type UtilityItem = {
   id: "assets" | "trash";
@@ -59,7 +156,10 @@ function TrashAreaIcon({ className }: Readonly<{ className?: string }>) {
       // The sidebar hands its drop-hover / arrival classes to this wrapper,
       // which is also what the e2e watches.
       data-sidebar-icon="trash"
-      className={cn("relative inline-flex shrink-0 overflow-visible", className)}
+      className={cn(
+        "relative inline-flex shrink-0 overflow-visible",
+        className,
+      )}
     >
       <Folder className="h-full w-full" strokeWidth={1.5} />
       <span className="absolute -bottom-1.5 -right-1.5 flex size-6 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
@@ -75,7 +175,10 @@ function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
   return (
     <span
       aria-hidden="true"
-      className={cn("relative inline-flex shrink-0 overflow-visible", className)}
+      className={cn(
+        "relative inline-flex shrink-0 overflow-visible",
+        className,
+      )}
     >
       <Folder className="h-full w-full" strokeWidth={1.5} />
       <span className="absolute -bottom-1.5 -right-1.5 flex size-6 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
@@ -166,17 +269,23 @@ const SIDEBAR_ICON_TOGGLE_ON =
  * longer run edge to edge either, so a wider rule with matching breathing room
  * sits in the same rhythm instead of interrupting one.
  */
-const SIDEBAR_SEPARATOR_CLASS = "mx-auto my-2 h-px w-10 shrink-0";
+// Stated as an INSET, not a width, so it follows the rail.
+//
+// It was `mx-auto w-10` — 40px centred in the 72px rail, which is the same
+// thing as 16px of margin each side. Written that way it stayed 40px when the
+// rail opened to 232px, and a 40px rule adrift in the middle of a 232px column
+// reads as a mistake rather than as a divider. As an inset it is 40px closed
+// (identical to before) and 200px open, with no second value to keep in step
+// and nothing keyed to the open state — which is what stops it animating
+// separately from the width, the way the glyphs used to.
+const SIDEBAR_SEPARATOR_CLASS = "mx-4 my-2 h-px shrink-0";
 
 function SidebarSeparator() {
   return (
     <div
       aria-hidden="true"
       data-sidebar-separator="normal"
-      className={cn(
-        SIDEBAR_SEPARATOR_CLASS,
-        "bg-zinc-500",
-      )}
+      className={cn(SIDEBAR_SEPARATOR_CLASS, "bg-zinc-500")}
     />
   );
 }
@@ -261,7 +370,11 @@ function SurfaceIconControl({
   const content = (
     <>
       <Icon className={SIDEBAR_GLYPH} />
-      <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
+      <SidebarTooltipLabel
+        id={tooltipId}
+        label={label}
+        description={description}
+      />
     </>
   );
 
@@ -345,7 +458,7 @@ export function TimelineSidebar() {
     rulerOn: false,
     childrenShown: false,
     previewOn: false,
-      flatOn: false,
+    flatOn: false,
     flatLoading: false,
   });
   useEffect(() => {
@@ -365,7 +478,8 @@ export function TimelineSidebar() {
   useEffect(() => {
     const handleArrival = () => setTrashArrival((n) => n + 1);
     window.addEventListener(GRAPH_TRASH_ARRIVAL_EVENT, handleArrival);
-    return () => window.removeEventListener(GRAPH_TRASH_ARRIVAL_EVENT, handleArrival);
+    return () =>
+      window.removeEventListener(GRAPH_TRASH_ARRIVAL_EVENT, handleArrival);
   }, []);
 
   // A dragged card is (or is not) currently over the breadcrumb's trash drop
@@ -376,7 +490,8 @@ export function TimelineSidebar() {
     const handleHover = (event: Event) =>
       setTrashDropHover((event as CustomEvent<boolean>).detail === true);
     window.addEventListener(GRAPH_TRASH_HOVER_EVENT, handleHover);
-    return () => window.removeEventListener(GRAPH_TRASH_HOVER_EVENT, handleHover);
+    return () =>
+      window.removeEventListener(GRAPH_TRASH_HOVER_EVENT, handleHover);
   }, []);
 
   // The rail is a VIEW rail, and stays one. It used to swap these controls for
@@ -392,6 +507,30 @@ export function TimelineSidebar() {
   // orphaned by unmounting the control the user had just pressed.
   const onGraphRoute = isGraphViewRoute(pathname);
   const railRef = useRef<HTMLElement>(null);
+  // Read through an EXTERNAL STORE rather than an effect. The naive shape — a
+  // `useState(false)` corrected by a mount effect — is a synchronous setState
+  // inside an effect, which lints as a cascading render and is a real one: the
+  // rail paints collapsed and then jumps. `useSyncExternalStore` reads the
+  // stored value during the first client render instead, and its SERVER
+  // snapshot is the collapsed default, which is what keeps SSR and hydration
+  // agreeing about a value the server cannot see.
+  //
+  // Subscribing to `storage` is what an effect could not have done at all: two
+  // tabs open on this app now agree about the rail.
+  const railExpanded = useSyncExternalStore(
+    subscribeRailExpanded,
+    readRailExpanded,
+    () => false,
+  );
+  useEffect(() => {
+    // The offset every surface beside the rail reads. Written on the document
+    // rather than the aside because those surfaces are its SIBLINGS, not its
+    // descendants — a variable set here would not inherit to them.
+    document.documentElement.style.setProperty(
+      RAIL_WIDTH_VAR,
+      `${railExpanded ? RAIL_OPEN_WIDTH_PX : RAIL_WIDTH_PX}px`,
+    );
+  }, [railExpanded]);
 
   const handleLogout = async () => {
     try {
@@ -409,54 +548,82 @@ export function TimelineSidebar() {
   // outrank them (R7 #8). Nothing overlaps the 72px rail itself, so raising
   // it hides nothing.
   return (
-    <aside
-      ref={railRef}
-      // No horizontal padding and `items-stretch`: the tiles ARE the rail's
-      // width, which is what makes them full-width squares. Vertical padding
-      // stays — it separates the rail's contents from the screen edges, which
-      // the side padding was not doing for the tiles.
-      className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col items-stretch gap-0 overflow-visible border-r border-zinc-800 bg-zinc-900/50 pt-1.5 pb-5 backdrop-blur-md"
-    >
-      <Link
-        href="/"
-        aria-label="Storyboard Workbench home"
-        className="flex w-full aspect-square items-center justify-center text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
+    // The provider is what turns each tile's tooltip into a permanent label.
+    // Geometry is done with descendant variants off `RAIL_CLASS` so the seven
+    // tile call sites stay untouched; this carries the ONE thing CSS cannot —
+    // that an always-visible label is not a `role="tooltip"`.
+    <SidebarLabelsInlineContext.Provider value={railExpanded}>
+      <aside
+        ref={railRef}
+        data-sidebar-expanded={railExpanded}
+        onClickCapture={suppressTipAfterPointerPress}
+        // No horizontal padding and `items-stretch`: the tiles ARE the rail's
+        // width, which is what makes them full-width squares. Vertical padding
+        // stays — it separates the rail's contents from the screen edges, which
+        // the side padding was not doing for the tiles.
+        //
+        // OPEN, only the WIDTH changes. Every tile keeps its 72px height and its
+        // glyph keeps its x — see RAIL_CLASS — so this reads as labels arriving
+        // rather than as a different rail redrawing itself.
+        className={cn(
+          // Unconditional: it carries the tile geometry, which must NOT change
+          // when the width does. See the note on RAIL_CLASS.
+          RAIL_CLASS,
+          "sticky top-0 z-50 flex h-screen shrink-0 flex-col items-stretch gap-0 overflow-visible border-r border-zinc-800 bg-zinc-900/50 pt-1.5 pb-5 backdrop-blur-md",
+          // Width alone is animated. `transition-all` here would also catch the
+          // backdrop filter, which is expensive to interpolate over a sticky
+          // full-height surface.
+          "transition-[width] duration-200 motion-reduce:transition-none",
+          // From RAIL_WIDTH_CLASS, which holds the literals Tailwind's scanner
+          // needs — see the note there on why these cannot be built by template.
+          railExpanded
+            ? `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS}`
+            : RAIL_WIDTH_CLASS.collapsed,
+        )}
       >
-        SW
-      </Link>
+        <Link
+          href="/"
+          aria-label="Storyboard Workbench home"
+          // Pinned to the icon column's width. Everything else here widens
+          // because it gains a label; the mark has none, and a 232px-wide "SW"
+          // centred over the rail would read as a banner.
+          className="flex w-full aspect-square items-center justify-center text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500 [.rail_&]:w-[72px]"
+        >
+          SW
+        </Link>
 
-      {activeProjectId && (
-        <div className="flex w-full flex-col items-stretch gap-0">
-          {/* The graph's layout switch (was the breadcrumb row's strip/grid
-              toggle). Grid first: it is the initial-load default. */}
-          <SurfaceIconControl
-            surface="grid"
-            onGraphRoute={onGraphRoute}
-            href={graphHref}
-            icon={GridLayoutGlyph}
-            isActive={onGraphRoute && graphView.surface === "grid"}
-            label="Grid layout"
-            description="Graph timelines as grids"
-          />
-          <SurfaceIconControl
-            surface="strip"
-            onGraphRoute={onGraphRoute}
-            href={`${graphHref}?surface=strip`}
-            icon={FilmStripGlyph}
-            isActive={onGraphRoute && graphView.surface === "strip"}
-            label="Strip layout"
-            description="Graph timelines as strips"
-          />
-        </div>
-      )}
-
-      {activeProjectId && (
-        <>
-          {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
-          <SidebarSeparator />
-
+        {activeProjectId && (
           <div className="flex w-full flex-col items-stretch gap-0">
-            {/* PREVIEW leads this group, directly under the separator.
+            {/* The graph's layout switch (was the breadcrumb row's strip/grid
+              toggle). Grid first: it is the initial-load default. */}
+            <SurfaceIconControl
+              surface="grid"
+              onGraphRoute={onGraphRoute}
+              href={graphHref}
+              icon={GridLayoutGlyph}
+              isActive={onGraphRoute && graphView.surface === "grid"}
+              label="Grid layout"
+              description="Graph timelines as grids"
+            />
+            <SurfaceIconControl
+              surface="strip"
+              onGraphRoute={onGraphRoute}
+              href={`${graphHref}?surface=strip`}
+              icon={FilmStripGlyph}
+              isActive={onGraphRoute && graphView.surface === "strip"}
+              label="Strip layout"
+              description="Graph timelines as strips"
+            />
+          </div>
+        )}
+
+        {activeProjectId && (
+          <>
+            {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
+            <SidebarSeparator />
+
+            <div className="flex w-full flex-col items-stretch gap-0">
+              {/* PREVIEW leads this group, directly under the separator.
 
                 It is a toggle, not a destination, so it wears the tint rather
                 than the indicator bar — but it sits in the rail rather than
@@ -468,208 +635,266 @@ export function TimelineSidebar() {
                 Ungated by surface deliberately: the pane plays the focused
                 timeline in grid as well as strip, so hiding it in grid would
                 remove a working control. */}
-            {onGraphRoute && (
-              <button
-                type="button"
-                aria-pressed={graphView.previewOn}
-                aria-label={graphView.previewOn ? "Hide preview" : "Show preview"}
-                aria-describedby="sidebar-tooltip-preview"
-                onClick={requestGraphPreviewToggle}
-                className={cn(
-                  SIDEBAR_ICON_BASE,
-                  graphView.previewOn ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
-                )}
-              >
-                <TvMinimal className={SIDEBAR_GLYPH} />
-                <SidebarTooltipLabel
-                  id="sidebar-tooltip-preview"
-                  label="Preview"
-                  description="Play the focused timeline"
-                />
-              </button>
-            )}
+              {onGraphRoute && (
+                <button
+                  type="button"
+                  aria-pressed={graphView.previewOn}
+                  aria-label={
+                    graphView.previewOn ? "Hide preview" : "Show preview"
+                  }
+                  aria-describedby="sidebar-tooltip-preview"
+                  onClick={requestGraphPreviewToggle}
+                  className={cn(
+                    SIDEBAR_ICON_BASE,
+                    graphView.previewOn
+                      ? SIDEBAR_ICON_TOGGLE_ON
+                      : SIDEBAR_ICON_IDLE,
+                  )}
+                >
+                  <TvMinimal className={SIDEBAR_GLYPH} />
+                  <SidebarTooltipLabel
+                    id="sidebar-tooltip-preview"
+                    label="Preview"
+                    description="Play the focused timeline"
+                  />
+                </button>
+              )}
 
-            {/* The children-timelines toggle is in the board's breadcrumb row
+              {/* The children-timelines toggle is in the board's breadcrumb row
                 (see graph-board), alongside the ruler. */}
 
-            {/* Flat mode — strip only. Grid keeps its nesting, so there is
+              {/* Flat mode — strip only. Grid keeps its nesting, so there is
                 nothing to flatten there. */}
-            {onGraphRoute && graphView.surface === "strip" && (
-              <button
-                type="button"
-                aria-pressed={graphView.flatOn}
-                aria-label={graphView.flatOn ? "Show collections" : "Show all items in order"}
-                aria-describedby="sidebar-tooltip-flat"
-                aria-busy={graphView.flatLoading}
-                onClick={requestGraphFlatToggle}
-                className={cn(
-                  SIDEBAR_ICON_BASE,
-                  // TOGGLE, not a destination — see SIDEBAR_ICON_TOGGLE_ON.
-                  graphView.flatOn ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
-                )}
-              >
-                <ChevronsLeftRightEllipsis
-                  className={cn(
-                    SIDEBAR_GLYPH,
-                    // Loading the closure can take a moment on a deep project,
-                    // and a half-built run would otherwise look like the real
-                    // answer.
-                    graphView.flatLoading ? "motion-safe:animate-pulse" : "",
-                  )}
-                />
-                <SidebarTooltipLabel
-                  id="sidebar-tooltip-flat"
-                  label="All items in order"
-                  description={
-                    graphView.flatLoading
-                      ? "Loading every collection…"
-                      : "One flat run — no collections. Reordering is off."
+              {onGraphRoute && graphView.surface === "strip" && (
+                <button
+                  type="button"
+                  aria-pressed={graphView.flatOn}
+                  aria-label={
+                    graphView.flatOn
+                      ? "Show collections"
+                      : "Show all items in order"
                   }
-                />
-              </button>
-            )}
+                  aria-describedby="sidebar-tooltip-flat"
+                  aria-busy={graphView.flatLoading}
+                  onClick={requestGraphFlatToggle}
+                  className={cn(
+                    SIDEBAR_ICON_BASE,
+                    // TOGGLE, not a destination — see SIDEBAR_ICON_TOGGLE_ON.
+                    graphView.flatOn
+                      ? SIDEBAR_ICON_TOGGLE_ON
+                      : SIDEBAR_ICON_IDLE,
+                  )}
+                >
+                  <ChevronsLeftRightEllipsis
+                    className={cn(
+                      SIDEBAR_GLYPH,
+                      // Loading the closure can take a moment on a deep project,
+                      // and a half-built run would otherwise look like the real
+                      // answer.
+                      graphView.flatLoading ? "motion-safe:animate-pulse" : "",
+                    )}
+                  />
+                  <SidebarTooltipLabel
+                    id="sidebar-tooltip-flat"
+                    label="All items in order"
+                    description={
+                      graphView.flatLoading
+                        ? "Loading every collection…"
+                        : "One flat run — no collections. Reordering is off."
+                    }
+                  />
+                </button>
+              )}
 
-            {/* The time-ruler toggle moved to the board's breadcrumb row,
+              {/* The time-ruler toggle moved to the board's breadcrumb row,
                 sitting left of the children toggle. It is still scoped to flat
                 mode and still appears and disappears with it — only its home
                 changed, joining the view controls it belongs with. */}
-          </div>
-        </>
-      )}
+            </div>
+          </>
+        )}
 
-      <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
-        {UTILITY_ITEMS.map((item) => {
-          if (item.id === "trash" && pathname === "/") return null;
+        <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
+          {UTILITY_ITEMS.map((item) => {
+            if (item.id === "trash" && pathname === "/") return null;
 
-          const Icon = item.icon;
-          const tooltipId = `sidebar-tooltip-utility-${item.id}`;
-          const isPressed = isTrashOpen;
-          const handleClick = () => setIsTrashOpen(!isTrashOpen);
+            const Icon = item.icon;
+            const tooltipId = `sidebar-tooltip-utility-${item.id}`;
+            const isPressed = isTrashOpen;
+            const handleClick = () => setIsTrashOpen(!isTrashOpen);
 
-          return (
-            <button
-              key={item.id}
-              type="button"
-              aria-label={item.label}
-              aria-describedby={tooltipId}
-              aria-pressed={isPressed}
-              onClick={handleClick}
-              className={cn(
-                SIDEBAR_ICON_BASE,
-                // Trash opens a DRAWER over the board; it does not take you
-                // anywhere, and the board behind it is still the page you are
-                // on. That makes it state, not location — the tint, like flat
-                // mode above (see SIDEBAR_ICON_TOGGLE_ON).
-                isPressed ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
-              )}
-            >
-              <Icon
-                // Remount per arrival so the one-shot pop animation replays
-                // even when drops land back-to-back.
-                key={item.id === "trash" ? trashArrival : undefined}
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-label={item.label}
+                aria-describedby={tooltipId}
+                aria-pressed={isPressed}
+                onClick={handleClick}
                 className={cn(
-                  SIDEBAR_GLYPH,
-                  // Continuous wiggle while a card hovers the trash drop zone;
-                  // the one-shot arrival pop takes over on the actual drop.
-                  item.id === "trash" && trashDropHover && "animate-trash-hover-attention",
-                  item.id === "trash" && trashArrival > 0 && "animate-trash-arrival",
+                  SIDEBAR_ICON_BASE,
+                  // Trash opens a DRAWER over the board; it does not take you
+                  // anywhere, and the board behind it is still the page you are
+                  // on. That makes it state, not location — the tint, like flat
+                  // mode above (see SIDEBAR_ICON_TOGGLE_ON).
+                  isPressed ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
                 )}
-              />
-              <SidebarTooltipLabel
-                id={tooltipId}
-                label={item.label}
-                description={item.description}
-              />
-            </button>
-          );
-        })}
+              >
+                <Icon
+                  // Remount per arrival so the one-shot pop animation replays
+                  // even when drops land back-to-back.
+                  key={item.id === "trash" ? trashArrival : undefined}
+                  className={cn(
+                    SIDEBAR_GLYPH,
+                    // Continuous wiggle while a card hovers the trash drop zone;
+                    // the one-shot arrival pop takes over on the actual drop.
+                    item.id === "trash" &&
+                      trashDropHover &&
+                      "animate-trash-hover-attention",
+                    item.id === "trash" &&
+                      trashArrival > 0 &&
+                      "animate-trash-arrival",
+                  )}
+                />
+                <SidebarTooltipLabel
+                  id={tooltipId}
+                  label={item.label}
+                  description={item.description}
+                />
+              </button>
+            );
+          })}
 
-        {/* The board-options slot used to sit here, below the trash
+          {/* THE RAIL'S OWN WIDTH CONTROL.
+
+            Under the trash and above the account tile. Bottom of the rail
+            because it is the one control here about the RAIL rather than about
+            the work — the same place an IDE puts it — and above the account,
+            which stays pinned last.
+
+            It wears the plain idle treatment in BOTH states, alone among the
+            toggles. `SIDEBAR_ICON_TOGGLE_ON` means "this changes what the
+            board shows"; the rail's own width changes nothing about the work,
+            and lighting it up would leave a permanent accent in the rail for a
+            preference you can already see in the rail's width. The glyph
+            flipping direction is the state readout. */}
+          <button
+            type="button"
+            aria-expanded={railExpanded}
+            aria-label={railExpanded ? "Collapse sidebar" : "Expand sidebar"}
+            aria-describedby="sidebar-tooltip-rail-width"
+            data-sidebar-rail-toggle={railExpanded ? "expanded" : "collapsed"}
+            onClick={() => writeRailExpanded(!railExpanded)}
+            className={cn(SIDEBAR_ICON_BASE, SIDEBAR_ICON_IDLE)}
+          >
+            {railExpanded ? (
+              <PanelLeftClose className={SIDEBAR_GLYPH} />
+            ) : (
+              <PanelLeftOpen className={SIDEBAR_GLYPH} />
+            )}
+            <SidebarTooltipLabel
+              id="sidebar-tooltip-rail-width"
+              label={railExpanded ? "Collapse" : "Expand"}
+              description="Show the name beside each icon"
+            />
+          </button>
+
+          {/* The board-options slot used to sit here, below the trash
             (PL14-005): an address the rail published for the graph to portal
             its settings menu into. That menu is back in the board's own
             controls row, under the divider, so the slot had nothing left to
             receive — an empty publishing div is worse than no seam at all,
             because the next reader has to prove nothing fills it. */}
 
-        <button
-          ref={buttonRef}
-          type="button"
-          aria-label="Account"
-          aria-describedby="sidebar-tooltip-utility-account"
-          aria-pressed={isProfileOpen}
-          onClick={() => setIsProfileOpen((open) => !open)}
-          className={cn(
-            SIDEBAR_ICON_BASE,
-            isProfileOpen ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE
-          )}
-        >
-          {user?.picture ? (
-            <img
-              src={user.picture}
-              alt={user.name || user.email || "Profile"}
-              className="h-8 w-8 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors"
-            />
-          ) : (
-            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100">
-              {initialOf(user)}
-            </div>
-          )}
-          <SidebarTooltipLabel
-            id="sidebar-tooltip-utility-account"
-            label="Account"
-            description={user?.email ? `Signed in as ${user.email}` : "Signed in"}
-          />
-        </button>
-
-        {isProfileOpen && (
-          <div
-            ref={profileMenuRef}
-            className="absolute bottom-0 left-full z-50 ml-2 w-64 rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] backdrop-blur-md profile-popover-animate"
+          <button
+            ref={buttonRef}
+            type="button"
+            aria-label="Account"
+            aria-describedby="sidebar-tooltip-utility-account"
+            aria-pressed={isProfileOpen}
+            onClick={() => setIsProfileOpen((open) => !open)}
+            className={cn(
+              SIDEBAR_ICON_BASE,
+              isProfileOpen ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+            )}
           >
-            <div className="flex items-center gap-3 border-b border-zinc-800/60 pb-3">
-              {user?.picture ? (
-                <img
-                  src={user.picture}
-                  alt={user.name || user.email || "Profile"}
-                  className="h-10 w-10 rounded-full object-cover border border-zinc-800"
-                />
-              ) : (
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-sm font-bold text-zinc-300">
-                  {initialOf(user)}
+            {user?.picture ? (
+              <img
+                src={user.picture}
+                alt={user.name || user.email || "Profile"}
+                className={cn(
+                  "h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
+                  SIDEBAR_AVATAR_INSET,
+                )}
+              />
+            ) : (
+              <div
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100",
+                  SIDEBAR_AVATAR_INSET,
+                )}
+              >
+                {initialOf(user)}
+              </div>
+            )}
+            <SidebarTooltipLabel
+              id="sidebar-tooltip-utility-account"
+              label="Account"
+              description={
+                user?.email ? `Signed in as ${user.email}` : "Signed in"
+              }
+            />
+          </button>
+
+          {isProfileOpen && (
+            <div
+              ref={profileMenuRef}
+              className="absolute bottom-0 left-full z-50 ml-2 w-64 rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] backdrop-blur-md profile-popover-animate"
+            >
+              <div className="flex items-center gap-3 border-b border-zinc-800/60 pb-3">
+                {user?.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={user.name || user.email || "Profile"}
+                    className="h-10 w-10 rounded-full object-cover border border-zinc-800"
+                  />
+                ) : (
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-sm font-bold text-zinc-300">
+                    {initialOf(user)}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-zinc-100">
+                    {user?.name || "User"}
+                  </p>
+                  <p className="truncate text-[10px] font-medium text-zinc-500">
+                    {user?.email}
+                  </p>
                 </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold text-zinc-100">
-                  {user?.name || "User"}
-                </p>
-                <p className="truncate text-[10px] font-medium text-zinc-500">
-                  {user?.email}
-                </p>
+              </div>
+              <div className="mt-3 flex flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    void handleLogout();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-zinc-400 hover:bg-red-500/10 hover:text-red-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500/30 cursor-pointer"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  Sign Out
+                </button>
               </div>
             </div>
-            <div className="mt-3 flex flex-col gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsProfileOpen(false);
-                  void handleLogout();
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-zinc-400 hover:bg-red-500/10 hover:text-red-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500/30 cursor-pointer"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                Sign Out
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      <TrashDrawer
-        isOpen={isTrashOpen}
-        onClose={() => setIsTrashOpen(false)}
-      />
+        <TrashDrawer
+          isOpen={isTrashOpen}
+          onClose={() => setIsTrashOpen(false)}
+        />
 
-      <style>{`
+        <style>{`
         @keyframes slideInLeft {
           from {
             transform: translateX(-8px);
@@ -684,7 +909,7 @@ export function TimelineSidebar() {
           animation: slideInLeft 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
       `}</style>
-
-    </aside>
+      </aside>
+    </SidebarLabelsInlineContext.Provider>
   );
 }

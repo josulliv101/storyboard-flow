@@ -327,7 +327,18 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
           therefore covered the panel's own controls — every click inside the
           drawer hit the backdrop and closed it, which is why Empty Trash
           "did nothing". Positioning the panel puts it back on top. */}
-      <div className="asset-library-panel pointer-events-auto relative ml-[72px] flex max-h-[48vh] flex-col border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl shadow-black/50">
+      {/* CLEARS THE RAIL, whatever width it currently is.
+          This was a hardcoded `ml-[72px]`, correct exactly while the rail
+          could not change size — so opening the rail slid the drawer under
+          it. The sidebar publishes its width on the document root; the
+          fallback is the collapsed width, which is what any surface rendering
+          before the sidebar's effect runs should assume.
+          A style rather than an arbitrary Tailwind value because it is a live
+          value that transitions, not a class the scanner could emit. */}
+      <div
+        style={{ marginLeft: "var(--sw-rail-width, 72px)" }}
+        className="asset-library-panel pointer-events-auto relative flex max-h-[48vh] flex-col border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl shadow-black/50 transition-[margin-left] duration-200 motion-reduce:transition-none"
+      >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-zinc-50 flex items-center gap-2">
