@@ -336,7 +336,18 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
           A style rather than an arbitrary Tailwind value because it is a live
           value that transitions, not a class the scanner could emit. */}
       <div
-        style={{ marginLeft: "var(--sw-rail-width, 72px)" }}
+        style={{
+          marginLeft: "var(--sw-rail-width, 72px)",
+          // NAMED, so the panel gets its own animation instead of riding the
+          // page's cross-fade. A bottom sheet that fades in reads as a dialog
+          // appearing; one that rises from the edge it is anchored to reads as
+          // a drawer being pulled out, which is what it is.
+          //
+          // The SCRIM deliberately has no name: cross-fading is exactly right
+          // for it, and that is what the root transition already does (the
+          // trim modal relies on the same thing).
+          viewTransitionName: "trash-drawer",
+        }}
         className="asset-library-panel pointer-events-auto relative flex max-h-[48vh] flex-col border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl shadow-black/50 transition-[margin-left] duration-200 motion-reduce:transition-none"
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3">

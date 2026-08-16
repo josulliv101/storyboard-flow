@@ -271,3 +271,51 @@ body {
 html {
   overflow-anchor: none;
 }
+
+/* The trash drawer RISES from the bottom edge, and sinks back.
+
+   Named animations rather than the default cross-fade: a bottom sheet that
+   fades in reads as a dialog appearing about the trash, where one that comes
+   up from the edge it is anchored to reads as a drawer being pulled out. The
+   scrim behind it is deliberately unnamed and still cross-fades on the root
+   transition — for a full-bleed wash that is exactly right, and it is what the
+   trim modal already leans on.
+
+   Only ONE side exists at a time: the drawer unmounts when closed, so opening
+   has just a `new` and closing just an `old`. That is why these are written as
+   two separate one-way animations instead of a group tween.
+
+   Out is quicker than in. Arriving wants to be watched; leaving wants to be
+   out of the way, and an exit that takes as long as its entrance feels like
+   the app is holding on to something you have dismissed. */
+@keyframes trash-drawer-rise {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes trash-drawer-sink {
+  to {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+::view-transition-new(trash-drawer) {
+  animation: trash-drawer-rise 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+::view-transition-old(trash-drawer) {
+  animation: trash-drawer-sink 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `withViewTransition` already skips the transition entirely here, so these
+     never run. Declared anyway: a future caller that reaches the drawer by
+     another path should not be able to reintroduce the motion by accident. */
+  ::view-transition-new(trash-drawer),
+  ::view-transition-old(trash-drawer) {
+    animation: none;
+  }
+}

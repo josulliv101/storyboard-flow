@@ -42,6 +42,7 @@ import {
 } from "./sidebar-icon-styles";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
+import { withViewTransition } from "@/lib/view-transition";
 
 import { SidebarCollectionShortcuts } from "./sidebar-collection-shortcuts";
 import {
@@ -678,7 +679,11 @@ export function TimelineSidebar() {
             const Icon = item.icon;
             const tooltipId = `sidebar-tooltip-utility-${item.id}`;
             const isPressed = isTrashOpen;
-            const handleClick = () => setIsTrashOpen(!isTrashOpen);
+            // Through a view transition, so the drawer RISES instead of
+          // appearing. Same helper the trim modal uses — including the root
+          // flag the e2e waits on.
+          const handleClick = () =>
+            void withViewTransition(() => setIsTrashOpen(!isTrashOpen));
 
             return (
               <button
@@ -851,7 +856,9 @@ export function TimelineSidebar() {
 
         <TrashDrawer
           isOpen={isTrashOpen}
-          onClose={() => setIsTrashOpen(false)}
+          // Closing animates too — the drawer's own X, Escape, and the scrim
+          // all arrive here, so all three get the same exit as the tile.
+          onClose={() => void withViewTransition(() => setIsTrashOpen(false))}
         />
 
         <style>{`
