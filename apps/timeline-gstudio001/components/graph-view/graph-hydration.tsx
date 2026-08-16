@@ -15,6 +15,7 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useGraphDetailsStore } from "./graph-details-context";
 import { FALLBACK_DETAIL } from "./graph-view-config";
+import { hydrationDocumentId } from "@/lib/hydration-target";
 
 /** A hydration failure is a DOCUMENT problem the user must see — a silent
  *  return here once left a collection showing "9 items" with an empty
@@ -35,7 +36,34 @@ export async function hydrateTimeline(
 ): Promise<void> {
   if (detailsStore.get(timelineId)?.hydrated === true) return;
 
-  const document = await graphDocumentsGateway.ensure(timelineId);
+  // WHICH DOCUMENT, which is not always this id.
+  //
+  // Callers hand this a graph NODE id, and for an ordinary collection that is
+  // also its timeline id — which is why passing it straight to the gateway
+  // worked until someone made a duplicate. A duplicate placement is minted as
+  // `dup:<parent>:<clip>`: a node here, a document nowhere. It went to the
+  // gateway as-is and produced `GET /api/timelines/dup%3A…` → 400 Invalid
+  // timeline id, once per duplicate on every hydration pass.
+  //
+  // A REFERENCE DOES NOT HYDRATE HERE, and did not before — it just used to
+  // announce that by 400ing. Loading one would mean building specs from
+  // another document and attaching them under this node, whose child ids may
+  // already exist in the graph under the original placement; that is a real
+  // change to the duplicate model and wants real data to verify, not a
+  // late-night guess. So the behaviour is exactly what it was, minus a request
+  // that could never have succeeded.
+  const documentId = hydrationDocumentId(detailsStore.get(timelineId), timelineId);
+  if (documentId !== timelineId) {
+    reportHydrationIssue(
+      timelineId,
+      documentId === null
+        ? "it references another timeline and the reference is missing"
+        : `it references ${documentId}, which is not loaded from here`,
+    );
+    return;
+  }
+
+  const document = await graphDocumentsGateway.ensure(documentId);
   if (!document) return; // the gateway surfaced the load failure itself
 
   const current = store.getSnapshot().graph;

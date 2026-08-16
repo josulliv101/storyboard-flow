@@ -56,6 +56,29 @@ import {
   type NodeId,
 } from "./engine";
 
+/**
+ * The prefix this file mints synthetic node ids with, when one id has to stand
+ * for a second placement of something already in the graph.
+ *
+ * Exported because a synthetic id is the one node id that names NO document,
+ * and callers outside this package have to be able to tell — the hydration
+ * path asks exactly that before deciding whether to fetch. Reading it off the
+ * shape of the string is the only way to know: a demoted node carries the
+ * reference in its detail entry, and a detail entry can be missing.
+ *
+ * NOT a character-class test. Node ids may contain any non-whitespace
+ * character — `scene/a` and `timeline-e2e,comma` are both real — so "does this
+ * look like an id the API would accept" is not the same question and answering
+ * it that way stops ordinary collections from loading.
+ */
+export const DUPLICATE_NODE_ID_PREFIX = "dup:";
+
+/** Whether this id was minted HERE for a duplicate placement, rather than
+ *  naming a document. See `DUPLICATE_NODE_ID_PREFIX`. */
+export function isDuplicateNodeId(nodeId: string): boolean {
+  return nodeId.startsWith(DUPLICATE_NODE_ID_PREFIX);
+}
+
 export type DocumentsById = Readonly<Record<string, TimelineDocument>>;
 
 /** App-level clip detail the graph deliberately doesn't model. */
@@ -255,7 +278,7 @@ function clipSpecs(
         // instead of letting store.hydrate reject the whole payload (which
         // silently blanked the collection). `sourceClipId` preserves the
         // stored id, so the write path round-trips it unchanged.
-        nodeId = `dup:${doc.id}:${clip.id}`;
+        nodeId = `${DUPLICATE_NODE_ID_PREFIX}${doc.id}:${clip.id}`;
         while (ctx.used.has(nodeId)) nodeId = `${nodeId}~`;
       }
       ctx.used.add(nodeId);
@@ -280,7 +303,7 @@ function clipSpecs(
       // through to the same synthetic form the media branch uses.
       let nodeId = clip.id;
       if (ctx.used.has(nodeId)) {
-        nodeId = `dup:${doc.id}:${clip.id}`;
+        nodeId = `${DUPLICATE_NODE_ID_PREFIX}${doc.id}:${clip.id}`;
         while (ctx.used.has(nodeId)) nodeId = `${nodeId}~`;
       }
       ctx.used.add(nodeId);

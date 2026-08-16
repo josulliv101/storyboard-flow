@@ -259,7 +259,15 @@ export function GraphTimelineView({
   const [waveformOn, setWaveformOn] = useState(false);
   // Flat mode: every item in the focused closure, in order, no nesting.
   // Strip-only — grid has no equivalent, and leaving grid turns it off below.
-  const [flatOn, setFlatOn] = useState(false);
+  // STRIP OPENS FLAT. The strip is a time axis, and a run of every shot in
+  // order is what a time axis is for — collections are a way to ORGANISE that
+  // run, not the default way to read it. So the control below is inverted: it
+  // offers "Collections", and turning it on is what leaves the flat run.
+  //
+  // The cost, stated plainly: flat mode refuses `move-nodes` (see
+  // `commandPolicy`), so a strip that opens flat opens without drag-to-reorder
+  // until you switch to Collections.
+  const [flatOn, setFlatOn] = useState(initialSurface === "strip");
   const [flatLoading, setFlatLoading] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
   // The sidebar owns the layout switch and the ruler toggle (its top icons /
@@ -287,6 +295,14 @@ export function GraphTimelineView({
   // window-event bridge exists only to reach the SIDEBAR across React trees —
   // a control that no longer lives there has no reason to pay for it.
   const toggleChildren = useCallback(() => setChildrenShown((current) => !current), []);
+  // The board's header owns this control now (it used to be a rail tile that
+  // reached in over the event bus). The bus listener above stays regardless —
+  // the pane's own close button and the WebMCP `set_preview` tool both still
+  // arrive that way, so this is a second caller, not a replacement.
+  const togglePreview = useCallback(() => setPreviewOn((current) => !current), []);
+  // Same move as preview: the control is in the board's controls row now, so
+  // it calls down through a prop. The bus listener stays for the WebMCP tool.
+  const toggleFlat = useCallback(() => setFlatOn((current) => !current), []);
   const toggleRuler = useCallback(() => setRulerOn((current) => !current), []);
   const toggleWaveform = useCallback(() => setWaveformOn((current) => !current), []);
 
@@ -311,7 +327,10 @@ export function GraphTimelineView({
   const [prevSurface, setPrevSurface] = useState(surface);
   if (prevSurface !== surface) {
     setPrevSurface(surface);
-    if (surface !== "strip" && flatOn) setFlatOn(false);
+    // Leaving the strip drops flat (grid has no flat run to show); arriving at
+    // it restores the strip's default rather than whatever the grid left
+    // behind. Both directions, so the strip is the same on every arrival.
+    setFlatOn(surface === "strip");
   }
 
   // The ruler is scoped to flat mode (its toggle only mounts there), so flat
@@ -826,11 +845,14 @@ export function GraphTimelineView({
                 pixelsPerSecond={pixelsPerSecond}
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
+                onPreviewToggle={togglePreview}
                 rulerOn={rulerOn}
                 onRulerToggle={toggleRuler}
                 waveformOn={waveformOn}
                 onWaveformToggle={toggleWaveform}
                 flatOn={flatOn}
+                flatLoading={flatLoading}
+                onFlatToggle={toggleFlat}
                 childrenShown={childrenShown}
                 onChildrenToggle={toggleChildren}
                 timeChannel={timeChannel}

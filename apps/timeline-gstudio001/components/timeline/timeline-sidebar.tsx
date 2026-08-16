@@ -7,7 +7,6 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import {
-  ChevronsLeftRightEllipsis,
   Film,
   Folder,
   Image as ImageIcon,
@@ -16,7 +15,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Trash2,
-  TvMinimal,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -27,8 +25,6 @@ import {
   GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
-  requestGraphFlatToggle,
-  requestGraphPreviewToggle,
   requestGraphSurface,
   type GraphSurface,
   type GraphViewStateDetail,
@@ -46,7 +42,9 @@ import {
 } from "./sidebar-icon-styles";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
+import { withViewTransition } from "@/lib/view-transition";
 
+import { SidebarCollectionShortcuts } from "./sidebar-collection-shortcuts";
 import {
   SidebarLabelsInlineContext,
   SidebarTooltipLabel,
@@ -66,8 +64,9 @@ const RAIL_EXPANDED_STORAGE_KEY = "sw:sidebar-expanded";
  */
 const RAIL_WIDTH_VAR = "--sw-rail-width";
 
-/** Fires when THIS tab toggles the rail. `storage` only notifies other tabs,
- *  so without this the toggle would not re-render the tab that pressed it. */
+/** Fires when THIS window toggles the rail — the only notification there is,
+ *  see below. Without it the toggle would not re-render the window that
+ *  pressed it. */
 const RAIL_EXPANDED_EVENT = "sw:sidebar-expanded-changed";
 
 function readRailExpanded(): boolean {
@@ -79,11 +78,25 @@ function readRailExpanded(): boolean {
   }
 }
 
+/**
+ * THIS WINDOW ONLY. Deliberately NOT subscribed to `storage`.
+ *
+ * It was, on the reasoning that two tabs should agree about the rail. That is
+ * wrong, and the way it was wrong is worth keeping: `storage` fires in every
+ * OTHER tab on the origin, so opening the rail in one window silently
+ * collapsed it in every other one. With the width animated, the far window
+ * did not read as "something else changed this" — it read as a toggle that
+ * stuttered and fell back, because the layout started moving and then went the
+ * other way.
+ *
+ * The rail's width is a property of a WINDOW, not of the account. Two windows
+ * side by side are the case where you most want one wide and one narrow.
+ * localStorage still carries the preference across a RELOAD, which is the part
+ * that was actually wanted; a live window is simply never yanked by another.
+ */
 function subscribeRailExpanded(onChange: () => void): () => void {
-  window.addEventListener("storage", onChange);
   window.addEventListener(RAIL_EXPANDED_EVENT, onChange);
   return () => {
-    window.removeEventListener("storage", onChange);
     window.removeEventListener(RAIL_EXPANDED_EVENT, onChange);
   };
 }
@@ -138,6 +151,45 @@ function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): v
   );
 }
 
+
+/**
+ * Letters that grow from nothing to their natural width, and back.
+ *
+ * A GRID, not a `max-width`, and the difference is the whole reason this looks
+ * right. Text has no width you can name in advance, so a max-width transition
+ * has to guess a number bigger than the word — and then the visible growth
+ * finishes early, at the word's real width, while the property keeps
+ * animating. The letters appear to arrive and then wait. `0fr` to `1fr`
+ * animates to exactly the content's own size, so the S and the W part at the
+ * speed the word actually needs.
+ *
+ * `overflow-hidden` on the inner span is what does the hiding; the outer grid
+ * only owns the width.
+ *
+ * LIGHTER THAN THE INITIALS. The link is `font-black` (900), and the S and W
+ * keep it — they are the mark, and they are all that survives the collapse.
+ * The letters that grow out of them are the word, so they step down to
+ * `semibold` (600): the contrast is what makes "SW" read as an abbreviation OF
+ * the name rather than as its first and ninth characters. 700 was tried and
+ * sits too close to 900 — the difference stops reading as deliberate. Weight is
+ * not animated, so a collapsing group stays light the whole way in.
+ */
+function RevealedLetters({
+  show,
+  children,
+}: Readonly<{ show: boolean; children: React.ReactNode }>) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "grid transition-[grid-template-columns] duration-200 motion-reduce:transition-none",
+        show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
+      )}
+    >
+      <span className="overflow-hidden font-semibold">{children}</span>
+    </span>
+  );
+}
 
 /** The avatar letter. Written once because the same nested ternary appeared in
  *  two places, and an empty name string made `name[0]` undefined in both. */
@@ -266,36 +318,10 @@ const SIDEBAR_ICON_PRESSED = [
  */
 const SIDEBAR_ICON_TOGGLE_ON =
   "text-sky-300 before:bg-sky-400/15 hover:text-sky-200 hover:before:bg-sky-400/25";
-/**
- * The rule between tile groups: longer than the glyphs it separates, with air
- * above and below.
- *
- * It has been both extremes. Flush against the tiles it disappeared into them;
- * as a short 28px hairline with 8px of margin it read as a gap the tiles had
- * fallen out of. What makes it work is the pill treatment above — the tiles no
- * longer run edge to edge either, so a wider rule with matching breathing room
- * sits in the same rhythm instead of interrupting one.
- */
-// Stated as an INSET, not a width, so it follows the rail.
-//
-// It was `mx-auto w-10` — 40px centred in the 72px rail, which is the same
-// thing as 16px of margin each side. Written that way it stayed 40px when the
-// rail opened to 232px, and a 40px rule adrift in the middle of a 232px column
-// reads as a mistake rather than as a divider. As an inset it is 40px closed
-// (identical to before) and 200px open, with no second value to keep in step
-// and nothing keyed to the open state — which is what stops it animating
-// separately from the width, the way the glyphs used to.
-const SIDEBAR_SEPARATOR_CLASS = "mx-4 my-2 h-px shrink-0";
-
-function SidebarSeparator() {
-  return (
-    <div
-      aria-hidden="true"
-      data-sidebar-separator="normal"
-      className={cn(SIDEBAR_SEPARATOR_CLASS, "bg-zinc-500")}
-    />
-  );
-}
+// The tile-group separator went with the tool group it divided (see the note
+// in the rail below). Nothing draws a rule between groups now: the layout
+// switch at the top and the utility stack at the bottom are already held apart
+// by the `mt-auto` that pins the latter to the floor.
 
 /**
  * The strip layout's glyph: lucide's `Film`, turned on its side.
@@ -591,12 +617,25 @@ export function TimelineSidebar() {
         <Link
           href="/"
           aria-label="Storyboard Workbench home"
-          // Pinned to the icon column's width. Everything else here widens
-          // because it gains a label; the mark has none, and a 232px-wide "SW"
-          // centred over the rail would read as a banner.
-          className="flex w-full aspect-square items-center justify-center text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500 [.rail_&]:w-[72px]"
+          // LEADING, at the glyph column's inset, in both states. Centring "SW"
+          // in the 72px rail already put it within a pixel of 22px, so pinning
+          // it there costs nothing closed and is what lets the name grow to the
+          // right rather than the whole mark sliding.
+          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
-          SW
+          {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
+              nothing, so closing slides the S and the W together into "SW"
+              rather than swapping one piece of text for another. The letters
+              you keep are the same letters throughout — same size, same font,
+              same position — which is the whole reason this reads as the mark
+              contracting instead of a label being replaced by an abbreviation.
+
+              The accessible name comes from `aria-label` on the link, so the
+              split spans are never read out letter by letter. */}
+          S
+          <RevealedLetters show={railExpanded}>toryboard&nbsp;</RevealedLetters>
+          W
+          <RevealedLetters show={railExpanded}>orkbench</RevealedLetters>
         </Link>
 
         {activeProjectId && (
@@ -624,101 +663,21 @@ export function TimelineSidebar() {
           </div>
         )}
 
-        {activeProjectId && (
-          <>
-            {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
-            <SidebarSeparator />
+        {/* SHORTCUTS into this project's top-level collections.
+            
+            The tool group that used to sit here is gone — preview moved to the
+            board's breadcrumb row and flat mode to the controls row under it,
+            both being view toggles that belong beside the board they change.
+            What took its place answers the rail's own question, "where", one
+            level further in than the layout switch above.
 
-            <div className="flex w-full flex-col items-stretch gap-0">
-              {/* PREVIEW leads this group, directly under the separator.
-
-                It is a toggle, not a destination, so it wears the tint rather
-                than the indicator bar — but it sits in the rail rather than
-                with the other toggles in the breadcrumb row because it is one
-                of the two controls worth calling out at rail scale. The rail
-                is where the eye goes first; giving up a slot there is how a
-                control gets promoted above the toolbar's noise.
-
-                Ungated by surface deliberately: the pane plays the focused
-                timeline in grid as well as strip, so hiding it in grid would
-                remove a working control. */}
-              {onGraphRoute && (
-                <button
-                  type="button"
-                  aria-pressed={graphView.previewOn}
-                  aria-label={
-                    graphView.previewOn ? "Hide preview" : "Show preview"
-                  }
-                  aria-describedby="sidebar-tooltip-preview"
-                  onClick={requestGraphPreviewToggle}
-                  className={cn(
-                    SIDEBAR_ICON_BASE,
-                    graphView.previewOn
-                      ? SIDEBAR_ICON_TOGGLE_ON
-                      : SIDEBAR_ICON_IDLE,
-                  )}
-                >
-                  <TvMinimal className={SIDEBAR_GLYPH} />
-                  <SidebarTooltipLabel
-                    id="sidebar-tooltip-preview"
-                    label="Preview"
-                    description="Play the focused timeline"
-                  />
-                </button>
-              )}
-
-              {/* The children-timelines toggle is in the board's breadcrumb row
-                (see graph-board), alongside the ruler. */}
-
-              {/* Flat mode — strip only. Grid keeps its nesting, so there is
-                nothing to flatten there. */}
-              {onGraphRoute && graphView.surface === "strip" && (
-                <button
-                  type="button"
-                  aria-pressed={graphView.flatOn}
-                  aria-label={
-                    graphView.flatOn
-                      ? "Show collections"
-                      : "Show all items in order"
-                  }
-                  aria-describedby="sidebar-tooltip-flat"
-                  aria-busy={graphView.flatLoading}
-                  onClick={requestGraphFlatToggle}
-                  className={cn(
-                    SIDEBAR_ICON_BASE,
-                    // TOGGLE, not a destination — see SIDEBAR_ICON_TOGGLE_ON.
-                    graphView.flatOn
-                      ? SIDEBAR_ICON_TOGGLE_ON
-                      : SIDEBAR_ICON_IDLE,
-                  )}
-                >
-                  <ChevronsLeftRightEllipsis
-                    className={cn(
-                      SIDEBAR_GLYPH,
-                      // Loading the closure can take a moment on a deep project,
-                      // and a half-built run would otherwise look like the real
-                      // answer.
-                      graphView.flatLoading ? "motion-safe:animate-pulse" : "",
-                    )}
-                  />
-                  <SidebarTooltipLabel
-                    id="sidebar-tooltip-flat"
-                    label="All items in order"
-                    description={
-                      graphView.flatLoading
-                        ? "Loading every collection…"
-                        : "One flat run — no collections. Reordering is off."
-                    }
-                  />
-                </button>
-              )}
-
-              {/* The time-ruler toggle moved to the board's breadcrumb row,
-                sitting left of the children toggle. It is still scoped to flat
-                mode and still appears and disappears with it — only its home
-                changed, joining the view controls it belongs with. */}
-            </div>
-          </>
+            It draws its OWN separator, or nothing at all. A new project has no
+            top-level collections, and a rule with nothing under it reads as
+            something that failed to load — so the group and its rule arrive
+            and leave together, which is only reliable while one component
+            owns both. */}
+        {activeProjectId && onGraphRoute && (
+          <SidebarCollectionShortcuts projectId={activeProjectId} />
         )}
 
         <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
@@ -728,7 +687,11 @@ export function TimelineSidebar() {
             const Icon = item.icon;
             const tooltipId = `sidebar-tooltip-utility-${item.id}`;
             const isPressed = isTrashOpen;
-            const handleClick = () => setIsTrashOpen(!isTrashOpen);
+            // Through a view transition, so the drawer RISES instead of
+          // appearing. Same helper the trim modal uses — including the root
+          // flag the e2e waits on.
+          const handleClick = () =>
+            void withViewTransition(() => setIsTrashOpen(!isTrashOpen));
 
             return (
               <button
@@ -830,7 +793,10 @@ export function TimelineSidebar() {
                 src={user.picture}
                 alt={user.name || user.email || "Profile"}
                 className={cn(
-                  "h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
+                  // `relative` for the same reason the glyphs carry it: the tile's pill is
+                // an absolute ::before and would otherwise paint a 40% black veil over
+                // this face. Same bug the collection thumbnails had.
+                "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
                   SIDEBAR_AVATAR_INSET,
                 )}
               />
@@ -898,7 +864,9 @@ export function TimelineSidebar() {
 
         <TrashDrawer
           isOpen={isTrashOpen}
-          onClose={() => setIsTrashOpen(false)}
+          // Closing animates too — the drawer's own X, Escape, and the scrim
+          // all arrive here, so all three get the same exit as the tile.
+          onClose={() => void withViewTransition(() => setIsTrashOpen(false))}
         />
 
         <style>{`

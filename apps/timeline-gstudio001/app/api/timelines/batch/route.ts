@@ -12,6 +12,7 @@ import {
 } from "@/lib/firebase-timeline-store";
 import { changeLogDocuments, recordChange } from "@/lib/change-log";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
+import { clientFacingStorageMessage } from "@/lib/firestore-failure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -170,12 +171,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
 
-    const message =
-      error instanceof Error &&
-      (error.message.startsWith("Firebase Storage is not configured") ||
-        error.message.includes("timed out"))
-        ? error.message
-        : "Unable to save the timeline documents.";
+    const message = clientFacingStorageMessage(error, "Unable to save the timeline documents.");
 
     console.error("[GSTUDIO_TIMELINE_STORAGE_ERROR]", error);
     return NextResponse.json({ error: message }, { status: 500 });

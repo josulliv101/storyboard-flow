@@ -134,6 +134,42 @@ export const FillsFullWidth: Story = {
   },
 };
 
+/**
+ * A GRID NEVER SCROLLS SIDEWAYS, and saying so out loud is the point.
+ *
+ * `overflow-y-auto` on its own does not leave the other axis alone: CSS
+ * resolves a `visible` axis to `auto` as soon as the other one is not visible,
+ * so the box was horizontally scrollable without anyone choosing that. Settled,
+ * it never overflows — columns are measured from this very box — so nothing
+ * showed. It surfaced when the box was ANIMATED narrower (the app's sidebar
+ * rail expanding over 200ms): for those frames the columns were still sized for
+ * the old width, and a horizontal scrollbar flashed in and out at the bottom of
+ * the grid.
+ *
+ * Asserted on the computed style rather than by measuring an overflow, because
+ * the defect is the CAPABILITY, not any particular frame of it. A test that
+ * waited to catch the flash would be a race; this one fails the moment someone
+ * tidies the class list back to a single overflow rule.
+ */
+export const GridNeverScrollsHorizontally: Story = {
+  render: () => (
+    <DndCollections initialGraph={gridGraph()}>
+      <div className="w-[601px]" data-testid="clip-container">
+        <VirtualGrid collectionId={parseNodeId("grid")} cellWidth={160} gap={8} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+    const grid = canvasElement.querySelector<HTMLElement>("[data-virtual-grid]")!;
+    const styles = getComputedStyle(grid);
+    expect(styles.overflowX).toBe("hidden");
+    // The vertical axis is what this box is FOR — clipping both would trap
+    // content in a grid too tall to read.
+    expect(styles.overflowY).toBe("auto");
+  },
+};
+
 /** Play-less twin for e2e. */
 export const GridPlayground: Story = {
   render: () => <GridHarness />,

@@ -381,7 +381,21 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         onPointerDown={backgroundClear.onPointerDown}
         onClick={backgroundClear.onClick}
         className={twMerge(
-          "relative overflow-y-auto rounded-md border border-dashed border-border p-2",
+          // `overflow-x-hidden` IS NOT REDUNDANT, and leaving it out is how a
+          // horizontal scrollbar nobody asked for appears at the bottom of the
+          // grid. CSS resolves a `visible` axis to `auto` whenever the other
+          // axis is not visible, so `overflow-y-auto` alone silently makes this
+          // box horizontally scrollable too — and then any momentary overhang
+          // raises a real scrollbar.
+          //
+          // Momentary is the whole of it: the settled grid always fits (its
+          // columns are measured from this box). But the measurement lags a
+          // container that is being ANIMATED — the app's sidebar rail expands
+          // over 200ms — so for those frames the columns are sized for the
+          // width the box used to have, overflow, and a scrollbar flashes in
+          // and out. A wrapping grid has no horizontal axis to scroll in the
+          // first place, so clipping it costs nothing and removes the flash.
+          "relative overflow-y-auto overflow-x-hidden rounded-md border border-dashed border-border p-2",
           className,
         )}
         style={

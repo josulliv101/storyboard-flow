@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { flushSync } from "react-dom";
 import { Redo2, Undo2, X } from "lucide-react";
 
 import {
@@ -31,6 +30,7 @@ import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
+import { withViewTransition } from "@/lib/view-transition";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -49,46 +49,10 @@ import { useItemDetails } from "./graph-item-details-context";
  *  is handed over inside the transition callback, never held by both. */
 const HERO = "trim-subject";
 
-const prefersReducedMotion = () =>
-  typeof window !== "undefined" &&
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (callback: () => void) => { finished: Promise<void> };
-};
-
-/**
- * Runs `mutate` inside a view transition when the browser has one, and plainly
- * when it doesn't (or when the user asked for less motion). `flushSync` is
- * required, not decorative: the browser captures the "after" state the moment
- * the callback returns, and a normal React update would still be queued.
- */
-function withViewTransition(mutate: () => void): Promise<void> {
-  const doc = document as ViewTransitionDocument;
-  if (!doc.startViewTransition || prefersReducedMotion()) {
-    mutate();
-    return Promise.resolve();
-  }
-  // Announce the transition on the root, SYNCHRONOUSLY, before it starts.
-  // While one runs the browser paints a snapshot over the page and every
-  // pointer event lands on <html>, so "is a transition in flight?" is a real
-  // question about whether the UI is inert — and polling
-  // `getAnimations()` cannot answer it, because the animations only exist
-  // after the browser has captured a frame. Anything waiting for the UI to be
-  // live again (the e2e does) watches this attribute instead.
-  doc.documentElement.dataset.viewTransition = "running";
-  return doc
-    .startViewTransition(() => {
-      flushSync(mutate);
-    })
-    .finished.catch(() => {
-      // A transition can be abandoned (another one starts, the tab hides).
-      // The DOM change has already happened either way.
-    })
-    .finally(() => {
-      delete doc.documentElement.dataset.viewTransition;
-    });
-}
+// `withViewTransition` moved to lib/view-transition.ts when the trash drawer
+// became a second caller. It is the same function: the root flag it sets is
+// what the e2e's `settleViewTransition` waits on, and two copies would be two
+// chances to forget it.
 
 function cardElement(id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);

@@ -7,17 +7,13 @@ import {
   listFirebaseTimelineProjects,
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
+import { clientFacingStorageMessage } from "@/lib/firestore-failure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function storageErrorResponse(error: unknown, fallback: string) {
-  const message =
-    error instanceof Error &&
-    (error.message.startsWith("Firebase Storage is not configured") ||
-      error.message.includes("timed out"))
-      ? error.message
-      : fallback;
+  const message = clientFacingStorageMessage(error, fallback);
 
   console.error("[GSTUDIO_PROJECTS_ERROR]", error);
   return NextResponse.json({ error: message }, { status: 500 });
