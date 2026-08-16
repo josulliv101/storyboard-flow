@@ -362,9 +362,14 @@ function SelectionSummary() {
 /**
  * What is in the focused timeline: "12 clips · 1:04".
  *
- * It describes the board rather than the selection, so it sits at the left of
- * the controls row under the divider — beside the controls that qualify what
- * that board shows — rather than in the breadcrumb trail above.
+ * It describes the board rather than the selection, so it sits in the controls
+ * row under the divider rather than in the breadcrumb trail above.
+ *
+ * In the MIDDLE of that row, in a column of its own. The row opened with it
+ * once and ended with it once; both put a statement in a run of controls. The
+ * row is three columns now — controls left, controls right, this between them —
+ * so the one thing here that is not pressable is also the one thing not in a
+ * cluster.
  *
  * No longer hidden below `sm`. It was competing for the breadcrumb row's centre
  * slot with the selection count and with the clipboard verbs, and on a narrow
@@ -489,6 +494,22 @@ function HeaderZoomControl({
 const HEADER_TOGGLE_ACTIVE =
   "bg-sky-400/15 text-sky-300 hover:bg-sky-400/25 hover:text-sky-200";
 const HEADER_TOGGLE_IDLE = "text-zinc-400 hover:text-zinc-100";
+
+/**
+ * The hairline between two groups of controls.
+ *
+ * A component rather than the literal div it replaces, because the board now
+ * draws these in two different rows and a fence that is a pixel taller in one
+ * of them is exactly the kind of drift nobody reports and everybody sees. The
+ * measurements are the breadcrumb row's, which had them first.
+ *
+ * `shrink-0` is load-bearing: it sits in a row whose groups carry `min-w-0` so
+ * they may compress, and a 1px flex child with no floor is the first thing a
+ * tight row rounds away to nothing — leaving the groups it separates touching.
+ */
+function ControlFence() {
+  return <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />;
+}
 
 /**
  * A view toggle in the breadcrumb row: time ruler, preview pane, children
@@ -1368,7 +1389,7 @@ function SelectModeHeader({
           Already `h-8` icon buttons, so the row's height is unchanged — which
           matters, because both faces of the header are pinned to one height
           and the last thing to break that was a single `h-9` on Done. */}
-      <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
+      <ControlFence />
       <GraphUndoRedo />
     </div>
   );
@@ -1522,17 +1543,18 @@ export function GraphBoard({
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   /** The preview pane above the board. The board renders it AND carries its
-   *  toggle now, in the header beside Select — the same shape as the ruler and
-   *  waveform below. The window-event bus still reaches the same state (the
+   *  toggle now, in the header beside Select. The window-event bus still
+   *  reaches the same state (the
    *  pane's own close button and the WebMCP `set_preview` tool arrive that
    *  way), so this prop is a second caller rather than a replacement. */
   previewOn: boolean;
   onPreviewToggle: () => void;
-  /** The strip's time ruler. Its toggle lives in this header now (see
-   *  `GraphRulerToggle`) and only mounts in flat mode, so the board both
-   *  renders the state and asks for the change. */
+  /** The strip's time ruler. Its toggle lives in the board's CONTROLS row now
+   *  — under the divider, beside the zoom — and only mounts in flat mode, so
+   *  the board both renders the state and asks for the change. */
   rulerOn: boolean;
   onRulerToggle: () => void;
+  /** The waveform lane, on the same gate and in the same group as the ruler. */
   waveformOn: boolean;
   onWaveformToggle: () => void;
   /** Strip's flat mode: render the whole closure in order, not this
@@ -1847,9 +1869,10 @@ export function GraphBoard({
                   the pane plays the focused timeline in grid as well as strip,
                   so hiding it in grid would remove a working control.
 
-                  Inside the fence with Select rather than out with the ruler
-                  pair, because those two are flat-mode only and come and go;
-                  these two are always here.
+                  Preview and Select are the two controls in this row that are
+                  ALWAYS here — nothing about them is gated on surface or on
+                  flat mode, which is exactly why the ruler pair went down to
+                  the controls row and these did not.
 
                   Preview first because it is the icon in a pair whose other
                   half carries a WORD: leading with the labelled control pushed
@@ -1864,31 +1887,15 @@ export function GraphBoard({
                 title="Preview — play the focused timeline"
               />
               <SelectModeButton />
-              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
-              {/* Ruler and waveform stay: they draw ONTO the strip rather than
-                  changing what is on it, they are flat-mode only, and pairing
-                  them with the surface controls to the right is what keeps
-                  them out of the way in grid mode. The fence travels with them
-                  — an empty group between two fences is just a doubled line. */}
-              {flatOn ? (
-                <>
-                  <HeaderToggle
-                    active={rulerOn}
-                    onToggle={onRulerToggle}
-                    icon={Ruler}
-                    label={rulerOn ? "Hide time ruler" : "Show time ruler"}
-                    title="Time ruler — tick marks over every strip"
-                  />
-                  <HeaderToggle
-                    active={waveformOn}
-                    onToggle={onWaveformToggle}
-                    icon={AudioLines}
-                    label={waveformOn ? "Hide audio waveform" : "Show audio waveform"}
-                    title="Audio waveform — peaks and pauses under the ruler"
-                  />
-                  <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
-                </>
-              ) : null}
+              <ControlFence />
+              {/* Ruler and waveform used to sit here, behind a fence of their
+                  own. They are down in the board's controls row now, beside
+                  the zoom: all three qualify the strip's TIME AXIS, and this
+                  row is where you are and what you can do to the selection.
+                  They also came and went with flat mode, so this row's width
+                  changed as you toggled it — the one place that cannot afford
+                  it, since the breadcrumb trail measures its budget against
+                  what is left. */}
               {/* Paste used to sit here, fenced between the view group and
                   history. It is in the CENTRE now, with copy and cut — the
                   three clipboard verbs read as one group, which is worth more
@@ -2000,37 +2007,47 @@ export function GraphBoard({
                 hairline beneath it. Full-bleed matters — a rule inset from the
                 panel's sides would draw a smaller box inside a bigger one and
                 put the seam back. */}
+            {/* THREE COLUMNS, not a flex run: the totals sit in the MIDDLE of
+                the row, and "middle" has to mean the row's centre rather than
+                whatever falls out of the two clusters' widths. A flex row with
+                `mx-auto` on the readout centres it in the LEFTOVER space, so
+                it would drift every time a control came or went — and half the
+                controls here are gated on surface or flat mode, so it would
+                drift constantly.
+
+                `minmax(min-content,1fr)` on both sides, NOT `minmax(0,1fr)`.
+                Equal 1fr columns are what put the auto middle dead centre; the
+                `min-content` floor is what stops a column being handed less
+                than its controls need and clipping them. This exact swap has
+                already been made once in the breadcrumb header above, after a
+                `minmax(0,1fr)` column started before its own content did. When
+                the sides genuinely cannot fit, centring yields first — that is
+                the intended order. */}
             <div
               data-board-controls-row
-              className="flex min-h-7 items-center gap-3 border-b border-white/10 px-3 py-2"
+              className="grid min-h-7 grid-cols-[minmax(min-content,1fr)_auto_minmax(min-content,1fr)] items-center gap-3 border-b border-white/10 px-3 py-2"
             >
-              <FocusedAggregate
-                focusedId={focusedId}
-                pixelsPerSecond={deferredPixelsPerSecond}
-              />
-              {/* Order preserved from the header cluster they came out of —
-                  filter (narrows the field) | collection (adds structure) |
-                  tree and zoom (draw what is left). Reshuffling them on the way
-                  down would have made this a second change wearing the first
-                  one's clothes. `ml-auto` rather than `justify-between` so the
-                  group still sits right when the aggregate renders nothing —
-                  an empty timeline would otherwise let it slide to the left. */}
-              <div className="ml-auto flex min-w-0 items-center gap-2">
-                {/* COLLECTIONS leads this group. It came out of the icon rail:
-                    it qualifies WHAT THE BOARD SHOWS, which is this row's job,
-                    and it belongs beside the count and duration it changes —
-                    the flat run turns "3 clips" into every clip in the
-                    closure, and the two now move together.
+              {/* LEFT COLUMN — WHAT THE BOARD IS MADE OF. Two fenced groups:
+                  the toggles that change its shape, then the one control that
+                  adds to it.
 
-                    INVERTED against the state it drives. The strip opens flat
+                  `min-w-0` on the flex box inside the column, so its own
+                  children may compress. The column's `min-content` floor
+                  governs how far that can go. */}
+              <div className="flex min-w-0 items-center gap-2">
+                {/* GROUP 1 — HOW THE BOARD IS STRUCTURED. Two toggles that
+                    change the shape of what is drawn, not its contents:
+                    whether this run is grouped into its collections, and
+                    whether the nested timelines draw below it. */}
+                {/* INVERTED against the state it drives. The strip opens flat
                     (see `flatOn`'s default), so the thing left to offer is the
                     nesting, and `active` is `!flatOn` — pressed means you have
                     left the flat run for the collections. Writing it the other
                     way round would give the strip a control that is lit on
                     arrival and whose job is to turn itself off.
 
-                    Strip only, unchanged from the rail: grid keeps its nesting,
-                    so there is nothing to flatten there. */}
+                    Strip only: grid keeps its nesting, so there is nothing to
+                    flatten there. */}
                 {surface === "strip" ? (
                   <HeaderToggle
                     active={!flatOn}
@@ -2046,8 +2063,6 @@ export function GraphBoard({
                     title="Collections — group the run back into its collections. Flat, everything is in order and reordering is off."
                   />
                 ) : null}
-                <TagFilterControl />
-                <GraphAddCollectionButton />
                 <HeaderToggle
                   active={childrenShown}
                   onToggle={onChildrenToggle}
@@ -2055,14 +2070,81 @@ export function GraphBoard({
                   label={childrenShown ? "Hide children timelines" : "Show children timelines"}
                   title="Children timelines — show the nested timeline tree"
                 />
-                {/* Strip only — there is no horizontal time axis to zoom in a
-                    grid. See HeaderZoomControl. */}
+                <ControlFence />
+                {/* GROUP 2 — the one control here that CHANGES THE TIMELINE
+                    rather than the view of it, which is the whole reason it
+                    gets a fence to itself. Everything either side is a
+                    reading; this one writes. */}
+                <GraphAddCollectionButton />
+              </div>
+
+              {/* CENTRE COLUMN — WHAT THE BOARD AMOUNTS TO. One readout, and
+                  the only thing in this row that is a statement rather than a
+                  control, which is why it gets the middle to itself.
+
+                  `justify-center` inside an `auto` column is belt and braces:
+                  the column is already exactly its content's width. It matters
+                  the moment anything joins the readout here. */}
+              <div className="flex items-center justify-center">
+                <FocusedAggregate
+                  focusedId={focusedId}
+                  pixelsPerSecond={deferredPixelsPerSecond}
+                />
+              </div>
+
+              {/* RIGHT COLUMN — THE TIME AXIS, then what qualifies the totals.
+                  `justify-end` rather than `ml-auto` on a child: this is a
+                  grid cell, so the cluster is pinned to the column's right
+                  edge and stays there even when the aggregate in the middle
+                  renders nothing (an empty timeline). */}
+              <div className="flex min-w-0 items-center justify-end gap-2">
+                {/* THE TIME AXIS: ticks, peaks, and the scale all three are
+                    measured at. Ruler and waveform came down out of the
+                    breadcrumb row to join the zoom that was already here.
+
+                    Gated as ONE unit on `surface === "strip"`, INCLUDING the
+                    fence that closes it — a separator is the edge of a group,
+                    so it has to come and go with the group it edges or it is
+                    just a stray line beside the filter in grid mode.
+
+                    The fence is gated on strip rather than on flat because the
+                    zoom is the member always present in a strip, so this group
+                    can thin to the slider but never empty while the fence is
+                    drawn. Ruler and waveform sit behind the narrower FLAT gate
+                    inside it — both draw against a single continuous time
+                    axis, which only the flat run is. */}
                 {surface === "strip" ? (
-                  <HeaderZoomControl
-                    pixelsPerSecond={pixelsPerSecond}
-                    onChange={onPixelsPerSecondChange}
-                  />
+                  <>
+                    {flatOn ? (
+                      <>
+                        <HeaderToggle
+                          active={rulerOn}
+                          onToggle={onRulerToggle}
+                          icon={Ruler}
+                          label={rulerOn ? "Hide time ruler" : "Show time ruler"}
+                          title="Time ruler — tick marks over every strip"
+                        />
+                        <HeaderToggle
+                          active={waveformOn}
+                          onToggle={onWaveformToggle}
+                          icon={AudioLines}
+                          label={waveformOn ? "Hide audio waveform" : "Show audio waveform"}
+                          title="Audio waveform — peaks and pauses under the ruler"
+                        />
+                      </>
+                    ) : null}
+                    <HeaderZoomControl
+                      pixelsPerSecond={pixelsPerSecond}
+                      onChange={onPixelsPerSecondChange}
+                    />
+                    <ControlFence />
+                  </>
                 ) : null}
+                {/* The filter sits with the settings rather than with the
+                    groups on the left because it does not change the board's
+                    shape or its contents — it changes what you are COUNTING,
+                    and the count it changes is one column over. */}
+                <TagFilterControl />
                 {/* LAST, at the far right of the row — the settings that
                     outlive the session, after the controls you actually ride
                     while working. Back from the icon rail (PL14-005); see the
