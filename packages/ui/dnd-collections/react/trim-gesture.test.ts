@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { parseNodeId, type ImageMediaNode, type VideoMediaNode } from "../core/graph";
+import {
+  parseNodeId,
+  type AudioMediaNode,
+  type ImageMediaNode,
+  type VideoMediaNode,
+} from "../core/graph";
 import { resolveMove, resolveTrim, TRIM_QUANTUM_SECONDS } from "./trim-gesture";
 
 // Pure-resolver coverage for the pointer trim gesture: quantization to the
@@ -25,6 +30,67 @@ const image = (over: Partial<ImageMediaNode> = {}): ImageMediaNode => ({
   name: "I",
   durationSeconds: 4,
   ...over,
+});
+
+const audio = (over: Partial<AudioMediaNode> = {}): AudioMediaNode => ({
+  id: parseNodeId("a"),
+  kind: "media",
+  mediaKind: "audio",
+  name: "A",
+  fullDurationSeconds: 10,
+  trimInSeconds: 2,
+  trimOutSeconds: 1,
+  ...over,
+});
+
+// AUDIO IS TRIMMED LIKE VIDEO. It always could be — the node is windowed and
+// the reducer accepted the update — but the gesture deliberately resolved to
+// the node's CURRENT window so the drag was inert, and nothing tested that.
+// These pin the behaviour that replaced it.
+describe("resolveTrim on audio", () => {
+  it("trims the START, which it previously could not", () => {
+    const { update, live } = resolveTrim(audio(), "left", 1);
+    expect(update).toEqual({ mediaKind: "audio", trimInSeconds: 3 });
+    expect(live.effectiveSeconds).toBeCloseTo(6, 6);
+  });
+
+  it("trims the END", () => {
+    const { update } = resolveTrim(audio(), "right", -1);
+    expect(update).toEqual({ mediaKind: "audio", trimOutSeconds: 2 });
+  });
+
+  it("carries the AUDIO discriminant, never video", () => {
+    // `applyMediaUpdate` rejects an update whose kind does not match the node,
+    // so a copy-pasted "video" literal here would be an invalid-media-update
+    // at dispatch rather than a type error.
+    for (const side of ["left", "right"] as const) {
+      expect(resolveTrim(audio(), side, 0.5).update.mediaKind).toBe("audio");
+    }
+  });
+
+  it("quantizes and clamps exactly as video does", () => {
+    expect(resolveTrim(audio(), "left", 0.04).update).toEqual({
+      mediaKind: "audio",
+      trimInSeconds: 2,
+    });
+    // Past the far end lands ON the limit rather than through it.
+    expect(resolveTrim(audio(), "left", 99).update).toEqual({
+      mediaKind: "audio",
+      trimInSeconds: 9,
+    });
+  });
+
+  it("agrees with video, given the same window", () => {
+    // The two share one branch now; this is the guard against them being
+    // split again and drifting.
+    for (const side of ["left", "right"] as const) {
+      for (const delta of [0.3, -0.7, 4, -4]) {
+        const a = resolveTrim(audio(), side, delta);
+        const v = resolveTrim(video(), side, delta);
+        expect(a.live.effectiveSeconds).toBeCloseTo(v.live.effectiveSeconds, 6);
+      }
+    }
+  });
 });
 
 describe("resolveTrim quantization", () => {
