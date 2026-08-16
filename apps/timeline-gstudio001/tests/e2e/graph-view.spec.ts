@@ -333,6 +333,27 @@ async function installGraphApi(
       return;
     }
 
+    // The graph gateway's READ path: many documents in one POST, each with its
+    // own outcome. Mirrors the real endpoint, and shares the per-id rules with
+    // the single GET below so the two can never answer differently — including
+    // `blockChildDocument`, whose whole point is one document that never
+    // arrives, which has to keep meaning that inside a batch.
+    if (id === "batch-get" && request.method() === "POST") {
+      const ids = (request.postDataJSON() as { ids?: string[] }).ids ?? [];
+      if (options.blockChildDocument && ids.includes(CHILD_ID)) {
+        await route.abort("failed");
+        return;
+      }
+      const results = ids.map((wanted) => {
+        const doc = documents.get(wanted);
+        return doc
+          ? { id: wanted, document: doc, revision: revisions.get(wanted) ?? 0 }
+          : { id: wanted, error: "Timeline was not found.", status: 404 };
+      });
+      await route.fulfill({ json: { results } });
+      return;
+    }
+
     if (options.blockChildDocument && id === CHILD_ID && request.method() === "GET") {
       // Simulate the fetch-latency window the bounce policy exists for: the
       // child document never arrives, so its collection stays un-hydrated.
@@ -3900,12 +3921,12 @@ test.describe("graph view E2E", () => {
     await expect(input).toHaveCount(1);
     expect(await stripOrder(page, PROJECT_ID)).toEqual(settled);
 
-    // A synthetic drop carries no user activation, so the picker cannot open
-    // itself and the one-click fallback is what shows. Asserting the fallback
-    // is the closest this suite can get to the real gesture: neither
-    // Playwright's mouse nor any tooling here can drive a NATIVE HTML5 drag, so
-    // the direct-open path has no automated coverage at all — which is exactly
-    // why a fallback exists rather than a bare click() and hope.
+    // The prompt is ALWAYS there, whether or not the picker opened over it.
+    // This test is why: under Playwright the drop still carries activation from
+    // an earlier click, so the picker IS opened — and headless Chromium cancels
+    // it instantly. When `cancel` used to dismiss the pending drop, that left
+    // nothing at all, which is the same hole a real person falls into by
+    // closing a picker they opened by accident.
     await expect(page.locator("[data-media-drop-prompt]")).toBeVisible();
 
     // Escape dismisses, still with nothing added.

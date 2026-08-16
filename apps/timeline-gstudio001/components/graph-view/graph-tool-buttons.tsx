@@ -126,14 +126,25 @@ export const MEDIA_TOOL_PAYLOAD = MEDIA_TOOL;
  * silently do nothing other times. That is the worst of all outcomes: it works
  * in every test and fails for whoever hesitates.
  *
- * So: TRY the picker, and when activation has expired, fall back to a prompt at
- * the drop point that costs one click and cannot fail. `navigator.userActivation`
- * is what decides, rather than calling `click()` and hoping — a refused picker
- * is not observable, so there is nothing to catch.
+ * So: the prompt is ALWAYS rendered, and the picker is opened on top of it when
+ * activation allows. Not one path or the other — both, layered.
  *
- * This could not be verified end-to-end here: neither Playwright's synthetic
- * mouse nor the browser tooling can drive a NATIVE HTML5 drag, so the trusted
- * path has no automated coverage and the fallback is what makes that acceptable.
+ * That is a correction. The first version showed the prompt only when
+ * activation had lapsed, and it lost drops: a picker that opens and is then
+ * dismissed fires `cancel`, which tore down the pending drop and left nothing
+ * behind — no prompt, no trace, the dropped position simply gone. Headless
+ * Chromium cancels instantly, which is how it was caught, but a real person
+ * closing a picker they opened by accident hits exactly the same path.
+ *
+ * `cancel` therefore does NOT dismiss. An OS picker closing is ambiguous — "I
+ * changed my mind" and "that picker never opened" look identical from here —
+ * and the two possible mistakes are not symmetric: leaving the prompt up costs
+ * one Escape, while tearing it down costs the drop and offers no way back. So
+ * the prompt survives, and only Escape or a click elsewhere dismisses.
+ *
+ * The trusted path still has no automated coverage — nothing here can drive a
+ * NATIVE HTML5 drag — which is the other reason the prompt is unconditional
+ * rather than a fallback nobody exercises.
  */
 export function MediaDropTarget({
   hadUserActivation,
@@ -154,13 +165,25 @@ export function MediaDropTarget({
 
   const open = useCallback(() => inputRef.current?.click(), []);
 
-  // Which path this drop takes is decided by a PROP, so there is no state to
-  // set and no cascading render: the answer was known at the drop, and by the
-  // time this mounts it is history rather than something to go and measure.
+  // Open the picker when the drop still had activation; the prompt is rendered
+  // either way, so this is an accelerator rather than a branch. Whether it was
+  // possible is a PROP — decided at the drop, when it was true — so there is no
+  // state to set here and no cascading render.
   useEffect(() => {
     if (hadUserActivation) open();
     else promptRef.current?.focus();
   }, [hadUserActivation, open]);
+
+  // Dismissal: Escape, or a click anywhere that is not the prompt. Not the
+  // picker's `cancel` — see the note above.
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => {
+      if (promptRef.current?.contains(event.target as Node)) return;
+      onDismiss();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [onDismiss]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -170,17 +193,6 @@ export function MediaDropTarget({
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [onDismiss]);
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    // React's `InputHTMLAttributes` has no `onCancel`, so this is bound
-    // imperatively. Without it, dismissing the OS picker would leave the parked
-    // drop waiting for files that are never coming.
-    const onCancel = () => onDismiss();
-    input.addEventListener("cancel", onCancel);
-    return () => input.removeEventListener("cancel", onCancel);
   }, [onDismiss]);
 
   return (
@@ -203,8 +215,7 @@ export function MediaDropTarget({
           onFiles(files);
         }}
       />
-      {!hadUserActivation ? (
-        <button
+      <button
           ref={promptRef}
           type="button"
           data-media-drop-prompt
@@ -217,9 +228,8 @@ export function MediaDropTarget({
           }}
           className="fixed z-50 flex h-8 items-center gap-2 rounded-md bg-zinc-900 px-2.5 text-[11px] font-medium text-zinc-200 shadow-lg ring-1 ring-white/15 hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
         >
-          Choose files…
-        </button>
-      ) : null}
+        Choose files…
+      </button>
     </>
   );
 }
