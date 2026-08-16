@@ -12,12 +12,15 @@ import { TagAccentDot } from "./tag-accent-dot";
 /**
  * The board's tag filter: pick tags, non-matching cards dim.
  *
- * Leads the header's right cluster paired with Select — the two controls that
- * change how you WORK with the board rather than what it contains. It used to
- * sit in the view group beside the ruler and waveform toggles, on the reasoning
- * that it qualifies what the board shows; true, but among those it read as one
- * more display switch, and this is the control the row most needed to make
- * findable.
+ * It lives at the READOUT end of the board's controls row, between the clip
+ * count and the settings menu. That is a third home, and the reasoning that
+ * settled it: this control does not change the board's shape (the left groups
+ * do) or add to it (the collection button does) — it changes WHAT YOU ARE
+ * COUNTING, so it and the total it changes read as one statement.
+ *
+ * ICON ONLY, no word. Every one of its neighbours in the row is a bare glyph;
+ * the label survives in `aria-label`, which is what the tests and assistive
+ * tech read anyway.
  *
  * The menu is built from the tags actually IN USE, not a fixed list. Tag
  * vocabulary here is emergent — a new checkpoint is a new tag — so anything
@@ -67,7 +70,15 @@ export function TagFilterControl() {
         title="Filter the board by tag — non-matching cards dim"
         aria-label={active > 0 ? `Filter by tag, ${active} active` : "Filter by tag"}
         className={[
-          "flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
+          // ICON ONLY. The word "Filter" is gone from the face of it — the
+          // name survives in `aria-label` and `title`, so screen readers and
+          // the tests that drive this button are unaffected, and only the
+          // pixels changed.
+          //
+          // `min-w-8` rather than `w-8`: at rest that makes it the same 32px
+          // square as the HeaderToggles it now sits beside, and it still grows
+          // for the count badge instead of cropping it.
+          "flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium transition-colors",
           "[@media(pointer:coarse)]:h-11",
           active > 0
             ? "bg-blue-500/20 text-blue-100 ring-1 ring-blue-500/40"
@@ -75,7 +86,6 @@ export function TagFilterControl() {
         ].join(" ")}
       >
         <Filter aria-hidden="true" className="size-3.5" strokeWidth={1.7} />
-        Filter
         {active > 0 ? (
           <span
             data-tag-filter-count
