@@ -21,9 +21,11 @@ import {
   EllipsisVertical,
   FolderPlus,
   FolderTree,
+  Layers,
   Redo2,
   Ruler,
   Settings,
+  TvMinimal,
   Undo2,
   X,
 } from "lucide-react";
@@ -490,6 +492,7 @@ function HeaderToggle({
   icon: Icon,
   label,
   title,
+  busy = false,
 }: Readonly<{
   active: boolean;
   onToggle: () => void;
@@ -502,6 +505,10 @@ function HeaderToggle({
    */
   label: string;
   title: string;
+  /** Work is in flight and the state shown is not settled yet. Only flat mode
+   *  needs it — loading a deep closure takes a moment, and a half-built run
+   *  would otherwise look like the real answer. */
+  busy?: boolean;
 }>) {
   return (
     <Button
@@ -510,11 +517,12 @@ function HeaderToggle({
       size="icon"
       aria-label={label}
       aria-pressed={active}
+      aria-busy={busy || undefined}
       title={title}
       onClick={onToggle}
       className={cn("h-8 w-8", active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE)}
     >
-      <Icon aria-hidden className="h-4 w-4" />
+      <Icon aria-hidden className={cn("h-4 w-4", busy && "motion-safe:animate-pulse")} />
     </Button>
   );
 }
@@ -1461,11 +1469,14 @@ export function GraphBoard({
   pixelsPerSecond,
   onPixelsPerSecondChange,
   previewOn,
+  onPreviewToggle,
   rulerOn,
   onRulerToggle,
   waveformOn,
   onWaveformToggle,
   flatOn,
+  flatLoading,
+  onFlatToggle,
   childrenShown,
   onChildrenToggle,
   timeChannel,
@@ -1483,11 +1494,13 @@ export function GraphBoard({
   onItemSizeChange: (size: ItemSize) => void;
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
-  /** The preview pane above the board. The board RENDERS it; the toggle
-   *  lives in the icon rail (timeline-sidebar) and reaches this state through
-   *  the window-event bus, which the pane's own close button and the WebMCP
-   *  `set_preview` tool already share. */
+  /** The preview pane above the board. The board renders it AND carries its
+   *  toggle now, in the header beside Select — the same shape as the ruler and
+   *  waveform below. The window-event bus still reaches the same state (the
+   *  pane's own close button and the WebMCP `set_preview` tool arrive that
+   *  way), so this prop is a second caller rather than a replacement. */
   previewOn: boolean;
+  onPreviewToggle: () => void;
   /** The strip's time ruler. Its toggle lives in this header now (see
    *  `GraphRulerToggle`) and only mounts in flat mode, so the board both
    *  renders the state and asks for the change. */
@@ -1498,6 +1511,9 @@ export function GraphBoard({
   /** Strip's flat mode: render the whole closure in order, not this
    *  collection's direct children. */
   flatOn: boolean;
+  /** The closure is still loading. Strip-only, like `flatOn` itself. */
+  flatLoading: boolean;
+  onFlatToggle: () => void;
   /** Whether the nested-timeline tree renders below the focused surface. The
    *  toggle for it lives in this header now (see `GraphChildrenToggle`), so
    *  unlike the sidebar-driven flags around it the board both renders the
@@ -1780,16 +1796,29 @@ export function GraphBoard({
                   here is the row's original job: where you are, what you have
                   picked, and what you can do to it. */}
               <SelectModeButton />
+              {/* PREVIEW, beside Select. It was a tile in the icon rail, which
+                  gave it prominence but put it a long way from the board it
+                  opens over — and it is a VIEW toggle, which is what this end
+                  of the row is for. Ungated by surface deliberately: the pane
+                  plays the focused timeline in grid as well as strip, so
+                  hiding it in grid would remove a working control.
+
+                  Inside the fence with Select rather than out with the ruler
+                  pair, because those two are flat-mode only and come and go;
+                  these two are always here. */}
+              <HeaderToggle
+                active={previewOn}
+                onToggle={onPreviewToggle}
+                icon={TvMinimal}
+                label={previewOn ? "Hide preview" : "Show preview"}
+                title="Preview — play the focused timeline"
+              />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* Ruler and waveform stay: they draw ONTO the strip rather than
                   changing what is on it, they are flat-mode only, and pairing
                   them with the surface controls to the right is what keeps
                   them out of the way in grid mode. The fence travels with them
-                  — an empty group between two fences is just a doubled line.
-
-                  PREVIEW is deliberately not here. It lives in the icon rail
-                  (see timeline-sidebar) because it is one of the two controls
-                  worth promoting to rail scale. */}
+                  — an empty group between two fences is just a doubled line. */}
               {flatOn ? (
                 <>
                   <HeaderToggle
@@ -1910,6 +1939,36 @@ export function GraphBoard({
                   group still sits right when the aggregate renders nothing —
                   an empty timeline would otherwise let it slide to the left. */}
               <div className="ml-auto flex min-w-0 items-center gap-2">
+                {/* COLLECTIONS leads this group. It came out of the icon rail:
+                    it qualifies WHAT THE BOARD SHOWS, which is this row's job,
+                    and it belongs beside the count and duration it changes —
+                    the flat run turns "3 clips" into every clip in the
+                    closure, and the two now move together.
+
+                    INVERTED against the state it drives. The strip opens flat
+                    (see `flatOn`'s default), so the thing left to offer is the
+                    nesting, and `active` is `!flatOn` — pressed means you have
+                    left the flat run for the collections. Writing it the other
+                    way round would give the strip a control that is lit on
+                    arrival and whose job is to turn itself off.
+
+                    Strip only, unchanged from the rail: grid keeps its nesting,
+                    so there is nothing to flatten there. */}
+                {surface === "strip" ? (
+                  <HeaderToggle
+                    active={!flatOn}
+                    onToggle={onFlatToggle}
+                    // `Layers` — the SAME glyph the collection mark uses in
+                    // the middle of every collection thumbnail (see
+                    // `data-collection-mark` in graph-collection-card). The
+                    // control that gives you the collections back should wear
+                    // the sign that marks one.
+                    icon={Layers}
+                    busy={flatLoading}
+                    label={flatOn ? "Show collections" : "Show all items in order"}
+                    title="Collections — group the run back into its collections. Flat, everything is in order and reordering is off."
+                  />
+                ) : null}
                 <TagFilterControl />
                 <GraphAddCollectionButton />
                 <HeaderToggle

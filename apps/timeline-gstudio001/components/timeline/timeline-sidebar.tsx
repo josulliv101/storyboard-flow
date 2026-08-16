@@ -7,7 +7,6 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import {
-  ChevronsLeftRightEllipsis,
   Film,
   Folder,
   Image as ImageIcon,
@@ -16,7 +15,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Trash2,
-  TvMinimal,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -27,8 +25,6 @@ import {
   GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
-  requestGraphFlatToggle,
-  requestGraphPreviewToggle,
   requestGraphSurface,
   type GraphSurface,
   type GraphViewStateDetail,
@@ -266,36 +262,10 @@ const SIDEBAR_ICON_PRESSED = [
  */
 const SIDEBAR_ICON_TOGGLE_ON =
   "text-sky-300 before:bg-sky-400/15 hover:text-sky-200 hover:before:bg-sky-400/25";
-/**
- * The rule between tile groups: longer than the glyphs it separates, with air
- * above and below.
- *
- * It has been both extremes. Flush against the tiles it disappeared into them;
- * as a short 28px hairline with 8px of margin it read as a gap the tiles had
- * fallen out of. What makes it work is the pill treatment above — the tiles no
- * longer run edge to edge either, so a wider rule with matching breathing room
- * sits in the same rhythm instead of interrupting one.
- */
-// Stated as an INSET, not a width, so it follows the rail.
-//
-// It was `mx-auto w-10` — 40px centred in the 72px rail, which is the same
-// thing as 16px of margin each side. Written that way it stayed 40px when the
-// rail opened to 232px, and a 40px rule adrift in the middle of a 232px column
-// reads as a mistake rather than as a divider. As an inset it is 40px closed
-// (identical to before) and 200px open, with no second value to keep in step
-// and nothing keyed to the open state — which is what stops it animating
-// separately from the width, the way the glyphs used to.
-const SIDEBAR_SEPARATOR_CLASS = "mx-4 my-2 h-px shrink-0";
-
-function SidebarSeparator() {
-  return (
-    <div
-      aria-hidden="true"
-      data-sidebar-separator="normal"
-      className={cn(SIDEBAR_SEPARATOR_CLASS, "bg-zinc-500")}
-    />
-  );
-}
+// The tile-group separator went with the tool group it divided (see the note
+// in the rail below). Nothing draws a rule between groups now: the layout
+// switch at the top and the utility stack at the bottom are already held apart
+// by the `mt-auto` that pins the latter to the floor.
 
 /**
  * The strip layout's glyph: lucide's `Film`, turned on its side.
@@ -624,102 +594,18 @@ export function TimelineSidebar() {
           </div>
         )}
 
-        {activeProjectId && (
-          <>
-            {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
-            <SidebarSeparator />
+        {/* NO TOOL GROUP HERE ANY MORE — the separator went with its
+            contents.
 
-            <div className="flex w-full flex-col items-stretch gap-0">
-              {/* PREVIEW leads this group, directly under the separator.
+            Preview moved to the board's breadcrumb row beside Select; flat
+            mode moved to the controls row under it, leading the group that
+            already carried the filter, the tree and the zoom. Both were here
+            for prominence, and both are VIEW toggles that belong next to the
+            board they change — flat mode especially, since it rewrites the
+            very count and duration it now sits beside.
 
-                It is a toggle, not a destination, so it wears the tint rather
-                than the indicator bar — but it sits in the rail rather than
-                with the other toggles in the breadcrumb row because it is one
-                of the two controls worth calling out at rail scale. The rail
-                is where the eye goes first; giving up a slot there is how a
-                control gets promoted above the toolbar's noise.
-
-                Ungated by surface deliberately: the pane plays the focused
-                timeline in grid as well as strip, so hiding it in grid would
-                remove a working control. */}
-              {onGraphRoute && (
-                <button
-                  type="button"
-                  aria-pressed={graphView.previewOn}
-                  aria-label={
-                    graphView.previewOn ? "Hide preview" : "Show preview"
-                  }
-                  aria-describedby="sidebar-tooltip-preview"
-                  onClick={requestGraphPreviewToggle}
-                  className={cn(
-                    SIDEBAR_ICON_BASE,
-                    graphView.previewOn
-                      ? SIDEBAR_ICON_TOGGLE_ON
-                      : SIDEBAR_ICON_IDLE,
-                  )}
-                >
-                  <TvMinimal className={SIDEBAR_GLYPH} />
-                  <SidebarTooltipLabel
-                    id="sidebar-tooltip-preview"
-                    label="Preview"
-                    description="Play the focused timeline"
-                  />
-                </button>
-              )}
-
-              {/* The children-timelines toggle is in the board's breadcrumb row
-                (see graph-board), alongside the ruler. */}
-
-              {/* Flat mode — strip only. Grid keeps its nesting, so there is
-                nothing to flatten there. */}
-              {onGraphRoute && graphView.surface === "strip" && (
-                <button
-                  type="button"
-                  aria-pressed={graphView.flatOn}
-                  aria-label={
-                    graphView.flatOn
-                      ? "Show collections"
-                      : "Show all items in order"
-                  }
-                  aria-describedby="sidebar-tooltip-flat"
-                  aria-busy={graphView.flatLoading}
-                  onClick={requestGraphFlatToggle}
-                  className={cn(
-                    SIDEBAR_ICON_BASE,
-                    // TOGGLE, not a destination — see SIDEBAR_ICON_TOGGLE_ON.
-                    graphView.flatOn
-                      ? SIDEBAR_ICON_TOGGLE_ON
-                      : SIDEBAR_ICON_IDLE,
-                  )}
-                >
-                  <ChevronsLeftRightEllipsis
-                    className={cn(
-                      SIDEBAR_GLYPH,
-                      // Loading the closure can take a moment on a deep project,
-                      // and a half-built run would otherwise look like the real
-                      // answer.
-                      graphView.flatLoading ? "motion-safe:animate-pulse" : "",
-                    )}
-                  />
-                  <SidebarTooltipLabel
-                    id="sidebar-tooltip-flat"
-                    label="All items in order"
-                    description={
-                      graphView.flatLoading
-                        ? "Loading every collection…"
-                        : "One flat run — no collections. Reordering is off."
-                    }
-                  />
-                </button>
-              )}
-
-              {/* The time-ruler toggle moved to the board's breadcrumb row,
-                sitting left of the children toggle. It is still scoped to flat
-                mode and still appears and disappears with it — only its home
-                changed, joining the view controls it belongs with. */}
-            </div>
-          </>
-        )}
+            What the rail keeps is what says WHERE you are: the layout switch
+            at the top, the trash and the account at the bottom. */}
 
         <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
           {UTILITY_ITEMS.map((item) => {
