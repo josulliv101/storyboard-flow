@@ -134,6 +134,50 @@ export const ExpandedShowsNames: Story = {
   },
 };
 
+/**
+ * THE HEADING IS AS WIDE AS ITS WORDS, and nothing wider.
+ *
+ * It collapses into the divider, and the divider is this same element with a
+ * 1px height and a background — so its width IS the rule's length. Left to
+ * stretch it filled the rail's gutter (207px measured, against 125px of
+ * lettering), and the collapse drew a bar 82px longer than the label it was
+ * replacing. Reported twice; the first fix made the morph one element, which
+ * was right and did not touch the length.
+ *
+ * Asserted as a RELATIONSHIP — box against its own text — rather than against
+ * a pixel count, which would only pin today's font and today's wording.
+ *
+ * Two rules make it hold and BOTH are load-bearing, which is why this checks
+ * the outcome rather than the class list: `self-start` (the rail is a column
+ * flex with `items-stretch`, so `w-fit` alone is inert) and a max-width (a
+ * `truncate`d box cannot shrink below `min-content`, which `nowrap` makes
+ * equal to `max-content`).
+ */
+export const TheHeadingIsAsWideAsItsWords: Story = {
+  render: () => (
+    <Rail open>
+      <CollectionShortcutsGroup
+        shortcuts={[shortcut({ nodeId: "a", title: "Scenes" })]}
+        onOpen={() => {}}
+      />
+    </Rail>
+  ),
+  play: async ({ canvasElement }) => {
+    const heading = canvasElement.querySelector<HTMLElement>(
+      '[data-sidebar-section="collections"]',
+    )!;
+    const rail = heading.parentElement!;
+    const headingWidth = heading.getBoundingClientRect().width;
+    const gutter = rail.getBoundingClientRect().width;
+
+    // It fits its own lettering: no leftover box either side of the words.
+    expect(headingWidth).toBeCloseTo(heading.scrollWidth, 0);
+    // And it is meaningfully NARROWER than the space it is allowed, which is
+    // the part stretching broke — the numbers were identical before.
+    expect(headingWidth).toBeLessThan(gutter - 32);
+  },
+};
+
 /** A collection with nothing in it yet keeps a target the same size as its
  *  neighbours — a gap in the column reads as a MISSING item, not an empty one. */
 export const EmptyCollectionGetsAStandIn: Story = {
