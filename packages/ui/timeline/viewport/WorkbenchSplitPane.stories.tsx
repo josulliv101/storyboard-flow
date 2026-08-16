@@ -135,6 +135,22 @@ export const StickyPreview: Story = {
     // be changed together, and a hard number is what makes that fail loudly.
     expect(buttonGroupBox.width).toBe(220);
     expect(buttonGroupBox.height).toBe(44);
+    // THE BAND'S CLEAR WINDOW IS HALF THAT WIDTH, either side of centre.
+    //
+    // The gradient breaks the divider so no line runs behind the transport's
+    // background-free glyphs. Its stops are hand-written and cannot read the
+    // sibling's width, so adding the two outer buttons widened the group to
+    // five wells and left the window at three — the jump-to-start and
+    // jump-to-end glyphs sat in the fade with the line still showing through.
+    // The assertion above was updated to 220 at the time; this one did not
+    // exist, so nothing caught it.
+    //
+    // Read off the COMPUTED gradient, which resolves the rem stops to pixels,
+    // so the check is against the group's real width rather than against the
+    // literal that produced it.
+    const bandGradient = getComputedStyle(dividerLine!).backgroundImage;
+    const clearHalf = buttonGroupBox.width / 2;
+    expect(bandGradient).toContain(`${clearHalf}px`);
     expect(controls.querySelector("[data-transport-capsule]")).toBeNull();
     // The grip is the coarse-pointer affordance — always in the DOM, painted
     // only at tablet width and below (md:hidden), so presence is what this

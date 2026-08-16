@@ -2181,8 +2181,19 @@ export function WorkbenchSplitPane({
           onPointerUp={handleDividerPointerUp}
           onPointerCancel={handleDividerPointerUp}
         >
-          {/* The band fades out across the 132px transport group so no divider
-              color shows behind its background-free icons.
+          {/* The band fades out across the transport group so no divider
+              colour shows behind its background-free icons.
+
+              THE WINDOW IS HALF THE GROUP'S WIDTH, and the numbers below are
+              that and nothing else: the group is `w-[13.75rem]`, so the clear
+              span reaches 6.875rem either side of centre and the fade adds
+              2rem beyond it. When the group was three buttons those numbers
+              were 4.125rem and 6.125rem — half of 8.25rem, the same rule.
+              Adding the two outer buttons widened the group to five wells and
+              left the window at three, so the jump-to-start and jump-to-end
+              glyphs sat in the fade with the line still running under them.
+              Kept in step by hand, because a CSS gradient cannot read the
+              sibling's width; if the count changes again, both numbers move.
 
               CENTERED on DIVIDER_BAND_CENTER_PX rather than sized from the
               box's top: 8px at desktop, and 12px below `md`, where it has to
@@ -2190,7 +2201,7 @@ export function WorkbenchSplitPane({
               share one mid-line, the transport that rides on it never moves. */}
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 h-3 rounded-sm bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_6.125rem),transparent_calc(50%_-_4.125rem),transparent_calc(50%_+_4.125rem),currentColor_calc(50%_+_6.125rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-700 group-active:text-zinc-600 md:h-2"
+            className="pointer-events-none absolute inset-x-0 h-3 rounded-sm bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_8.875rem),transparent_calc(50%_-_6.875rem),transparent_calc(50%_+_6.875rem),currentColor_calc(50%_+_8.875rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-700 group-active:text-zinc-600 md:h-2"
             style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
             data-divider-line
           />
