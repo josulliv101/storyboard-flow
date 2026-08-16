@@ -54,12 +54,28 @@ export async function hydrateTimeline(
   // that could never have succeeded.
   const documentId = hydrationDocumentId(detailsStore.get(timelineId), timelineId);
   if (documentId !== timelineId) {
-    reportHydrationIssue(
-      timelineId,
-      documentId === null
-        ? "it references another timeline and the reference is missing"
-        : `it references ${documentId}, which is not loaded from here`,
-    );
+    // NOT AN ERROR, and saying so out loud was a regression of its own.
+    //
+    // A duplicate reference card does not hydrate here — deliberately, and it
+    // never did. Removing the request that could not succeed was right; giving
+    // its absence a red banner was not. A board with five duplicate cards on
+    // it grew five alarms describing routine behaviour, which is worse than
+    // the 400 in the network tab it replaced: that at least stayed out of the
+    // way of the work.
+    //
+    // The two cases still differ, and the difference belongs in the console
+    // rather than on the board. A recorded reference means the card is doing
+    // exactly what a reference card does. A MISSING one means stored data
+    // nobody can resolve — worth a developer's attention, still not worth
+    // interrupting the person editing.
+    if (documentId === null) {
+      console.warn(
+        `[GSTUDIO_HYDRATION] "${timelineId}" is a duplicate placement with no recorded reference; its card cannot load contents.`,
+      );
+    }
+    // Clear any banner this id left behind, so a card that WAS unresolvable
+    // and now is not stops being reported.
+    reportHydrationIssue(timelineId, null);
     return;
   }
 
