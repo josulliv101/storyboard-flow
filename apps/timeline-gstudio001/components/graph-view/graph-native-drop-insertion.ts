@@ -1,24 +1,16 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 
 import {
   parseNodeId,
-  useCollectionsContainer,
   useCollectionsStore,
   type CollectionItemNode,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
-import { resolveInsertPlacement } from "@/lib/graph-insert-placement";
-import {
-  GRAPH_INSERT_TOOL_EVENT,
-  isGraphInsertTool,
-  type GraphInsertToolDetail,
-} from "@/lib/graph-view-events";
-
-import { TOOL_LABELS, type SidebarTool } from "./graph-native-drop-model";
+import { type SidebarTool } from "./graph-native-drop-model";
 import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details";
 
 /** Mint an id with a time-ordered prefix. */
@@ -27,11 +19,19 @@ export function mintId(prefix: string): string {
 }
 
 /**
- * Mint-and-insert for the sidebar's tool palette, shared by the two ways a
- * tool can arrive: a native DRAG (which carries a pointer-derived index) and
- * plain ACTIVATION of the sidebar button (which appends). Extracted so the
- * keyboard path runs exactly the same code as the drop — an accessible route
- * that quietly diverges from the pointer one is how they drift apart.
+ * Mint-and-insert, shared by every way a collection can arrive: a native DROP
+ * (which carries a pointer-derived index), the Add item menu's answer at a drop
+ * point, its plain CLICK (which appends), and the trailing slot. Extracted so
+ * the keyboard path runs exactly the same code as the drop — an accessible
+ * route that quietly diverges from the pointer one is how they drift apart.
+ *
+ * There used to be a fifth caller here, `SidebarToolInsertBridge`: a window-event
+ * listener that inserted next to the SELECTION via `resolveInsertPlacement`. Its
+ * one dispatcher was the collection button in the controls row, and that button
+ * is now Add item, which appends. Nothing dispatched to it any more, so it went
+ * — a listener with no sender reads as live and is not. `resolveInsertPlacement`
+ * itself stays: PASTE uses it, which is where landing beside what you picked is
+ * unambiguously the right rule.
  */
 export function useToolInsertion(collectionId: string) {
   const store = useCollectionsStore();
@@ -116,58 +116,4 @@ export function useToolInsertion(collectionId: string) {
 export function useAppendCollection(collectionId: string): (toIndex: number) => boolean {
   const { insertTool } = useToolInsertion(collectionId);
   return useCallback((toIndex: number) => insertTool("collection", toIndex), [insertTool]);
-}
-
-/**
- * The KEYBOARD/click path for the sidebar tool palette. The sidebar is app
- * chrome living outside this provider, so it hands the tool off through a
- * window event (same pattern as the Assets launcher). SELECTION-AWARE via the
- * shared `resolveInsertPlacement`: the tool lands right after the most
- * recently selected card, inside THAT card's own timeline (any strip the
- * board is showing under the focused collection — clicking the tool never
- * clears selection, so this works for mouse and keyboard alike). With nothing
- * selected — or with a selection left BEHIND by a drill-in, which survives the
- * navigation and would otherwise plant the collection in the timeline the user
- * just left — it appends to the focused collection, the one spot that needs no
- * explanation. Dragging the tool remains the pointer-precision path either way.
- *
- * Mounted for BOTH surfaces, deliberately: `NativeDropStrip` only wraps the
- * strip, and an accessible control that silently does nothing in grid mode
- * would be worse than no control at all.
- */
-export function SidebarToolInsertBridge({
-  collectionId,
-}: Readonly<{ collectionId: string }>) {
-  const store = useCollectionsStore();
-  const { insertTool } = useToolInsertion(collectionId);
-  const { announce } = useCollectionsContainer();
-
-  useEffect(() => {
-    const handleInsert = (event: Event) => {
-      const tool = (event as CustomEvent<GraphInsertToolDetail>).detail?.tool;
-      if (!tool || !isGraphInsertTool(tool)) return;
-      const snapshot = store.getSnapshot();
-      const graph = snapshot.graph;
-      const { parentId, toIndex, afterId } = resolveInsertPlacement(
-        graph,
-        snapshot.interaction.selectedIds,
-        collectionId,
-      );
-      const landed = insertTool(tool, toIndex, parentId);
-      const target = graph.nodesById.get(parentId)?.name ?? "the timeline";
-      const afterName =
-        afterId !== null ? (graph.nodesById.get(afterId)?.name ?? "the selected clip") : null;
-      announce(
-        landed
-          ? afterName !== null
-            ? `Added a ${TOOL_LABELS[tool]} after "${afterName}" in "${target}".`
-            : `Added a ${TOOL_LABELS[tool]} to the end of "${target}".`
-          : `Could not add a ${TOOL_LABELS[tool]} to "${target}".`,
-      );
-    };
-    window.addEventListener(GRAPH_INSERT_TOOL_EVENT, handleInsert);
-    return () => window.removeEventListener(GRAPH_INSERT_TOOL_EVENT, handleInsert);
-  }, [store, collectionId, insertTool, announce]);
-
-  return null;
 }

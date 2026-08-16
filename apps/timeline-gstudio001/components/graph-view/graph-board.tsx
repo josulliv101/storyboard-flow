@@ -50,7 +50,7 @@ import {
 } from "@/lib/graph-item-action-specs";
 import {
   requestGraphItemAction,
-  requestGraphToolInsert,
+  requestGraphAddItem,
   type GraphItemAction,
   type GraphSurface,
 } from "@/lib/graph-view-events";
@@ -91,7 +91,7 @@ import {
 } from "./graph-selection-menu";
 import { NativeDropGrid } from "./graph-native-drop-grid";
 import { NativeDropStrip } from "./graph-native-drop-strip";
-import { SidebarToolInsertBridge } from "./graph-native-drop-insertion";
+import { AddItemButton } from "./graph-add-item-menu";
 import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
@@ -131,6 +131,7 @@ import {
   ITEM_SIZE_DIMENSIONS,
   ITEM_SIZES,
   MAX_SUBTREE_DEPTH,
+  DEFAULT_TIMELINE_PPS,
   MAX_TIMELINE_PPS,
   MIN_TIMELINE_PPS,
   isItemSize,
@@ -394,6 +395,25 @@ function FocusedAggregate({
 }
 
 /**
+ * The zoom slider's reading, as a PERCENTAGE of the default.
+ *
+ * The stored value is pixels-per-second, which is the right unit for the layout
+ * maths and the wrong one to show a person: it is an implementation detail of
+ * how a strip is drawn, and "50" means nothing without knowing what the other
+ * numbers are. A percentage answers the only question the readout is asked —
+ * how far from normal is this — and needs no scale to interpret.
+ *
+ * `DEFAULT_TIMELINE_PPS` is the 100% mark, so the control opens reading 100%.
+ * The bounds (6..200 px/s) land at 12%..400%.
+ *
+ * DISPLAY ONLY. The slider's own value, its min/max and everything downstream
+ * stay in px/s — including the `aria-valuenow` an e2e test reads.
+ */
+function zoomPercent(pixelsPerSecond: number): number {
+  return Math.round((pixelsPerSecond / DEFAULT_TIMELINE_PPS) * 100);
+}
+
+/**
  * Horizontal zoom, as a real slider in the header's view group.
  *
  * It spent a while as a MENU ROW, and the comment there argued the shape was
@@ -429,14 +449,31 @@ function HeaderZoomControl({
       // you click to jump the value is the track beside it, which would
       // otherwise read as empty board and drop the selection.
       data-collections-control
-      className="flex shrink-0 items-center gap-2"
+      // `pl-1.5` on top of the row's `gap-2`, and only on the LEFT. Every
+      // neighbour is a button whose glyph sits inside its own padding, so the
+      // row's gap lands between two cushioned edges; the slider's track starts
+      // hard at its box edge, which put it visibly nearer the fence than any
+      // two other controls are to each other. This buys back the padding the
+      // buttons have and it does not.
+      className="flex shrink-0 items-center gap-2 pl-1.5"
     >
       <Slider
+        // A hook on the SLIDER, distinct from `data-header-zoom` on the wrapper
+        // around it. A pointer test aiming at "the left end of the track" has to
+        // measure the track — measuring the wrapper worked only while the two
+        // shared an edge, and a later `pl-1.5` on the wrapper silently moved the
+        // click into the padding, where it did nothing and the zoom never
+        // changed.
+        data-header-zoom-slider
         // The name and the READING both go to the thumb, which is where Radix
         // puts `role="slider"` (see components/core/slider). A bare number on
         // an axis like pixels-per-second announces nothing on its own.
         aria-label="Timeline zoom"
-        aria-valuetext={`${value} pixels per second`}
+        // Announced as the PERCENTAGE shown, not the raw pixels-per-second the
+        // slider stores. A bare number on an axis like px/s announces nothing
+        // on its own, and "100%" carries the one fact that matters — how far
+        // from the default you are.
+        aria-valuetext={`${zoomPercent(value)}%`}
         min={MIN_TIMELINE_PPS}
         max={MAX_TIMELINE_PPS}
         step={1}
@@ -451,9 +488,11 @@ function HeaderZoomControl({
       <span
         data-header-zoom-value
         aria-hidden="true"
-        className="w-[52px] shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+        // Narrower than the `52px` "200 px/s" needed: the widest reading is
+        // now "400%".
+        className="w-[38px] shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
       >
-        {value} px/s
+        {zoomPercent(value)}%
       </span>
     </span>
   );
@@ -526,6 +565,7 @@ function HeaderToggle({
   label,
   title,
   busy = false,
+  text,
 }: Readonly<{
   active: boolean;
   onToggle: () => void;
@@ -542,6 +582,16 @@ function HeaderToggle({
    *  needs it — loading a deep closure takes a moment, and a half-built run
    *  would otherwise look like the real answer. */
   busy?: boolean;
+  /**
+   * A visible word beside the glyph. Absent for almost every toggle here — the
+   * row's language is bare glyphs — and present where a control has earned the
+   * width by being something other than one more view switch.
+   *
+   * It does NOT replace `label`: that stays the accessible name, and the two
+   * differ on purpose ("Preview" on screen, "Show preview"/"Hide preview" to a
+   * screen reader, which needs the STATE the pressed look conveys visually).
+   */
+  text?: string;
 }>) {
   return (
     <Button
@@ -568,9 +618,18 @@ function HeaderToggle({
       // `min-content` the real width of its controls, which is what the
       // header row's right column now sizes itself against — a squeezable
       // icon would report a smaller minimum and let the column collapse again.
-      className={cn("h-8 w-8 shrink-0", active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE)}
+      className={cn(
+        "h-8 shrink-0",
+        // Square when it is a glyph alone; grown to fit when it carries a word.
+        // `size="icon"` sets a fixed square, so a labelled one has to opt out of
+        // the width and take its own padding — and `whitespace-nowrap` so the
+        // word cannot wrap and drag the row's pinned height with it.
+        text === undefined ? "w-8" : "w-auto gap-1.5 px-2 text-[11px] font-medium whitespace-nowrap",
+        active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE,
+      )}
     >
       <Icon aria-hidden className={cn("h-4 w-4", busy && "motion-safe:animate-pulse")} />
+      {text}
     </Button>
   );
 }
@@ -1443,67 +1502,38 @@ function GraphUndoRedo() {
 }
 
 /**
- * The Collection tool, relocated from the icon sidebar into the board header
- * (right cluster). Same two affordances it always had: CLICK (or keyboard)
- * appends a nested timeline to the open collection through the insert bridge,
- * and native DRAG carries it onto a strip to pick a POSITION. The default
- * browser drag image is suppressed (1×1 transparent gif) so only the strip's
- * own drop indicator shows where it will land.
+ * The controls row's ADD ITEM control, and the click half of its behaviour.
+ *
+ * Replaces a Collection-only tool. That button offered exactly one kind of
+ * thing, while media had a route only at the very end of a surface (the
+ * trailing slot) or by dragging in from the OS — so "put a clip here" and "put
+ * a collection here" were two unrelated gestures with different reach. One
+ * control now asks WHICH, and both answers land the same way.
+ *
+ * Two gestures:
+ *
+ * - CLICK opens the menu; either answer APPENDS. That is a change from the
+ *   button this replaces, which landed next to the SELECTION (via
+ *   `resolveInsertPlacement`) — a rule that reads well from a sidebar palette
+ *   and poorly from a control sitting directly above the board, where "add one"
+ *   plainly means "at the end of this".
+ * - DRAG carries the add-item payload onto any surface, which parks the
+ *   position and asks the same question THERE (see `AddItemDropMenu`).
+ *
+ * The work happens in `useNativeDrop`, inside the drop surface below this row —
+ * that is where the mint-and-insert and the whole upload pipeline live, and
+ * context does not flow upward, so the click path crosses down by ADDRESSED
+ * event. See GRAPH_ADD_ITEM_EVENT for why addressed and not broadcast.
  */
-function GraphAddCollectionButton() {
-  const handleDragStart = (event: React.DragEvent) => {
-    // Same MIME the sidebar tool used, which NativeDropStrip/Grid accept.
-    event.dataTransfer.setData("application/x-gstudio-type", "collection");
-    event.dataTransfer.effectAllowed = "copy";
-    const img = new window.Image();
-    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-    event.dataTransfer.setDragImage(img, 0, 0);
-
-    // The browser shows a "no-drop" cursor wherever a dragover handler doesn't
-    // preventDefault — i.e. everywhere except directly over a strip/grid — so
-    // the cursor flickers to no-drop as the pointer crosses the gaps between
-    // them (and at the very start, up in the header). Claim EVERY dragover at
-    // the document level for the drag's lifetime so the cursor stays a valid
-    // "copy" throughout; the strips/grids still own the drop position and the
-    // actual add. A matching document drop swallows a stray drop that misses
-    // every strip so the browser takes no default action.
-    const onDocDragOver = (e: DragEvent) => {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-    };
-    const onDocDrop = (e: DragEvent) => {
-      e.preventDefault();
-    };
-    const cleanup = () => {
-      document.removeEventListener("dragover", onDocDragOver, true);
-      document.removeEventListener("drop", onDocDrop, true);
-      document.removeEventListener("dragend", cleanup);
-    };
-    // Capture before nested surfaces. Chromium can briefly expose an empty
-    // `types` list while crossing DOM boundaries, so the drag-lifetime guard
-    // must not depend on reading our MIME type back from each event.
-    document.addEventListener("dragover", onDocDragOver, true);
-    document.addEventListener("drop", onDocDrop, true);
-    document.addEventListener("dragend", cleanup, { once: true });
-  };
-
+function BoardAddItemButton({ collectionId }: Readonly<{ collectionId: string }>) {
+  const [open, setOpen] = useState(false);
   return (
-    <button
-      type="button"
-      draggable
-      aria-label="Add Collection to the open timeline"
-      title="New collection — click to append, drag onto a strip to place"
-      onDragStart={handleDragStart}
-      onClick={() => requestGraphToolInsert("collection")}
-      // NO BORDER at rest. It was the only bordered control in this row —
-      // every toggle beside it is a bare ghost square — so the box read as a
-      // different KIND of thing rather than as the same row's tool. The
-      // hover still fills and tints, which is what says it is pressable, and
-      // `cursor-grab` is what says it is also draggable.
-      className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-md bg-zinc-900/40 text-zinc-400 transition-colors hover:bg-sky-950/30 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-    >
-      <FolderPlus aria-hidden="true" className="h-4 w-4" />
-    </button>
+    <AddItemButton
+      open={open}
+      onOpenChange={setOpen}
+      onCollection={() => requestGraphAddItem({ collectionId, kind: "collection" })}
+      onFiles={(files) => requestGraphAddItem({ collectionId, kind: "media", files })}
+    />
   );
 }
 
@@ -1883,6 +1913,7 @@ export function GraphBoard({
                 active={previewOn}
                 onToggle={onPreviewToggle}
                 icon={TvMinimal}
+                text="Preview"
                 label={previewOn ? "Hide preview" : "Show preview"}
                 title="Preview — play the focused timeline"
               />
@@ -1919,9 +1950,6 @@ export function GraphBoard({
           </div>
         }
       >
-        {/* Outside the surface branch on purpose: the sidebar's tool buttons
-            must insert in grid mode too, where no NativeDropStrip exists. */}
-        <SidebarToolInsertBridge collectionId={focusedId} />
         {/* Also outside it (PL10-012): details are not a strip idea. A grid
             card has no trim handles, but it has a name, a duration, and
             whatever an item grows next — so it opens the same view. The modal
@@ -2025,20 +2053,44 @@ export function GraphBoard({
                 the intended order. */}
             <div
               data-board-controls-row
-              className="grid min-h-7 grid-cols-[minmax(min-content,1fr)_auto_minmax(min-content,1fr)] items-center gap-3 border-b border-white/10 px-3 py-2"
+              // WRAPS when it cannot fit, three columns when it can.
+              //
+              // The row needs ~648px of content. Below roughly an 800px
+              // viewport the three columns overflow the panel, and every way of
+              // absorbing that inside one line is worse than a second line:
+              // clipping the sides would cut off the Add item and filter menus,
+              // which are absolutely positioned INSIDE those columns; letting
+              // the columns shrink puts their `shrink-0` contents on top of
+              // each other again; and `overflow-x-auto` on the row would
+              // establish a scroll container that clips those same menus
+              // vertically.
+              //
+              // Wrapping is available here in a way it is not one row up: the
+              // breadcrumb header is pinned to a single height that the preview
+              // pane measures itself against, and this row is deliberately not
+              // sticky and measured by nothing.
+              className="flex min-h-7 flex-wrap items-center gap-3 border-b border-white/10 px-3 py-2 lg:grid lg:grid-cols-[minmax(min-content,1fr)_auto_minmax(min-content,1fr)]"
             >
               {/* LEFT COLUMN — WHAT THE BOARD IS MADE OF. Two fenced groups:
-                  the toggles that change its shape, then the one control that
-                  adds to it.
+                  the one control that ADDS to it, then the toggles that change
+                  its shape.
+
+                  ADD LEADS. It is the only control in the row that writes, and
+                  the only one that is a verb rather than a view — so it opens
+                  the row rather than trailing the switches. It also carries the
+                  row's only label, and a labelled control reads as the start of
+                  a run far better than as something wedged after two glyphs.
 
                   `min-w-0` on the flex box inside the column, so its own
                   children may compress. The column's `min-content` floor
                   governs how far that can go. */}
               <div className="flex min-w-0 items-center gap-2">
-                {/* GROUP 1 — HOW THE BOARD IS STRUCTURED. Two toggles that
-                    change the shape of what is drawn, not its contents:
-                    whether this run is grouped into its collections, and
-                    whether the nested timelines draw below it. */}
+                <BoardAddItemButton collectionId={focusedId} />
+                <ControlFence />
+                {/* HOW THE BOARD IS STRUCTURED. Two toggles that change the
+                    shape of what is drawn, not its contents: whether this run
+                    is grouped into its collections, and whether the nested
+                    timelines draw below it. */}
                 {/* INVERTED against the state it drives. The strip opens flat
                     (see `flatOn`'s default), so the thing left to offer is the
                     nesting, and `active` is `!flatOn` — pressed means you have
@@ -2070,12 +2122,10 @@ export function GraphBoard({
                   label={childrenShown ? "Hide children timelines" : "Show children timelines"}
                   title="Children timelines — show the nested timeline tree"
                 />
-                <ControlFence />
-                {/* GROUP 2 — the one control here that CHANGES THE TIMELINE
-                    rather than the view of it, which is the whole reason it
-                    gets a fence to itself. Everything either side is a
-                    reading; this one writes. */}
-                <GraphAddCollectionButton />
+                {/* NO trailing fence. A fence is the edge BETWEEN two groups,
+                    and there is nothing after this one — the column ends here.
+                    One was briefly left behind when Add item moved to the front
+                    of the row, drawing a line against empty space. */}
               </div>
 
               {/* CENTRE COLUMN — WHAT THE BOARD AMOUNTS TO. One readout, and
@@ -2084,8 +2134,24 @@ export function GraphBoard({
 
                   `justify-center` inside an `auto` column is belt and braces:
                   the column is already exactly its content's width. It matters
-                  the moment anything joins the readout here. */}
-              <div className="flex items-center justify-center">
+                  the moment anything joins the readout here.
+
+                  `min-w-0 overflow-hidden` IS NOT decoration — it fixes a real
+                  bug this grid introduced. On a narrow viewport the three
+                  columns cannot all fit; the sides hold their `min-content`
+                  floors, so CSS squeezes the flexible `auto` track instead —
+                  measured at 30px against a 91px readout. The readout is
+                  `shrink-0`, so it kept its full width and, being centred,
+                  overhung its own column by 30px on EACH side, landing on top
+                  of the buttons either way. Not a cosmetic overlap: it
+                  intercepted their pointer events, and at 560px the children
+                  toggle became unclickable. Flex children cannot do this to
+                  each other, which is why the old flex row never could.
+
+                  Clipping is the right thing to lose first. Everything either
+                  side is a control; this is the one thing in the row you only
+                  read. */}
+              <div className="flex min-w-0 items-center justify-center overflow-hidden">
                 <FocusedAggregate
                   focusedId={focusedId}
                   pixelsPerSecond={deferredPixelsPerSecond}
@@ -2133,6 +2199,14 @@ export function GraphBoard({
                         />
                       </>
                     ) : null}
+                    {/* The ruler and the waveform are TOGGLES — things drawn
+                        onto the strip. The slider is a continuous control that
+                        changes the axis they are drawn against. Fenced apart
+                        because they read as one undifferentiated run
+                        otherwise, and only inside the flat branch: with the
+                        toggles gone this fence would open the group with a
+                        line against nothing. */}
+                    {flatOn ? <ControlFence /> : null}
                     <HeaderZoomControl
                       pixelsPerSecond={pixelsPerSecond}
                       onChange={onPixelsPerSecondChange}

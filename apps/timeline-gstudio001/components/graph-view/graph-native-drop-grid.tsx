@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNod
 import { getChildren, parseNodeId, useCollectionsStore } from "@storyboard/ui/dnd-collections";
 
 import { useNativeDragArmed } from "./graph-native-drag-signal";
+import { AddItemDropMenu } from "./graph-add-item-menu";
 import { AppendFilesContext, useNativeDrop } from "./graph-native-drop-engine";
 import {
   DROP_INDICATOR_CLASS,
@@ -45,7 +46,15 @@ export function NativeDropGrid({
   children,
 }: Readonly<{ collectionId: string; projectId: string; children: ReactNode }>) {
   const store = useCollectionsStore();
-  const { commitDrop, upload, appendFiles } = useNativeDrop(collectionId, projectId);
+  const {
+    commitDrop,
+    upload,
+    appendFiles,
+    pendingChoice,
+    chooseCollection,
+    chooseMedia,
+    cancelChoice,
+  } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<GridIndicator | null>(null);
   const armed = useNativeDragArmed();
@@ -179,6 +188,16 @@ export function NativeDropGrid({
       onDrop={handleDrop}
     >
       <AppendFilesContext.Provider value={appendFiles}>{children}</AppendFilesContext.Provider>
+      {/* The strip's twin, from the same engine state — see the note there. */}
+      {pendingChoice !== null && (
+        <AddItemDropMenu
+          clientX={pendingChoice.clientX}
+          clientY={pendingChoice.clientY}
+          onCollection={chooseCollection}
+          onFiles={chooseMedia}
+          onDismiss={cancelChoice}
+        />
+      )}
       {indicator !== null && (
         <div
           data-native-drop-indicator

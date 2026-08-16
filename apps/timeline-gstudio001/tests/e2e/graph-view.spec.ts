@@ -424,6 +424,18 @@ async function openGraph(page: Page): Promise<void> {
  * collections" while flat. Leaving restores "Show all items in order", which
  * is what the flat-specific tests click to go back.
  */
+/**
+ * Add a collection through the Add item button — the CLICK route.
+ *
+ * Two steps now rather than one: the button asks which kind before it adds
+ * anything. Extracted because several tests only need "a collection exists"
+ * and should not each re-encode how the menu works.
+ */
+async function addCollectionViaButton(page: Page): Promise<void> {
+  await page.locator("[data-add-item-button]").click();
+  await page.locator("[data-add-item-menu] [data-add-item-collection]").click();
+}
+
 async function leaveFlatMode(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Show collections" }).click();
 }
@@ -3801,6 +3813,114 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
+  test("Add item asks WHICH, and appends the answer to the end", async ({ page }) => {
+    // One control for the two things a timeline can hold. It replaces a
+    // collection-only tool, so the assertions here are about the merge: the
+    // menu offers both kinds, and BOTH land at the end — a change from the old
+    // button, which landed next to the SELECTION.
+    const api = await installGraphApi(page);
+    let uploads = 0;
+    await page.route("**/api/timeline-media/upload", (route) => {
+      uploads += 1;
+      return route.fulfill({
+        json: { pathname: `added-${uploads}.png`, url: PIXEL, thumbnailUrl: PIXEL },
+      });
+    });
+    await openGraph(page);
+    const before = (await stripOrder(page, PROJECT_ID)).length;
+
+    const button = page.locator("[data-add-item-button]");
+    await expect(button).toHaveCount(1);
+    // DRAGGABLE, and it says so twice over: the attribute makes the gesture
+    // real, and the grip glyph is what makes it visible before you try.
+    await expect(button).toHaveAttribute("draggable", "true");
+
+    // 1) CLICK opens the menu, with both kinds and the drag hint.
+    await button.click();
+    const menu = page.locator("[data-add-item-menu]");
+    await expect(menu).toBeVisible();
+    await expect(menu.locator("[data-add-item-collection]")).toBeVisible();
+    await expect(menu.locator("[data-add-item-media]")).toBeVisible();
+    // THE DISCOVERABILITY HALF. Without it the second gesture is invisible to
+    // anyone who has not already found it, which for a control whose whole
+    // point is that you can drag it somewhere means most people.
+    await expect(menu.locator("[data-add-item-drag-hint]")).toContainText(/drag/i);
+
+    // 2) Add collection APPENDS — last, not next to any selection.
+    await menu.locator("[data-add-item-collection]").click();
+    await expect(menu).toHaveCount(0);
+    await expect.poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length)).toBe(before + 1);
+    const afterCollection = await stripOrder(page, PROJECT_ID);
+    expect(afterCollection[afterCollection.length - 1]).toMatch(/^timeline-/);
+
+    // 3) Add media item goes through the SAME upload pipeline a drop uses, and
+    //    also appends. Files are set straight on the input: clicking the item
+    //    opens the OS picker, which a browser test cannot drive.
+    await button.click();
+    await page
+      .locator("[data-add-item-menu] [data-add-item-input]")
+      .setInputFiles([
+        { name: "added.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) },
+      ]);
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length), { timeout: 15000 })
+      .toBe(before + 2);
+    expect(uploads).toBe(1);
+    await expect.poll(() => api.patchesFor(PROJECT_ID).length, { timeout: 5000 }).toBeGreaterThan(0);
+  });
+
+  test("a dragged Add item asks at the spot it landed, and answers there", async ({ page }) => {
+    // The drag half. Dropping does NOT insert anything — it parks the position
+    // and asks; the answer lands where the drop did. Everything about that is
+    // new behaviour, and the position surviving the wait is the part most
+    // likely to rot, since nothing commits while the menu is open.
+    await installGraphApi(page);
+    await openGraph(page);
+    const before = await stripOrder(page, PROJECT_ID);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    const transfer = await page.evaluateHandle(() => {
+      const value = new DataTransfer();
+      value.setData("application/x-gstudio-type", "add-item");
+      return value;
+    });
+    // clientX 0 = before the first card, the same boundary the collection-tool
+    // test uses. clientY is what positions the menu.
+    await dropZone.dispatchEvent("drop", { dataTransfer: transfer, clientX: 0, clientY: 300 });
+
+    // NOTHING landed yet. This is the claim that makes dismissal a real cancel
+    // rather than something to undo — the graph is untouched until answered.
+    const menu = page.locator("[data-add-item-drop-menu]");
+    await expect(menu).toBeVisible();
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(before);
+
+    // 1) Escape cancels, still leaving nothing behind.
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(before);
+
+    // 2) Drop again and ANSWER: the collection lands at the dropped boundary
+    //    (first), not appended at the end where a click would put it. That is
+    //    the entire difference between the two gestures.
+    const second = await page.evaluateHandle(() => {
+      const value = new DataTransfer();
+      value.setData("application/x-gstudio-type", "add-item");
+      return value;
+    });
+    await dropZone.dispatchEvent("drop", { dataTransfer: second, clientX: 0, clientY: 300 });
+    await expect(menu).toBeVisible();
+    // No drag hint here — you arrived by dragging.
+    await expect(menu.locator("[data-add-item-drag-hint]")).toHaveCount(0);
+    await menu.locator("[data-add-item-collection]").click();
+
+    await expect.poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length)).toBe(
+      before.length + 1,
+    );
+    const after = await stripOrder(page, PROJECT_ID);
+    expect(after[0]).toMatch(/^timeline-/);
+    expect(after.slice(1)).toEqual(before);
+  });
+
   test("the trailing slot browses for media — the only route that needs no pointer", async ({
     page,
   }) => {
@@ -3923,20 +4043,30 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
-  test("sidebar tools insert from the KEYBOARD, with no pointer involved", async ({ page }) => {
-    // The palette used to be pointer-only: its tiles were <div role="button">
-    // whose Enter/Space did nothing but show a "drag this" toast, and actual
-    // insertion needed a native drag carrying a custom DataTransfer. Keyboard
-    // and assistive-tech users could not create anything at all.
+  test("Add item works from the KEYBOARD, with no pointer involved", async ({ page }) => {
+    // The palette this replaces was pointer-only: its tiles were
+    // <div role="button"> whose Enter/Space did nothing but show a "drag this"
+    // toast, and actual insertion needed a native drag carrying a custom
+    // DataTransfer. Keyboard and assistive-tech users could not create anything.
+    //
+    // Adding the menu put that at risk again — activating the control now opens
+    // a menu instead of inserting — so the route is asserted end to end here.
     await installGraphApi(page);
     await openGraph(page);
 
-    const collectionTool = page.getByRole("button", { name: /add collection/i });
-    await expect(collectionTool).toBeVisible();
+    const addItem = page.locator("[data-add-item-button]");
+    await expect(addItem).toBeVisible();
 
-    // Reach it by TABBING — it must be in the focus order, not just clickable.
-    await collectionTool.focus();
-    await expect(collectionTool).toBeFocused();
+    // Reach it by FOCUS — it must be in the focus order, not just clickable.
+    await addItem.focus();
+    await expect(addItem).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    // Opening MOVES FOCUS to the first choice. Without that the menu is open
+    // but its answers are an unknown number of Tabs away, which is the whole
+    // difference between a keyboard route and a keyboard dead end.
+    const collectionItem = page.locator("[data-add-item-menu] [data-add-item-collection]");
+    await expect(collectionItem).toBeFocused();
     await page.keyboard.press("Enter");
 
     // Appended to the end of the focused timeline.
@@ -3944,9 +4074,14 @@ test.describe("graph view E2E", () => {
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie", expect.stringMatching(/^timeline-/)]);
 
+    // Focus RETURNS to the trigger, so the next Tab carries on from here rather
+    // than restarting at the top of the page.
+    await expect(addItem).toBeFocused();
+
     // Space is the other native activation key, and must not be swallowed.
-    await collectionTool.focus();
     await page.keyboard.press(" ");
+    await expect(collectionItem).toBeFocused();
+    await page.keyboard.press("Enter");
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
       .toBe(6);
@@ -3963,70 +4098,77 @@ test.describe("graph view E2E", () => {
       .toMatch(/^timeline-/);
   });
 
-  test("the collection tool lands AFTER the selected card, in that card's own strip", async ({
+  test("Escape closes the menu without adding anything, and gives focus back", async ({ page }) => {
+    // The cancel path. It matters more than it looks: the menu is the only
+    // thing standing between a keystroke and a write, so an Escape that half
+    // works — closes but still inserts, or closes and strands focus on <body> —
+    // turns a change of mind into an edit to undo.
+    await installGraphApi(page);
+    await openGraph(page);
+    const before = await stripOrder(page, PROJECT_ID);
+
+    const addItem = page.locator("[data-add-item-button]");
+    await addItem.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-add-item-menu]")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-add-item-menu]")).toHaveCount(0);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(before);
+    await expect(addItem).toBeFocused();
+
+    // And Escape did not travel on to the board behind it, where the same key
+    // clears the selection — a menu's dismissal is not a board gesture.
+    await expect(page.locator("[data-graph-shortcuts-sheet]")).toHaveCount(0);
+  });
+
+  test("Add item APPENDS, whatever is selected and wherever the selection lives", async ({
     page,
   }) => {
+    // A DELIBERATE CHANGE, and the reason it is pinned rather than deleted.
+    //
+    // The collection tool this replaces landed next to the SELECTION, in that
+    // card's own strip, via `resolveInsertPlacement` — a rule that reads well
+    // from a sidebar palette and poorly from a control sitting directly above
+    // the board, where "add one" plainly means "at the end of this". The rule
+    // itself is alive and still tested: PASTE uses it, which is where landing
+    // next to what you picked is unambiguously right.
     await installGraphApi(page);
     await openGraph(page);
 
-    // Select bravo (a media clip: click toggles selection, no drill)…
+    // Select bravo, in the middle of the run…
     await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="bravo"]'));
     await expect(strip(page, PROJECT_ID).locator('[data-node-id="bravo"]')).toHaveAttribute(
       "data-selected",
       "true",
     );
 
-    // …then CLICK the sidebar tool: sidebar clicks never clear selection,
-    // so the new collection lands right after bravo, not at the end.
-    const collectionTool = page.getByRole("button", { name: /add collection/i });
-    await collectionTool.click();
+    // …and the collection still lands LAST, not after bravo.
+    await addCollectionViaButton(page);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual([
         "alpha",
         "bravo",
-        expect.stringMatching(/^timeline-/),
         CHILD_ID,
         "charlie",
+        expect.stringMatching(/^timeline-/),
       ]);
 
-    // The selected card may live in ANY strip: select c1 in the CHILD
-    // timeline — the insert follows the selection there, not the focus.
+    // Not even when the selection lives in ANOTHER strip. This is the case the
+    // old rule existed for, so it is the one that proves the rule is gone: the
+    // add goes to the FOCUSED timeline's end, and the child is untouched.
     await expandSubGraph(page, "Scene A");
     await expect
       .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
       .toEqual(["c1", "c2"]);
     await selectCard(strip(page, CHILD_ID).locator('[data-node-id="c1"]'));
-    await collectionTool.click();
-    await expect
-      .poll(() => stripOrder(page, CHILD_ID))
-      .toEqual(["c1", expect.stringMatching(/^timeline-/), "c2"]);
+    await addCollectionViaButton(page);
 
-    // The focused root gained exactly the ONE insert from before.
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
-      .toBe(5);
-
-    // …but only strips INSIDE the focused subtree count. Select charlie in the
-    // project, then drill into Scene A: the selection survives the navigation,
-    // and the tool must append into the collection now open rather than plant
-    // the new timeline back where the user came from (same rule as Paste).
-    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="charlie"]'));
-    await drillButton(page, "Scene A").click();
-    // Wait on the PROJECT strip leaving, not on a CHILD card appearing: the
-    // Scene A sub-row is expanded above, so its strip is already on the page
-    // and that wait would pass without the route having changed at all —
-    // letting the tool click race the navigation (it did, first run).
-    await expect(strip(page, PROJECT_ID)).toHaveCount(0);
-    await collectionTool.click();
-    await expect
-      .poll(() => stripOrder(page, CHILD_ID))
-      .toEqual([
-        "c1",
-        expect.stringMatching(/^timeline-/),
-        "c2",
-        expect.stringMatching(/^timeline-/),
-      ]);
+      .toBe(6);
   });
 
   test("keyboard insertion works in grid mode too", async ({ page }) => {
@@ -4038,7 +4180,11 @@ test.describe("graph view E2E", () => {
     await surfaceButton(page, "grid").click();
     await expect(page.locator(`[data-native-drop="${PROJECT_ID}"]`)).toHaveCount(1);
 
-    await page.getByRole("button", { name: /add collection/i }).focus();
+    // Enter to open, Enter to choose — the menu takes focus, so the whole
+    // route is two keystrokes with no Tabbing in between.
+    await page.locator("[data-add-item-button]").focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-add-item-menu] [data-add-item-collection]")).toBeFocused();
     await page.keyboard.press("Enter");
 
     await expect
@@ -5499,7 +5645,7 @@ test.describe("graph view E2E", () => {
     await expect(empty).toContainText(/no child timelines/i);
 
     // Adding a collection replaces it with the real row, no reload.
-    await page.getByRole("button", { name: /add collection/i }).click();
+    await addCollectionViaButton(page);
     await expect(empty).toHaveCount(0);
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(1);
 
@@ -5897,24 +6043,27 @@ test.describe("graph view E2E", () => {
     await expect(status).toHaveText("");
   });
 
-  test("the collection tool in the breadcrumb row is a drag source, uncovered by the drop-zone layer", async ({ page }) => {
-    // The tool keeps BOTH affordances after moving to the header: keyboard
-    // activation (covered elsewhere) and native drag. Playwright's synthetic
-    // mouse cannot drive a native HTML5 drag, so this asserts the next best
-    // thing: the element is still draggable and its dragstart still loads the
-    // DataTransfer the drop targets read.
+  test("the Add item button is a drag source, uncovered by the drop-zone layer", async ({ page }) => {
+    // The control keeps BOTH affordances: keyboard activation (covered
+    // elsewhere) and native drag. Playwright's synthetic mouse cannot drive a
+    // native HTML5 drag, so this asserts the next best thing: the element is
+    // still draggable and its dragstart still loads the DataTransfer the drop
+    // targets read.
     await installGraphApi(page);
     await openGraph(page);
 
-    const collectionTool = page.getByRole("button", { name: /add collection/i });
-    await expect(collectionTool).toHaveAttribute("draggable", "true");
+    const addItem = page.locator("[data-add-item-button]");
+    await expect(addItem).toHaveAttribute("draggable", "true");
 
-    const carried = await collectionTool.evaluate((el) => {
+    // The payload is `add-item`, NOT `collection`. That difference is the whole
+    // feature: a collection payload commits on drop, while this one parks the
+    // position and asks which kind to put there.
+    const carried = await addItem.evaluate((el) => {
       const transfer = new DataTransfer();
       el.dispatchEvent(new DragEvent("dragstart", { dataTransfer: transfer, bubbles: true }));
       return transfer.getData("application/x-gstudio-type");
     });
-    expect(carried).toBe("collection");
+    expect(carried).toBe("add-item");
 
     // ...and the button must actually RECEIVE that dragstart under a real
     // pointer. dispatchEvent above bypasses hit-testing, so it can't catch a
@@ -5922,7 +6071,7 @@ test.describe("graph view E2E", () => {
     // layer sits over this same row. Assert hit-testing: the topmost element at
     // the tool's own centre is the tool itself, which holds only while the idle
     // drop-zone layer stays pointer-events-none.
-    const onThisTool = await collectionTool.evaluate((el) => {
+    const onThisTool = await addItem.evaluate((el) => {
       const r = el.getBoundingClientRect();
       const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       return el.contains(top);
@@ -8306,7 +8455,11 @@ test.describe("graph view E2E", () => {
     // Dragged to the left end with the POINTER, which is how this control is
     // actually used and what the move out of the menu was for. Keyboard Home
     // is Radix's to implement and is not what this test is about.
-    const track = (await page.locator("[data-header-zoom]").boundingBox())!;
+    // The SLIDER's own box, not the wrapper's. They used to share a left edge,
+    // so measuring the wrapper worked by coincidence; a `pl-1.5` added to the
+    // wrapper for spacing then put this click 6px into the padding, where it
+    // hit nothing and the zoom stayed at its default.
+    const track = (await page.locator("[data-header-zoom-slider]").boundingBox())!;
     await page.mouse.click(track.x + 1, track.y + track.height / 2);
     // NEAR the floor, not exactly on it: the thumb has width, so a click at the
     // track's left edge lands a step or two in. What the test needs is "zoomed
