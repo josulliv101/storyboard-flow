@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isEmailAllowed } from "@/lib/auth-allowlist";
 import { completeFirebaseEmailSignInLink } from "@/lib/firebase-auth-rest";
 import { createSessionCookie, setSessionCookie } from "@/lib/firebase-auth-session";
 import { readJsonObject } from "@/lib/read-json-body";
@@ -18,6 +19,23 @@ export async function POST(request: Request) {
     }
 
     const authResult = await completeFirebaseEmailSignInLink(email, oobCode);
+
+    // A VALID LINK IS NOT A TICKET. The send path refuses addresses that are
+    // not on the list, but links already in an inbox outlive that check — and
+    // so does a link mailed before the list existed, or before an address was
+    // taken off it. Refused HERE too, so the only thing a stale link buys is
+    // this message.
+    //
+    // Checked against the address Firebase just authenticated, not the one the
+    // request claimed, since the two need not agree.
+    if (!isEmailAllowed(authResult.email)) {
+      console.warn("[GSTUDIO_AUTH_COMPLETE_REFUSED]", { reason: "not-allowlisted" });
+      return NextResponse.json(
+        { error: "This account does not have access." },
+        { status: 403 },
+      );
+    }
+
     const sessionCookie = await createSessionCookie(authResult.idToken);
 
     return setSessionCookie(

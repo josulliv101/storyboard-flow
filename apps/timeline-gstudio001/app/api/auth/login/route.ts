@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { isEmailAllowed } from "@/lib/auth-allowlist";
 import { sendFirebaseEmailSignInLink } from "@/lib/firebase-auth-rest";
 import { clientAddress, createRateLimiter } from "@/lib/rate-limit";
 import { readJsonObject } from "@/lib/read-json-body";
@@ -74,6 +75,15 @@ export async function POST(request: Request) {
   // link: answering "that one is rate-limited" would confirm the address is
   // worth hammering.
   if (!perAddress.check(bucketKey(email)).allowed) {
+    return acceptedResponse();
+  }
+
+  // NOT ON THE LIST, NO LINK — and the same answer as every other outcome, so
+  // this does not become the enumeration oracle the rest of this route exists
+  // to avoid. Silent by design: a would-be signer-up learns nothing, and the
+  // owner sees it in the log.
+  if (!isEmailAllowed(email)) {
+    console.warn("[GSTUDIO_AUTH_LOGIN_REFUSED]", { reason: "not-allowlisted" });
     return acceptedResponse();
   }
 

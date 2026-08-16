@@ -3,6 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { type DecodedIdToken } from "firebase-admin/auth";
 
+import { isEmailAllowed } from "./auth-allowlist";
 import { getFirebaseAuth } from "./firebase-admin";
 
 export const AUTH_COOKIE_NAME = "__Host-gstudio_session";
@@ -42,7 +43,18 @@ export async function getAuthUser(): Promise<AuthUser | null> {
 
   try {
     const decodedToken = await getFirebaseAuth().verifySessionCookie(sessionCookie, true);
-    return toAuthUser(decodedToken);
+    const user = toAuthUser(decodedToken);
+    // THE GATE THAT EVICTS. Refusing to mail links, and refusing to mint new
+    // sessions, does nothing to a cookie somebody already holds — it stays
+    // valid for its full lifetime, and every request it makes is authorised.
+    // Checking here is what makes removing an address take effect on the next
+    // request rather than whenever their session happens to expire.
+    //
+    // Every authenticated path runs through this function, so this is the one
+    // place that cannot be gone around; it costs a string compare against an
+    // already-decoded token.
+    if (!isEmailAllowed(user.email)) return null;
+    return user;
   } catch {
     return null;
   }
