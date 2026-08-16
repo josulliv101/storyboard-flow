@@ -8437,4 +8437,62 @@ test.describe("graph view E2E", () => {
       .toEqual({ width: 1152, height: 480, fps: 24 });
   });
 
+
+  /**
+   * A LANE CARD RESIZES WHILE YOU DRAG ITS HANDLE.
+   *
+   * It did not. Layer cards are deliberately not virtualized, so `indexById` —
+   * built from the PICTURE row's ids — did not know them, and `previewTrim`
+   * fell into its abort branch on every pointer move. The trim still committed
+   * correctly on release, which is exactly what made it hard to see: the
+   * gesture looked wired, but you dragged a handle, nothing moved, and the
+   * card jumped when you let go.
+   *
+   * Both edges, because a lane clip is pinned by its placed start and trimming
+   * EITHER edge holds the left and shrinks the width — so a left-handle drag
+   * has no distinguishing landmark other than this width, and a preview that
+   * only tracked the right edge would look right in half the cases.
+   *
+   * The commit is asserted against the LAST previewed width rather than a
+   * fixed number: the package's rule is that a preview equals its commit
+   * outcome, and pinning both to one constant would let them drift together.
+   */
+  for (const side of ["left", "right"] as const) {
+    test(`a lane card follows the pointer during a ${side} trim`, async ({ page }) => {
+      const api = await installGraphApi(page);
+      api.documents.get(PROJECT_ID)!.clips = [
+        mediaClip("alpha", "video", 0, 6, 20),
+        { ...mediaClip("bed", "audio", 1, 8, 20), trackIndex: 1, placedStart: 2 },
+      ];
+      await openGraph(page);
+
+      const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="bed"]');
+      await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="bed"]'));
+      const started = Math.round((await wrapper.boundingBox())!.width);
+
+      const hb = (await wrapper.locator(`[data-trim-handle="${side}"]`).boundingBox())!;
+      const y = hb.y + hb.height / 2;
+      // Left shortens by dragging RIGHT, right by dragging left.
+      const dir = side === "left" ? 1 : -1;
+
+      await page.mouse.move(hb.x + hb.width / 2, y);
+      await page.mouse.down();
+      const widths: number[] = [];
+      for (const step of [20, 40]) {
+        await page.mouse.move(hb.x + hb.width / 2 + dir * step, y, { steps: 3 });
+        widths.push(Math.round((await wrapper.boundingBox())!.width));
+      }
+
+      // THE ASSERTION THAT WAS MISSING: it narrows AS YOU DRAG, monotonically,
+      // rather than sitting at its committed width until release.
+      expect(widths[0]).toBeLessThan(started);
+      expect(widths[1]).toBeLessThan(widths[0]!);
+
+      await page.mouse.up();
+      await expect
+        .poll(async () => Math.round((await wrapper.boundingBox())!.width))
+        .toBe(widths[1]);
+    });
+  }
+
 });
