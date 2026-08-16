@@ -5,6 +5,9 @@ import {
   packTimelineClips,
 } from "@storyboard/ui/timeline/timeline-documents";
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
+// The REAL write gate, so "the server would accept this projection" is
+// asserted rather than approximated by an expected array.
+import { isStoredTimelineDocument } from "@storyboard/timeline-model/validate";
 
 import {
   buildFocusedGraph,
@@ -591,7 +594,21 @@ describe("duplicate collection-reference demotion", () => {
     });
   });
 
-  it("round-trips both references back to their stored id and child pointer", () => {
+  it("writes the duplicate back as a REFERENCE, not a second owning placement", () => {
+    // This expectation used to be the opposite — both clips round-tripped to
+    // the stored id, on the rule that a synthetic id must never leak into
+    // storage. That was right until the batch endpoint grew its duplicate-owner
+    // guard, because ownership is SPELT `id === childTimelineId`: writing the
+    // stored id back spells a second owning placement, and the server now
+    // refuses the whole batch with
+    //
+    //   409 Refusing to give <id> a second owning placement.
+    //
+    // A document that already contains one (a real one sat in the trash bin,
+    // from an item trashed, restored and trashed again) could then never be
+    // written again — which stopped every delete, everywhere, since the bin is
+    // per-user and every delete rewrites it. Keeping the stored id was
+    // faithful; it was faithful to something the model no longer permits.
     const built = buildFocusedGraph({ scene: DOUBLED }, "scene", 2);
     if (!built.ok) throw new Error(built.error);
 
@@ -601,11 +618,42 @@ describe("duplicate collection-reference demotion", () => {
       parseNodeId("scene"),
     );
 
-    // A demoted node must not leak its synthetic id into storage.
-    expect(clips.map((clip) => clip.id)).toEqual([SAME, SAME]);
+    // The first placement OWNS the child and keeps the stored id untouched.
+    // The second points at the same child under its own id, which is exactly
+    // what "must be a reference, not an owning placement" asks for.
+    expect(clips.map((clip) => clip.id)).toEqual([SAME, `dup:scene:${SAME}`]);
     expect(
       clips.map((clip) => (clip.kind === "collection" ? clip.childTimelineId : null)),
     ).toEqual([SAME, SAME]);
+
+    // The server's rule, applied to the projection: one owner per child.
+    const owners = clips.filter(
+      (clip) => clip.kind === "collection" && clip.id === clip.childTimelineId,
+    );
+    expect(owners).toHaveLength(1);
+  });
+
+  it("re-reads to the same id, so the repair does not churn on every save", () => {
+    // The written id is derived from the document id and the stored clip id,
+    // and re-reading demotes to that same synthetic id — so a second save
+    // produces identical bytes rather than minting `dup:...~` forever.
+    const built = buildFocusedGraph({ scene: DOUBLED }, "scene", 2);
+    if (!built.ok) throw new Error(built.error);
+    const once = graphChildrenToClips(built.value.graph, built.value.details, parseNodeId("scene"));
+
+    const reread = buildFocusedGraph(
+      { scene: { id: "scene", title: "Scene", clips: once } },
+      "scene",
+      2,
+    );
+    if (!reread.ok) throw new Error(reread.error);
+    const twice = graphChildrenToClips(
+      reread.value.graph,
+      reread.value.details,
+      parseNodeId("scene"),
+    );
+
+    expect(twice.map((clip) => clip.id)).toEqual(once.map((clip) => clip.id));
   });
 });
 
@@ -857,6 +905,41 @@ describe("hydrated collection previewItems", () => {
     expect(clip.previewItems).toEqual([
       { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
     ]);
+  });
+
+  // A placeholder's stored frames are carried through UNTOUCHED — which is
+  // right for a stale frame and wrong for an impossible one. A legacy AUDIO
+  // frame (written before either deriver learned to skip audio) is refused by
+  // the write gate, so carrying it back out made the document unwritable: the
+  // batch 400ed, and because the collection in question lived in the TRASH
+  // BIN, which every delete rewrites, deleting anything failed.
+  //
+  // The projection is checked against the REAL gate rather than an expected
+  // array, because "the server would accept this" is the actual claim.
+  it("drops an unpaintable stored frame instead of re-emitting it", () => {
+    const documents = docsWithStalePreview();
+    delete documents.kid; // still a placeholder — nothing live to re-derive from
+    const poisoned = documents["stale-root"].clips[0];
+    if (poisoned?.kind !== "collection") throw new Error("expected a collection clip");
+    // Assigned through an untyped view on purpose: this frame is not
+    // expressible in the current model, which is exactly its history — it was
+    // written when the model was looser, and no writer can produce one today.
+    (poisoned as { previewItems: unknown }).previewItems = [
+      // Audio has a `src`, so every check except the kind passes.
+      { id: "audio-80b79709", kind: "audio", src: "https://example.com/vo.flac", alt: "VO" },
+      { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
+    ];
+
+    const focused = buildFocusedGraph(documents, "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root");
+
+    expect(clips[0]?.kind === "collection" && clips[0].previewItems).toEqual([
+      { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
+    ]);
+    expect(
+      isStoredTimelineDocument({ id: "stale-root", title: "Stale root", clips }),
+    ).toBe(true);
   });
 });
 

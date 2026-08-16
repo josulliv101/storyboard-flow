@@ -8,6 +8,7 @@
 // through view state in the legacy pipeline.
 
 import type { LayerFrame } from "./layer-frame";
+import type { CollectionPreviewItem } from "./preview-items";
 import type { RenderFormat } from "./render-format";
 
 export type MediaKind = "image" | "video";
@@ -247,15 +248,7 @@ export type CollectionTimelineClip = TimelineItemBase & {
    * collection is disabled — then `duration` already is the playable time.
    */
   playableDuration?: number;
-  previewItems?: Array<{
-    id: string;
-    kind: MediaKind;
-    src: string;
-    poster?: string;
-    /** Source-time offset represented by a video preview. Absent means 0. */
-    trimIn?: number;
-    alt: string;
-  }>;
+  previewItems?: CollectionPreviewItem[];
 };
 
 export type TimelineClip = MediaTimelineClip | CollectionTimelineClip;
