@@ -120,7 +120,6 @@ import { useGraphDetailsSnapshot } from "./graph-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
 import { GraphRenderFormat } from "./graph-render-format";
 import { GraphRenderStatus } from "./graph-render-status";
-import { GraphAccountControl } from "./graph-account-control";
 import { GraphProjectMenu } from "./graph-project-menu";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
@@ -1451,15 +1450,10 @@ function BoardViewControls({
                   than the container-scoped grouping it had here. This cluster
                   keeps only what qualifies the board itself. */}
               <GraphUndoRedo />
-              {/* WHO IS SIGNED IN, last in the row. It was the bottom tile of
-                  the icon rail; it ends this cluster instead, after history,
-                  because the run reads outward from the work — what the board
-                  shows, what you can undo, whose board it is.
-
-                  No fence before it: a fence separates controls that could be
-                  mistaken for one another, and nobody mistakes a face for a
-                  button that edits the board. */}
-              <GraphAccountControl />
+              {/* The ACCOUNT is not here. It was briefly, after history — and
+                  it went back to the bottom of the icon rail, where it can be
+                  reached from the projects page too. This rail is in the root
+                  layout; this header is not. */}
               {/* Board options are not here — they are the last control in the
                   board's own controls row under the divider, with the rest of
                   the chrome that qualifies the board rather than navigates
