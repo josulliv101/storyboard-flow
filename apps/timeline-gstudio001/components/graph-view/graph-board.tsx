@@ -1499,6 +1499,30 @@ function SelectModeHeader({
     store.setMultiSelectMode(false);
   };
 
+  // PLACED BY EACH FACE, not by the row. It leads the verb run, where it is the
+  // subject the verbs act on; while armed it FOLLOWS the breadcrumb, where the
+  // trail is the subject and the count is what is in flight over it.
+  const count = (
+    <span
+      data-select-mode-count={armed ? armedCount : selectionCount}
+      // Mono and tabular so the row does not twitch sideways as the count
+      // crosses 9 — this number changes on every tap, which is precisely the
+      // moment a reflowing toolbar is most annoying.
+      //
+      // blue-500, the SAME step as the ring around a selected card
+      // (`ring-2 ring-blue-500` in graph-item-content). This text is the count
+      // of exactly those ringed cards, so matching the ring is what ties the
+      // number to the thing it counts; blue-400 was a near-miss that read as a
+      // third accent rather than the selection colour. `text-sm` (14px),
+      // matching the breadcrumb trail it now sits beside — a count a pixel
+      // smaller than the trail is exactly the kind of drift that makes the two
+      // read as different toolbars.
+      className="shrink-0 font-mono text-sm tabular-nums text-blue-500"
+    >
+      {armed ? armedCount : selectionCount} selected
+    </span>
+  );
+
   return (
     <div
       data-select-mode-header=""
@@ -1510,26 +1534,6 @@ function SelectModeHeader({
       // same height. Verbs move into the `⋮` instead.
       className="flex min-w-0 flex-1 items-center gap-x-5"
     >
-      <span
-        data-select-mode-count={armed ? armedCount : selectionCount}
-        // Mono and tabular so the row does not twitch sideways as the count
-        // crosses 9 — this number changes on every tap, which is precisely the
-        // moment a reflowing toolbar is most annoying.
-        //
-        // blue-500, the SAME step as the ring around a selected card
-        // (`ring-2 ring-blue-500` in graph-item-content). This text is the
-        // count of exactly those ringed cards, so matching the ring is what
-        // ties the number to the thing it counts; blue-400 was a near-miss
-        // that read as a third accent rather than the selection colour.
-        // `text-sm` (14px), matching the breadcrumb trail this row swaps
-        // places with. The two faces of the header have to read as the same
-        // row wearing a different hat — a count a pixel smaller than the trail
-        // it replaces is exactly the kind of drift that makes the swap feel
-        // like a different toolbar appearing.
-        className="shrink-0 font-mono text-sm tabular-nums text-blue-500"
-      >
-        {armed ? armedCount : selectionCount} selected
-      </span>
       {/* THE SWAP. Dimmed verbs are worse than absent ones here: after a cut
           all five are unavailable for the same reason, and the row still has
           to get the user somewhere. The breadcrumb takes the identical wing —
@@ -1546,21 +1550,26 @@ function SelectModeHeader({
             className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden"
           >
             {breadcrumb}
-            {/* INSIDE THE WING, packed against the trail, which is the same
-                move Done makes into the verb run and for the same reason.
-                The wing is `flex-1` because `useFittedAncestorCount` takes its
-                budget from the wing's width — so it is the box that absorbs the
-                row's leftover, and a tail rendered outside it lands at the far
-                end of that leftover rather than beside the breadcrumb it
-                belongs to.
-                
-                No width reservation needed here: that hook already computes its
-                budget as the wing's width MINUS every child of the wing that is
-                not the trail, so these two simply take their room out of the
-                crumbs' before the trail decides how many ancestors it can show.
-                The slack falls after them on its own — a `justify-start` flex
-                box leaves its leftover at the end. */}
-            <ControlFence />
+            {/* NO RULE between the trail, the count and Paste. All three are
+                one statement — where you are, what you are holding, where it
+                goes — and a rule inside a sentence reads as a full stop. The
+                one rule left in this row is the one before Cancel, which is a
+                real boundary: everything left of it continues the gesture.
+
+                INSIDE THE WING, all of it, which is the same move Done makes
+                into the verb run and for the same reason. The wing is `flex-1`
+                because `useFittedAncestorCount` takes its budget from the
+                wing's width — so it is the box that absorbs the row's leftover,
+                and anything rendered outside it lands at the far end of that
+                leftover rather than beside the breadcrumb it belongs to.
+
+                No width reservation needed here, unlike Done's: that hook
+                already computes its budget as the wing's width MINUS every
+                child of the wing that is not the trail, so these take their
+                room out of the crumbs' before the trail decides how many
+                ancestors it can show. The slack falls after them on its own —
+                a `justify-start` flex box leaves its leftover at the end. */}
+            {count}
             <SelectModeTail
               anchorName={anchorName}
               armed={armed}
@@ -1570,6 +1579,8 @@ function SelectModeHeader({
           </div>
         </>
       ) : (
+        <>
+        {count}
         <SelectModeVerbRun
           state={state}
           trailing={
@@ -1590,6 +1601,7 @@ function SelectModeHeader({
             />
           }
         />
+        </>
       )}
       {/* NO right-hand cluster here any more. Preview, Select, the project `⋮`
           and undo/redo render OUTSIDE this component, from the header row
