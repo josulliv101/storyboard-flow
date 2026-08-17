@@ -423,6 +423,29 @@ export function GraphTimelineView({
     if (!bootedFromServer) graphDocumentsGateway.refresh();
     let cancelled = false;
     void (async () => {
+      // FILL THE CACHE FIRST, in one request: the project and every document
+      // under it. Without it the cache fills a document at a time as cards
+      // mount, and each of those reads walks its own subtree server-side —
+      // measured at 58 requests and ~430 document reads for a 151-document
+      // project (#437).
+      //
+      // ONLY on the legacy boot. A server-primed boot already arrives with the
+      // whole closure in its payloads (`loadGraphBootstrapPayloads` ships what
+      // it had to read anyway), and asking again here walked all 151 documents
+      // a SECOND time — measured at 465 reads against the 237 it was meant to
+      // beat. The fix for a duplicated walk is not a faster walk.
+      //
+      // AWAITED, which is the point of it: letting this race the hydration
+      // below leaves both running, and the per-card reads mostly win.
+      //
+      // Best effort — it primes what it can and says nothing when it cannot (a
+      // closure too large to walk, a network failure), because every document
+      // it would have primed is one `ensure` fetches anyway.
+      if (!bootedFromServer) {
+        await graphDocumentsGateway.ensureClosure(projectId);
+        if (cancelled) return;
+      }
+
       const [projectDocument, trashDocument] = await Promise.all([
         graphDocumentsGateway.ensure(projectId),
         graphDocumentsGateway.ensure(trashDocumentId),

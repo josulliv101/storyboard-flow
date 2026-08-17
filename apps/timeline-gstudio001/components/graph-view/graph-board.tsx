@@ -91,7 +91,7 @@ import {
 } from "./graph-selection-menu";
 import { NativeDropGrid } from "./graph-native-drop-grid";
 import { NativeDropStrip } from "./graph-native-drop-strip";
-import { AddItemButton } from "./graph-add-item-menu";
+import { MEDIA_TOOL_PAYLOAD, ToolButton } from "./graph-tool-buttons";
 import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
@@ -120,6 +120,7 @@ import { useGraphDetailsSnapshot } from "./graph-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
 import { GraphRenderFormat } from "./graph-render-format";
 import { GraphRenderStatus } from "./graph-render-status";
+import { GraphProjectMenu } from "./graph-project-menu";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
@@ -1502,38 +1503,91 @@ function GraphUndoRedo() {
 }
 
 /**
- * The controls row's ADD ITEM control, and the click half of its behaviour.
+ * The controls row's two ADD tools.
  *
- * Replaces a Collection-only tool. That button offered exactly one kind of
- * thing, while media had a route only at the very end of a surface (the
- * trailing slot) or by dragging in from the OS — so "put a clip here" and "put
- * a collection here" were two unrelated gestures with different reach. One
- * control now asks WHICH, and both answers land the same way.
+ * They replace a single "Add item" button that asked which kind in a menu, and
+ * before that a Collection-only tool with no media route at all — media could
+ * only be added at the very end of a surface (the trailing slot) or by dragging
+ * in from the OS. The menu was a step that existed because one control had to
+ * serve two jobs; two controls answer the question by being two controls.
  *
- * Two gestures:
+ * CLICK appends to the end. DRAG places at the spot you let go. Both tools, the
+ * same two gestures — which is the whole reason for the pair.
  *
- * - CLICK opens the menu; either answer APPENDS. That is a change from the
- *   button this replaces, which landed next to the SELECTION (via
- *   `resolveInsertPlacement`) — a rule that reads well from a sidebar palette
- *   and poorly from a control sitting directly above the board, where "add one"
- *   plainly means "at the end of this".
- * - DRAG carries the add-item payload onto any surface, which parks the
- *   position and asks the same question THERE (see `AddItemDropMenu`).
+ * Appending is itself a change from the ORIGINAL collection tool, which landed
+ * next to the SELECTION via `resolveInsertPlacement`: a rule that reads well
+ * from a sidebar palette and poorly from a control sitting directly above the
+ * board, where "add one" plainly means "at the end of this". That rule is alive
+ * and still tested — PASTE uses it, which is where landing beside what you
+ * picked is unambiguously right.
  *
- * The work happens in `useNativeDrop`, inside the drop surface below this row —
- * that is where the mint-and-insert and the whole upload pipeline live, and
- * context does not flow upward, so the click path crosses down by ADDRESSED
- * event. See GRAPH_ADD_ITEM_EVENT for why addressed and not broadcast.
+ * The work happens in `useNativeDrop`, inside the drop surface BELOW this row:
+ * that is where the mint-and-insert and the upload pipeline live, and context
+ * does not flow upward, so the click path crosses down by ADDRESSED event. See
+ * GRAPH_ADD_ITEM_EVENT for why addressed and not broadcast.
  */
-function BoardAddItemButton({ collectionId }: Readonly<{ collectionId: string }>) {
-  const [open, setOpen] = useState(false);
+function BoardAddTools({
+  collectionId,
+  flatOn,
+  onLeaveFlat,
+}: Readonly<{ collectionId: string; flatOn: boolean; onLeaveFlat: () => void }>) {
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
   return (
-    <AddItemButton
-      open={open}
-      onOpenChange={setOpen}
-      onCollection={() => requestGraphAddItem({ collectionId, kind: "collection" })}
-      onFiles={(files) => requestGraphAddItem({ collectionId, kind: "media", files })}
-    />
+    <>
+      <ToolButton
+        testId="collection"
+        label="Collection"
+        payload="collection"
+        title="Collection — click to add one at the end, or drag onto the board to place it"
+        onActivate={() => {
+          requestGraphAddItem({ collectionId, kind: "collection" });
+          // LEAVE FLAT MODE, because otherwise this looks like it did nothing.
+          //
+          // A flat run is every MEDIA item in the closure, in order. A new
+          // collection is empty, so it contributes none and the board does not
+          // change by a pixel — the item really is there, and the only sign of
+          // it is a row in the children tree, which is off by default.
+          // Measured: board cards 11 to 11, sub-timeline rows 6 to 7.
+          //
+          // Which makes a real add indistinguishable from a dead button.
+          // Switching the view is the smaller surprise: they asked for a
+          // collection, so put them where collections exist.
+          //
+          // Only for COLLECTIONS — media appears in a flat run immediately, so
+          // there is nothing to explain and no reason to move anybody's view.
+          if (flatOn) onLeaveFlat();
+        }}
+      />
+      <ToolButton
+        testId="media"
+        label="Media"
+        payload={MEDIA_TOOL_PAYLOAD}
+        title="Media — click to browse and add at the end, or drag onto the board to place what you pick"
+        onActivate={() => mediaInputRef.current?.click()}
+      />
+      {/* The CLICK path's picker. It lives here, in the button's own tree, so
+          the picker opens inside the click that asked for it and user
+          activation is never in question. The DRAG path cannot borrow this one:
+          its files have to land at a PARKED position that only the surface
+          knows, so it carries a picker of its own (see MediaDropTarget). */}
+      <input
+        ref={mediaInputRef}
+        type="file"
+        multiple
+        accept="image/*,video/*"
+        tabIndex={-1}
+        aria-hidden="true"
+        data-add-media-end-input
+        className="sr-only"
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])];
+          // Reset BEFORE handing off, so picking the same file twice running
+          // fires `change` again — the input compares against its own value.
+          event.target.value = "";
+          if (files.length > 0) requestGraphAddItem({ collectionId, kind: "media", files });
+        }}
+      />
+    </>
   );
 }
 
@@ -1918,6 +1972,12 @@ export function GraphBoard({
                 title="Preview — play the focused timeline"
               />
               <SelectModeButton />
+              {/* PROJECT `⋮`, immediately right of Select. Export and Load act
+                  on the whole project and produce (or consume) a file, which is
+                  a different question from the gear's set-once settings at the
+                  end of the controls row — so it is a second menu rather than
+                  two more items in that one. */}
+              <GraphProjectMenu projectId={projectId} />
               <ControlFence />
               {/* Ruler and waveform used to sit here, behind a fence of their
                   own. They are down in the board's controls row now, beside
@@ -2085,7 +2145,11 @@ export function GraphBoard({
                   children may compress. The column's `min-content` floor
                   governs how far that can go. */}
               <div className="flex min-w-0 items-center gap-2">
-                <BoardAddItemButton collectionId={focusedId} />
+                <BoardAddTools
+                  collectionId={focusedId}
+                  flatOn={flatOn}
+                  onLeaveFlat={onFlatToggle}
+                />
                 <ControlFence />
                 {/* HOW THE BOARD IS STRUCTURED. Two toggles that change the
                     shape of what is drawn, not its contents: whether this run

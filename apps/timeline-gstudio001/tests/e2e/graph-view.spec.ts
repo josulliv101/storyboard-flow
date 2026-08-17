@@ -236,6 +236,54 @@ type GraphApi = {
   batches: string[][];
 };
 
+/**
+ * Every `/api/` request that reached this page without a mock, per page.
+ *
+ * A WeakMap rather than a field on GraphApi: the assertion runs in `afterEach`,
+ * which has the page but not whatever the test did with the return value.
+ */
+const unmockedApiCalls = new WeakMap<Page, string[]>();
+
+/**
+ * THE ESCAPE GUARD. Anything under `/api/` that no test mocked is recorded and
+ * aborted, instead of reaching the real dev server.
+ *
+ * This suite runs against the real Next app, which has real `.env` credentials
+ * loaded, so "no real storage is read or written" was an INTENTION enforced by
+ * remembering to mock every route. The gap that motivated this: `/api/renders`
+ * was never mocked, and `lib/render/job-store.ts` has no offline branch — so
+ * while the render poller was live, every test with a board open queried the
+ * real `gstudioRenderJobs` collection every few seconds for the length of the
+ * test. Invisible in `[READTOTAL]`, which only instruments the timeline
+ * collection, and invisible here, because a fallthrough looked exactly like a
+ * mock working.
+ *
+ * REGISTERED FIRST, which is what makes it a backstop rather than a wall:
+ * Playwright matches handlers in reverse registration order, so every mock
+ * added later still wins. Only what nobody claimed lands here.
+ *
+ * Aborted AND recorded. The abort keeps the request off the network even if the
+ * assertion is never reached; the recording is what turns a silent escape into a
+ * named failure in `afterEach`.
+ */
+async function guardUnmockedApi(page: Page): Promise<void> {
+  const escaped: string[] = [];
+  unmockedApiCalls.set(page, escaped);
+  await page.route("**/api/**", (route) => {
+    const { pathname, search } = new URL(route.request().url());
+    escaped.push(`${route.request().method()} ${pathname}${search}`);
+    return route.abort("failed");
+  });
+}
+
+test.afterEach(({ page }) => {
+  const escaped = unmockedApiCalls.get(page) ?? [];
+  expect(
+    escaped,
+    "Unmocked /api/ request(s) escaped to the real app — mock them, or they hit real Firestore when offline mode is off",
+  ).toEqual([]);
+});
+
 async function installGraphApi(
   page: Page,
   options: {
@@ -244,6 +292,7 @@ async function installGraphApi(
     lanes?: Readonly<Record<string, number>>;
   } = {},
 ): Promise<GraphApi> {
+  await guardUnmockedApi(page);
   const documents = buildFixtureDocuments();
   // The fixtures are all trackIndex 0 — they predate lanes — so this is how a
   // test gets a layered board without maintaining a second fixture set.
@@ -329,6 +378,27 @@ async function installGraphApi(
         results.push({ id: write.document.id, revision: next });
       }
       batches.push(writes.map((write) => write.document.id));
+      await route.fulfill({ json: { results } });
+      return;
+    }
+
+    // The graph gateway's READ path: many documents in one POST, each with its
+    // own outcome. Mirrors the real endpoint, and shares the per-id rules with
+    // the single GET below so the two can never answer differently — including
+    // `blockChildDocument`, whose whole point is one document that never
+    // arrives, which has to keep meaning that inside a batch.
+    if (id === "batch-get" && request.method() === "POST") {
+      const ids = (request.postDataJSON() as { ids?: string[] }).ids ?? [];
+      if (options.blockChildDocument && ids.includes(CHILD_ID)) {
+        await route.abort("failed");
+        return;
+      }
+      const results = ids.map((wanted) => {
+        const doc = documents.get(wanted);
+        return doc
+          ? { id: wanted, document: doc, revision: revisions.get(wanted) ?? 0 }
+          : { id: wanted, error: "Timeline was not found.", status: 404 };
+      });
       await route.fulfill({ json: { results } });
       return;
     }
@@ -425,15 +495,15 @@ async function openGraph(page: Page): Promise<void> {
  * is what the flat-specific tests click to go back.
  */
 /**
- * Add a collection through the Add item button — the CLICK route.
+ * Add a collection through the Collection tool — the CLICK route.
  *
- * Two steps now rather than one: the button asks which kind before it adds
- * anything. Extracted because several tests only need "a collection exists"
- * and should not each re-encode how the menu works.
+ * One press again: an "Add item" button briefly asked which kind in a menu, and
+ * that menu is gone — there are two tools now, so the question is answered by
+ * which one you press. Kept as a helper because several tests only need "a
+ * collection exists" and should not each re-encode how the control works.
  */
 async function addCollectionViaButton(page: Page): Promise<void> {
-  await page.locator("[data-add-item-button]").click();
-  await page.locator("[data-add-item-menu] [data-add-item-collection]").click();
+  await page.locator('[data-tool-button="collection"]').click();
 }
 
 async function leaveFlatMode(page: Page): Promise<void> {
@@ -3813,11 +3883,11 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
-  test("Add item asks WHICH, and appends the answer to the end", async ({ page }) => {
-    // One control for the two things a timeline can hold. It replaces a
-    // collection-only tool, so the assertions here are about the merge: the
-    // menu offers both kinds, and BOTH land at the end — a change from the old
-    // button, which landed next to the SELECTION.
+  test("the two tools both append: a collection, and picked media", async ({ page }) => {
+    // One control for each of the two things a timeline can hold, replacing an
+    // "Add item" button that asked which kind in a menu. The assertions here
+    // are about the pair behaving as ONE idea: same gesture, same landing spot,
+    // different payload.
     const api = await installGraphApi(page);
     let uploads = 0;
     await page.route("**/api/timeline-media/upload", (route) => {
@@ -3829,36 +3899,26 @@ test.describe("graph view E2E", () => {
     await openGraph(page);
     const before = (await stripOrder(page, PROJECT_ID)).length;
 
-    const button = page.locator("[data-add-item-button]");
-    await expect(button).toHaveCount(1);
-    // DRAGGABLE, and it says so twice over: the attribute makes the gesture
-    // real, and the grip glyph is what makes it visible before you try.
-    await expect(button).toHaveAttribute("draggable", "true");
+    const collection = page.locator('[data-tool-button="collection"]');
+    const media = page.locator('[data-tool-button="media"]');
+    await expect(collection).toHaveCount(1);
+    await expect(media).toHaveCount(1);
+    // BOTH draggable, and it says so twice over: the attribute makes the
+    // gesture real, the grip glyph makes it visible before you try.
+    await expect(collection).toHaveAttribute("draggable", "true");
+    await expect(media).toHaveAttribute("draggable", "true");
 
-    // 1) CLICK opens the menu, with both kinds and the drag hint.
-    await button.click();
-    const menu = page.locator("[data-add-item-menu]");
-    await expect(menu).toBeVisible();
-    await expect(menu.locator("[data-add-item-collection]")).toBeVisible();
-    await expect(menu.locator("[data-add-item-media]")).toBeVisible();
-    // THE DISCOVERABILITY HALF. Without it the second gesture is invisible to
-    // anyone who has not already found it, which for a control whose whole
-    // point is that you can drag it somewhere means most people.
-    await expect(menu.locator("[data-add-item-drag-hint]")).toContainText(/drag/i);
-
-    // 2) Add collection APPENDS — last, not next to any selection.
-    await menu.locator("[data-add-item-collection]").click();
-    await expect(menu).toHaveCount(0);
+    // 1) Collection APPENDS — last, not next to any selection.
+    await collection.click();
     await expect.poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length)).toBe(before + 1);
     const afterCollection = await stripOrder(page, PROJECT_ID);
     expect(afterCollection[afterCollection.length - 1]).toMatch(/^timeline-/);
 
-    // 3) Add media item goes through the SAME upload pipeline a drop uses, and
-    //    also appends. Files are set straight on the input: clicking the item
+    // 2) Media goes through the SAME upload pipeline a drop uses, and also
+    //    appends. Files are set straight on the input: pressing the button
     //    opens the OS picker, which a browser test cannot drive.
-    await button.click();
     await page
-      .locator("[data-add-item-menu] [data-add-item-input]")
+      .locator("[data-add-media-end-input]")
       .setInputFiles([
         { name: "added.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) },
       ]);
@@ -3869,56 +3929,59 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => api.patchesFor(PROJECT_ID).length, { timeout: 5000 }).toBeGreaterThan(0);
   });
 
-  test("a dragged Add item asks at the spot it landed, and answers there", async ({ page }) => {
-    // The drag half. Dropping does NOT insert anything — it parks the position
-    // and asks; the answer lands where the drop did. Everything about that is
-    // new behaviour, and the position surviving the wait is the part most
-    // likely to rot, since nothing commits while the menu is open.
+  test("a dragged Collection commits where it lands; a dragged Media asks for files there", async ({
+    page,
+  }) => {
+    // The drag half, and the ONE place the two tools legitimately differ. A
+    // collection can be minted from nothing, so its drop commits immediately.
+    // Media cannot — there are no files yet — so its drop parks the position
+    // and asks, and nothing is added until files arrive.
     await installGraphApi(page);
     await openGraph(page);
     const before = await stripOrder(page, PROJECT_ID);
     const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
 
-    const transfer = await page.evaluateHandle(() => {
-      const value = new DataTransfer();
-      value.setData("application/x-gstudio-type", "add-item");
-      return value;
+    const payload = (value: string) =>
+      page.evaluateHandle((tool) => {
+        const transfer = new DataTransfer();
+        transfer.setData("application/x-gstudio-type", tool);
+        return transfer;
+      }, value);
+
+    // 1) COLLECTION: lands at the dropped boundary (clientX 0 = before the
+    //    first card), not appended where a click would put it.
+    await dropZone.dispatchEvent("drop", { dataTransfer: await payload("collection"), clientX: 0 });
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length))
+      .toBe(before.length + 1);
+    const afterCollection = await stripOrder(page, PROJECT_ID);
+    expect(afterCollection[0]).toMatch(/^timeline-/);
+    expect(afterCollection.slice(1)).toEqual(before);
+
+    // 2) MEDIA: the drop adds NOTHING on its own. That is the claim that makes
+    //    cancelling the picker a real cancel rather than something to undo.
+    const settled = await stripOrder(page, PROJECT_ID);
+    await dropZone.dispatchEvent("drop", {
+      dataTransfer: await payload("media"),
+      clientX: 0,
+      clientY: 300,
     });
-    // clientX 0 = before the first card, the same boundary the collection-tool
-    // test uses. clientY is what positions the menu.
-    await dropZone.dispatchEvent("drop", { dataTransfer: transfer, clientX: 0, clientY: 300 });
+    const input = page.locator("[data-media-drop-input]");
+    await expect(input).toHaveCount(1);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(settled);
 
-    // NOTHING landed yet. This is the claim that makes dismissal a real cancel
-    // rather than something to undo — the graph is untouched until answered.
-    const menu = page.locator("[data-add-item-drop-menu]");
-    await expect(menu).toBeVisible();
-    expect(await stripOrder(page, PROJECT_ID)).toEqual(before);
+    // The prompt is ALWAYS there, whether or not the picker opened over it.
+    // This test is why: under Playwright the drop still carries activation from
+    // an earlier click, so the picker IS opened — and headless Chromium cancels
+    // it instantly. When `cancel` used to dismiss the pending drop, that left
+    // nothing at all, which is the same hole a real person falls into by
+    // closing a picker they opened by accident.
+    await expect(page.locator("[data-media-drop-prompt]")).toBeVisible();
 
-    // 1) Escape cancels, still leaving nothing behind.
+    // Escape dismisses, still with nothing added.
     await page.keyboard.press("Escape");
-    await expect(menu).toHaveCount(0);
-    expect(await stripOrder(page, PROJECT_ID)).toEqual(before);
-
-    // 2) Drop again and ANSWER: the collection lands at the dropped boundary
-    //    (first), not appended at the end where a click would put it. That is
-    //    the entire difference between the two gestures.
-    const second = await page.evaluateHandle(() => {
-      const value = new DataTransfer();
-      value.setData("application/x-gstudio-type", "add-item");
-      return value;
-    });
-    await dropZone.dispatchEvent("drop", { dataTransfer: second, clientX: 0, clientY: 300 });
-    await expect(menu).toBeVisible();
-    // No drag hint here — you arrived by dragging.
-    await expect(menu.locator("[data-add-item-drag-hint]")).toHaveCount(0);
-    await menu.locator("[data-add-item-collection]").click();
-
-    await expect.poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length)).toBe(
-      before.length + 1,
-    );
-    const after = await stripOrder(page, PROJECT_ID);
-    expect(after[0]).toMatch(/^timeline-/);
-    expect(after.slice(1)).toEqual(before);
+    await expect(input).toHaveCount(0);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(settled);
   });
 
   test("the trailing slot browses for media — the only route that needs no pointer", async ({
@@ -4043,45 +4106,37 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
-  test("Add item works from the KEYBOARD, with no pointer involved", async ({ page }) => {
-    // The palette this replaces was pointer-only: its tiles were
+  test("the tools work from the KEYBOARD, with no pointer involved", async ({ page }) => {
+    // The palette these replace was pointer-only: its tiles were
     // <div role="button"> whose Enter/Space did nothing but show a "drag this"
     // toast, and actual insertion needed a native drag carrying a custom
     // DataTransfer. Keyboard and assistive-tech users could not create anything.
     //
-    // Adding the menu put that at risk again — activating the control now opens
-    // a menu instead of inserting — so the route is asserted end to end here.
+    // An intermediate "Add item" version put a MENU between the keystroke and
+    // the add, which needed focus management to stay usable. Two plain buttons
+    // need none of that — worth a test, because losing a menu is exactly the
+    // kind of change that can quietly lose its accessible route with it.
     await installGraphApi(page);
     await openGraph(page);
 
-    const addItem = page.locator("[data-add-item-button]");
-    await expect(addItem).toBeVisible();
+    const collection = page.locator('[data-tool-button="collection"]');
+    await expect(collection).toBeVisible();
 
     // Reach it by FOCUS — it must be in the focus order, not just clickable.
-    await addItem.focus();
-    await expect(addItem).toBeFocused();
+    await collection.focus();
+    await expect(collection).toBeFocused();
     await page.keyboard.press("Enter");
 
-    // Opening MOVES FOCUS to the first choice. Without that the menu is open
-    // but its answers are an unknown number of Tabs away, which is the whole
-    // difference between a keyboard route and a keyboard dead end.
-    const collectionItem = page.locator("[data-add-item-menu] [data-add-item-collection]");
-    await expect(collectionItem).toBeFocused();
-    await page.keyboard.press("Enter");
-
-    // Appended to the end of the focused timeline.
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie", expect.stringMatching(/^timeline-/)]);
 
-    // Focus RETURNS to the trigger, so the next Tab carries on from here rather
-    // than restarting at the top of the page.
-    await expect(addItem).toBeFocused();
+    // Focus STAYS on the tool, so a second add is one more keystroke and the
+    // next Tab carries on from here.
+    await expect(collection).toBeFocused();
 
     // Space is the other native activation key, and must not be swallowed.
     await page.keyboard.press(" ");
-    await expect(collectionItem).toBeFocused();
-    await page.keyboard.press("Enter");
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
       .toBe(6);
@@ -4098,31 +4153,7 @@ test.describe("graph view E2E", () => {
       .toMatch(/^timeline-/);
   });
 
-  test("Escape closes the menu without adding anything, and gives focus back", async ({ page }) => {
-    // The cancel path. It matters more than it looks: the menu is the only
-    // thing standing between a keystroke and a write, so an Escape that half
-    // works — closes but still inserts, or closes and strands focus on <body> —
-    // turns a change of mind into an edit to undo.
-    await installGraphApi(page);
-    await openGraph(page);
-    const before = await stripOrder(page, PROJECT_ID);
-
-    const addItem = page.locator("[data-add-item-button]");
-    await addItem.focus();
-    await page.keyboard.press("Enter");
-    await expect(page.locator("[data-add-item-menu]")).toBeVisible();
-
-    await page.keyboard.press("Escape");
-    await expect(page.locator("[data-add-item-menu]")).toHaveCount(0);
-    expect(await stripOrder(page, PROJECT_ID)).toEqual(before);
-    await expect(addItem).toBeFocused();
-
-    // And Escape did not travel on to the board behind it, where the same key
-    // clears the selection — a menu's dismissal is not a board gesture.
-    await expect(page.locator("[data-graph-shortcuts-sheet]")).toHaveCount(0);
-  });
-
-  test("Add item APPENDS, whatever is selected and wherever the selection lives", async ({
+  test("the tools APPEND, whatever is selected and wherever the selection lives", async ({
     page,
   }) => {
     // A DELIBERATE CHANGE, and the reason it is pinned rather than deleted.
@@ -4180,11 +4211,8 @@ test.describe("graph view E2E", () => {
     await surfaceButton(page, "grid").click();
     await expect(page.locator(`[data-native-drop="${PROJECT_ID}"]`)).toHaveCount(1);
 
-    // Enter to open, Enter to choose — the menu takes focus, so the whole
-    // route is two keystrokes with no Tabbing in between.
-    await page.locator("[data-add-item-button]").focus();
-    await page.keyboard.press("Enter");
-    await expect(page.locator("[data-add-item-menu] [data-add-item-collection]")).toBeFocused();
+    // One keystroke: there is no menu between the tool and the add.
+    await page.locator('[data-tool-button="collection"]').focus();
     await page.keyboard.press("Enter");
 
     await expect
@@ -6043,7 +6071,7 @@ test.describe("graph view E2E", () => {
     await expect(status).toHaveText("");
   });
 
-  test("the Add item button is a drag source, uncovered by the drop-zone layer", async ({ page }) => {
+  test("a tool button is a drag source, uncovered by the drop-zone layer", async ({ page }) => {
     // The control keeps BOTH affordances: keyboard activation (covered
     // elsewhere) and native drag. Playwright's synthetic mouse cannot drive a
     // native HTML5 drag, so this asserts the next best thing: the element is
@@ -6052,18 +6080,18 @@ test.describe("graph view E2E", () => {
     await installGraphApi(page);
     await openGraph(page);
 
-    const addItem = page.locator("[data-add-item-button]");
+    const addItem = page.locator('[data-tool-button="media"]');
     await expect(addItem).toHaveAttribute("draggable", "true");
 
-    // The payload is `add-item`, NOT `collection`. That difference is the whole
+    // The payload is `media`, NOT `collection`. That difference is the whole
     // feature: a collection payload commits on drop, while this one parks the
-    // position and asks which kind to put there.
+    // position and asks for files to put there.
     const carried = await addItem.evaluate((el) => {
       const transfer = new DataTransfer();
       el.dispatchEvent(new DragEvent("dragstart", { dataTransfer: transfer, bubbles: true }));
       return transfer.getData("application/x-gstudio-type");
     });
-    expect(carried).toBe("add-item");
+    expect(carried).toBe("media");
 
     // ...and the button must actually RECEIVE that dragstart under a real
     // pointer. dispatchEvent above bypasses hit-testing, so it can't catch a

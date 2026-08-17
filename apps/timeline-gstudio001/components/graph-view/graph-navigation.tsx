@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, type MutableRefObject } from "react";
-import { useRouter } from "next/navigation";
 
 import {
   focusNodeWhenMounted,
@@ -27,6 +26,36 @@ import type { GraphDetailsStore } from "@/lib/graph-details-store";
 
 import { useGraphDetailsStore } from "./graph-details-context";
 import { pressFeedbackHostFor, spawnPressFeedback } from "./press-feedback";
+
+/**
+ * Move the URL WITHOUT asking the server for that segment.
+ *
+ * `router.push` fetches the RSC payload for the focus segment, and that segment
+ * serves the focused document — which means walking its whole closure to derive
+ * card summaries bottom-up. Measured on a six-document project: entering the
+ * board read 7, then clicking one collection read its subtree AGAIN, 5 more,
+ * every one of them already in the client's cache from `ensureClosure`. On a
+ * 151-document board that repeats per drill and dwarfs the initial load.
+ *
+ * Nothing about an in-session focus change needs the server. `openTimeline`
+ * only navigates after walking the CLIENT graph from the target to the project
+ * root, so reaching this point already proves the target is in memory; the view
+ * derives focus from `usePathname`, which Next keeps in sync with
+ * `history.pushState`; and anything not yet hydrated is fetched by
+ * `HydrationController` through the batch endpoint, which reads only what is
+ * missing instead of re-walking the subtree.
+ *
+ * A COLD entry still goes through the server route — a deep link, a reload,
+ * Back into a tab that was never primed — and that is the case where reading
+ * the subtree is the right thing to do. This only removes the round trip when
+ * the answer is already here.
+ *
+ * Back/Forward keep working: Next patches history, so `popstate` updates
+ * `usePathname` the same way, and the optimistic pending path clears on it.
+ */
+function pushFocusUrl(url: string): void {
+  window.history.pushState(null, "", url);
+}
 
 type GraphViewNav = Readonly<{
   /**
@@ -62,17 +91,20 @@ export function GraphViewNavProvider({
    */
   openNodeRef?: MutableRefObject<(nodeId: NodeId) => void>;
   /**
-   * The focus path this navigation is heading to, published BEFORE the
-   * router push. `router.push` doesn't commit the new pathname until the
-   * server answers that segment's RSC request, and the view derives its focus
-   * from the pathname — so without this the whole board waits on a round trip
-   * it needs nothing from. The consumer renders the pending path immediately
-   * and drops it when the URL catches up.
+   * The focus path this navigation is heading to, published BEFORE the URL
+   * moves.
+   *
+   * It existed to cover `router.push`, which did not commit the new pathname
+   * until the server answered that segment's RSC request (~270ms locally) while
+   * the view derived its focus from that pathname. `pushFocusUrl` updates the
+   * URL synchronously, so the gap it was hiding is gone — but it stays, because
+   * publishing the destination up front is still what lets the board and the URL
+   * agree by construction rather than by timing, and the consumer clears it on
+   * any real path change (a deep link, Back/Forward).
    */
   onNavigateStart?: (path: readonly string[]) => void;
   children: React.ReactNode;
 }>) {
-  const router = useRouter();
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
 
@@ -88,7 +120,7 @@ export function GraphViewNavProvider({
         const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
         if (timelineId === projectId) {
           onNavigateStart?.([]);
-          router.push(base);
+          pushFocusUrl(base);
           return true;
         }
 
@@ -117,11 +149,11 @@ export function GraphViewNavProvider({
         // below encodes these same segments), so the optimistic render and
         // the committed one can't disagree.
         onNavigateStart?.(chain);
-        router.push(`${base}/${chain.map(encodeURIComponent).join("/")}`);
+        pushFocusUrl(`${base}/${chain.map(encodeURIComponent).join("/")}`);
         return true;
       },
     }),
-    [detailsStore, focusedId, onNavigateStart, projectId, router, store],
+    [detailsStore, focusedId, onNavigateStart, projectId, store],
   );
 
   // A plain click on ANY card lands here now, so this is where the two

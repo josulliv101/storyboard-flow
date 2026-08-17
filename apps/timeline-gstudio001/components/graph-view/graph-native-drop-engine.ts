@@ -35,7 +35,7 @@ import {
   MAX_CONCURRENT_MEDIA,
   TOOL_MIME,
   aggregateDropStatus,
-  isAddItemTool,
+  isMediaTool,
   isSidebarTool,
   resolveAnchorIndex,
   type DropAnchor,
@@ -44,18 +44,29 @@ import {
 } from "./graph-native-drop-model";
 
 /**
- * A drop that has landed but not decided: WHERE it landed, and where on screen
- * to ask WHAT it should be.
+ * A MEDIA drop that has landed but has no files yet: WHERE it landed, and where
+ * on screen to ask for them.
  *
  * The anchor is the same id-based `DropAnchor` a file drop carries, and for the
  * same reason — it names its gap by the cards either side of it, so it still
- * points at the place you dropped even if the board changes while the menu is
- * open. That property was built for uploads finishing late; a menu waiting on a
- * human is the same shape of wait, only longer and more likely.
+ * points at the place you dropped even if the board changes while the picker is
+ * open. That property was built for uploads finishing late; a picker waiting on
+ * a human is the same shape of wait, only longer and more likely.
  */
-export type PendingAddChoice = Readonly<{
+export type PendingMediaDrop = Readonly<{
   anchor: DropAnchor;
-  /** Viewport coordinates of the drop, for positioning the menu. */
+  /**
+   * Whether the browser still had TRANSIENT USER ACTIVATION at the instant of
+   * the drop, and the file picker can therefore be opened without a further
+   * click.
+   *
+   * Captured HERE, in the drop handler, rather than later in the component that
+   * opens the picker. Activation is transient by definition — it expires on a
+   * timer — so a reading taken after a render and an effect is a reading of a
+   * different moment than the one that matters.
+   */
+  hadUserActivation: boolean;
+  /** Viewport coordinates of the drop, for positioning the fallback prompt. */
   clientX: number;
   clientY: number;
 }>;
@@ -370,10 +381,10 @@ export function useNativeDrop(collectionId: string, projectId: string) {
     [addNodes, resolveAnchoredTarget, setDropStatus, projectId],
   );
 
-  // A dropped ADD ITEM, waiting on the user to say which kind. Null the rest
-  // of the time, which is what the surfaces render nothing from.
-  const [pendingChoice, setPendingChoice] = useState<PendingAddChoice | null>(null);
-  const cancelChoice = useCallback(() => setPendingChoice(null), []);
+  // A dropped MEDIA tool, waiting on files. Null the rest of the time, which is
+  // what the surfaces render nothing from.
+  const [pendingMedia, setPendingMedia] = useState<PendingMediaDrop | null>(null);
+  const cancelMediaDrop = useCallback(() => setPendingMedia(null), []);
 
   /** Commit a drop whose insert boundary the surface already resolved. Tools
    *  land synchronously; files hand the anchor over to the async upload; an
@@ -385,11 +396,20 @@ export function useNativeDrop(collectionId: string, projectId: string) {
         insertTool(tool, anchor.index);
         return;
       }
-      if (tool && isAddItemTool(tool)) {
-        // Park the position and ASK. Nothing is dispatched here — the graph is
-        // untouched until the menu is answered, so dismissing it leaves no
-        // trace, which is what makes Escape a real cancel rather than an undo.
-        setPendingChoice({ anchor, clientX: event.clientX, clientY: event.clientY });
+      if (tool && isMediaTool(tool)) {
+        // Park the position and ask for files. Nothing is dispatched here — the
+        // graph is untouched until files arrive, so cancelling the picker
+        // leaves no trace, which is what makes it a real cancel rather than an
+        // undo.
+        setPendingMedia({
+          anchor,
+          // `isActive` is transient activation specifically. `hasBeenActive` is
+          // "ever", true forever after the first click anywhere on the page,
+          // which would claim every drop could open a picker.
+          hadUserActivation: navigator.userActivation?.isActive ?? false,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
         return;
       }
       const files = [...event.dataTransfer.files];
@@ -399,47 +419,25 @@ export function useNativeDrop(collectionId: string, projectId: string) {
   );
 
   /**
-   * Answer a pending choice with COLLECTION, at the position it was dropped.
+   * Land the files a parked MEDIA drop was waiting for, at the position it was
+   * dropped.
    *
-   * Re-resolves the anchor through `resolveAnchoredTarget` rather than reusing
-   * `anchor.index` the way the immediate tool path does. Both halves matter and
-   * neither is optional here:
+   * The very same `dropFiles` an OS drop uses: one decode per video, bounded
+   * concurrency, per-file failure reporting and ONE undoable commit all come
+   * along, none of it reimplemented for this route.
    *
-   * - TIME PASSED. A menu sat open while the board stayed live; a raw index
-   *   captured at drop time can name a different gap by the time it is used.
-   * - FLAT MODE. A flat boundary is not a parent-relative index, and
-   *   `resolveAnchoredTarget` is what converts it (see its own note). The
-   *   immediate path skipping that step is pre-existing behaviour this does not
-   *   touch — but a NEW path has no reason to inherit it.
-   *
-   * The insert runs OUTSIDE the state updater, reading the current choice from
-   * the closure. An updater must be pure — React calls it twice in StrictMode —
-   * and inserting from inside one adds two collections for one click.
+   * Runs OUTSIDE a state updater, reading the parked drop from the closure. An
+   * updater must be pure — React calls it twice in StrictMode — and uploading
+   * from inside one would upload and insert every chosen file twice.
    */
-  const chooseCollection = useCallback(() => {
-    if (pendingChoice === null) return;
-    const target = resolveAnchoredTarget(pendingChoice.anchor);
-    setPendingChoice(null);
-    insertTool("collection", target.index, target.parentId);
-  }, [pendingChoice, insertTool, resolveAnchoredTarget]);
-
-  /**
-   * Answer a pending choice with MEDIA: the files go through the very same
-   * `dropFiles` an OS drop uses, at the parked anchor. One decode per video,
-   * bounded concurrency, per-file failure reporting, and ONE undoable commit
-   * all come along — none of it is reimplemented for this route.
-   *
-   * Outside the updater for the same reason as above: a StrictMode double-call
-   * would upload and insert every chosen file twice.
-   */
-  const chooseMedia = useCallback(
+  const resolveMediaDrop = useCallback(
     (files: readonly File[]) => {
-      if (pendingChoice === null) return;
-      const { anchor } = pendingChoice;
-      setPendingChoice(null);
+      if (pendingMedia === null) return;
+      const { anchor } = pendingMedia;
+      setPendingMedia(null);
       if (files.length > 0) void dropFiles(files, anchor);
     },
-    [pendingChoice, dropFiles],
+    [pendingMedia, dropFiles],
   );
 
   /**
@@ -501,10 +499,9 @@ export function useNativeDrop(collectionId: string, projectId: string) {
     commitDrop,
     upload,
     appendFiles,
-    pendingChoice,
-    chooseCollection,
-    chooseMedia,
-    cancelChoice,
+    pendingMedia,
+    resolveMediaDrop,
+    cancelMediaDrop,
   };
 }
 

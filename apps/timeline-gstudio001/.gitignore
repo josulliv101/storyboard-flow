@@ -19,3 +19,9 @@ mcp-app/dist/
 # Written by `npm run correct:aspects` — one ffprobe reading per source URL, so
 # a re-run does not hit the media host again. Local cache; never committed.
 .aspect-probe-cache.json
+fixtures/scale-probe.json
+
+# The scratch offline board: whatever `POST /api/timelines/import` last wrote,
+# i.e. somebody's exported project. Personal working state, and the one fixture
+# that IS meant to be overwritten — the import route refuses the generated ones.
+fixtures/local.json

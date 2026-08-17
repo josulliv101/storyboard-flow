@@ -47,6 +47,36 @@ import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details"
 /** Slow enough to be free, fast enough that an upload feels immediate. */
 const POLL_MS = 5000;
 
+/**
+ * KILL SWITCH — the poll is OFF unless explicitly turned on.
+ *
+ * "Slow enough to be free" above was the assumption this disables, and it does
+ * not survive contact with Firestore's billing model. The poll asks only for
+ * revision NUMBERS, which is cheap in bytes and not cheap at all in reads:
+ * Firestore bills per document, so fetching one integer costs the same single
+ * read as fetching the whole document. A visible board watching root + focus
+ * therefore spends 2 reads every 5s — 24/minute, ~34,500/day — against a
+ * 50,000/day free tier, while nobody touches anything. That is most of a day's
+ * quota spent on no change at all, and it is the shape of an idle cost: it
+ * scales with how long a tab is left open, not with how much work is done.
+ *
+ * WHAT BREAKS WHILE THIS IS OFF. A write from outside this session is not
+ * noticed: an agent uploading a render through the remote MCP endpoint, or an
+ * edit made in another tab, will not appear until something reloads the
+ * document. Local editing is unaffected — this bridge only ever applied
+ * REMOTE patches.
+ *
+ * Set `NEXT_PUBLIC_GSTUDIO_REMOTE_POLL=on` to restore it. Compared against the
+ * string rather than truthiness so that `=off`, `=0` and `=false` all read as
+ * off instead of the reverse (a bare `!!process.env.X` makes "off" mean on).
+ *
+ * The durable fix, when this comes back, is the backoff the render poller
+ * already models in lib/render/render-poll.ts — ACTIVE_POLL_MS 2500 while
+ * something is happening against IDLE_POLL_MS 30_000 when it is not. This
+ * poller has no such notion; it is a flat 5s forever.
+ */
+const POLLING_ENABLED = process.env.NEXT_PUBLIC_GSTUDIO_REMOTE_POLL === "on";
+
 export function RemoteChangesBridge({
   timelineIds,
 }: Readonly<{ timelineIds: readonly string[] }>) {
@@ -61,6 +91,10 @@ export function RemoteChangesBridge({
   const busyRef = useRef(false);
 
   useEffect(() => {
+    // Nothing is registered when the poll is off — no timer AND no
+    // visibilitychange listener, which would otherwise pull on every tab
+    // return and make "disabled" mean "polls whenever you look at it".
+    if (!POLLING_ENABLED) return;
     let cancelled = false;
 
     async function pull(timelineId: string) {

@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/core/button";
 import { Skeleton } from "@/components/core/skeleton";
 import { toast } from "@/components/core/sonner";
+import { LoadProjectButton } from "@/components/projects/load-project-button";
 import { cn } from "@/lib/utils";
 
 type TimelineProjectSummary = {
@@ -214,9 +215,10 @@ export default function Home() {
           </p>
         </div>
 
+        <div className="flex w-full flex-col items-stretch gap-2 md:w-[420px] md:shrink-0">
         <form
           onSubmit={handleCreateProject}
-          className="flex w-full flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/55 p-3 sm:flex-row md:w-[420px] md:shrink-0"
+          className="flex w-full flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/55 p-3 sm:flex-row"
         >
           <label htmlFor="project-title" className="sr-only">
             Project title
@@ -238,6 +240,13 @@ export default function Home() {
             New Project
           </Button>
         </form>
+        {/* OUTSIDE the create form, deliberately — a submit-typed button inside
+            it would create an empty project on Enter. Under it rather than
+            beside it so the everyday verb keeps the full width it had. */}
+        <div className="flex justify-end">
+          <LoadProjectButton />
+        </div>
+        </div>
       </header>
 
       <section

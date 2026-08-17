@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNod
 import { getChildren, parseNodeId, useCollectionsStore } from "@storyboard/ui/dnd-collections";
 
 import { useNativeDragArmed } from "./graph-native-drag-signal";
-import { AddItemDropMenu } from "./graph-add-item-menu";
+import { MediaDropTarget } from "./graph-tool-buttons";
 import { AppendFilesContext, useNativeDrop } from "./graph-native-drop-engine";
 import {
   DROP_INDICATOR_CLASS,
@@ -50,10 +50,9 @@ export function NativeDropGrid({
     commitDrop,
     upload,
     appendFiles,
-    pendingChoice,
-    chooseCollection,
-    chooseMedia,
-    cancelChoice,
+    pendingMedia,
+    resolveMediaDrop,
+    cancelMediaDrop,
   } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<GridIndicator | null>(null);
@@ -189,13 +188,13 @@ export function NativeDropGrid({
     >
       <AppendFilesContext.Provider value={appendFiles}>{children}</AppendFilesContext.Provider>
       {/* The strip's twin, from the same engine state — see the note there. */}
-      {pendingChoice !== null && (
-        <AddItemDropMenu
-          clientX={pendingChoice.clientX}
-          clientY={pendingChoice.clientY}
-          onCollection={chooseCollection}
-          onFiles={chooseMedia}
-          onDismiss={cancelChoice}
+      {pendingMedia !== null && (
+        <MediaDropTarget
+          hadUserActivation={pendingMedia.hadUserActivation}
+          clientX={pendingMedia.clientX}
+          clientY={pendingMedia.clientY}
+          onFiles={resolveMediaDrop}
+          onDismiss={cancelMediaDrop}
         />
       )}
       {indicator !== null && (

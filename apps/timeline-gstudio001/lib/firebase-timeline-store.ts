@@ -521,6 +521,66 @@ export async function collectOwnedTimelineClips(
 }
 
 /**
+ * A running count of document reads, for diagnosing read VOLUME.
+ *
+ * Off unless `GSTUDIO_COUNT_READS` is set, and dev-only in practice. It exists
+ * because this is the one place every read passes through, and the question
+ * "why are we making 50,000 of these a day" cannot be answered from the
+ * Firebase console — that reports totals, not which page load caused them.
+ *
+ * How it was used, so the next person does not have to reinvent it: point
+ * `GSTUDIO_FIXTURE_TIMELINES` at a synthetic project of known shape
+ * (`scripts/make-scale-probe.mjs`), load a board, and read the last total off
+ * the server log. That measured the batch-read endpoint at 430 reads down to
+ * 250 for one page load of a 151-document project.
+ *
+ * The count lives on `globalThis` so it survives the dev server's module
+ * re-evaluation, which would otherwise reset it on every file save.
+ */
+function countRead(): number | null {
+  if (!process.env.GSTUDIO_COUNT_READS) return null;
+  const scope = globalThis as unknown as { __gstudioReads?: number };
+  scope.__gstudioReads = (scope.__gstudioReads ?? 0) + 1;
+  return scope.__gstudioReads;
+}
+
+/**
+ * The `[READTOTAL n]` line, emitted once the read has RESOLVED so it can say
+ * what the read actually bought.
+ *
+ * A bare running total answers "how many" and nothing else, which is the wrong
+ * half of the question: 152 reads on one page load is only diagnosable if you
+ * can see that it was 151 distinct documents rather than one document fetched
+ * 151 times. So each line names its document and what came back with it.
+ *
+ * `source` is the field to read first. `fixture` means the read was served from
+ * disk and cost NOTHING, `firestore` means it was billed — a distinction the
+ * bare counter hid, and the reason a local dev loop with
+ * GSTUDIO_FIXTURE_TIMELINES set can look expensive while being free (and why
+ * the render poller, which has no fixture branch, was billing invisibly).
+ *
+ * Counted-but-absent is deliberately still a LINE. `MISSING` and `DENIED` reads
+ * cost exactly the same one read as a hit, and a total that is one or two above
+ * the document count is usually the trash bin being asked for and not found —
+ * unexplainable without seeing the miss.
+ */
+function logRead(
+  total: number | null,
+  id: string,
+  entry: TimelineEntry | null,
+  source: "fixture" | "firestore",
+  note?: "denied",
+): void {
+  if (total === null) return;
+  const detail = entry
+    ? `${JSON.stringify(entry.document.title || "(untitled)")} rev=${entry.revision} clips=${entry.document.clips.length}`
+    : note === "denied"
+      ? "DENIED"
+      : "MISSING";
+  console.log(`[READTOTAL ${total}] ${id} ${detail} (${source})`);
+}
+
+/**
  * ONE stored record, EXACTLY as written — collection summaries and all.
  *
  * "Stored" is the load-bearing word, and the counterpart to `serveTimelineDocument`.
@@ -549,29 +609,46 @@ export async function readStoredTimelineEntry(
   id: string,
   requesterUid: string,
 ): Promise<TimelineEntry | null> {
+  // Counted HERE, before the fixture branch and before the fetch: the metric is
+  // read ATTEMPTS, so a miss, a denial and a fixture hit all count. What each
+  // attempt turned out to be is reported by `logRead` once it resolves.
+  const readTotal = countRead();
   // OFFLINE MODE. Dev-only, refused outright in production — see
   // `fixture-timeline-store`. Intercepted HERE rather than per route because
   // this is the single read seam: `serveTimelineDocument`, `serveTrashDocument`,
   // the RSC focus-path loader and the closure walker all come through it, so
   // one branch covers every reader and none of them can drift.
-  if (fixtureStoreEnabled()) return fixtureReadEntry(id);
+  if (fixtureStoreEnabled()) {
+    const fixtureEntry = fixtureReadEntry(id);
+    logRead(readTotal, id, fixtureEntry, "fixture");
+    return fixtureEntry;
+  }
 
   const snapshot = await withFirebaseTimeout(
     collection().doc(id).get(),
     "Loading timeline document",
   );
 
-  if (!snapshot.exists) return null;
+  if (!snapshot.exists) {
+    logRead(readTotal, id, null, "firestore");
+    return null;
+  }
   const data = snapshot.data() as TimelineDocumentRecord;
   // Reads no longer write. An ownerless record is denied like any other record
   // the requester does not own — knowing its id is not a claim to it.
   if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") {
+    // Logged before the throw: a denied read is billed like any other, and a
+    // gap in the numbered sequence would be the one thing this instrument
+    // cannot explain.
+    logRead(readTotal, id, null, "firestore", "denied");
     throw new TimelineAccessDeniedError(id);
   }
-  return {
+  const entry = {
     document: toTimelineDocument(snapshot.id, data),
     revision: data.revision ?? 0,
   };
+  logRead(readTotal, id, entry, "firestore");
+  return entry;
 }
 
 /** `readStoredTimelineEntry` without the revision — same caveats, read them there. */

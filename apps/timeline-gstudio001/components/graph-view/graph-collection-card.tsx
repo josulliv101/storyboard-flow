@@ -23,7 +23,7 @@ import { GraphViewNavContext } from "./graph-navigation";
 import { CardCornerSlot } from "./graph-anchor-menu";
 import {
   AudioPlaceholder,
-  CollectionLeaderPlaceholder,
+  EmptyCollectionPlaceholder,
 } from "./graph-card-placeholders";
 import {
   DisabledChip,
@@ -199,45 +199,52 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
               click, drag and checkbox untouched, and it is `aria-hidden`
               because the surface's label already announces "collection".
 
-              Only over real frames — the empty state below draws its own
-              placeholder, and two glyphs stacked would just read as a bug. */}
-          {previews.length > 0 ? (
-            <span
-              data-collection-mark
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 z-10 grid place-items-center"
-            >
+              ON EVERY COLLECTION CARD, empty or not. It used to be gated on
+              there being real frames, because the empty state drew an academy
+              leader and two glyphs stacked in one centre read as a bug. That
+              placeholder is a plain gradient now precisely so this mark can be
+              the one thing saying "collection" — said once, and the same way,
+              whether the card has frames behind it or nothing at all. */}
+          <span
+            data-collection-mark
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-10 grid place-items-center"
+          >
               {/* A disc behind the glyph, so the mark reads on ANY frame.
                   The glyph alone is white-on-whatever-the-children-are: over a
                   pale or busy frame the strokes break up, and the drop-shadow
                   under it only outlines them rather than giving them a ground.
                   The disc is that ground.
 
-                  Deliberately faint — `bg-black/25`. This sits over the frame
-                  that tells you WHICH collection this is, so it has to darken
-                  the picture without hiding it; anything heavier reads as a
-                  scrim over the card. It is a background-colour alpha, NOT
-                  `opacity` on the wrapper, which would take the glyph down to
-                  an eighth (0.25 × its own 0.5) along with it. */}
-              <span className="rounded-full bg-black/25 p-2">
-                <Layers
-                  className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
-                  strokeWidth={1.5}
-                />
-              </span>
+                  `bg-black/45`, up from the 0.25 it shipped at. The original
+                  was tuned to darken the frame as little as possible, and it
+                  went too far the other way: on a mid-tone frame the disc
+                  barely registered, so the glyph was back to floating on the
+                  picture with no ground. It is still an alpha well short of
+                  opaque — the frame is how you recognise WHICH collection this
+                  is, so it must read through.
+
+                  A background-colour alpha, NOT `opacity` on the wrapper,
+                  which would take the glyph down along with it (0.45 × its own
+                  0.5). */}
+            <span className="rounded-full bg-black/45 p-2">
+              <Layers
+                className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.5}
+              />
             </span>
-          ) : null}
+          </span>
           {previews.length === 0 ? (
             <span
               data-empty-collection-preview
-              data-collection-preview-kind={leadsWithAudio ? "audio" : "leader"}
+              data-collection-preview-kind={leadsWithAudio ? "audio" : "empty"}
               aria-hidden="true"
               className="flex flex-1 items-center justify-center overflow-hidden rounded-sm"
             >
-              {/* The film leader means "no picture". For a collection of voice
-                  takes that is the wrong sentence — the right one is "this is
-                  sound", and the audio card's own glyph already says it. */}
-              {leadsWithAudio ? <AudioPlaceholder /> : <CollectionLeaderPlaceholder />}
+              {/* A collection of voice takes gets the audio card's own glyph:
+                  "this is sound" is a truer sentence there than "this is
+                  empty", and it is the same mark an audio clip wears. */}
+              {leadsWithAudio ? <AudioPlaceholder /> : <EmptyCollectionPlaceholder />}
             </span>
           ) : (
             previews.map((preview, index) => (
