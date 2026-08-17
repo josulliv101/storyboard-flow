@@ -236,6 +236,54 @@ type GraphApi = {
   batches: string[][];
 };
 
+/**
+ * Every `/api/` request that reached this page without a mock, per page.
+ *
+ * A WeakMap rather than a field on GraphApi: the assertion runs in `afterEach`,
+ * which has the page but not whatever the test did with the return value.
+ */
+const unmockedApiCalls = new WeakMap<Page, string[]>();
+
+/**
+ * THE ESCAPE GUARD. Anything under `/api/` that no test mocked is recorded and
+ * aborted, instead of reaching the real dev server.
+ *
+ * This suite runs against the real Next app, which has real `.env` credentials
+ * loaded, so "no real storage is read or written" was an INTENTION enforced by
+ * remembering to mock every route. The gap that motivated this: `/api/renders`
+ * was never mocked, and `lib/render/job-store.ts` has no offline branch — so
+ * while the render poller was live, every test with a board open queried the
+ * real `gstudioRenderJobs` collection every few seconds for the length of the
+ * test. Invisible in `[READTOTAL]`, which only instruments the timeline
+ * collection, and invisible here, because a fallthrough looked exactly like a
+ * mock working.
+ *
+ * REGISTERED FIRST, which is what makes it a backstop rather than a wall:
+ * Playwright matches handlers in reverse registration order, so every mock
+ * added later still wins. Only what nobody claimed lands here.
+ *
+ * Aborted AND recorded. The abort keeps the request off the network even if the
+ * assertion is never reached; the recording is what turns a silent escape into a
+ * named failure in `afterEach`.
+ */
+async function guardUnmockedApi(page: Page): Promise<void> {
+  const escaped: string[] = [];
+  unmockedApiCalls.set(page, escaped);
+  await page.route("**/api/**", (route) => {
+    const { pathname, search } = new URL(route.request().url());
+    escaped.push(`${route.request().method()} ${pathname}${search}`);
+    return route.abort("failed");
+  });
+}
+
+test.afterEach(({ page }) => {
+  const escaped = unmockedApiCalls.get(page) ?? [];
+  expect(
+    escaped,
+    "Unmocked /api/ request(s) escaped to the real app — mock them, or they hit real Firestore when offline mode is off",
+  ).toEqual([]);
+});
+
 async function installGraphApi(
   page: Page,
   options: {
@@ -244,6 +292,7 @@ async function installGraphApi(
     lanes?: Readonly<Record<string, number>>;
   } = {},
 ): Promise<GraphApi> {
+  await guardUnmockedApi(page);
   const documents = buildFixtureDocuments();
   // The fixtures are all trackIndex 0 — they predate lanes — so this is how a
   // test gets a layered board without maintaining a second fixture set.
