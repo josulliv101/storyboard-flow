@@ -7145,12 +7145,11 @@ test.describe("graph view E2E", () => {
     // left wherever the closing menu put it — a difference this test should not
     // encode, because the guarantee below holds either way.
     //
-    // WHICH control it is now depends on the row. The select row replaces the
-    // breadcrumb the moment the mode is armed — including at zero selected —
-    // and the header's Select toggle goes with the browse row it lives in. So
-    // armed-and-empty is served by Done, and only the disarmed state shows the
-    // toggle. The guarantee is unchanged and is what this asserts: whatever the
-    // selection, SOME visible control reports the mode and turns it off.
+    // BOTH controls are on screen now — the Select toggle keeps its place
+    // through select mode, beside a Done that does the same job. This still
+    // routes through Done when the row is armed, because that is the path worth
+    // exercising; the guarantee it asserts is unchanged: whatever the
+    // selection, a visible control reports the mode and turns it off.
     const header = page.locator("[data-graph-board-header]");
     const headerToggle = page.locator("[data-select-mode-toggle]");
     if ((await header.getAttribute("data-header-mode")) === "select") {
@@ -7610,12 +7609,46 @@ test.describe("graph view E2E", () => {
     await assertStacked("select");
   });
 
-  test("select mode keeps undo/redo, to the right of Done and fenced by a rule", async ({
+  test("select mode keeps the row's right-hand cluster, with Select pressed", async ({
     page,
   }) => {
-    // Arming the mode used to take undo AWAY — `GraphUndoRedo` rendered only
-    // in the browse branch — at exactly the moment a multi-select delete makes
-    // it most wanted.
+    // Arming the mode used to replace the WHOLE row, which took Preview, the
+    // Select toggle itself and the project `⋮` off screen — the control the
+    // user had just pressed vanished from under the cursor. Only the left of
+    // the row changes now.
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    await expect(header).toHaveAttribute("data-header-mode", "select");
+
+    const toggle = page.locator("[data-select-mode-toggle]");
+    await expect(toggle).toBeVisible();
+    // PRESSED, for as long as the mode is on. It used to be able to show that
+    // state only in the window before the first card was picked.
+    await expect(toggle).toHaveAttribute("data-select-mode-toggle", "on");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(header.getByRole("button", { name: /preview/i })).toBeVisible();
+    await expect(header.locator("[data-project-menu]")).toBeVisible();
+    await expect(header.getByRole("button", { name: "Undo" })).toBeVisible();
+    await expect(header.getByRole("button", { name: "Redo" })).toBeVisible();
+
+    // And it is a real way out, not just an indicator.
+    await toggle.click();
+    await expect(header).toHaveAttribute("data-header-mode", "browse");
+  });
+
+  test("Done sits beside Delete, one rule between them, undo/redo beyond", async ({
+    page,
+  }) => {
+    // REVERSED deliberately. Done used to take `ml-auto` to the far end of the
+    // row, on the argument that two controls which both end the gesture — one
+    // of them destructive — should not be shoulder to shoulder. The rule is
+    // what replaces that distance: Done now sits with the rest of the selection
+    // controls rather than adrift at the end of a row whose other end is a full
+    // cluster of unrelated buttons.
     await installGraphApi(page);
     await openGraph(page);
     const header = page.locator("[data-graph-board-header]");
@@ -7625,27 +7658,38 @@ test.describe("graph view E2E", () => {
     await expect(header).toHaveAttribute("data-header-mode", "select");
 
     const done = page.locator("[data-select-mode-done]");
+    // The last verb DRAWN, and the one kept longest as the row narrows, so it
+    // is reliably the one Done lands beside. DIRECT children only: the run also
+    // holds an invisible ruler copy of every verb, which it measures itself
+    // against, and matching both is a strict-mode failure.
+    const del = header.locator('[data-select-mode-verbs] > [data-header-action="delete"]');
     const undo = header.getByRole("button", { name: "Undo" });
-    const redo = header.getByRole("button", { name: "Redo" });
-    await expect(undo).toBeVisible();
-    await expect(redo).toBeVisible();
+    await expect(done).toBeVisible();
+    await expect(del).toBeVisible();
 
-    // RIGHT of Done, and in reading order among themselves.
     const doneBox = (await done.boundingBox())!;
+    const deleteBox = (await del.boundingBox())!;
     const undoBox = (await undo.boundingBox())!;
-    const redoBox = (await redo.boundingBox())!;
-    expect(undoBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
-    expect(redoBox.x).toBeGreaterThanOrEqual(undoBox.x + undoBox.width);
 
-    // EXACTLY ONE rule, and it sits after Done. Done's own separation on the
-    // left is the empty space `ml-auto` opens up; a rule there too fenced it
-    // in from both sides and made the way OUT read as one more item in the
-    // verb run.
-    const rules = header.locator('[data-select-mode-header] > [aria-hidden="true"].w-px');
+    // Done is to Delete's right, and CLOSE to it — the whole point of the
+    // change. The gap is one rule plus the run's gutters, so a generous ceiling
+    // still fails the old layout, where the row's entire leftover width sat
+    // between them: 280px, measured, on this viewport.
+    expect(doneBox.x).toBeGreaterThan(deleteBox.x + deleteBox.width);
+    expect(doneBox.x - (deleteBox.x + deleteBox.width)).toBeLessThan(80);
+
+    // EXACTLY ONE rule, and it is BETWEEN them — not after Done, where it used
+    // to be. The rule is what says "this one leaves, the rest act".
+    const rules = header.locator('[data-select-mode-verbs] > [aria-hidden="true"].w-px');
     await expect(rules).toHaveCount(1);
     const ruleBox = (await rules.first().boundingBox())!;
-    expect(ruleBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
-    expect(ruleBox.x).toBeLessThan(undoBox.x);
+    expect(ruleBox.x).toBeGreaterThanOrEqual(deleteBox.x + deleteBox.width);
+    expect(ruleBox.x).toBeLessThanOrEqual(doneBox.x);
+
+    // History still sits beyond the way out, in the shared cluster it now
+    // renders from. Arming the mode used to drop undo entirely — at exactly the
+    // moment a multi-select delete makes it most wanted.
+    expect(undoBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
   });
 
   test("the grid card carries NO ⋮ — the select row holds its actions", async ({

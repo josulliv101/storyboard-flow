@@ -910,7 +910,12 @@ function SelectionCentreControls({
  */
 function HeaderPasteButton({
   anchorName,
-}: Readonly<{ anchorName: string | null }>) {
+  /** Rendered into the verb run's measuring ruler — same box, nothing that
+   *  identifies it. `[data-header-paste]` is located globally by tests, and the
+   *  ruler is a second copy of this markup inside the same row: copy in browse
+   *  mode, then arm select mode, and the page would hold two of it. */
+  measuring = false,
+}: Readonly<{ anchorName: string | null; measuring?: boolean }>) {
   const state = useSelectionActionState();
   const clipboardCount = useClipboardCount();
 
@@ -927,14 +932,14 @@ function HeaderPasteButton({
       type="button"
       variant="ghost"
       size="icon"
-      aria-label={pasteLabel}
+      aria-label={measuring ? undefined : pasteLabel}
       title={pasteLabel}
-      data-header-paste
+      data-header-paste={measuring ? undefined : ""}
       // Still dims while an action is in flight, so a paste cannot double-fire
       // behind a slow one.
       aria-disabled={state.busy || undefined}
       onClick={() => {
-        if (state.busy) return;
+        if (measuring || state.busy) return;
         requestGraphItemAction("paste");
       }}
       className={cn(
@@ -964,10 +969,13 @@ function HeaderPasteButton({
  * beside a label; this is the design's `CircleCheck`, which reads as a control
  * rather than a state. The word beside it is what makes it a mode and not a verb.
  *
- * Rendered only while the mode is DISARMED or nothing is picked yet — once
- * there is a selection the whole row becomes `SelectModeHeader`, which carries
- * its own way out. So this shows its armed state (a pressed toggle you can
- * press again) for exactly the window in which it is still on screen.
+ * ALWAYS RENDERED, in both faces of the header. It used to disappear the moment
+ * a selection existed, because the whole row became `SelectModeHeader` — so the
+ * control the user had just pressed vanished from under the cursor, and its
+ * pressed state was only ever visible in the window before the first card was
+ * picked. It stays in place and stays pressed for as long as the mode is on,
+ * which is what a toggle is supposed to do; pressing it again is now one of two
+ * ways out, alongside Done.
  */
 function SelectModeButton() {
   const store = useCollectionsStore();
@@ -998,13 +1006,18 @@ function SelectModeButton() {
 }
 
 /**
- * The header row while a selection is being assembled — the breadcrumb's place,
- * taken over by the thing the user is actually doing.
+ * The LEFT of the header row while a selection is being assembled — the
+ * breadcrumb's place, taken over by the thing the user is actually doing.
  *
- * It replaces rather than joins, because the two say different things about
- * where you are: the trail answers "which collection am I in", and in this mode
- * the answer that matters is "what have I got". The trail comes back the moment
- * the selection empties, which is also the moment it becomes useful again.
+ * It replaces the breadcrumb rather than joining it, because the two say
+ * different things about where you are: the trail answers "which collection am
+ * I in", and in this mode the answer that matters is "what have I got". The
+ * trail comes back the moment the selection empties, which is also the moment
+ * it becomes useful again.
+ *
+ * It replaces only THAT. The row's right-hand cluster (`BoardViewControls`)
+ * renders either way — this used to take the whole row, Preview and Select and
+ * the project menu with it.
  *
  * NOT shown merely because the mode is armed. With nothing picked this would be
  * a row of dimmed verbs and a count of zero — it says nothing, and it would
@@ -1103,17 +1116,29 @@ function useFittedVerbCount(
     if (!container || !ruler) return;
 
     const measure = () => {
-      const budget = container.clientWidth;
+      const fullBudget = container.clientWidth;
       // 0 while the row is display:none (the browse header is showing) — keep
       // the last answer rather than collapsing to zero verbs and flashing them
       // all back in on the next frame.
-      if (budget === 0) return;
+      if (fullBudget === 0) return;
       const widths = Array.from(ruler.children).map((child) =>
         Math.ceil((child as HTMLElement).getBoundingClientRect().width),
       );
-      // The ruler's LAST child is the `⋮`, sitting past every verb index — see
-      // the note on it in SelectModeHeader.
+      // The ruler's last two children sit past every verb index — see the note
+      // on them in SelectModeVerbRun.
       const overflowWidth = widths[SELECT_MODE_VERBS.length] ?? 0;
+      // DONE IS ALWAYS DRAWN, so its width comes off the budget unconditionally
+      // — before pass 1, unlike the `⋮`, whose cost depends on whether pass 1
+      // needed it. It lives INSIDE this container (that is what puts it beside
+      // Delete rather than an inch away at the end of the row), and the
+      // container clips what does not fit, so a width nobody reserved is a way
+      // out of select mode that disappears on a narrow window.
+      const trailingWidth = widths[SELECT_MODE_VERBS.length + 1] ?? 0;
+      // Plus the gutter BETWEEN the run and it, which the ruler's own wrapper
+      // cannot show: the ruler measures the tail's controls and the gaps among
+      // them, while the gap that separates the whole tail from the last verb is
+      // the run's, and is only spent once the tail is drawn beside it.
+      const budget = fullBudget - (trailingWidth > 0 ? trailingWidth + SELECT_MODE_VERB_GAP_PX : 0);
 
       // PASS 1 — does the whole run fit with NO `⋮` at all? Asked first, and
       // against the full budget, because when everything fits there is no
@@ -1227,7 +1252,20 @@ function SelectModeVerb({
  * the whole run out is what makes the swap legal, and it also stops the
  * measuring ResizeObserver from running for a row that is not drawn.
  */
-function SelectModeVerbRun({ state }: Readonly<{ state: ItemActionState }>) {
+function SelectModeVerbRun({
+  state,
+  /** Drawn at the END of the run and never dropped — Done. Passed in rather
+   *  than rendered here so the run stays a run of verbs, and so the ARMED
+   *  branch (which has no verb run at all) can place the same control itself. */
+  trailing,
+  /** The same markup as `trailing`, stripped of anything that identifies it,
+   *  for the ruler to measure — see SelectModeTail's `measuring`. */
+  trailingRuler,
+}: Readonly<{
+  state: ItemActionState;
+  trailing?: React.ReactNode;
+  trailingRuler?: React.ReactNode;
+}>) {
   const { containerRef, rulerRef, visible } = useFittedVerbCount(state);
   // What the row could not draw — exactly the overflow menu's contents, taken
   // in DRAW order so the two halves of one list stay in one order.
@@ -1266,6 +1304,13 @@ function SelectModeVerbRun({ state }: Readonly<{ state: ItemActionState }>) {
             a verb early. Kept LAST, past every verb index, so the per-verb
             lookup by `indexOf` above is unaffected by its presence. */}
         <span data-select-mode-overflow-ruler="" className={cn(HEADER_SELECTION_SIZE, "shrink-0")} />
+        {/* The TRAILING control's width, measured the same way and for the same
+            reason — it is inside this container, so a width nobody reserved is
+            a control the container clips. Kept last, past the `⋮`, so neither
+            the per-verb lookup by `indexOf` nor the overflow index moves. */}
+        <span data-select-mode-trailing-ruler="" className="flex shrink-0 items-center gap-x-5">
+          {trailingRuler}
+        </span>
       </div>
       {SELECT_MODE_VERBS.filter((action) => visible.has(action)).map((action) => (
         <SelectModeVerb key={action} action={action} state={state} />
@@ -1303,7 +1348,113 @@ function SelectModeVerbRun({ state }: Readonly<{ state: ItemActionState }>) {
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
+      {trailing}
+      {/* THE SLACK GOES HERE, past everything, which is the whole reason the
+          tail is inside this container at all.
+
+          The run is `flex-1` because the fit maths needs its budget to come
+          from the ROW rather than from its own contents (see
+          useFittedVerbCount). That makes it the element that absorbs the row's
+          leftover width — so a Done rendered OUTSIDE it lands at the far end of
+          that leftover, an inch of empty space away from the Delete it is meant
+          to sit beside. Measured at 280px on a 1280 viewport. Inside, with the
+          slack explicitly BEHIND it, it stays put. Same fix, and the same
+          reason, as the `⋮` above. */}
+      <span aria-hidden="true" className="min-w-0 flex-1" />
     </div>
+  );
+}
+
+/**
+ * The row's right-hand cluster: what you are looking at, and the board-wide
+ * controls that qualify it.
+ *
+ * RENDERED IN BOTH FACES OF THE HEADER. Select mode used to replace the whole
+ * row, which took Preview, Select and the project `⋮` off screen for as long as
+ * the mode was armed — so the control you had just pressed vanished from under
+ * your cursor, and the way back out was a different button in a different
+ * place. They stay put now, and `SelectModeButton` shows its pressed state for
+ * the whole time the mode is on rather than only until the first card is
+ * picked.
+ */
+function BoardViewControls({
+  previewOn,
+  onPreviewToggle,
+  projectId,
+  className,
+}: Readonly<{
+  previewOn: boolean;
+  onPreviewToggle: () => void;
+  projectId: string;
+  className?: string;
+}>) {
+  return (
+    <DragChromeFade className={cn("flex min-w-0 shrink-0 items-center justify-end gap-2", className)}>
+              {/* SELECT leads what is left of this cluster. It used to lead as
+                  a PAIR with the tag filter — the two controls that change how
+                  you WORK with the board rather than what it contains — and
+                  that pairing is gone deliberately: the filter moved down to
+                  the controls row under the divider, with the rest of the
+                  controls that qualify what the board shows. Select stays here
+                  because it is the one that arms an ACTION, and the verbs it
+                  arms (the centre cluster) are in this row.
+
+                  The Collection tool, the children-timelines toggle and the
+                  zoom slider all went down with the filter. What remains up
+                  here is the row's original job: where you are, what you have
+                  picked, and what you can do to it. */}
+              {/* PREVIEW LEADS, Select follows. It was a tile in the icon
+                  rail, which gave it prominence but put it a long way from the
+                  board it opens over — and it is a VIEW toggle, which is what
+                  this end of the row is for. Ungated by surface deliberately:
+                  the pane plays the focused timeline in grid as well as strip,
+                  so hiding it in grid would remove a working control.
+
+                  Preview and Select are the two controls in this row that are
+                  ALWAYS here — nothing about them is gated on surface or on
+                  flat mode, which is exactly why the ruler pair went down to
+                  the controls row and these did not.
+
+                  Preview first because it is the icon in a pair whose other
+                  half carries a WORD: leading with the labelled control pushed
+                  the icon out to the fence, away from the icon toggles beyond
+                  it, so the row read as a button with an ornament rather than
+                  as one run of controls. */}
+              <HeaderToggle
+                active={previewOn}
+                onToggle={onPreviewToggle}
+                icon={TvMinimal}
+                text="Preview"
+                label={previewOn ? "Hide preview" : "Show preview"}
+                title="Preview — play the focused timeline"
+              />
+              <SelectModeButton />
+              {/* PROJECT `⋮`, immediately right of Select. Export and Load act
+                  on the whole project and produce (or consume) a file, which is
+                  a different question from the gear's set-once settings at the
+                  end of the controls row — so it is a second menu rather than
+                  two more items in that one. */}
+              <GraphProjectMenu projectId={projectId} />
+              <ControlFence />
+              {/* Ruler and waveform used to sit here, behind a fence of their
+                  own. They are down in the board's controls row now, beside
+                  the zoom: all three qualify the strip's TIME AXIS, and this
+                  row is where you are and what you can do to the selection.
+                  They also came and went with flat mode, so this row's width
+                  changed as you toggled it — the one place that cannot afford
+                  it, since the breadcrumb trail measures its budget against
+                  what is left. */}
+              {/* Paste used to sit here, fenced between the view group and
+                  history. It is in the CENTRE now, with copy and cut — the
+                  three clipboard verbs read as one group, which is worth more
+                  than the container-scoped grouping it had here. This cluster
+                  keeps only what qualifies the board itself. */}
+              <GraphUndoRedo />
+              {/* Board options are not here — they are the last control in the
+                  board's own controls row under the divider, with the rest of
+                  the chrome that qualifies the board rather than navigates
+                  it. */}
+            </DragChromeFade>
   );
 }
 
@@ -1329,6 +1480,24 @@ function SelectModeHeader({
   // reading the DOM: the row itself treats the two identically, because from
   // here on they want exactly the same things.
   const cutPending = usePendingCutCount() > 0;
+
+  // Clear THEN disarm. The store keeps the mode armed through an empty
+  // selection for this view (keepMultiSelectModeWhenEmpty), so the clear cannot
+  // disarm it out from under this; the order is only about ending in one notify
+  // rather than leaving the row briefly showing "0 selected" on its way out.
+  //
+  // Done also ABANDONS a pending cut. Leaving without pasting is the user
+  // saying the move is not happening, and the alternative is worse than untidy:
+  // the sources would stay dimmed on a board with no select row and — since the
+  // `✕` that cancels a cut lives only in the BROWSE header — no obvious way
+  // back to them. `clear()` drops the entries and the pending set in one
+  // notify, which un-dims the sources in place; they never moved, so there is
+  // nothing to put back.
+  const leave = () => {
+    graphClipboard.clear();
+    store.clearSelection();
+    store.setMultiSelectMode(false);
+  };
 
   return (
     <div
@@ -1370,28 +1539,91 @@ function SelectModeHeader({
           half of "where am I pasting this": the same row now answers it by
           click and by drag. */}
       {armed ? (
-        <div
-          data-select-mode-breadcrumb=""
-          data-crumb-wing
-          className="flex min-w-0 flex-1 items-center overflow-hidden"
-        >
-          {breadcrumb}
-        </div>
+        <>
+          <div
+            data-select-mode-breadcrumb=""
+            data-crumb-wing
+            className="flex min-w-0 flex-1 items-center overflow-hidden"
+          >
+            {breadcrumb}
+          </div>
+          {/* Outside the run because there IS no run while armed — the
+              breadcrumb takes its wing, and being `flex-1` it absorbs the
+              slack, so the tail lands hard against it either way. */}
+          <SelectModeTail
+            anchorName={anchorName}
+            armed={armed}
+            cutPending={cutPending}
+            onDone={leave}
+          />
+        </>
       ) : (
-        <SelectModeVerbRun state={state} />
+        <SelectModeVerbRun
+          state={state}
+          trailing={
+            <SelectModeTail
+              anchorName={anchorName}
+              armed={armed}
+              cutPending={cutPending}
+              onDone={leave}
+            />
+          }
+          trailingRuler={
+            <SelectModeTail
+              anchorName={anchorName}
+              armed={armed}
+              cutPending={cutPending}
+              onDone={leave}
+              measuring
+            />
+          }
+        />
       )}
-      <HeaderPasteButton anchorName={anchorName} />
-      {/* `ml-auto`: Done sits at the far end, away from Delete. Both end the
-          gesture, only one of them destroys anything, and putting them
-          shoulder to shoulder is how a mis-click becomes a deletion. The
-          empty space is what separates it on this side — a rule here as well
-          fenced Done in from both directions and made the way OUT read as
-          just another item in the verb run. */}
-      <Button
+      {/* NO right-hand cluster here any more. Preview, Select, the project `⋮`
+          and undo/redo render OUTSIDE this component, from the header row
+          itself, in both of its faces — so they keep their positions when the
+          mode is armed instead of being taken away and put back. */}
+    </div>
+  );
+}
+
+/**
+ * What ends the gesture: Paste when there is something to paste, then Done.
+ *
+ * DONE SITS BESIDE DELETE NOW, one fence away, which is a deliberate reversal.
+ * It used to take `ml-auto` to the far end of the row on the argument that two
+ * controls which both end the gesture — one of them destructive — should not be
+ * shoulder to shoulder. The fence is what replaces that distance: it still
+ * reads as a separate group, and the way out is now where the rest of the
+ * selection controls are rather than adrift at the end of a row whose other end
+ * is a full cluster of unrelated buttons.
+ *
+ * `measuring` renders the same boxes for the ruler to size and NOTHING that
+ * identifies them — no `data-select-mode-done`, no `data-header-paste`, no
+ * handlers. The ruler is a second copy of this markup living inside the same
+ * row, and a second element answering to either locator is a strict-mode
+ * failure in every test that reaches for one.
+ */
+function SelectModeTail({
+  anchorName,
+  armed,
+  cutPending,
+  onDone,
+  measuring = false,
+}: Readonly<{
+  anchorName: string | null;
+  armed: boolean;
+  cutPending: boolean;
+  onDone: () => void;
+  measuring?: boolean;
+}>) {
+  return (
+    <>
+      <HeaderPasteButton anchorName={anchorName} measuring={measuring} />
+      <ControlFence />
+      <button
         type="button"
-        variant="ghost"
-        size="sm"
-        data-select-mode-done
+        data-select-mode-done={measuring ? undefined : ""}
         title={
           armed
             ? cutPending
@@ -1399,59 +1631,42 @@ function SelectModeHeader({
               : "Cancel — discard what was copied"
             : "Finish selecting"
         }
-        // Clear THEN disarm. The store keeps the mode armed through an empty
-        // selection for this view (keepMultiSelectModeWhenEmpty), so the clear
-        // cannot disarm it out from under this and the order is only about
-        // ending in one notify rather than leaving the row briefly showing "0
-        // selected" on its way out.
+        onClick={measuring ? undefined : onDone}
+        // The verb run's own box, class for class — so it shares their
+        // baseline, their hit area and their coarse-pointer growth rather than
+        // setting a second standard next to them. It was a `text-sm
+        // font-medium` pill in an `h-8` zinc-700 outline, which was right while
+        // it lived alone at the far end of the row and had nothing to agree
+        // with; beside Delete it read as a dialog's confirm button that had
+        // wandered into a toolbar. Shorter than that `h-8`, which cannot cost
+        // the row height: Preview, Select and the `⋮` opposite are all still
+        // `h-8` and the two faces of the header stay pinned to one height.
         //
-        // Done also ABANDONS a pending cut. Leaving without pasting is the
-        // user saying the move is not happening, and the alternative is worse
-        // than untidy: the sources would stay dimmed on a board with no select
-        // row and — since the `✕` that cancels a cut lives only in the BROWSE
-        // header — no obvious way back to them. `clear()` drops the entries and
-        // the pending set in one notify, which un-dims the sources in place;
-        // they never moved, so there is nothing to put back.
-        onClick={() => {
-          graphClipboard.clear();
-          store.clearSelection();
-          store.setMultiSelectMode(false);
-        }}
-        // BORDERED, unlike every other control on this row. It is the way out,
-        // and the only one here that is not a verb acting on the selection —
-        // an outline is what separates "leave" from "do something to these".
+        // What separates it now is the rule to its left and its INK: the verbs
+        // idle at zinc-400 and brighten on hover, this one idles at zinc-100.
+        // Same shape, same type, more weight of colour — the quiet version of
+        // the distinction the outline was making loudly.
         //
-        // `h-8`, matching every other header control (HEADER_SELECTION_SIZE).
-        // It was `h-9`, and that 4px was the whole reason entering select mode
-        // nudged the board down: this is the tallest thing in the row, so it
-        // alone set the header's height — 61px against the browse row's 57.
+        // No `ml-auto`: the slack is absorbed inside the verb run, PAST this,
+        // which is what keeps it beside Delete.
         className={cn(
-          "ml-auto h-8 shrink-0 rounded-lg border border-zinc-700 px-3.5 text-sm font-medium",
-          "[@media(pointer:coarse)]:h-11",
-          "text-zinc-100 hover:border-zinc-500 hover:bg-transparent hover:text-white",
+          "inline-flex shrink-0 items-center gap-1.5 rounded px-1 py-1.5 text-[13px] transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
+          "[@media(pointer:coarse)]:py-3",
+          "text-zinc-100 hover:text-white",
         )}
       >
+        {/* NO ICON, unlike every verb beside it. A tick was tried and taken
+            back out: the verbs' glyphs each name an ACTION, and a tick beside
+            the way out reads as confirming something. The word alone is what
+            distinguishes leaving from acting, now that the two share a box. */}
         {/* CANCEL while armed. The button does the same thing either way —
             clear the clipboard, drop the selection, leave the mode — but the
             word has to match what the user is walking away from. "Done" over a
             half-finished paste reads as "commit it", which is the opposite. */}
         {armed ? "Cancel" : "Done"}
-      </Button>
-      {/* History lives on the RIGHT of Done, fenced off by its own rule.
-          Undo/redo are not selection verbs — they act on the board whatever is
-          picked — so they sit outside the run of verbs and outside the way
-          out, as their own group.
-
-          Select mode used to drop them entirely: `GraphUndoRedo` was rendered
-          only in the browse branch, so arming the mode took undo away at
-          exactly the moment a multi-select delete makes it most wanted.
-
-          Already `h-8` icon buttons, so the row's height is unchanged — which
-          matters, because both faces of the header are pinned to one height
-          and the last thing to break that was a single `h-9` on Done. */}
-      <ControlFence />
-      <GraphUndoRedo />
-    </div>
+      </button>
+    </>
   );
 }
 
@@ -1898,7 +2113,18 @@ export function GraphBoard({
                 shape. It stays outside DragChromeFade with the breadcrumb,
                 because a save landing mid-drag is still worth seeing. */}
             {selectModeRow ? (
-              <SelectModeHeader anchorName={anchorName} breadcrumb={breadcrumb} />
+              <>
+                <SelectModeHeader anchorName={anchorName} breadcrumb={breadcrumb} />
+                {/* The SAME cluster the browse row ends with, in the same place.
+                    Select mode changes what the LEFT of the row is doing; it
+                    has never had a reason to change what the right of it
+                    offers. */}
+                <BoardViewControls
+                  previewOn={previewOn}
+                  onPreviewToggle={onPreviewToggle}
+                  projectId={projectId}
+                />
+              </>
             ) : (
               <>
             {/* `data-crumb-wing`: the box whose width the trail measures
@@ -1934,72 +2160,11 @@ export function GraphBoard({
                 board pinned beneath it — with it. Narrow viewports are
                 answered by moving controls OUT (the row under the divider now
                 carries four of them) rather than by wrapping. */}
-            <DragChromeFade className="flex min-w-0 items-center justify-end gap-2">
-              {/* SELECT leads what is left of this cluster. It used to lead as
-                  a PAIR with the tag filter — the two controls that change how
-                  you WORK with the board rather than what it contains — and
-                  that pairing is gone deliberately: the filter moved down to
-                  the controls row under the divider, with the rest of the
-                  controls that qualify what the board shows. Select stays here
-                  because it is the one that arms an ACTION, and the verbs it
-                  arms (the centre cluster) are in this row.
-
-                  The Collection tool, the children-timelines toggle and the
-                  zoom slider all went down with the filter. What remains up
-                  here is the row's original job: where you are, what you have
-                  picked, and what you can do to it. */}
-              {/* PREVIEW LEADS, Select follows. It was a tile in the icon
-                  rail, which gave it prominence but put it a long way from the
-                  board it opens over — and it is a VIEW toggle, which is what
-                  this end of the row is for. Ungated by surface deliberately:
-                  the pane plays the focused timeline in grid as well as strip,
-                  so hiding it in grid would remove a working control.
-
-                  Preview and Select are the two controls in this row that are
-                  ALWAYS here — nothing about them is gated on surface or on
-                  flat mode, which is exactly why the ruler pair went down to
-                  the controls row and these did not.
-
-                  Preview first because it is the icon in a pair whose other
-                  half carries a WORD: leading with the labelled control pushed
-                  the icon out to the fence, away from the icon toggles beyond
-                  it, so the row read as a button with an ornament rather than
-                  as one run of controls. */}
-              <HeaderToggle
-                active={previewOn}
-                onToggle={onPreviewToggle}
-                icon={TvMinimal}
-                text="Preview"
-                label={previewOn ? "Hide preview" : "Show preview"}
-                title="Preview — play the focused timeline"
-              />
-              <SelectModeButton />
-              {/* PROJECT `⋮`, immediately right of Select. Export and Load act
-                  on the whole project and produce (or consume) a file, which is
-                  a different question from the gear's set-once settings at the
-                  end of the controls row — so it is a second menu rather than
-                  two more items in that one. */}
-              <GraphProjectMenu projectId={projectId} />
-              <ControlFence />
-              {/* Ruler and waveform used to sit here, behind a fence of their
-                  own. They are down in the board's controls row now, beside
-                  the zoom: all three qualify the strip's TIME AXIS, and this
-                  row is where you are and what you can do to the selection.
-                  They also came and went with flat mode, so this row's width
-                  changed as you toggled it — the one place that cannot afford
-                  it, since the breadcrumb trail measures its budget against
-                  what is left. */}
-              {/* Paste used to sit here, fenced between the view group and
-                  history. It is in the CENTRE now, with copy and cut — the
-                  three clipboard verbs read as one group, which is worth more
-                  than the container-scoped grouping it had here. This cluster
-                  keeps only what qualifies the board itself. */}
-              <GraphUndoRedo />
-              {/* Board options are not here — they are the last control in the
-                  board's own controls row under the divider, with the rest of
-                  the chrome that qualifies the board rather than navigates
-                  it. */}
-            </DragChromeFade>
+            <BoardViewControls
+              previewOn={previewOn}
+              onPreviewToggle={onPreviewToggle}
+              projectId={projectId}
+            />
               </>
             )}
 
