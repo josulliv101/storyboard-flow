@@ -45,6 +45,32 @@ const nextConfig: NextConfig = {
       config.watchOptions = {
         ignored: /.*/,
       };
+      return config;
+    }
+    if (dev) {
+      // DATA THE APP WRITES IS NOT SOURCE, and watching it costs reads.
+      //
+      // Offline mode persists every save to its fixture JSON, and offline media
+      // uploads land under public/. Both live inside the app, so the watcher
+      // treated each one as a source change: adding a collection produced
+      // `POST /api/timelines/batch` -> `✓ Compiled` -> a full page reload -> the
+      // board re-rendering, which walks the whole closure. One edit, ~16 reads
+      // of pure feedback, none of it anything to do with the edit.
+      //
+      // Ignoring them loses nothing. The fixture store does NOT rely on webpack
+      // to notice a changed fixture — it stats the file on every read and
+      // rebuilds on a new mtime, which is how regenerating scale-probe.json is
+      // picked up without a restart. Uploaded media is served statically by
+      // path and never imported, so a recompile could not affect it either.
+      config.watchOptions = {
+        ...(config.watchOptions ?? {}),
+        ignored: [
+          '**/node_modules/**',
+          '**/.git/**',
+          '**/fixtures/*.json',
+          '**/public/offline-media/**',
+        ],
+      };
     }
     return config;
   },
