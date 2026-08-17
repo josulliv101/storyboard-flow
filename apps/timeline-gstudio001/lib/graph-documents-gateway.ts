@@ -170,6 +170,15 @@ export type GraphDocumentsGateway = Readonly<{
    */
   isConflicted: (timelineId: string) => boolean;
   /**
+   * True when a closure walk reported this id as UNRESOLVABLE — the document
+   * does not exist, as opposed to not being loaded yet. Only the server can
+   * tell those apart, so this is its answer, remembered.
+   */
+  isKnownMissing: (timelineId: string) => boolean;
+  /** Record ids a SERVER walk reported unresolvable. The RSC boot path ships
+   *  them alongside its payloads; `ensureClosure` records its own. */
+  recordMissing: (ids: readonly string[]) => void;
+  /**
    * Declare that the CACHE is ahead of the live graph for this document, so
    * clip writes projected from that graph must stop.
    *
@@ -285,6 +294,10 @@ export function createGraphDocumentsGateway(
   // change that touches several documents writes them in the same window,
   // so they travel in the SAME atomic batch.
   const dirtyIds = new Set<string>();
+  /** Ids the SERVER reported as unresolvable while walking a closure — a
+   *  dangling childTimelineId, not a document waiting to load. See the note in
+   *  `ensureClosure`. */
+  const knownMissingIds = new Set<string>();
   // Documents this session has actually EMPTIED — observed at the moment the
   // clips went from some to none, not inferred later from a projection that
   // happens to be empty. The store refuses an empty-over-non-empty write
@@ -669,8 +682,23 @@ export function createGraphDocumentsGateway(
       if (gen !== generation || !response.ok) return;
       const payload = (await response.json().catch(() => ({}))) as {
         results?: { id?: string; document?: TimelineDocument; revision?: number }[];
+        missing?: string[];
       };
       if (gen !== generation) return;
+
+      // KEEP THE MISSING LIST, which this used to discard.
+      //
+      // The server distinguishes two things the client otherwise cannot: a
+      // document that is not loaded YET, and one that does not exist — a
+      // dangling `childTimelineId` whose document was deleted. Its walk
+      // substitutes an empty document for the second and reports the id here.
+      //
+      // Without that distinction, any consumer asking "do I hold the whole
+      // closure?" has to answer no whenever a reference dangles, because an
+      // unresolvable id looks identical to an unhydrated one. Recording them
+      // lets `compileClientPlaybackManifest` substitute empties exactly where
+      // the server does and still refuse on genuine gaps.
+      for (const id of payload.missing ?? []) knownMissingIds.add(id);
 
       // Installed as PRIMES, through exactly the path an RSC payload uses. That
       // matters for more than tidiness: `installPrime` is what refuses a
@@ -1178,6 +1206,10 @@ export function createGraphDocumentsGateway(
     hasPendingWrite: (timelineId) =>
       dirtyIds.has(timelineId) || saveInFlightIds.includes(timelineId),
     isConflicted: (timelineId) => conflictedIds.has(timelineId),
+    isKnownMissing: (timelineId) => knownMissingIds.has(timelineId),
+    recordMissing: (ids) => {
+      for (const id of ids) knownMissingIds.add(id);
+    },
     markGraphBehind: (timelineId, reason) => {
       if (documents[timelineId] === undefined) return;
       if (conflictedIds.has(timelineId)) return;

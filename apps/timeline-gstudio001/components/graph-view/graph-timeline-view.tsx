@@ -180,11 +180,20 @@ function FlatRunAnnouncement({
 export function GraphTimelineView({
   projectId,
   bootstrap,
+  bootstrapMissing,
 }: {
   projectId: string;
   /** Server-read boot payloads (RSC layout). Null = no session at render
    *  time; the legacy fetch boot covers it. */
   bootstrap?: readonly GraphServerPayload[] | null;
+  /**
+   * Ids the server's closure walk could not resolve. Recorded before the
+   * payloads are primed so anything asking "do I hold the whole closure?" can
+   * tell a dangling reference from a document still in flight — only the server
+   * knows the difference, and on a primed boot `ensureClosure` (its other
+   * source) never runs.
+   */
+  bootstrapMissing?: readonly string[] | null;
 }) {
   const pathname = usePathname();
   const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
@@ -384,10 +393,11 @@ export function GraphTimelineView({
   // `user` is a dep so payloads that arrived before the client-side auth
   // resolved get re-applied once the binding exists.
   useEffect(() => {
+    graphDocumentsGateway.recordMissing(bootstrapMissing ?? []);
     for (const payload of bootstrap ?? []) {
       graphDocumentsGateway.prime(payload.document, payload.revision, payload.forUid);
     }
-  }, [bootstrap, user]);
+  }, [bootstrap, bootstrapMissing, user]);
   // Whether THIS mount booted from server payloads — captured once: the
   // boot effect must not re-run when later layout renders replace the
   // bootstrap array's identity.

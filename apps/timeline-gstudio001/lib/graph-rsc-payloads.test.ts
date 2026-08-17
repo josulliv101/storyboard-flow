@@ -137,7 +137,7 @@ describe("loadGraphBootstrapPayloads", () => {
     seed("project-1", "user-a", [image("a", 0, 4)], 5);
     seed("trash-user-a", "user-a", [image("t", 0, 4)], 2);
 
-    const payloads = await loadGraphBootstrapPayloads("project-1", "user-a");
+    const payloads = (await loadGraphBootstrapPayloads("project-1", "user-a"))?.payloads ?? null;
     expect(payloads).not.toBeNull();
     expect(payloads!.map((payload) => [payload.document.id, payload.revision])).toEqual([
       ["project-1", 5],
@@ -147,7 +147,7 @@ describe("loadGraphBootstrapPayloads", () => {
 
   it("serves an unstored trash as an empty revision-0 document", async () => {
     seed("project-1", "user-a", [image("a", 0, 4)]);
-    const payloads = await loadGraphBootstrapPayloads("project-1", "user-a");
+    const payloads = (await loadGraphBootstrapPayloads("project-1", "user-a"))?.payloads ?? null;
     expect(at(payloads ?? [], 1).document.clips).toEqual([]);
     expect(at(payloads ?? [], 1).revision).toBe(0);
   });

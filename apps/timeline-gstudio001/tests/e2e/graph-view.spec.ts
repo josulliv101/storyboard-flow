@@ -1,5 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { at } from "../../lib/test-support/at";
+import { compilePlaybackManifest } from "@storyboard/timeline-domain";
+import type { TimelineDocument } from "@storyboard/timeline-model/types";
+import { deriveClosureSummaries } from "../../lib/derive-collection-summaries";
 
 // E2E for the graph project view (/timeline/[projectId]/graph) — the REAL
 // Next app driven with real mouse input. The server surface the view touches
@@ -140,83 +143,55 @@ function buildFixtureDocuments(): Map<string, FixtureDocument> {
  *  projection — which is every local run. CI is slower per step, the manifest
  *  won the race, and one test went red there and only there. A vacuous fixture,
  *  not a flake. */
+/**
+ * The fixture's playback manifest — compiled by the REAL pipeline.
+ *
+ * This was a hand-written walk living in this file: a second implementation of
+ * flattening, maintained by hand against the one in
+ * `packages/timeline-domain`. It drifted, as second implementations do — its
+ * own comment recorded emitting no `trackIndex` at all, so "every leaf arrived
+ * on lane 0 and the manifest said the timeline had no lanes" — and the tests
+ * calibrated against it were measuring the mock rather than the product.
+ *
+ * It compiles through `deriveClosureSummaries` then `compilePlaybackManifest`
+ * now, which is exactly what `compile-timeline-manifest.ts` does server-side
+ * and what the client does when it holds the whole closure. Three callers, one
+ * definition, no drift available.
+ *
+ * The derivation step is not optional here either: stored summaries are stale
+ * by design (patch-scoped writes), so compiling without it windows a grown
+ * child's newest clips out of playback.
+ */
 function compileFixtureManifest(
   documents: Map<string, FixtureDocument>,
   rootId: string,
   revision: number,
 ) {
-  const root = documents.get(rootId);
-  if (!root) return null;
-  type Leaf = Record<string, unknown>;
-  const leaves: Leaf[] = [];
-  const walk = (
-    documentId: string,
-    path: string[],
-    offset: number,
-    /** True once any collection clip ABOVE this document was disabled. There is
-     *  no way back on the way down: an enabled child of a disabled parent
-     *  still does not play. */
-    inheritedDisabled: boolean,
-    /** The OUTERMOST non-zero lane seen on the way down, 0 while still on the
-     *  picture — the same one-way shape as `inheritedDisabled`.
-     *
-     *  Missing here for the same reason `disabled` once was, and it would have
-     *  failed the same way: this mock emitted no `trackIndex` at all, so every
-     *  leaf arrived on lane 0 and the manifest said the timeline had no lanes.
-     *  A test asserting that a bed plays under the picture would have passed
-     *  against a manifest in which there was no bed. */
-    laneFromRoot: number,
-  ) => {
-    const doc = documents.get(documentId);
-    if (!doc) return;
-    for (const clip of doc.clips) {
-      const clipDisabled = inheritedDisabled || clip.disabled === true;
-      const clipLane =
-        laneFromRoot !== 0 ? laneFromRoot : ((clip.trackIndex as number | undefined) ?? 0);
-      if (clip.kind === "collection") {
-        const childId = clip.childTimelineId as string;
-        walk(
-          childId,
-          [...path, childId],
-          offset + (clip.startTime as number),
-          clipDisabled,
-          clipLane,
-        );
-        continue;
-      }
-      leaves.push({
-        id: clip.id,
-        collectionPath: path,
-        kind: clip.kind,
-        src: clip.src,
-        poster: clip.poster,
-        timelineStart: offset + (clip.startTime as number),
-        timelineDuration: clip.duration,
-        sourceStart: clip.trimIn ?? 0,
-        playbackRate: 1,
-        // Always present, exactly as the real compiler emits it — 0 is the
-        // answer for everything written before lanes, never absence.
-        trackIndex: clipLane,
-        // Omitted when false, exactly as the real compiler emits it.
-        ...(clipDisabled ? { disabled: true } : {}),
-      });
+  if (!documents.has(rootId)) return null;
+
+  const record: Record<string, TimelineDocument> = {};
+  for (const [id, document] of documents) {
+    record[id] = document as unknown as TimelineDocument;
+  }
+
+  // Referenced but absent — the server substitutes an empty document AND
+  // reports the id as unresolved, so the derivation leaves the parent's stored
+  // summary standing ("stale beats blank") instead of rewriting it to empty.
+  const missing = new Set<string>();
+  for (const document of documents.values()) {
+    for (const clip of document.clips) {
+      const childId = clip.childTimelineId as string | undefined;
+      if (clip.kind === "collection" && childId && !documents.has(childId)) missing.add(childId);
     }
-  };
-  walk(rootId, [rootId], 0, false, 0);
-  const durationSeconds = root.clips.reduce(
-    (duration, clip) =>
-      Math.max(duration, (clip.startTime as number) + (clip.duration as number)),
-    0,
+  }
+  for (const id of missing) record[id] = { id, title: "", clips: [] };
+
+  return compilePlaybackManifest(
+    deriveClosureSummaries(record, missing),
+    rootId,
+    revision,
+    new Date().toISOString(),
   );
-  return {
-    projectId: rootId,
-    projectRevision: revision,
-    durationSeconds,
-    leaves: leaves.sort(
-      (a, b) => (a.timelineStart as number) - (b.timelineStart as number),
-    ),
-    compiledAt: new Date().toISOString(),
-  };
 }
 
 // ── API mock ────────────────────────────────────────────────────────────────
@@ -290,21 +265,41 @@ async function installGraphApi(
     blockChildDocument?: boolean;
     /** Put named PROJECT clips on a lane above the picture, by id. */
     lanes?: Readonly<Record<string, number>>;
+    /**
+     * Pin named PROJECT clips to a start time. Only meaningful on lanes 1+,
+     * where packing would otherwise put a clip at the start of its own lane —
+     * a laned clip the user dropped somewhere carries this, so a fixture that
+     * wants one parked over a picture gap has to say so.
+     */
+    placedStarts?: Readonly<Record<string, number>>;
   } = {},
 ): Promise<GraphApi> {
   await guardUnmockedApi(page);
   const documents = buildFixtureDocuments();
   // The fixtures are all trackIndex 0 — they predate lanes — so this is how a
   // test gets a layered board without maintaining a second fixture set.
-  const lanes = options.lanes;
-  if (lanes) {
+  const lanes = options.lanes ?? {};
+  const placedStarts = options.placedStarts ?? {};
+  if (options.lanes || options.placedStarts) {
     const project = documents.get(PROJECT_ID);
     if (project) {
       documents.set(PROJECT_ID, {
         ...project,
         clips: project.clips.map((clip) => {
           const lane = lanes[clip.id];
-          return lane === undefined ? clip : { ...clip, trackIndex: lane };
+          const placedStart = placedStarts[clip.id];
+          if (lane === undefined && placedStart === undefined) return clip;
+          // LANE ALONE PACKS FROM ZERO — that is the feature, and one test
+          // asserts exactly it. A clip that must sit somewhere else on its lane
+          // needs `placedStart`, because packing is per lane
+          // (`nextStartByTrack`) and the model "HONOURS placedStart on lanes 1+,
+          // which is what makes a lane a timeline". The two are separate options
+          // because the two tests need opposite things and both are right.
+          return {
+            ...clip,
+            ...(lane === undefined ? {} : { trackIndex: lane }),
+            ...(placedStart === undefined ? {} : { placedStart }),
+          };
         }),
       });
     }
@@ -8618,7 +8613,11 @@ test.describe("graph view E2E", () => {
   test("a layered clip is LIVE in the preview, and the picture HOLDS under it", async ({
     page,
   }) => {
-    await installGraphApi(page, { lanes: { bravo: 1 } });
+    // PARKED, not merely laned. A lane packs from zero, so a bare `lanes`
+    // fixture puts bravo over alpha and there is no picture gap to hold across
+    // — the very thing this test is about. `placedStarts` pins it at 6, which
+    // is what a clip the user dropped there actually carries.
+    await installGraphApi(page, { lanes: { bravo: 1 }, placedStarts: { bravo: 6 } });
     await openGraph(page);
     await expect.poll(() => laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
 
