@@ -11,7 +11,6 @@ import {
   Folder,
   Image as ImageIcon,
   Layers,
-  LogOut,
   PanelLeftClose,
   PanelLeftOpen,
   Trash2,
@@ -35,13 +34,11 @@ import {
   RAIL_OPEN_WIDTH_PX,
   RAIL_WIDTH_CLASS,
   RAIL_WIDTH_PX,
-  SIDEBAR_AVATAR_INSET,
   SIDEBAR_GLYPH,
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
 } from "./sidebar-icon-styles";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
-import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 import { withViewTransition } from "@/lib/view-transition";
 
@@ -196,14 +193,6 @@ function RevealedLetters({
       <span className="overflow-hidden font-semibold opacity-90">{children}</span>
     </span>
   );
-}
-
-/** The avatar letter. Written once because the same nested ternary appeared in
- *  two places, and an empty name string made `name[0]` undefined in both. */
-function initialOf(
-  user: { name?: string | null; email?: string | null } | null | undefined,
-): string {
-  return (user?.name?.[0] ?? user?.email?.[0] ?? "U").toUpperCase();
 }
 
 type UtilityItem = {
@@ -452,34 +441,8 @@ const UTILITY_ITEMS: UtilityItem[] = [
 
 export function TimelineSidebar() {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [isTrashOpen, setIsTrashOpen] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const profileMenuRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!isProfileOpen) return;
-
-    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
-      if (
-        profileMenuRef.current &&
-        !profileMenuRef.current.contains(event.target as Node) &&
-        buttonRef.current &&
-        !buttonRef.current.contains(event.target as Node)
-      ) {
-        setIsProfileOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("touchstart", handleClickOutside);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
-    };
-  }, [isProfileOpen]);
   const pathSegments = pathname.split("/").filter(Boolean);
   const activeProjectId =
     pathSegments[0] === "timeline" && pathSegments[1]?.startsWith("project-")
@@ -571,15 +534,6 @@ export function TimelineSidebar() {
       `${railExpanded ? RAIL_OPEN_WIDTH_PX : RAIL_WIDTH_PX}px`,
     );
   }, [railExpanded]);
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-      toast("Signed out.", { id: "auth-signed-out" });
-    } catch {
-      toast("Unable to sign out.", { id: "auth-signed-out" });
-    }
-  };
 
   // z-50, not z-40: the aside is sticky, so it IS a stacking context and
   // every child z-index (the fly-out tooltips' z-50 included) is trapped
@@ -796,97 +750,14 @@ export function TimelineSidebar() {
             />
           </button>
 
-          {/* The board-options slot used to sit here, below the trash
-            (PL14-005): an address the rail published for the graph to portal
-            its settings menu into. That menu is back in the board's own
-            controls row, under the divider, so the slot had nothing left to
-            receive — an empty publishing div is worse than no seam at all,
-            because the next reader has to prove nothing fills it. */}
+          {/* THE ACCOUNT TILE IS GONE FROM HERE, and with it the board-options
+            slot that used to sit above it (PL14-005). Both left for the board:
+            the settings menu to the board's own controls row, the account to
+            the header row after undo/redo, where it ends the run of controls
+            about you and the board.
 
-          <button
-            ref={buttonRef}
-            type="button"
-            aria-label="Account"
-            aria-describedby="sidebar-tooltip-utility-account"
-            aria-pressed={isProfileOpen}
-            onClick={() => setIsProfileOpen((open) => !open)}
-            className={cn(
-              SIDEBAR_ICON_BASE,
-              isProfileOpen ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
-            )}
-          >
-            {user?.picture ? (
-              <img
-                src={user.picture}
-                alt={user.name || user.email || "Profile"}
-                className={cn(
-                  // `relative` for the same reason the glyphs carry it: the tile's pill is
-                // an absolute ::before and would otherwise paint a 40% black veil over
-                // this face. Same bug the collection thumbnails had.
-                "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
-                  SIDEBAR_AVATAR_INSET,
-                )}
-              />
-            ) : (
-              <div
-                className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100",
-                  SIDEBAR_AVATAR_INSET,
-                )}
-              >
-                {initialOf(user)}
-              </div>
-            )}
-            <SidebarTooltipLabel
-              id="sidebar-tooltip-utility-account"
-              label="Account"
-              description={
-                user?.email ? `Signed in as ${user.email}` : "Signed in"
-              }
-            />
-          </button>
-
-          {isProfileOpen && (
-            <div
-              ref={profileMenuRef}
-              className="absolute bottom-0 left-full z-50 ml-2 w-64 rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] backdrop-blur-md profile-popover-animate"
-            >
-              <div className="flex items-center gap-3 border-b border-zinc-800/60 pb-3">
-                {user?.picture ? (
-                  <img
-                    src={user.picture}
-                    alt={user.name || user.email || "Profile"}
-                    className="h-10 w-10 rounded-full object-cover border border-zinc-800"
-                  />
-                ) : (
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-sm font-bold text-zinc-300">
-                    {initialOf(user)}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-zinc-100">
-                    {user?.name || "User"}
-                  </p>
-                  <p className="truncate text-[10px] font-medium text-zinc-500">
-                    {user?.email}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-col gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileOpen(false);
-                    void handleLogout();
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-zinc-400 hover:bg-red-500/10 hover:text-red-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500/30 cursor-pointer"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  Sign Out
-                </button>
-              </div>
-            </div>
-          )}
+            The rail keeps only what it was for — where the work lives, and how
+            wide to draw the rail itself. */}
         </div>
 
         <TrashDrawer
