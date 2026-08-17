@@ -32,6 +32,35 @@ const READY_FLASH_MS = 20_000;
 const STATUS_CLASS = "shrink-0 whitespace-nowrap font-mono text-xs";
 
 /**
+ * KILL SWITCH — the render poll is OFF unless explicitly turned on.
+ *
+ * Disabled alongside the revision poll in graph-remote-changes.tsx, for a
+ * reason that is worse here: this one is INVISIBLE to the read counter. Every
+ * poll runs `listRenderJobsForTimeline`, a Firestore query against
+ * `gstudioRenderJobs` (lib/render/job-store.ts) — and unlike the timeline
+ * store, that module has NO fixture branch, so it reaches real Firestore even
+ * with GSTUDIO_FIXTURE_TIMELINES set and a local dev loop that looks free.
+ * `countRead()` only instruments the timeline collection, so none of it appears
+ * in [READTOTAL]: a cost you cannot see with the instrument built to see costs.
+ *
+ * Measured before disabling: 15 polls in 58s on an idle board — with the
+ * response body an EMPTY list. An empty list means `hasActiveRender` is false
+ * and `nextPollDelayMs` should have returned IDLE_POLL_MS (30s, ~2 polls in
+ * that window), so the idle backoff was not holding. That measurement was
+ * taken across HMR edits, which remount this and fire the immediate
+ * `setTimeout(0)` read each time, so the 15 is an upper bound and the honest
+ * next step is a clean-restart count rather than a diagnosis from here.
+ *
+ * WHAT BREAKS WHILE THIS IS OFF: the render chip. No "Rendering 45%", no
+ * "Render ready", no "Render failed" — a render started from the MCP endpoint
+ * still runs and still files its output in Renders, but the board says nothing
+ * while it does. Nothing else reads this hook.
+ *
+ * Set `NEXT_PUBLIC_GSTUDIO_RENDER_POLL=on` to restore it.
+ */
+const RENDER_POLLING_ENABLED = process.env.NEXT_PUBLIC_GSTUDIO_RENDER_POLL === "on";
+
+/**
  * Poll this timeline's renders, at a rate that follows what is happening — and
  * not at all while the tab is hidden. The rule is in `lib/render/render-poll`,
  * where it is unit-tested; this owns the fetching and the timer.
@@ -73,6 +102,10 @@ function useTimelineRenders(timelineId: string | null): RenderRow[] {
   }, [timelineId]);
 
   useEffect(() => {
+    // No timer, no immediate read, and no visibilitychange listener — that
+    // listener polls on every tab return, so leaving it would make "disabled"
+    // mean "queries Firestore whenever you look at the board".
+    if (!RENDER_POLLING_ENABLED) return;
     if (timelineId === null) return;
     let cancelled = false;
 
