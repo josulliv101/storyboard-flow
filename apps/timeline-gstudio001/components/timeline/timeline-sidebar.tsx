@@ -803,6 +803,16 @@ export function TimelineSidebar() {
             receive — an empty publishing div is worse than no seam at all,
             because the next reader has to prove nothing fills it. */}
 
+          {/* THE ACCOUNT TILE ALSO EXISTS IN THE BOARD HEADER, after undo/redo.
+            Deliberately, for now: this rail is in the ROOT layout and that
+            header is not, so the projects page at `/` reaches its sign-out
+            through here and nowhere else. Removing this one took the only way
+            out of the app off that page.
+
+            So the duplication is the temporary state, not the goal — when the
+            header's control finds a home the projects page can also see, this
+            goes. */}
+
           <button
             ref={buttonRef}
             type="button"
