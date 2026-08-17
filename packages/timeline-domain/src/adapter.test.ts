@@ -745,6 +745,76 @@ describe("hydrated collection durations", () => {
     expect(clips[0].duration).toBe(999);
   });
 
+  it("gives an EMPTY hydrated collection the same floor the model does", () => {
+    // Where the zeroes come from in the first place, and the root of the
+    // reload-changes-the-number bug.
+    //
+    // `hydratedCollectionDuration` starts at TIMELINE_LEADING_PADDING_SECONDS
+    // (zero) and adds a term per child, so a collection with no children
+    // returns 0 — while `collectionSpanSeconds`, the model's own answer to the
+    // same question, returns 3 for an empty list because "a zero-width
+    // collection card cannot be seen or clicked".
+    //
+    // It is not only a display bug: the write path persists documents THROUGH
+    // this projection, so every empty collection wrote a stored duration of 0,
+    // which is then the value every later reader has to defend against.
+    const documents: Record<string, TimelineDocument> = {
+      "empty-root": {
+        id: "empty-root",
+        title: "Empty root",
+        clips: [{ ...collectionClip("clip-empty", "empty", "Empty"), duration: 999 }],
+      },
+      empty: { id: "empty", title: "Empty", clips: [] },
+    };
+    const focused = buildFocusedGraph(documents, "empty-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "empty-root");
+    expect(clips[0].duration).toBeCloseTo(3, 5);
+  });
+
+  it("floors a placeholder's ZERO summary rather than counting it as no time", () => {
+    // The disagreement this fixes, reproduced from a real board: the same
+    // collection read 12.4s on a cold load and 3.4s after navigating to it and
+    // back, so the number changed on reload.
+    //
+    // The server ignores stored summaries and re-derives bottom-up, where
+    // `collectionSpanSeconds` floors an empty collection at 3 — "a zero-width
+    // collection card cannot be seen or clicked". The client trusted the stored
+    // value for placeholders, and the stored value was `0`: the write path
+    // persists a duration it does not know, and `?? 3` never fires because zero
+    // is not nullish. Three children contributing nothing collapsed the parent's
+    // badge to one child's worth.
+    //
+    // Storing 0 is worse than storing nothing, and until the write path stops
+    // doing it, every reader has to defend against it.
+    const documents: Record<string, TimelineDocument> = {
+      "zero-root": {
+        id: "zero-root",
+        title: "Zero root",
+        clips: [{ ...collectionClip("clip-parent", "parent", "Parent"), duration: 999 }],
+      },
+      parent: {
+        id: "parent",
+        title: "Parent",
+        clips: packTimelineClips([
+          { ...collectionClip("clip-a", "a", "A"), duration: 3 },
+          { ...collectionClip("clip-b", "b", "B"), duration: 0 },
+          { ...collectionClip("clip-c", "c", "C"), duration: 0 },
+        ]),
+      },
+      // a, b and c never load: placeholders, so their stored summaries are all
+      // anyone knows about them.
+    };
+    const focused = buildFocusedGraph(documents, "zero-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "zero-root");
+    // 3 + gap + 3 + gap + 3 — the two zeroes floored to the same 3 seconds the
+    // server's derivation gives them. Counting them as 0 yields 3.24.
+    expect(clips[0].duration).toBeCloseTo(9.24, 5);
+  });
+
   it("recurses through hydrated nesting and stops at placeholders", () => {
     const documents: Record<string, TimelineDocument> = {
       "nest-root": {
