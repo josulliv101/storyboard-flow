@@ -120,6 +120,7 @@ import { useGraphDetailsSnapshot } from "./graph-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
 import { GraphRenderFormat } from "./graph-render-format";
 import { GraphRenderStatus } from "./graph-render-status";
+import { GraphProjectMenu } from "./graph-project-menu";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
@@ -1971,6 +1972,12 @@ export function GraphBoard({
                 title="Preview — play the focused timeline"
               />
               <SelectModeButton />
+              {/* PROJECT `⋮`, immediately right of Select. Export and Load act
+                  on the whole project and produce (or consume) a file, which is
+                  a different question from the gear's set-once settings at the
+                  end of the controls row — so it is a second menu rather than
+                  two more items in that one. */}
+              <GraphProjectMenu projectId={projectId} />
               <ControlFence />
               {/* Ruler and waveform used to sit here, behind a fence of their
                   own. They are down in the board's controls row now, beside
