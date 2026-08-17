@@ -25,3 +25,7 @@ fixtures/scale-probe.json
 # i.e. somebody's exported project. Personal working state, and the one fixture
 # that IS meant to be overwritten — the import route refuses the generated ones.
 fixtures/local.json
+
+# Offline-mode media: files the upload route writes when GSTUDIO_FIXTURE_TIMELINES
+# is set, served statically at /offline-media. Local testing artefacts.
+public/offline-media/

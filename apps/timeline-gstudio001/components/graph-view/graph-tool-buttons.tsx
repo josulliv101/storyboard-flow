@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { GripVertical } from "lucide-react";
+import { GripVertical, type LucideIcon } from "lucide-react";
 
 import { MEDIA_TOOL, TOOL_MIME } from "./graph-native-drop-model";
 
@@ -24,12 +24,35 @@ import { MEDIA_TOOL, TOOL_MIME } from "./graph-native-drop-model";
  * `MediaDropTarget` for how that second half lands.
  */
 
-/** Grip, then the word. Shared so the two cannot drift apart. */
+/**
+ * Grip, glyph, then the word. Shared so the two cannot drift apart.
+ *
+ * THE GLYPH MATCHES THE THING, not the other add affordance. `Layers` is what a
+ * collection card draws in the middle of its thumbnail, and `Image` is the clip
+ * card's picture glyph — so the tool that makes one looks like what it makes.
+ *
+ * That is a choice between two defensible consistencies, and worth recording
+ * because the other one is also written down: the end-of-row add slot draws
+ * `FolderPlus`, and its comment claims that glyph is "the same FolderPlus the
+ * controls row uses". These buttons had no glyph at all when they became
+ * grip-and-label, so that claim was already stale; matching the CARD keeps it
+ * stale on purpose. The pairing that matters more is button-to-object — you
+ * look at collection cards constantly and at the add slot rarely.
+ *
+ * Three elements need the spacing to say what belongs together. The grip is a
+ * different KIND of thing from the other two — it is the drag affordance, not
+ * part of the name — so it sits tight to the left edge (`pl-1.5`) while a
+ * uniform `gap-1.5` keeps glyph and word reading as one label rather than as
+ * two more controls. `pr-2.5` against `pl-1.5` is deliberate optical balance:
+ * a glyph carries less visual weight than text, so equal padding would look
+ * lopsided.
+ */
 export function ToolButton({
   label,
   payload,
   title,
   testId,
+  icon: Icon,
   onActivate,
 }: Readonly<{
   label: string;
@@ -37,6 +60,8 @@ export function ToolButton({
   payload: string;
   title: string;
   testId: string;
+  /** The kind this tool adds, as a lucide component. */
+  icon: LucideIcon;
   onActivate: () => void;
 }>) {
   return (
@@ -48,17 +73,44 @@ export function ToolButton({
       title={title}
       onDragStart={(event) => beginToolDrag(event, payload)}
       onClick={onActivate}
-      // NO BORDER at rest, matching every toggle in this row — a bordered box
-      // would read as a different KIND of control rather than as one of the
-      // row's tools. `cursor-grab` says it is draggable; the grip says so
-      // before you hover.
+      // A FILL AT REST, which reverses what this used to say.
+      //
+      // It carried "NO BORDER at rest, matching every toggle in this row — a
+      // bordered box would read as a different KIND of control". The intent was
+      // right and the result was not: with no fill, three elements and no edge,
+      // you cannot see where one button ends and the next begins, and the pair
+      // read as loose icons dropped in the row rather than as two things you can
+      // pick up.
+      //
+      // Still not a border — a fill, and NO ring or outline at rest either.
+      // These two ARE a different kind of control from the toggles beside them:
+      // the toggles change what the board shows, these are things you drag onto
+      // it, and being visibly grabbable is the point.
+      //
+      // `zinc-700/70`, and the number was measured rather than picked. The row's
+      // panel is `bg-zinc-900/60` over a near-black page, so the first attempt
+      // (`zinc-800/40`) resolved to about SEVEN levels of brightness above its
+      // own backdrop — present in the computed style, invisible on screen. A
+      // lighter base at a higher alpha lands ~30 levels up, which is what it
+      // takes for a fill alone to bound a control on this surface.
+      //
+      // Hover has to go LIGHTER than that, not darker: `sky-950` was a fine
+      // hover against nothing and would read as a press against this fill, so
+      // the hover moved up the sky ramp to stay a lift.
       //
       // `h-8` is load-bearing: the row pins every control to one height.
       // `whitespace-nowrap` so a label cannot wrap and take the row's height
       // with it when the viewport tightens.
-      className="flex h-8 shrink-0 cursor-grab items-center gap-2 rounded-md pr-2 pl-1 text-[11px] font-medium whitespace-nowrap text-zinc-400 transition-colors hover:bg-sky-950/30 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      className="flex h-8 shrink-0 cursor-grab items-center gap-1.5 rounded-md bg-zinc-700/70 pr-2.5 pl-1.5 text-[11px] font-medium whitespace-nowrap text-zinc-200 transition-colors hover:bg-sky-800/60 hover:text-sky-200 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
     >
-      <GripVertical aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
+      {/* Smaller than the kind glyph beside it, deliberately: the grip is an
+          affordance, not information. At the same size the two competed and the
+          button read as having two icons. */}
+      <GripVertical aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+      {/* 3.5 rather than the slot's 4: this sits beside an 11px label and a
+          3.5 grip, and a 16px glyph between them reads as the loudest thing in
+          a row of quiet controls. */}
+      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
       {label}
     </button>
   );
