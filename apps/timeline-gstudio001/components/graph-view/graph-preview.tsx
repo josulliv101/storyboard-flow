@@ -852,6 +852,11 @@ function useManifestClips(
   // dependency that would itself re-run the fetch.
   const failureCountRef = useRef(0);
   const lastFetchedIdRef = useRef(focusedId);
+  /** The last INSTALLED manifest and the `focusedId:staleAt` it was compiled
+   *  for. Single slot: this exists for the close-and-reopen case, where the key
+   *  is unchanged; switching timelines evicts, which is the honest bound on how
+   *  much compiled state a preview panel should hold. */
+  const manifestCacheRef = useRef<{ key: string; manifest: PlaybackManifest } | null>(null);
 
   // Disabling preview unsubscribes the effect below, so a commit made while
   // CLOSED would otherwise never clear the cached manifest — see
@@ -897,6 +902,46 @@ function useManifestClips(
 
   useEffect(() => {
     if (!enabled) return;
+
+    // REUSE THE LAST MANIFEST when nothing it was compiled from has changed.
+    //
+    // Closing and reopening preview re-ran this effect and refetched identical
+    // bytes — measured at ~149 document reads per toggle on a 143-collection
+    // project, for a manifest that could not have changed because no commit
+    // happened in between. The server has no cache, so every one of those
+    // walked the whole closure again.
+    //
+    // `staleAt` is already the "content moved" signal: the subscription above
+    // bumps it after every committed change (and a failed fetch bumps it to
+    // retry). Keying on it means an edit invalidates the memo exactly when it
+    // should, and a toggle does not.
+    //
+    // RE-CHECKED THROUGH THE INSTALL GUARD rather than trusted. A cached
+    // manifest that passed `manifestTrailsLedger` when it arrived can still
+    // fall behind it afterwards — a write that was pending then may have
+    // settled since, moving the ledger without producing a commit of its own.
+    // Running the same comparison keeps the guard's invariant intact instead of
+    // carving an exception into it for cached values.
+    const cacheKey = `${focusedId}:${staleAt}`;
+    const cached = manifestCacheRef.current;
+    if (
+      cached !== null &&
+      cached.key === cacheKey &&
+      !manifestTrailsLedger(
+        cached.manifest,
+        focusedId,
+        (id) => graphDocumentsGateway.revisionOf(id),
+        (id) => graphDocumentsGateway.hasPendingWrite(id),
+      )
+    ) {
+      setState({
+        clips: manifestToClips(cached.manifest),
+        spans: cardSpansOf(cached.manifest),
+        forId: focusedId,
+      });
+      return;
+    }
+
     // Abort, not just a flag: the flag only protected state, leaving the
     // request itself running after unmount/refocus. Abort also rejects the
     // in-flight json() parse, so the signal check below is the single guard.
@@ -957,6 +1002,9 @@ function useManifestClips(
           retryTimer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
           return;
         }
+        // Cached only AFTER the install guard passed, so the memo can never
+        // hold a manifest this session already judged pre-write.
+        manifestCacheRef.current = { key: cacheKey, manifest: result.manifest };
         setState({
           clips: manifestToClips(result.manifest),
           spans: cardSpansOf(result.manifest),
