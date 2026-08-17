@@ -7624,7 +7624,6 @@ test.describe("graph view E2E", () => {
     await toggleMultiSelect(page);
     await expect(header).toHaveAttribute("data-header-mode", "select");
 
-    await page.screenshot({ path: "header-row.png", clip: { x: 860, y: 15, width: 420, height: 55 } });
     const toggle = page.locator("[data-select-mode-toggle]");
     await expect(toggle).toBeVisible();
     // PRESSED, for as long as the mode is on. It used to be able to show that
