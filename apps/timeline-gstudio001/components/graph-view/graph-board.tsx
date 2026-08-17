@@ -19,8 +19,8 @@ import {
   ClipboardPaste,
   Command,
   EllipsisVertical,
-  FolderPlus,
   FolderTree,
+  Image as ImageIcon,
   Layers,
   Redo2,
   Ruler,
@@ -1538,6 +1538,7 @@ function BoardAddTools({
         testId="collection"
         label="Collection"
         payload="collection"
+        icon={Layers}
         title="Collection — click to add one at the end, or drag onto the board to place it"
         onActivate={() => {
           requestGraphAddItem({ collectionId, kind: "collection" });
@@ -1562,6 +1563,7 @@ function BoardAddTools({
         testId="media"
         label="Media"
         payload={MEDIA_TOOL_PAYLOAD}
+        icon={ImageIcon}
         title="Media — click to browse and add at the end, or drag onto the board to place what you pick"
         onActivate={() => mediaInputRef.current?.click()}
       />
