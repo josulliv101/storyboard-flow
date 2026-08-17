@@ -140,6 +140,79 @@ export async function serveTimelineDocument(
   return { document: summarized[id] ?? healedDocument, revision };
 }
 
+/**
+ * Serve a timeline AND every document reachable from it, in one answer.
+ *
+ * ── Why this is nearly free ────────────────────────────────────────────────
+ *
+ * `serveTimelineDocument` above ALREADY walks the whole closure and already
+ * derives a summarized document for every id in it — that is what
+ * `deriveClosureSummaries` returns — and then returns exactly one of them and
+ * discards the rest. The client, having been given only the root, asks for each
+ * child in turn, and each of those requests walks its own subtree again.
+ *
+ * So this does not add work. It stops throwing work away.
+ *
+ * Measured on a 151-document project: serving it per document cost 58 requests
+ * and ~430 reads, batching those requests brought it to 19 and 237, and this
+ * makes it one request and one read per document (#437).
+ *
+ * ── What it does NOT do ────────────────────────────────────────────────────
+ *
+ * No heal beyond the root, matching `serveTimelineDocument` — the heal has
+ * always been root-only, and widening it here would be a different change
+ * hiding inside a performance one.
+ *
+ * MISSING documents are omitted rather than served as empty placeholders. The
+ * closure walk substitutes `{ id, title: "", clips: [] }` for a child it cannot
+ * read so that one dangling reference degrades to silence instead of failing
+ * the whole preview — correct there, wrong here: priming that into the client's
+ * cache would install a convincing empty document over an id that might simply
+ * be someone else's, and the client would then never try to read it properly.
+ * They come back in `missing` instead, as information.
+ *
+ * A TOO-LARGE closure returns null rather than throwing, so the caller can fall
+ * back to serving just the root and let the client hydrate the old way. A
+ * pathological tree must not make a project unopenable.
+ */
+export async function serveTimelineClosure(
+  id: string,
+  requesterUid: string,
+): Promise<Readonly<{
+  documents: Record<string, ServedTimeline>;
+  missing: string[];
+}> | null> {
+  // ONE reader for the whole walk — the property this endpoint exists for.
+  const read = createTimelineEntryReader(requesterUid);
+  const entry = await read(id);
+  if (!entry) return null;
+
+  const cloudinaryAssets = await listCloudinaryAssets(requesterUid).catch(() => []);
+  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
+
+  const closure = await loadTimelineClosure(id, requesterUid, {
+    rootEntry: entry,
+    read,
+  }).catch((error: unknown) => {
+    if (error instanceof TimelineClosureTooLargeError) return null;
+    throw error;
+  });
+  if (closure === null) return null;
+
+  const missing = new Set(closure.missing);
+  const summarized = deriveClosureSummaries(
+    { ...closure.documents, [id]: healedDocument },
+    missing,
+  );
+
+  const documents: Record<string, ServedTimeline> = {};
+  for (const [documentId, document] of Object.entries(summarized)) {
+    if (missing.has(documentId)) continue;
+    documents[documentId] = { document, revision: closure.revisions[documentId] ?? 0 };
+  }
+  return { documents, missing: [...missing] };
+}
+
 /** The user's trash document — an empty default (revision 0 = the first
  *  write compare-and-set creates it) until something is stored. */
 export async function serveTrashDocument(

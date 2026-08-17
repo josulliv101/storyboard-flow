@@ -4,6 +4,7 @@ import { collectionChildIds } from "./derive-collection-summaries";
 import type { GraphServerPayload } from "./graph-documents-gateway";
 import {
   createTimelineEntryReader,
+  serveTimelineClosure,
   serveTimelineDocument,
   serveTrashDocument,
 } from "./serve-timeline";
@@ -43,16 +44,42 @@ export async function loadGraphBootstrapPayloads(
   requesterUid: string,
 ): Promise<readonly GraphServerPayload[] | null> {
   try {
-    // One reader for the whole render: the project's own serve reads every
-    // child to derive summaries, and the trash read joins the same cache.
+    // THE WHOLE CLOSURE, not just the project.
+    //
+    // This used to serve the project alone — and serving a project reads every
+    // document beneath it anyway, to derive collection summaries bottom-up. So
+    // all of them were loaded, two of them were shipped, and the client then
+    // asked for the rest one card at a time, each of those requests walking its
+    // own subtree again. Measured on a 151-document project: 58 requests and
+    // ~430 document reads for one page load (#437).
+    //
+    // Shipping what was already loaded costs nothing extra and leaves the
+    // client with a full cache, so the per-card reads never happen.
+    //
+    // A closure too large to walk returns null, and the caller falls back to
+    // the project alone — the old behaviour, which still works, just slower.
     const read = createTimelineEntryReader(requesterUid);
-    const project = await serveTimelineDocument(projectId, requesterUid, read);
-    if (!project) return null;
+    const closure = await serveTimelineClosure(projectId, requesterUid);
+    if (!closure) {
+      const project = await serveTimelineDocument(projectId, requesterUid, read);
+      if (!project) return null;
+      const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
+      return [
+        { ...project, forUid: requesterUid },
+        { ...trash, forUid: requesterUid },
+      ];
+    }
+    // The trash is NOT under the project, so it is read separately — through
+    // its own reader, since the closure's is finished with.
     const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
     // forUid lets the client's prime refuse payloads that survive an auth
     // transition in the router cache.
     return [
-      { ...project, forUid: requesterUid },
+      ...Object.entries(closure.documents).map(([, served]) => ({
+        document: served.document,
+        revision: served.revision,
+        forUid: requesterUid,
+      })),
       { ...trash, forUid: requesterUid },
     ];
   } catch {
