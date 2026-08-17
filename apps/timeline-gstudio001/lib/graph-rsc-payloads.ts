@@ -39,10 +39,22 @@ const MAX_PATH_ATTEMPTS = 48;
  * (missing or denied): the client boots through its legacy fetch path and
  * surfaces the error there.
  */
+export type GraphBootstrap = Readonly<{
+  payloads: readonly GraphServerPayload[];
+  /**
+   * Ids the closure walk could not resolve — a `childTimelineId` whose document
+   * is gone. Shipped because ONLY the server can tell that apart from a
+   * document the client has not loaded yet, and the client needs the difference
+   * to know whether it holds a complete closure. Empty on the fallback path
+   * below, where the client holds two documents and can prove nothing anyway.
+   */
+  missing: readonly string[];
+}>;
+
 export async function loadGraphBootstrapPayloads(
   projectId: string,
   requesterUid: string,
-): Promise<readonly GraphServerPayload[] | null> {
+): Promise<GraphBootstrap | null> {
   try {
     // THE WHOLE CLOSURE, not just the project.
     //
@@ -64,24 +76,30 @@ export async function loadGraphBootstrapPayloads(
       const project = await serveTimelineDocument(projectId, requesterUid, read);
       if (!project) return null;
       const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
-      return [
-        { ...project, forUid: requesterUid },
-        { ...trash, forUid: requesterUid },
-      ];
+      return {
+        payloads: [
+          { ...project, forUid: requesterUid },
+          { ...trash, forUid: requesterUid },
+        ],
+        missing: [],
+      };
     }
     // The trash is NOT under the project, so it is read separately — through
     // its own reader, since the closure's is finished with.
     const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
     // forUid lets the client's prime refuse payloads that survive an auth
     // transition in the router cache.
-    return [
-      ...Object.entries(closure.documents).map(([, served]) => ({
-        document: served.document,
-        revision: served.revision,
-        forUid: requesterUid,
-      })),
-      { ...trash, forUid: requesterUid },
-    ];
+    return {
+      payloads: [
+        ...Object.entries(closure.documents).map(([, served]) => ({
+          document: served.document,
+          revision: served.revision,
+          forUid: requesterUid,
+        })),
+        { ...trash, forUid: requesterUid },
+      ],
+      missing: closure.missing,
+    };
   } catch {
     return null;
   }

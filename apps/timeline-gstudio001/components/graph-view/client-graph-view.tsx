@@ -19,7 +19,16 @@ export function ClientGraphView({
 }: {
   projectId: string;
   /** Server-read boot documents (RSC layout) — null without a session. */
-  bootstrap?: readonly GraphServerPayload[] | null;
+  bootstrap?: Readonly<{
+    payloads: readonly GraphServerPayload[];
+    missing: readonly string[];
+  }> | null;
 }) {
-  return <GraphTimelineView projectId={projectId} bootstrap={bootstrap ?? null} />;
+  return (
+    <GraphTimelineView
+      projectId={projectId}
+      bootstrap={bootstrap?.payloads ?? null}
+      bootstrapMissing={bootstrap?.missing ?? null}
+    />
+  );
 }
