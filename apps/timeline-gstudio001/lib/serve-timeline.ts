@@ -10,9 +10,11 @@ import {
 } from "./derive-collection-summaries";
 import {
   loadTimelineClosure,
+  type TimelineEntryReader,
   TimelineClosureTooLargeError,
 } from "./load-timeline-closure";
 import {
+  readStoredTimelineEntries,
   readStoredTimelineEntry,
   type TimelineEntry,
 } from "./firebase-timeline-store";
@@ -43,17 +45,56 @@ export type ServedTimeline = Readonly<{
  * `TimelineAccessDeniedError` is a stable answer for the life of a request,
  * and re-reading to rediscover it would defeat the point.
  */
-export type TimelineEntryReader = (id: string) => Promise<TimelineEntry | null>;
+export type { TimelineEntryReader } from "./load-timeline-closure";
 
 export function createTimelineEntryReader(requesterUid: string): TimelineEntryReader {
   const inflight = new Map<string, Promise<TimelineEntry | null>>();
-  return (id) => {
+  const read: TimelineEntryReader = (id) => {
     const cached = inflight.get(id);
     if (cached) return cached;
     const request = readStoredTimelineEntry(id, requesterUid);
     inflight.set(id, request);
     return request;
   };
+
+  // The BATCH GOES THROUGH THE SAME `inflight` MAP, which is the whole point:
+  // batch-get shares one reader across several roots, so an id already being
+  // read for one root must not be re-read for the next. Ids already in flight
+  // are awaited, only the rest are fetched, and the results are recorded so a
+  // later single read joins this batch instead of issuing its own get().
+  read.many = async (ids) => {
+    const out = new Map<string, TimelineEntry | null>();
+    const wanted: string[] = [];
+    const joined: Promise<void>[] = [];
+    for (const id of new Set(ids)) {
+      const cached = inflight.get(id);
+      if (cached) {
+        // A rejected read is a document this caller cannot see; the walk turns
+        // that into "missing" rather than failing the level (see below).
+        joined.push(cached.then((entry) => void out.set(id, entry), () => void out.set(id, null)));
+      } else {
+        wanted.push(id);
+      }
+    }
+
+    const batch = wanted.length
+      ? readStoredTimelineEntries(wanted, requesterUid)
+      : Promise.resolve(new Map<string, TimelineEntry | null>());
+    // Seeded BEFORE the await so a concurrent reader joins rather than races.
+    // Falling back to null on a failed batch keeps a doomed request from
+    // leaving unhandled rejections behind it — the failure itself still
+    // propagates through the await below.
+    for (const id of wanted) {
+      inflight.set(id, batch.then((entries) => entries.get(id) ?? null, () => null));
+    }
+
+    const entries = await batch;
+    for (const id of wanted) out.set(id, entries.get(id) ?? null);
+    await Promise.all(joined);
+    return out;
+  };
+
+  return read;
 }
 
 /** Null when the document doesn't exist; throws TimelineAccessDeniedError
