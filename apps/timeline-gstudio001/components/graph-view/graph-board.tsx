@@ -547,8 +547,8 @@ const HEADER_TOGGLE_IDLE = "text-zinc-400 hover:text-zinc-100";
  * they may compress, and a 1px flex child with no floor is the first thing a
  * tight row rounds away to nothing — leaving the groups it separates touching.
  */
-function ControlFence() {
-  return <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />;
+function ControlFence({ className }: Readonly<{ className?: string }> = {}) {
+  return <div aria-hidden="true" className={cn("h-5 w-px shrink-0 bg-zinc-700", className)} />;
 }
 
 /**
@@ -1543,19 +1543,31 @@ function SelectModeHeader({
           <div
             data-select-mode-breadcrumb=""
             data-crumb-wing
-            className="flex min-w-0 flex-1 items-center overflow-hidden"
+            className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden"
           >
             {breadcrumb}
+            {/* INSIDE THE WING, packed against the trail, which is the same
+                move Done makes into the verb run and for the same reason.
+                The wing is `flex-1` because `useFittedAncestorCount` takes its
+                budget from the wing's width — so it is the box that absorbs the
+                row's leftover, and a tail rendered outside it lands at the far
+                end of that leftover rather than beside the breadcrumb it
+                belongs to.
+                
+                No width reservation needed here: that hook already computes its
+                budget as the wing's width MINUS every child of the wing that is
+                not the trail, so these two simply take their room out of the
+                crumbs' before the trail decides how many ancestors it can show.
+                The slack falls after them on its own — a `justify-start` flex
+                box leaves its leftover at the end. */}
+            <ControlFence />
+            <SelectModeTail
+              anchorName={anchorName}
+              armed={armed}
+              cutPending={cutPending}
+              onDone={leave}
+            />
           </div>
-          {/* Outside the run because there IS no run while armed — the
-              breadcrumb takes its wing, and being `flex-1` it absorbs the
-              slack, so the tail lands hard against it either way. */}
-          <SelectModeTail
-            anchorName={anchorName}
-            armed={armed}
-            cutPending={cutPending}
-            onDone={leave}
-          />
         </>
       ) : (
         <SelectModeVerbRun
@@ -2317,7 +2329,14 @@ export function GraphBoard({
                   flatOn={flatOn}
                   onLeaveFlat={onFlatToggle}
                 />
-                <ControlFence />
+                {/* Extra room on the LEFT only. The row's `gap-2` is measured
+                    between boxes, and the two tool buttons carry a drag grip
+                    inside theirs — so the gap that reads as generous between
+                    two glyph toggles reads as cramped where a labelled button
+                    with a grip meets a rule. The asymmetry is the point: this
+                    fence separates a written verb from a run of view toggles,
+                    and the space belongs on the side with more in it. */}
+                <ControlFence className="ml-1" />
                 {/* HOW THE BOARD IS STRUCTURED. Two toggles that change the
                     shape of what is drawn, not its contents: whether this run
                     is grouped into its collections, and whether the nested
