@@ -451,6 +451,44 @@ export function buildFocusedGraph(
  * from the live graph makes the projection agree with the manifest wherever
  * the session has real knowledge, and writes become self-healing.
  */
+/**
+ * What a PLACEHOLDER collection is worth, in seconds.
+ *
+ * All anyone knows about an un-hydrated child is its stored summary — but a
+ * stored `0` is not knowledge, it is the write path persisting a duration it
+ * did not have. Zero survives `??` (it is not nullish), so every reader that
+ * wrote `summary ?? 3` was silently counting those children as no time at all.
+ *
+ * Found as a number that changed on reload: a collection read 12.4s on a cold
+ * load, where the server ignores stored summaries and re-derives bottom-up, and
+ * 3.4s after navigating to it and back, where the client trusted three stored
+ * zeroes. The floor is not invented here either — `collectionSpanSeconds` gives
+ * an empty collection the same 3 seconds, because "a zero-width collection card
+ * cannot be seen or clicked", and the `?? 3` this replaces was plainly reaching
+ * for that same rule.
+ *
+ * One helper, three callers (duration, playable duration, and the projection's
+ * own clip), so a fourth reader cannot reintroduce the gap.
+ */
+function placeholderSeconds(...candidates: readonly (number | undefined)[]): number {
+  for (const candidate of candidates) {
+    // Positive AND finite: a stored NaN or Infinity is the same kind of
+    // non-knowledge as a zero, and either would poison every ancestor's total.
+    if (candidate !== undefined && Number.isFinite(candidate) && candidate > 0) return candidate;
+  }
+  return EMPTY_COLLECTION_SECONDS;
+}
+
+/**
+ * What a collection with nothing countable in it is worth.
+ *
+ * The model's own number, from `collectionSpanSeconds`: "An EMPTY list is 3
+ * seconds, not zero: a zero-width collection card cannot be seen or clicked."
+ * Named here rather than repeated as a literal, because the two walks below and
+ * the placeholder fallback above are three chances to disagree with it.
+ */
+const EMPTY_COLLECTION_SECONDS = 3;
+
 export function hydratedCollectionDuration(
   graph: CollectionsGraph,
   details: DetailsById,
@@ -470,9 +508,18 @@ export function hydratedCollectionDuration(
     const detail = details[childId as string];
     total += detail?.hydrated
       ? hydratedCollectionDuration(graph, details, childId)
-      : (detail?.duration ?? 3);
+      : placeholderSeconds(detail?.duration);
   }
-  return total;
+  // NOTHING COUNTABLE means the model's empty floor, not the padding constant.
+  //
+  // This walk started at TIMELINE_LEADING_PADDING_SECONDS — which is zero — and
+  // added a term per child, so an empty collection returned 0 while
+  // `collectionSpanSeconds` returned 3 for the same question. That is where the
+  // stored zeroes came from: the write path persists documents THROUGH this
+  // projection, so every empty collection wrote a duration of 0, and every
+  // reader downstream then had to defend against a value that was never a
+  // measurement.
+  return first ? EMPTY_COLLECTION_SECONDS : total;
 }
 
 /**
@@ -510,8 +557,21 @@ export function hydratedCollectionPlayableDuration(
     const detail = details[childId as string];
     total += detail?.hydrated
       ? hydratedCollectionPlayableDuration(graph, details, childId)
-      : (detail?.playableDuration ?? detail?.duration ?? 3);
+      : placeholderSeconds(detail?.playableDuration, detail?.duration);
   }
+  // NO FLOOR HERE, unlike its twin, and the difference is the whole point of
+  // there being two walks.
+  //
+  // I put one here first and an existing test refused it: "returns ZERO when
+  // every child is disabled — a real answer, not 'unknown'". That is right.
+  // Geometry needs a floor because a zero-width card cannot be seen or clicked;
+  // a READOUT of what a viewer would sit through has no such need, and zero is
+  // a legitimate live value for a collection that plays nothing. Flooring it
+  // would also re-break what that test guards: a reader treating 0 as "unknown"
+  // falls back on a stale nonzero summary and re-quotes it.
+  //
+  // The placeholder fallback above still defaults to 3, and that is consistent:
+  // an UN-HYDRATED child is unknown, an all-disabled one is measured.
   return total;
 }
 
@@ -836,7 +896,7 @@ export function graphChildrenToClips(
     // anyone knows about them.
     const duration = detail?.hydrated
       ? hydratedCollectionDuration(graph, details, node.id)
-      : (detail?.duration ?? 3);
+      : placeholderSeconds(detail?.duration);
     // Hydrated collections DERIVE their preview frames from live children (see
     // hydratedCollectionPreviewItems) — same stale-summary rule duration and
     // itemCount already follow; placeholders keep the stored summary.
