@@ -4,6 +4,19 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
 import { readStoredTimelineEntry, type TimelineEntry } from "./firebase-timeline-store";
 
+/**
+ * How a caller reads documents.
+ *
+ * Declared HERE rather than in `serve-timeline`, which re-exports it: the
+ * closure walk is what consumes `many`, and this module must not import from
+ * its own caller.
+ */
+export type TimelineEntryReader = ((id: string) => Promise<TimelineEntry | null>) & {
+  /** Optional bulk path — see `createTimelineEntryReader`. A plain function
+   *  still satisfies this type, which is what test readers hand in. */
+  many?: (ids: readonly string[]) => Promise<Map<string, TimelineEntry | null>>;
+};
+
 // The nested document closure for a timeline: the root plus every document
 // reachable through collection clips, breadth-first with a visited set (a
 // reference cycle in stored data terminates the WALK here; the manifest
@@ -77,7 +90,7 @@ export async function loadTimelineClosure(
      * closure walk that bypassed it would re-fetch documents the caller had
      * just loaded. It is also the seam its tests inject through.
      */
-    read?: (id: string) => Promise<TimelineEntry | null>;
+    read?: TimelineEntryReader;
   }>,
 ): Promise<{
   documents: Record<string, TimelineDocument>;
@@ -118,7 +131,7 @@ export async function loadTimelineClosure(
   // `rootEntry: null` is a caller that looked and found nothing — honour it
   // rather than re-reading to rediscover the same absence. `undefined` means
   // the caller has no opinion.
-  const read =
+  const read: TimelineEntryReader =
     options?.read ?? ((childId: string) => readStoredTimelineEntry(childId, requesterUid));
   const rootEntry =
     options?.rootEntry !== undefined
@@ -128,10 +141,20 @@ export async function loadTimelineClosure(
   let frontier: readonly string[] = record(rootId, rootEntry);
 
   while (frontier.length > 0) {
-    const entries = await mapWithConcurrency(frontier, READ_CONCURRENCY, async (id) => ({
-      id,
-      entry: await read(id).catch(() => null),
-    }));
+    // ONE ROUND TRIP PER LEVEL when the reader can batch, twelve-at-a-time when
+    // it cannot (hand-written readers in tests, and the un-shared default). The
+    // shape of the walk is identical either way — a level is read, then
+    // recorded in frontier order — so only the number of network calls moves.
+    const batched = await read.many?.(frontier);
+    const entries = batched
+      ? frontier.map((id) => ({ id, entry: batched.get(id) ?? null }))
+      : await mapWithConcurrency(frontier, READ_CONCURRENCY, async (id) => ({
+          id,
+          // A read that throws is a document this requester cannot see. It is
+          // recorded as missing, exactly as a document that does not exist:
+          // one unreadable branch must not fail the whole closure.
+          entry: await read(id).catch(() => null),
+        }));
     // Recorded in frontier order, so `documents` and `missing` keep the
     // deterministic ordering the sequential walk produced.
     frontier = entries.flatMap(({ id, entry }) => record(id, entry));

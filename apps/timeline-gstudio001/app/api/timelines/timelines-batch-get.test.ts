@@ -20,7 +20,10 @@ const state = vi.hoisted(() => {
   const current = {
     user: { uid: "user-a", email: null as string | null, name: null, picture: null },
   };
-  /** Every `doc(id).get()` the store performs — one Firestore document read. */
+  /** Every document the store reads, however it read it — one Firestore
+   *  document read each, whether it arrived via `doc(id).get()` or in a
+   *  `getAll` batch. Batching changes the number of REQUESTS, never the number
+   *  of documents, so these assertions hold across both. */
   const reads: string[] = [];
 
   const snapshot = (id: string) => {
@@ -42,6 +45,11 @@ const state = vi.hoisted(() => {
         },
       }),
     }),
+    getAll: async (...refs: { id: string }[]) =>
+      refs.map((ref) => {
+        reads.push(ref.id);
+        return snapshot(ref.id);
+      }),
   };
   return { docs, current, db, reads };
 });

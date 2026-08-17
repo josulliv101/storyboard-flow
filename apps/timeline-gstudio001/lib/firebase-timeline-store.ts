@@ -191,6 +191,11 @@ export type TimelineProjectSummary = {
 };
 
 const TIMELINE_COLLECTION = "gstudioTimelineDocuments";
+
+/** Documents per batched read. Firestore's `getAll` takes a stream of refs
+ *  rather than a fixed maximum, so this is about keeping any one request a
+ *  reasonable size — not a platform limit like the 500-op write transaction. */
+const MAX_BATCH_READ_DOCUMENTS = 200;
 const FIREBASE_TIMEOUT_MS = 8_000;
 
 /**
@@ -649,6 +654,95 @@ export async function readStoredTimelineEntry(
   };
   logRead(readTotal, id, entry, "firestore");
   return entry;
+}
+
+/**
+ * MANY documents in ONE Firestore round trip.
+ *
+ * The closure walk read a document at a time — `mapWithConcurrency` over
+ * `doc(id).get()`, twelve in flight — so a 500-document closure was ~42
+ * sequential rounds. Firestore takes a batched read, which makes it one call
+ * per BFS level: depth rather than breadth. Measured before: 3,701ms to export
+ * a 143-document project, most of it round trips rather than Firestore work.
+ *
+ * THE BILL DOES NOT MOVE. Firestore charges per document returned, so 500
+ * documents cost 500 reads however they arrive. `countRead` still fires once
+ * per id, before the fetch, exactly as the single-document path does — if
+ * [READTOTAL] changes after this, something broke rather than got faster.
+ *
+ * DENIED IS NULL HERE, where the single-document read throws. Its callers map
+ * that throw to a 404; this one's caller is the closure walk, which already
+ * wrote `.catch(() => null)` around every child read — a subtree you cannot see
+ * is a dangling branch, not a failed page. Returning null keeps that behaviour
+ * without making the whole frontier fail because one document in it was
+ * someone else's.
+ */
+export async function readStoredTimelineEntries(
+  ids: readonly string[],
+  requesterUid: string,
+): Promise<Map<string, TimelineEntry | null>> {
+  const out = new Map<string, TimelineEntry | null>();
+  // Deduped before counting: a repeated id would otherwise be billed twice in
+  // the log and passed to `getAll` twice.
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return out;
+
+  // Counted BEFORE the fetch, per id, so the metric stays "read attempts" —
+  // the same rule the single-document path follows.
+  const totals = new Map<string, number | null>();
+  for (const id of unique) totals.set(id, countRead());
+
+  if (fixtureStoreEnabled()) {
+    for (const id of unique) {
+      const entry = fixtureReadEntry(id);
+      logRead(totals.get(id) ?? null, id, entry, "fixture");
+      out.set(id, entry);
+    }
+    return out;
+  }
+
+  // CHUNKED, because one `getAll` is one request and a BFS level can be most of
+  // a 500-document closure. The chunks go out together, so the round trips still
+  // overlap; the bound is on request size, not on parallelism.
+  const chunks: string[][] = [];
+  for (let index = 0; index < unique.length; index += MAX_BATCH_READ_DOCUMENTS) {
+    chunks.push(unique.slice(index, index + MAX_BATCH_READ_DOCUMENTS));
+  }
+  const snapshots = (
+    await Promise.all(
+      chunks.map((chunk) =>
+        withFirebaseTimeout(
+          getFirebaseDb().getAll(...chunk.map((id) => collection().doc(id))),
+          "Loading timeline documents",
+        ),
+      ),
+    )
+  ).flat();
+
+  for (const snapshot of snapshots) {
+    const id = snapshot.id;
+    const total = totals.get(id) ?? null;
+    if (!snapshot.exists) {
+      logRead(total, id, null, "firestore");
+      out.set(id, null);
+      continue;
+    }
+    const data = snapshot.data() as TimelineDocumentRecord;
+    // Per SNAPSHOT, never per request: one readable document in a batch must
+    // not carry the rest past the ownership boundary.
+    if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") {
+      logRead(total, id, null, "firestore", "denied");
+      out.set(id, null);
+      continue;
+    }
+    const entry = {
+      document: toTimelineDocument(snapshot.id, data),
+      revision: data.revision ?? 0,
+    };
+    logRead(total, id, entry, "firestore");
+    out.set(id, entry);
+  }
+  return out;
 }
 
 /** `readStoredTimelineEntry` without the revision — same caveats, read them there. */

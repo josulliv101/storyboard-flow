@@ -42,7 +42,14 @@ const state = vi.hoisted(() => {
       docs.delete(id);
     },
   });
+  const readOnce = (id: string) => {
+    reads.set(id, (reads.get(id) ?? 0) + 1);
+    return snapshot(id);
+  };
   const db = {
+    // Counted per DOCUMENT, same as `doc(id).get()` — a batched read is one
+    // request but still one billed read per document in it.
+    getAll: async (...refs: { id: string }[]) => refs.map((ref) => readOnce(ref.id)),
     collection: () => ({
       doc: docRef,
       where: (field: string, _op: string, value: unknown) => ({
