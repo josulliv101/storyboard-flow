@@ -270,6 +270,15 @@ export async function serveTimelineDocument(
 export async function serveTimelineClosure(
   id: string,
   requesterUid: string,
+  options?: Readonly<{
+    /**
+     * Levels below the root to read. Absent = the whole closure.
+     *
+     * The BOARD passes a bound; the preview/export compile must not. See
+     * `loadTimelineClosure`'s `maxDepth` for why the board can afford to stop.
+     */
+    maxDepth?: number;
+  }>,
 ): Promise<Readonly<{
   documents: Record<string, ServedTimeline>;
   missing: string[];
@@ -310,6 +319,7 @@ export async function serveTimelineClosure(
     loadTimelineClosure(id, requesterUid, {
       rootEntry: entry,
       read,
+      ...(options?.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
     }).catch((error: unknown) => {
       if (error instanceof TimelineClosureTooLargeError) return null;
       throw error;
@@ -321,9 +331,16 @@ export async function serveTimelineClosure(
   // `serveTimelineDocument` for what it did and why it went.
   const healedDocument = entry.document;
   const missing = new Set(closure.missing);
+  // UNRESOLVED IS THE WIDER SET, and the distinction is the whole reason the
+  // walk reports the two separately. A child that is gone and a child the depth
+  // bound skipped are alike in one way — neither can be derived FROM, so both
+  // leave the parent's stored summary standing ("stale beats blank"). They are
+  // nothing alike to the client, which shows a dangling reference differently
+  // from a collection it simply has not loaded yet.
+  const unresolved = new Set([...closure.missing, ...closure.unvisited]);
   const summarized = deriveClosureSummaries(
     { ...closure.documents, [id]: healedDocument },
-    missing,
+    unresolved,
   );
 
   const documents: Record<string, ServedTimeline> = {};
