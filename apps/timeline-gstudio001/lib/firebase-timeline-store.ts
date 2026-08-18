@@ -1334,6 +1334,46 @@ export async function createFirebaseTimelineProject(requesterUid: string, title?
  */
 const MAX_CASCADE_DOCUMENTS = 500;
 
+/** A clip left pointing at a document a delete would destroy. */
+export type TimelineInboundReference = Readonly<{
+  /** The document holding the clip — NOT part of the delete. */
+  fromId: string;
+  /** The clip's target, which the delete would remove. */
+  toId: string;
+}>;
+
+/**
+ * A delete refused because it would leave someone else pointing at nothing.
+ *
+ * The cascade walks DOWN: it collects the subtree below the root and removes
+ * it. Nothing asked who else pointed INTO that subtree, so a reference from
+ * outside it survived its target and became a dangling `childTimelineId` — a
+ * clip that still draws a card for a document that no longer exists. Five of
+ * those in one real project quietly added 33.9s of phantom footage to a
+ * collection's readout before anyone noticed.
+ *
+ * The twin of `TimelineOrphanError`, pointed the other way: that one refuses to
+ * leave a child with no parent, this one refuses to leave a parent with no
+ * child.
+ *
+ * REFUSES rather than repairs. Stripping the referring clips would edit
+ * documents the caller never named, during an operation they asked to be
+ * destructive — so the caller is told exactly what points in and decides.
+ */
+export class TimelineInboundReferenceError extends Error {
+  readonly references: readonly TimelineInboundReference[];
+
+  constructor(id: string, references: readonly TimelineInboundReference[]) {
+    super(
+      `Refusing to delete "${id}": ` +
+        `${references.map((r) => `"${r.fromId}" still points at "${r.toId}"`).join(", ")}. ` +
+        `Remove those clips first, or they will be left referencing nothing.`,
+    );
+    this.name = "TimelineInboundReferenceError";
+    this.references = references;
+  }
+}
+
 export class TimelineCascadeTooLargeError extends Error {
   constructor(id: string) {
     super(
@@ -1381,6 +1421,9 @@ export async function deleteFirebaseTimelineDocument(id: string, requesterUid: s
   }
 
   const visited = new Set<string>([id]);
+  /** The root's project, captured on the way past — the inbound check below
+   *  needs it and the root is the only document certain to be read. */
+  let rootProjectId: string | undefined;
   // Root-first, so reversing it deletes the deepest documents first and the
   // root last — relevant only in the multi-batch path below, where a failure
   // part-way leaves a visibly broken parent the user can retry from rather
@@ -1410,6 +1453,7 @@ export async function deleteFirebaseTimelineDocument(id: string, requesterUid: s
       }
 
       const data = snapshot.data() as TimelineDocumentRecord;
+      if (currentId === id) rootProjectId = data.projectId;
       if (resolveOwnership(data.ownerUid, requesterUid) === "denied") {
         // At the root this is the authorization answer. Deeper it means a
         // stored clip pointed at someone else's document: skip it, and keep
@@ -1457,6 +1501,39 @@ export async function deleteFirebaseTimelineDocument(id: string, requesterUid: s
       }
     }
     frontier = next;
+  }
+
+  // WHO ELSE POINTS IN? Asked BEFORE anything is destroyed.
+  //
+  // Newly affordable. Answering it used to mean scanning the collection —
+  // hundreds of reads for every delete — so the cascade simply did not ask, and
+  // a reference from outside the subtree was left dangling. Now that every
+  // document carries `projectId`, it is ONE query.
+  //
+  // The ROOT is excluded on purpose: its own parent legitimately points at it,
+  // and removing that clip is the caller's job (the graph command that deletes
+  // a node writes its parent in the same batch). Only references to the
+  // DESCENDANTS being taken down with it are a problem, and only from documents
+  // that are not themselves being deleted.
+  //
+  // A document with no `projectId` cannot be checked this way, and the check is
+  // skipped rather than answered with a collection scan. That is a real gap and
+  // a deliberate one: `npm run stamp:project-ids` backfills the field, and a
+  // scan per delete is the cost this whole line of work exists to remove.
+  if (rootProjectId !== undefined && toDelete.length > 1) {
+    const deleting = new Set(toDelete);
+    const project = await readStoredTimelineProjectEntries(rootProjectId, requesterUid);
+    const references: TimelineInboundReference[] = [];
+    for (const [documentId, entry] of project) {
+      if (deleting.has(documentId)) continue;
+      for (const clip of entry.document.clips) {
+        if (clip.kind !== "collection" || !clip.childTimelineId) continue;
+        if (clip.childTimelineId === id) continue;
+        if (!deleting.has(clip.childTimelineId)) continue;
+        references.push({ fromId: documentId, toId: clip.childTimelineId });
+      }
+    }
+    if (references.length > 0) throw new TimelineInboundReferenceError(id, references);
   }
 
   // ONE atomic batch for the whole cascade, where it fits — which, given

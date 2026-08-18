@@ -38,6 +38,28 @@ const state = vi.hoisted(() => {
           return snapshot(id);
         },
       }),
+      // The project query the inbound-reference check runs. Chainable, because
+      // the real one filters on ownerUid AND projectId.
+      where: function whereChain(field: string, _op: string, value: unknown) {
+        const filters: [string, unknown][] = [[field, value]];
+        const chain = {
+          where: (nextField: string, _nextOp: string, nextValue: unknown) => {
+            filters.push([nextField, nextValue]);
+            return chain;
+          },
+          get: async () => {
+            const matched = [...docs.entries()].filter(([, data]) =>
+              filters.every(([f, v]) => (data as Record<string, unknown>)[f] === v),
+            );
+            queries.push(filters.map(([f, v]) => `${f}=${String(v)}`).join("&"));
+            return {
+              size: matched.length,
+              docs: matched.map(([id]) => snapshot(id)),
+            };
+          },
+        };
+        return chain;
+      },
     }),
     batch: () => {
       const queued: string[] = [];
@@ -57,7 +79,9 @@ const state = vi.hoisted(() => {
       };
     },
   };
-  return { docs, reads, commits, failNextCommit, db };
+  /** Project queries issued — the inbound check must cost ONE, not a scan. */
+  const queries: string[] = [];
+  return { docs, reads, commits, failNextCommit, queries, db };
 });
 
 vi.mock("server-only", () => ({}));
@@ -75,6 +99,7 @@ vi.mock("firebase-admin/firestore", () => {
 import {
   deleteFirebaseTimelineDocument,
   TimelineCascadeTooLargeError,
+  TimelineInboundReferenceError,
 } from "./firebase-timeline-store";
 import { TimelineAccessDeniedError } from "./timeline-ownership";
 
@@ -116,6 +141,18 @@ function seed(id: string, ownerUid: string | undefined, childIds: string[] = [])
 }
 
 
+/** Seed a document that carries a `projectId`, which is what makes the
+ *  inbound-reference check affordable — and therefore possible at all. */
+function seedInProject(
+  id: string,
+  ownerUid: string,
+  projectId: string,
+  childIds: string[] = [],
+) {
+  seed(id, ownerUid, childIds);
+  state.docs.set(id, { ...(state.docs.get(id) as Stored), projectId });
+}
+
 /**
  * Seed a LEGACY record: clips at the top level only, with no nested
  * `document`. `buildSavePayload` always writes all three fields today, so
@@ -146,6 +183,7 @@ function seedRecoveryOnly(id: string, ownerUid: string, childIds: string[] = [])
 }
 
 beforeEach(() => {
+  state.queries.length = 0;
   state.docs.clear();
   state.reads.length = 0;
   state.commits.length = 0;
@@ -341,5 +379,96 @@ describe("cascade deletion", () => {
 
     // All three still present: no partial deletion to reason about.
     expect([...state.docs.keys()].sort()).toEqual(["child", "grandchild", "root"]);
+  });
+});
+
+describe("inbound references", () => {
+  /**
+   * The gap this closes: the cascade walks DOWN. It collected the subtree and
+   * deleted it, and never asked who else pointed INTO that subtree — so a clip
+   * from outside survived its target and became a dangling `childTimelineId`.
+   *
+   * Not hypothetical. Five of them in one real project added 33.9s of phantom
+   * footage to a collection's readout, and a delete the owner was about to run
+   * would have created a sixth.
+   *
+   * Answering it used to mean scanning the collection, hundreds of reads per
+   * delete. With `projectId` on every document it is one query, which is the
+   * only reason this check exists now and did not before.
+   */
+  it("refuses when a document outside the subtree points into it", async () => {
+    seedInProject("root", "user-a", "p1", ["mid"]);
+    seedInProject("mid", "user-a", "p1", ["leaf"]);
+    seedInProject("leaf", "user-a", "p1");
+    // The outsider — not part of the delete, but pointing at its deepest member.
+    seedInProject("elsewhere", "user-a", "p1", ["leaf"]);
+
+    await expect(deleteFirebaseTimelineDocument("root", "user-a")).rejects.toBeInstanceOf(
+      TimelineInboundReferenceError,
+    );
+    // NOTHING deleted — the check runs before the batch, so a refusal is not a
+    // partial delete.
+    expect(state.commits).toEqual([]);
+    expect(state.docs.has("leaf")).toBe(true);
+  });
+
+  it("names what points where, so the caller can act on it", async () => {
+    seedInProject("root", "user-a", "p1", ["mid"]);
+    seedInProject("mid", "user-a", "p1");
+    seedInProject("elsewhere", "user-a", "p1", ["mid"]);
+
+    const error = await deleteFirebaseTimelineDocument("root", "user-a").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TimelineInboundReferenceError);
+    expect((error as TimelineInboundReferenceError).references).toEqual([
+      { fromId: "elsewhere", toId: "mid" },
+    ]);
+  });
+
+  it("ignores the ROOT's own parent, which legitimately points at it", async () => {
+    // Deleting a collection always leaves its parent holding a clip for it —
+    // removing that clip is the caller's job, in the same write. Treating it as
+    // an inbound reference would refuse every delete there is.
+    seedInProject("parent", "user-a", "p1", ["root"]);
+    seedInProject("root", "user-a", "p1", ["mid"]);
+    seedInProject("mid", "user-a", "p1");
+
+    await deleteFirebaseTimelineDocument("root", "user-a");
+    expect(state.docs.has("root")).toBe(false);
+    expect(state.docs.has("mid")).toBe(false);
+  });
+
+  it("ignores references from documents that are themselves being deleted", async () => {
+    // A diamond inside the subtree is not a dangling reference in waiting —
+    // both ends go at once.
+    seedInProject("root", "user-a", "p1", ["a", "b"]);
+    seedInProject("a", "user-a", "p1", ["shared"]);
+    seedInProject("b", "user-a", "p1", ["shared"]);
+    seedInProject("shared", "user-a", "p1");
+
+    await deleteFirebaseTimelineDocument("root", "user-a");
+    expect(state.docs.has("shared")).toBe(false);
+  });
+
+  it("costs ONE query, not a scan", async () => {
+    seedInProject("root", "user-a", "p1", ["mid"]);
+    seedInProject("mid", "user-a", "p1");
+
+    await deleteFirebaseTimelineDocument("root", "user-a");
+    // The whole reason the check is affordable. A per-document lookup, or a
+    // collection scan, is the cost this line of work exists to remove.
+    expect(state.queries).toEqual(["ownerUid=user-a&projectId=p1"]);
+  });
+
+  it("skips the check for a document with no projectId rather than scanning", async () => {
+    // A deliberate gap, documented at the call site: legacy records predate the
+    // field, and `npm run stamp:project-ids` is the fix. Refusing to delete
+    // them, or scanning per delete, are both worse.
+    seed("root", "user-a", ["mid"]);
+    seed("mid", "user-a");
+    seed("elsewhere", "user-a", ["mid"]);
+
+    await deleteFirebaseTimelineDocument("root", "user-a");
+    expect(state.queries).toEqual([]);
+    expect(state.docs.has("mid")).toBe(false);
   });
 });
