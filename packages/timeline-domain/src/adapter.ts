@@ -644,6 +644,65 @@ export function hydratedCollectionDuration(
  * before the field existed — where nothing is disabled the two are equal
  * anyway, so the fallback is exact rather than approximate.
  */
+/**
+ * What a viewer sits through in ONE collection — lane-aware.
+ *
+ * The board header's number. Its twin below answers the same question
+ * lane-BLIND, by summing every child, and cannot be changed to do otherwise:
+ * `graphChildrenToClips` projects through it to persist each clip's
+ * `playableDuration`, so redefining it would rewrite stored summaries.
+ *
+ * WHY THE HEADER NEEDED ITS OWN. It was computing from card GEOMETRY —
+ * `playableSpanSeconds` over the spans the strip draws — which is the layout
+ * span, and a card whose descendants are disabled keeps its full slot. So the
+ * header counted time nobody watches: on a real project it read 23:01 while its
+ * three cards summed to about 20:45, because more than half of one branch is
+ * disabled deep inside. The spans carry no node id, so the fix could not live
+ * in `playableSpanSeconds` — it has to start from the graph.
+ *
+ * LANES PLAY TOGETHER, so a lane's contents are summed and the longest lane
+ * wins. Summing across lanes would claim a 4s bed under a 4s shot makes an 8s
+ * timeline. Only 4 clips across 2 documents use a non-picture lane here, but
+ * the header is the one readout that already got this right and it should not
+ * regress to fix the other half.
+ */
+export function hydratedCollectionPlayableSpan(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  collectionId: NodeId,
+  isKnownMissing: (id: string) => boolean = () => false,
+): number {
+  const byLane = new Map<number, number[]>();
+  for (const childId of getChildren(graph, collectionId)) {
+    const node = graph.nodesById.get(childId);
+    if (!node || node.disabled === true) continue;
+    const key = childId as string;
+    // Gone contributes NO SECONDS but still takes a slot, which is the same
+    // bargain the lane-blind walk makes: the broken reference is drawn, so it
+    // still separates its neighbours and its gap is real.
+    const seconds = isKnownMissing(key)
+      ? 0
+      : node.kind === "media"
+        ? mediaDurationSeconds(node)
+        : hydratedCollectionPlayableDuration(graph, details, childId, isKnownMissing);
+    // THE LANE IS ON THE NODE, not the detail — the same source
+    // `graphChildrenToClips` reads when it projects a clip back out.
+    const lane = trackIndexOf({ trackIndex: node.trackIndex ?? 0 });
+    const row = byLane.get(lane);
+    if (row) row.push(seconds);
+    else byLane.set(lane, [seconds]);
+  }
+  let longest = 0;
+  for (const row of byLane.values()) {
+    const content = row.reduce((total, seconds) => total + seconds, 0);
+    longest = Math.max(
+      longest,
+      TIMELINE_LEADING_PADDING_SECONDS + content + CLIP_GAP_SECONDS * (row.length - 1),
+    );
+  }
+  return longest;
+}
+
 export function hydratedCollectionPlayableDuration(
   graph: CollectionsGraph,
   details: DetailsById,

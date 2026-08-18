@@ -15,6 +15,7 @@ import {
   collectAffectedCollectionIds,
   collectionSubtreeHydrated,
   collectUnhydratedDropTargets,
+  hydratedCollectionPlayableSpan,
   graphChildrenToClips,
   hydratedCollectionDuration,
   hydratedCollectionPlayableDuration,
@@ -1636,5 +1637,74 @@ describe("collectionSubtreeHydrated", () => {
     // is 103 of 149 collections.
     const { graph, details } = graphOf(media("root"), "root");
     expect(collectionSubtreeHydrated(graph, details, "root")).toBe(true);
+  });
+});
+
+describe("hydratedCollectionPlayableSpan", () => {
+  /**
+   * The board header's number, and why it needed its own function.
+   *
+   * It was measured from card GEOMETRY (`playableSpanSeconds` over the spans
+   * the strip draws), which keeps a card's full slot even when its descendants
+   * are disabled. On a real project the header read 23:01 while its own three
+   * cards summed to about 20:45 — more than half of one branch is disabled deep
+   * inside. The spans carry no node id, so the playable length could not be
+   * recovered from them.
+   *
+   * Its lane-blind twin cannot simply be reused: `graphChildrenToClips`
+   * projects through that one to persist each clip's `playableDuration`.
+   */
+  it("excludes what a disabled descendant contributes", () => {
+    const documents = {
+      root: { id: "root", title: "root", clips: [collectionClip("c-kid", "kid", "Kid")] },
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([image("k-a", 4), { ...image("k-b", 6), disabled: true }]),
+      },
+    };
+    const focused = buildFocusedGraph(documents, "root");
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+
+    // 4s plays, 6s does not.
+    expect(hydratedCollectionPlayableSpan(graph, details, parseNodeId("root"))).toBeCloseTo(4, 5);
+  });
+
+  it("takes the LONGEST lane, not the sum — lanes play together", () => {
+    // A 4s bed under a 4s shot is a 4s timeline, not an 8s one.
+    const documents = {
+      root: {
+        id: "root",
+        title: "root",
+        clips: packTimelineClips([image("picture", 4), { ...image("bed", 4), trackIndex: 1 }]),
+      },
+    };
+    const focused = buildFocusedGraph(documents, "root");
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+
+    expect(hydratedCollectionPlayableSpan(graph, details, parseNodeId("root"))).toBeCloseTo(4, 5);
+  });
+
+  it("counts a dangling child as nothing, like every other readout", () => {
+    const documents = {
+      root: {
+        id: "root",
+        title: "root",
+        clips: packTimelineClips([
+          { ...collectionClip("c-gone", "gone", "Gone"), duration: 12.36 },
+          collectionClip("c-leaf", "leaf", "Leaf"),
+        ]),
+      },
+      leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+    };
+    const focused = buildFocusedGraph(documents, "root");
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+
+    expect(
+      hydratedCollectionPlayableSpan(graph, details, parseNodeId("root"), (id) => id === "gone"),
+    ).toBeCloseTo(0.12 + 4, 5);
   });
 });

@@ -14,6 +14,7 @@ export {
   DUPLICATE_NODE_ID_PREFIX,
   collectionSubtreeHydrated,
   hydratedCollectionDuration,
+  hydratedCollectionPlayableSpan,
   hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
   resolveCollectionPreviews,
