@@ -13,6 +13,7 @@ import {
   buildFocusedGraph,
   buildHydrationSpecs,
   collectAffectedCollectionIds,
+  collectionSubtreeHydrated,
   collectUnhydratedDropTargets,
   graphChildrenToClips,
   hydratedCollectionDuration,
@@ -1436,5 +1437,98 @@ describe("previews when the walk cannot see the whole subtree (#290)", () => {
     expect(scene.previewItems).toEqual([
       { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
     ]);
+  });
+});
+
+describe("collectionSubtreeHydrated", () => {
+  /**
+   * Whether a collection's aggregate readouts can be shown at all.
+   *
+   * `hydratedCollectionDuration` always returns a number: for any child it does
+   * not have, it substitutes that child's STORED summary. Those summaries drift
+   * (58.4% of collection clips in a real project carry at least one stale
+   * field), so the number is plausible and unverifiable. This predicate is how
+   * a card knows to say nothing instead — and TRANSITIVITY is the whole point,
+   * because a collection can be fully loaded while its grandchild is not.
+   */
+  const media = (rootId: string) => ({
+    [rootId]: {
+      id: rootId,
+      title: rootId,
+      clips: [collectionClip("clip-leaf", "leaf", "Leaf")],
+    },
+    leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+  });
+
+  const graphOf = (documents: Record<string, TimelineDocument>, rootId: string) => {
+    const focused = buildFocusedGraph(documents, rootId);
+    if (!focused.ok) throw new Error(focused.error);
+    return focused.value;
+  };
+
+  it("vouches for a collection whose children are all media", () => {
+    // The cheap case, and the reason the board is not simply blank: a
+    // media-only collection is exactly known from its own document, so it earns
+    // its readout at one level of reading.
+    const { graph, details } = graphOf(media("root"), "root");
+    expect(collectionSubtreeHydrated(graph, details, "leaf")).toBe(true);
+  });
+
+  it("refuses a collection whose child collection never loaded", () => {
+    const documents = media("root");
+    delete (documents as Record<string, unknown>).leaf;
+    const { graph, details } = graphOf(documents, "root");
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+  });
+
+  it("refuses a LOADED collection with an unloaded grandchild", () => {
+    // The case the predicate exists for. `root` and `mid` are both present, so
+    // asking only about immediate children would vouch for root — while its
+    // duration is quietly standing in `deep`'s stored summary.
+    const { graph, details } = graphOf(
+      {
+        root: { id: "root", title: "root", clips: [collectionClip("c-mid", "mid", "Mid")] },
+        mid: { id: "mid", title: "Mid", clips: [collectionClip("c-deep", "deep", "Deep")] },
+      },
+      "root",
+    );
+    // Not a vacuous pass: the root has NO detail entry (details come from a
+    // parent's clip, and the focused root is nobody's clip), so the refusal
+    // has to come from `deep`, two levels down.
+    expect(details.root).toBeUndefined();
+    expect(details.mid?.hydrated).toBe(true);
+    expect(details.deep?.hydrated).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+  });
+
+  it("still refuses when a document is LOADED but not hydrated into the graph", () => {
+    // A fact about the client worth pinning: `buildFocusedGraph` hydrates the
+    // focused collection and ONE level below it. `deep` below is present in the
+    // documents and still comes back unhydrated, because nothing has called
+    // `hydrateTimeline` for it — drill-in and sub-timeline expansion do that.
+    //
+    // Which is why the server's full-closure derivation existed at all: the
+    // client's graph never held the deep documents, so every number below the
+    // first level came from the clip summaries the server had just recomputed.
+    // Reading one level and vouching is the same bargain made honestly.
+    const { graph, details } = graphOf(
+      {
+        root: { id: "root", title: "root", clips: [collectionClip("c-mid", "mid", "Mid")] },
+        mid: { id: "mid", title: "Mid", clips: [collectionClip("c-deep", "deep", "Deep")] },
+        deep: { id: "deep", title: "Deep", clips: packTimelineClips([image("d-a", 4)]) },
+      },
+      "root",
+    );
+    expect(details.deep?.hydrated).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+  });
+
+  it("vouches for a one-level tree, which is what a board actually shows", () => {
+    // The case that makes the board useful rather than blank: the focused
+    // collection plus media-only children is fully in the graph, so its cards
+    // and the header both earn their times. Measured on the real project, this
+    // is 103 of 149 collections.
+    const { graph, details } = graphOf(media("root"), "root");
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(true);
   });
 });

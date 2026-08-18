@@ -43,6 +43,7 @@ import {
   useDisabledByAncestor,
   useEnabledChildCount,
   useFirstChildIsAudio,
+  useCollectionSubtreeHydrated,
   useHydratedCollectionSeconds,
 } from "./graph-card-derivations";
 
@@ -85,12 +86,11 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
     enabledChildCount,
     storedItemCount: detail?.itemCount,
   });
-  const totalSeconds = collectionCardSeconds({
-    hydrated,
-    liveSeconds,
-    storedPlayableDuration: detail?.playableDuration,
-    storedDuration: detail?.duration,
-  });
+  // VOUCHED, not merely hydrated — see `collectionSubtreeHydrated`. A card
+  // whose branch is only partly loaded shows its item count and no time,
+  // rather than a plausible number derived from stale stored summaries.
+  const vouched = useCollectionSubtreeHydrated(id as string);
+  const totalSeconds = collectionCardSeconds({ vouched, liveSeconds });
   const previews = useCollectionPreviewFrames(id as string, hydrated, detail?.previewItems);
   const displayName = title ?? node.name;
   const inheritedDisabled = useDisabledByAncestor(id);

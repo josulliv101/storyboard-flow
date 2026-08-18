@@ -170,14 +170,16 @@ export function collectionCardItemCount(
  */
 export function collectionCardSeconds(
   input: Readonly<{
-    hydrated: boolean;
+    /**
+     * Whether this collection AND everything under it is loaded —
+     * `collectionSubtreeHydrated`. Not the card's own `hydrated` flag, which
+     * only says its immediate children arrived.
+     */
+    vouched: boolean;
     liveSeconds: number | null;
-    storedPlayableDuration: number | undefined;
-    storedDuration: number | undefined;
   }>,
 ): number | null {
-  if (input.hydrated) return input.liveSeconds;
-  return input.storedPlayableDuration ?? input.storedDuration ?? null;
+  return input.vouched ? input.liveSeconds : null;
 }
 
 /**

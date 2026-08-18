@@ -489,6 +489,50 @@ function placeholderSeconds(...candidates: readonly (number | undefined)[]): num
  */
 const EMPTY_COLLECTION_SECONDS = 3;
 
+/**
+ * Can this collection's aggregate readouts be VOUCHED for?
+ *
+ * True only when the collection and every collection beneath it is hydrated.
+ * The distinction matters because `hydratedCollectionDuration` below answers
+ * for a partly-loaded tree by substituting each unhydrated child's STORED
+ * summary — a number that is right often enough to look right and wrong often
+ * enough to mislead. Measured on a real project served one level deep, two of
+ * the three cards on the board reported a duration off by up to 40 seconds.
+ *
+ * So the walks stay as they are (the write path projects through them, and
+ * geometry must always have an answer), and this says whether the answer is
+ * worth SHOWING. A card that cannot vouch for its time renders no time and
+ * gains one when the branch is opened and its subtree loads.
+ *
+ * A reference CYCLE resolves as vouched rather than looping: an unhydrated node
+ * anywhere in it has already returned false, so the only way back to a node
+ * being visited is through nodes that were all hydrated.
+ */
+export function collectionSubtreeHydrated(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  collectionId: NodeId,
+  visiting: Set<string> = new Set(),
+): boolean {
+  const key = collectionId as string;
+  if (visiting.has(key)) return true;
+  // ABSENT is not unhydrated. Details are built from a parent's CLIP, so the
+  // focused root has no entry of its own — its document is the one thing we
+  // certainly hold. Any referenced child does have an entry (with
+  // `hydrated: false` until it loads), so absence only ever means "this is the
+  // root". Failing on absence made the board header permanently timeless.
+  const detail = details[key];
+  if (detail !== undefined && detail.hydrated !== true) return false;
+  visiting.add(key);
+  for (const childId of getChildren(graph, collectionId)) {
+    const node = graph.nodesById.get(childId);
+    if (!node || node.kind !== "collection") continue;
+    if (!collectionSubtreeHydrated(graph, details, childId, visiting)) return false;
+  }
+  visiting.delete(key);
+  return true;
+}
+
 export function hydratedCollectionDuration(
   graph: CollectionsGraph,
   details: DetailsById,

@@ -110,6 +110,7 @@ import {
   useSelectionCount,
   type PreviewTimeChannel,
 } from "./graph-preview";
+import { useCollectionSubtreeHydrated } from "./graph-card-derivations";
 import { splitLaneRows } from "./graph-lane-rows";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
@@ -383,6 +384,13 @@ function FocusedAggregate({
   pixelsPerSecond,
 }: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
   const { count, seconds } = useFocusedTimelineAggregate(focusedId, pixelsPerSecond);
+  // The total sums this board's cards, so it inherits their uncertainty: a
+  // collection card whose branch is not loaded contributes a STORED summary,
+  // and those drift. The count is safe — it is this board's own children — so
+  // an unvouched board says "3 clips" and earns the time when its branches
+  // load. Measured before this: the root board claimed 23:21 against a true
+  // 21:55.
+  const vouched = useCollectionSubtreeHydrated(focusedId);
   if (count === 0) return null;
   return (
     <span
@@ -390,7 +398,8 @@ function FocusedAggregate({
       className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400"
       title="Focused timeline total"
     >
-      {count} {count === 1 ? "clip" : "clips"} · {formatDuration(seconds)}
+      {count} {count === 1 ? "clip" : "clips"}
+      {vouched ? <> · {formatDuration(seconds)}</> : null}
     </span>
   );
 }

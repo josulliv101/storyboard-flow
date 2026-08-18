@@ -9,6 +9,7 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
+  collectionSubtreeHydrated,
   hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
   resolveCollectionPreviews,
@@ -182,6 +183,41 @@ export function useCollectionPreviewFrames(
  * when one of them really did. The rounded content key keeps sub-millisecond
  * recompute jitter from churning the value.
  */
+/**
+ * Whether this collection's readouts can be VOUCHED for — it and everything
+ * under it loaded.
+ *
+ * Separate from the card's `hydrated` flag, which only says its own children
+ * arrived. `useHydratedCollectionSeconds` will happily answer for a partly
+ * loaded tree by substituting stored summaries for the missing parts, and those
+ * summaries drift (58.4% of collection clips carry at least one stale field).
+ * This is what lets the card decline to show that answer.
+ *
+ * Recomputed on every graph or details change rather than cached: it is a walk
+ * of nodes already in memory, and it must flip the moment a branch finishes
+ * loading — that flip IS the number appearing.
+ */
+export function useCollectionSubtreeHydrated(id: string): boolean {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const getSnapshot = useCallback(
+    () => collectionSubtreeHydrated(store.getSnapshot().graph, detailsStore.read(), id as NodeId),
+    [store, detailsStore, id],
+  );
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const unsubStore = store.subscribe(onChange);
+      const unsubDetails = detailsStore.subscribe(onChange);
+      return () => {
+        unsubStore();
+        unsubDetails();
+      };
+    },
+    [store, detailsStore],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
 export function useHydratedCollectionSeconds(id: string, enabled: boolean): number | null {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();

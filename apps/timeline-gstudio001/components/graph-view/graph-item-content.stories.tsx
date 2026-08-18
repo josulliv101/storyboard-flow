@@ -239,7 +239,12 @@ export const SingleFrame: Story = {
   play: async ({ canvasElement }) => {
     const images = previewImages(canvasElement);
     await expect(images).toHaveLength(1);
-    await expect(canvasElement).toHaveTextContent(/4\.0s\s*\/\s*1 item/);
+    // NO TIME on a placeholder. This fixture is un-hydrated, so the seconds
+    // could only come from the stored summary — and those are wrong on 58.4% of
+    // collection clips, with nothing on screen marking which. The count is
+    // still shown; the time arrives when the branch loads.
+    await expect(canvasElement).toHaveTextContent(/1 item/);
+    await expect(canvasElement.textContent ?? "").not.toContain("4.0s");
   },
 };
 
@@ -257,7 +262,12 @@ export const PlaceholderAriaCountMatchesBadge: Story = {
     const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
     // The stored summary (itemCount 2), not the live childCount (0).
     await expect(surface.getAttribute("aria-label")).toBe("A timeline (collection, 2 items)");
-    await expect(canvasElement).toHaveTextContent(/8\.0s\s*\/\s*2 items/);
+    // The COUNT survives on a placeholder and the time does not, which is the
+    // asymmetry worth pinning: one level of reading settles a count exactly
+    // (measured 0/3 wrong), while a duration sums the whole subtree and cannot
+    // be known without it.
+    await expect(canvasElement).toHaveTextContent(/2 items/);
+    await expect(canvasElement.textContent ?? "").not.toContain("8.0s");
 
     const name = canvasElement.querySelector<HTMLElement>(
       '[title="Click or press F2 to rename"]',
@@ -958,7 +968,10 @@ export const DisabledCollection: Story = {
     await expect(getComputedStyle(metadata).filter).toBe("none");
     await expect(getComputedStyle(metadata).opacity).toBe("1");
     await expect(metadata.textContent).toContain("A timeline");
-    await expect(metadata.textContent).toContain("8.0s");
+    // The time is absent here for the same reason as the other placeholder
+    // stories, not because disabling hid it — the disabled CHIP and the
+    // metadata row are what this story is about, and both still render.
+    await expect(metadata.textContent).not.toContain("8.0s");
     await expect(metadata.textContent).toContain("2 items");
     // The corner drill control used to be checked here too (its glyph's stroke
     // weight). It is gone, and its Layers glyph survives as the caption's KIND
@@ -1950,5 +1963,114 @@ export const CollectionCheckboxAppearsInSelectMode: Story = {
     });
     await expect(indicator.dataset.selectionIndicatorReveal).toBe("armed");
     await expect(getComputedStyle(indicator).opacity).toBe("1");
+  },
+};
+
+/* ── Vouching: a card shows a time only when it can add one up ────────────── */
+
+const VOUCH_PARENT_ID = "vouch-parent" as NodeId;
+const VOUCH_KID_ID = "vouch-kid" as NodeId;
+
+/** A collection holding only MEDIA — everything its time depends on is in the
+ *  graph, so it can be added up exactly. 103 of 149 collections in the real
+ *  project look like this. */
+const mediaOnlyGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: VOUCH_PARENT_ID,
+      name: "Locations",
+      children: [
+        { kind: "media", id: "loc-a" as NodeId, name: "Alley", fullDurationSeconds: 4 },
+        { kind: "media", id: "loc-b" as NodeId, name: "Diner", fullDurationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+/** The same card, but one child is a COLLECTION that has not loaded. Its
+ *  seconds are unknowable without reading that branch. */
+const nestedCollectionGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: VOUCH_PARENT_ID,
+      name: "Characters",
+      children: [{ kind: "collection", id: VOUCH_KID_ID, name: "Pat", children: [] }],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+const detail = (over: Partial<ClipDetail>): ClipDetail => ({
+  alt: "A timeline",
+  aspect: 16 / 9,
+  hydrated: true,
+  itemCount: 2,
+  duration: 999,
+  previewItems: [],
+  ...over,
+});
+
+/** Renders as text like "8.1s" or "23:21" — either shape counts as a time. */
+const A_TIME = /\d+(\.\d+)?s|\d+:\d{2}/;
+
+const vouchDecorator =
+  (graph: CollectionsGraph, details: Record<string, ClipDetail>): Decorator =>
+  (Story) => (
+    <DndCollections initialGraph={graph}>
+      <GraphDetailsProvider store={createGraphDetailsStore(details)}>
+        <div className="h-32 w-40 bg-zinc-950 p-2">
+          <Story />
+        </div>
+      </GraphDetailsProvider>
+    </DndCollections>
+  );
+
+/**
+ * A collection whose branch is fully loaded SHOWS its time.
+ *
+ * The board reads one level (`BOARD_OPEN_MAX_DEPTH`), so a media-only
+ * collection arrives complete and can be added up exactly. This is the case
+ * that keeps the board from being uniformly timeless.
+ */
+export const VouchedCollectionShowsItsTime: Story = {
+  args: { ...baseArgs, id: VOUCH_PARENT_ID },
+  decorators: [
+    vouchDecorator(mediaOnlyGraph, { [VOUCH_PARENT_ID]: detail({ duration: 999 }) }),
+  ],
+  play: async ({ canvasElement }) => {
+    // NOT 999: the stored summary is deliberately absurd here, so a card
+    // reading it rather than its live children fails loudly.
+    await expect(canvasElement.textContent ?? "").toMatch(A_TIME);
+    await expect(canvasElement.textContent ?? "").not.toContain("999");
+  },
+};
+
+/**
+ * A collection with an unloaded branch shows its COUNT and no time.
+ *
+ * Previously it fell back to the stored summary, which drifts — measured on a
+ * real project, two of the three cards on the board reported a duration up to
+ * 40 seconds wrong, and nothing on screen distinguished them from the right
+ * one. A count is still exact (these are this collection's own children), so
+ * the card stays informative; the time arrives when the branch is opened.
+ */
+export const UnvouchedCollectionShowsCountOnly: Story = {
+  args: { ...baseArgs, id: VOUCH_PARENT_ID },
+  decorators: [
+    vouchDecorator(nestedCollectionGraph, {
+      [VOUCH_PARENT_ID]: detail({ itemCount: 1 }),
+      // The child that has not loaded — the reason the parent cannot add up.
+      [VOUCH_KID_ID]: detail({ hydrated: false, itemCount: 5, duration: 60 }),
+    }),
+  ],
+  play: async ({ canvasElement }) => {
+    const text = canvasElement.textContent ?? "";
+    await expect(text).toContain("1 item");
+    await expect(text).not.toMatch(A_TIME);
   },
 };

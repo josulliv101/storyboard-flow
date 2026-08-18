@@ -12,6 +12,7 @@ export {
   // one is synthetic — the hydration path decides whether to fetch on it.
   isDuplicateNodeId,
   DUPLICATE_NODE_ID_PREFIX,
+  collectionSubtreeHydrated,
   hydratedCollectionDuration,
   hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
