@@ -238,7 +238,15 @@ export function useHydratedCollectionSeconds(id: string, enabled: boolean): numb
       // (`hydratedCollectionDuration`) still drives the clip's duration in the
       // projection, where the disabled slot has to survive.
       compute: (graph: CollectionsGraph, details: DetailsById, nodeId: NodeId) =>
-        hydratedCollectionPlayableDuration(graph, details, nodeId),
+        hydratedCollectionPlayableDuration(
+          graph,
+          details,
+          nodeId,
+          // A dangling reference contributes nothing to what plays. Without
+          // this the readout quotes the stored duration of a document that is
+          // gone — 33.9s of a real collection's 19:24.
+          graphDocumentsGateway.isKnownMissing,
+        ),
       contentKey: (seconds) => String(Math.round(seconds * 1000)),
     }),
   );

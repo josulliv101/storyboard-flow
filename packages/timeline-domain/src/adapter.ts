@@ -490,6 +490,30 @@ function placeholderSeconds(...candidates: readonly (number | undefined)[]): num
 const EMPTY_COLLECTION_SECONDS = 3;
 
 /**
+ * The node whose CHILDREN are this collection's real content, or null when it
+ * is not loaded.
+ *
+ * Ordinarily that is the node itself. A DUPLICATE placement is the exception:
+ * the same child referenced twice inside one hydrated area is demoted to a
+ * `dup:` node with no children of its own, carrying `duplicateOfTimelineId`
+ * back to the placement that does have them.
+ *
+ * The walks below used to read such a node's STORED summary, which is a copy
+ * nothing maintains. In a real project the two parents of the one duplicated
+ * collection store 6.12s and 7.12s for the same 4.0s of content — so at least
+ * one was always wrong, and whichever ancestor contained it inherited the
+ * error. Following the pointer costs nothing (the original is already in the
+ * graph) and makes the answer exact.
+ */
+function collectionContentSource(details: DetailsById, id: NodeId): NodeId | null {
+  const detail = details[id as string];
+  if (detail?.hydrated === true) return id;
+  const original = detail?.duplicateOfTimelineId;
+  if (original !== undefined && details[original]?.hydrated === true) return original as NodeId;
+  return null;
+}
+
+/**
  * Can this collection's aggregate readouts be VOUCHED for?
  *
  * True only when the collection and every collection beneath it is hydrated.
@@ -541,7 +565,15 @@ export function collectionSubtreeHydrated(
     // the root". Failing on absence made the board header permanently
     // timeless.
     const detail = details[key];
-    if (detail !== undefined && detail.hydrated !== true) return false;
+    if (detail !== undefined) {
+      // A DUPLICATE resolves to the placement that holds the content, exactly
+      // as the duration walks do — otherwise a second reference to a loaded
+      // collection blocks every ancestor forever, which is what kept a
+      // 133-document branch timeless after the dangling ids were handled.
+      const source = collectionContentSource(details, id);
+      if (source === null) return false;
+      if (source !== id) return visit(source, visiting);
+    }
     visiting.add(key);
     for (const childId of getChildren(graph, id)) {
       const node = graph.nodesById.get(childId);
@@ -559,32 +591,42 @@ export function hydratedCollectionDuration(
   details: DetailsById,
   collectionId: NodeId,
 ): number {
-  let total = TIMELINE_LEADING_PADDING_SECONDS;
-  let first = true;
-  for (const childId of getChildren(graph, collectionId)) {
-    const node = graph.nodesById.get(childId);
-    if (!node) continue;
-    if (!first) total += CLIP_GAP_SECONDS;
-    first = false;
-    if (node.kind === "media") {
-      total += mediaDurationSeconds(node);
-      continue;
+  // VISITING GUARD. Following a duplicate's pointer is the first thing in this
+  // walk that can reach a node already on the stack, so the recursion needs a
+  // way to stop. A tree never triggers it.
+  const walk = (id: NodeId, visiting: Set<string>): number => {
+    const key = id as string;
+    if (visiting.has(key)) return EMPTY_COLLECTION_SECONDS;
+    visiting.add(key);
+    let total = TIMELINE_LEADING_PADDING_SECONDS;
+    let first = true;
+    for (const childId of getChildren(graph, id)) {
+      const node = graph.nodesById.get(childId);
+      if (!node) continue;
+      if (!first) total += CLIP_GAP_SECONDS;
+      first = false;
+      if (node.kind === "media") {
+        total += mediaDurationSeconds(node);
+        continue;
+      }
+      const source = collectionContentSource(details, childId);
+      total +=
+        source === null
+          ? placeholderSeconds(details[childId as string]?.duration)
+          : walk(source, visiting);
     }
-    const detail = details[childId as string];
-    total += detail?.hydrated
-      ? hydratedCollectionDuration(graph, details, childId)
-      : placeholderSeconds(detail?.duration);
-  }
-  // NOTHING COUNTABLE means the model's empty floor, not the padding constant.
-  //
-  // This walk started at TIMELINE_LEADING_PADDING_SECONDS — which is zero — and
-  // added a term per child, so an empty collection returned 0 while
-  // `collectionSpanSeconds` returned 3 for the same question. That is where the
-  // stored zeroes came from: the write path persists documents THROUGH this
-  // projection, so every empty collection wrote a duration of 0, and every
-  // reader downstream then had to defend against a value that was never a
-  // measurement.
-  return first ? EMPTY_COLLECTION_SECONDS : total;
+    visiting.delete(key);
+    // NOTHING COUNTABLE means the model's empty floor, not the padding
+    // constant. This walk starts at TIMELINE_LEADING_PADDING_SECONDS — which is
+    // zero — and adds a term per child, so an empty collection returned 0 while
+    // `collectionSpanSeconds` returned 3 for the same question. That is where
+    // the stored zeroes came from: the write path persists documents THROUGH
+    // this projection, so every empty collection wrote a duration of 0, and
+    // every reader downstream then had to defend against a value that was never
+    // a measurement.
+    return first ? EMPTY_COLLECTION_SECONDS : total;
+  };
+  return walk(collectionId, new Set());
 }
 
 /**
@@ -606,38 +648,67 @@ export function hydratedCollectionPlayableDuration(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: NodeId,
+  /**
+   * Ids the server has reported as GONE. They contribute ZERO here.
+   *
+   * Not what this did: a dangling reference fell through to
+   * `placeholderSeconds`, which returns the clip's stored duration — a
+   * remembered number for content that no longer exists. Measured on a real
+   * project, five dangling references added 33.9s to one collection's readout,
+   * so a card reported 19:24 of material when 18:51 of it was real.
+   *
+   * Its GEOMETRY twin deliberately keeps the stored span: the broken reference
+   * still draws a card, and a zero-width card cannot be seen or clicked. What
+   * a viewer would sit through is a different question, and the answer for a
+   * document that is gone is nothing.
+   */
+  isKnownMissing: (id: string) => boolean = () => false,
 ): number {
-  let total = TIMELINE_LEADING_PADDING_SECONDS;
-  let first = true;
-  for (const childId of getChildren(graph, collectionId)) {
-    const node = graph.nodesById.get(childId);
-    if (!node) continue;
-    if (node.disabled === true) continue;
-    if (!first) total += CLIP_GAP_SECONDS;
-    first = false;
-    if (node.kind === "media") {
-      total += mediaDurationSeconds(node);
-      continue;
+  const walk = (id: NodeId, visiting: Set<string>): number => {
+    const key = id as string;
+    if (visiting.has(key)) return 0;
+    visiting.add(key);
+    let total = TIMELINE_LEADING_PADDING_SECONDS;
+    let first = true;
+    for (const childId of getChildren(graph, id)) {
+      const node = graph.nodesById.get(childId);
+      if (!node) continue;
+      if (node.disabled === true) continue;
+      if (!first) total += CLIP_GAP_SECONDS;
+      first = false;
+      if (node.kind === "media") {
+        total += mediaDurationSeconds(node);
+        continue;
+      }
+      const childKey = childId as string;
+      // Gone plays for zero seconds — see `isKnownMissing` above. The gap is
+      // still counted: the card is drawn, so it still separates its neighbours.
+      if (isKnownMissing(childKey)) continue;
+      const source = collectionContentSource(details, childId);
+      const detail = details[childKey];
+      total +=
+        source === null
+          ? placeholderSeconds(detail?.playableDuration, detail?.duration)
+          : walk(source, visiting);
     }
-    const detail = details[childId as string];
-    total += detail?.hydrated
-      ? hydratedCollectionPlayableDuration(graph, details, childId)
-      : placeholderSeconds(detail?.playableDuration, detail?.duration);
-  }
-  // NO FLOOR HERE, unlike its twin, and the difference is the whole point of
-  // there being two walks.
-  //
-  // I put one here first and an existing test refused it: "returns ZERO when
-  // every child is disabled — a real answer, not 'unknown'". That is right.
-  // Geometry needs a floor because a zero-width card cannot be seen or clicked;
-  // a READOUT of what a viewer would sit through has no such need, and zero is
-  // a legitimate live value for a collection that plays nothing. Flooring it
-  // would also re-break what that test guards: a reader treating 0 as "unknown"
-  // falls back on a stale nonzero summary and re-quotes it.
-  //
-  // The placeholder fallback above still defaults to 3, and that is consistent:
-  // an UN-HYDRATED child is unknown, an all-disabled one is measured.
-  return total;
+    visiting.delete(key);
+    // NO FLOOR HERE, unlike its twin, and the difference is the whole point of
+    // there being two walks.
+    //
+    // A floor was tried here and an existing test refused it: "returns ZERO
+    // when every child is disabled — a real answer, not 'unknown'". Geometry
+    // needs a floor because a zero-width card cannot be seen or clicked; a
+    // READOUT of what a viewer would sit through has no such need, and zero is
+    // a legitimate live value for a collection that plays nothing. Flooring it
+    // would also re-break what that test guards: a reader treating 0 as
+    // "unknown" falls back on a stale nonzero summary and re-quotes it.
+    //
+    // The placeholder fallback above still defaults to 3, and that is
+    // consistent: an UN-HYDRATED child is unknown, an all-disabled one is
+    // measured.
+    return total;
+  };
+  return walk(collectionId, new Set());
 }
 
 /**

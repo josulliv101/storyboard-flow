@@ -1048,11 +1048,13 @@ describe("graph-documents-gateway", () => {
       // observed result was FIVE identical closure POSTs inside 30ms, each one
       // walking the whole project. That is 745 document reads to do a 149-read
       // job, in the exact code added to REDUCE reads.
-      let resolveFetch: (value: Response) => void = () => {};
+      // Typed from what `jsonResponse` returns, not the DOM `Response`: the
+      // suite's stub is a minimal shape and the gateway only reads json()/ok.
+      let resolveFetch: (value: ReturnType<typeof jsonResponse>) => void = () => {};
       const calls: string[] = [];
       vi.stubGlobal("fetch", (url: string) => {
         calls.push(url);
-        return new Promise<Response>((resolve) => {
+        return new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
           resolveFetch = resolve;
         });
       });

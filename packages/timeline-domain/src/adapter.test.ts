@@ -1542,6 +1542,93 @@ describe("collectionSubtreeHydrated", () => {
     expect(collectionSubtreeHydrated(graph, details, "root", (id) => id === "gone")).toBe(true);
   });
 
+  it("vouches for a DUPLICATE placement once the original is loaded", () => {
+    // A second reference to the same collection is demoted to a card with no
+    // children of its own, permanently unhydrated. Waiting on it blocked every
+    // ancestor forever — a real project had one such duplicate, and it alone
+    // kept a 133-document branch timeless after the dangling ids were handled.
+    // Its content is not unknown: the original placement is right there.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: packTimelineClips([
+            collectionClip("ref-a", "leaf", "Leaf"),
+            collectionClip("ref-b", "leaf", "Leaf"),
+          ]),
+        },
+        leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+      },
+      "root",
+    );
+
+    expect(details["ref-b"]).toMatchObject({ duplicateOfTimelineId: "leaf" });
+    expect(details["ref-b"]?.hydrated).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(true);
+  });
+
+  it("counts a duplicate's REAL content rather than its stored summary", () => {
+    // The reason vouching for it is honest. The walk used to read the dup
+    // card's stored duration, a copy nothing maintains — in the real project
+    // the two parents of one duplicated collection stored 6.12s and 7.12s for
+    // the same 4.0s of content, so at least one was always wrong and its
+    // ancestors inherited the error.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: packTimelineClips([
+            collectionClip("ref-a", "leaf", "Leaf"),
+            { ...collectionClip("ref-b", "leaf", "Leaf"), duration: 999 },
+          ]),
+        },
+        leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+      },
+      "root",
+    );
+
+    // Two placements of a 4s leaf, one gap between them — NOT 4 + gap + 999.
+    expect(hydratedCollectionDuration(graph, details, parseNodeId("root"))).toBeCloseTo(8.12, 5);
+  });
+
+  it("counts a DANGLING child as zero playable seconds, not its stored duration", () => {
+    // What the board was doing: quoting the remembered length of a document
+    // that no longer exists. Five of these added 33.9s to one collection, so a
+    // card claimed 19:24 of material when 18:51 of it was real.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: packTimelineClips([
+            { ...collectionClip("c-gone", "gone", "Gone"), duration: 12.36 },
+            collectionClip("c-leaf", "leaf", "Leaf"),
+          ]),
+        },
+        leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+      },
+      "root",
+    );
+
+    // Unaware of the absence, it quotes the stored 12.36.
+    expect(hydratedCollectionPlayableDuration(graph, details, parseNodeId("root"))).toBeCloseTo(
+      12.36 + 0.12 + 4,
+      5,
+    );
+    // Told the document is gone, it contributes nothing — but the GAP stays,
+    // because the broken reference still draws a card between its neighbours.
+    expect(
+      hydratedCollectionPlayableDuration(
+        graph,
+        details,
+        parseNodeId("root"),
+        (id) => id === "gone",
+      ),
+    ).toBeCloseTo(0.12 + 4, 5);
+  });
+
   it("vouches for a one-level tree, which is what a board actually shows", () => {
     // The case that makes the board useful rather than blank: the focused
     // collection plus media-only children is fully in the graph, so its cards
