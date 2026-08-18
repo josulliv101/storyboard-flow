@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import {
   getChildren,
@@ -343,11 +343,24 @@ export function BackgroundClosureHydrator({
 }: Readonly<{ projectId: string; enabled: boolean }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
+  // Once per project, however often the effect re-runs. The gateway dedupes
+  // the REQUEST, but the hydration walk below is main-thread work over every
+  // document in the closure — measured at ~517ms across three long tasks — and
+  // running it five times because React re-ran an effect is jank, not reads.
+  const done = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     const run = async () => {
+      // CLAIMED HERE, NOT AT EFFECT ENTRY, and the difference is the whole
+      // thing working. React runs an effect, tears it down and runs it again in
+      // development; a flag set on entry is claimed by the first run, whose
+      // scheduled work the teardown then cancels, and the second run declines
+      // because the flag is already set. Observed exactly that: zero closure
+      // requests and every card permanently timeless.
+      if (done.current === projectId) return;
+      done.current = projectId;
       // Best effort throughout: a failure here leaves the board exactly as it
       // was — correct, with fewer times shown — so nothing is reported.
       await graphDocumentsGateway.ensureClosure(projectId).catch(() => {});

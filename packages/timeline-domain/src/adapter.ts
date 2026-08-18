@@ -512,25 +512,46 @@ export function collectionSubtreeHydrated(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: NodeId,
-  visiting: Set<string> = new Set(),
+  /**
+   * Ids the server has REPORTED as gone — a `childTimelineId` whose document
+   * does not exist.
+   *
+   * GONE IS KNOWN, and conflating it with "not loaded yet" is what made this
+   * predicate wait forever. A dangling reference has no document to load, so a
+   * branch containing one could never vouch and its card was permanently
+   * timeless rather than briefly so. Measured on a real project: five dangling
+   * references under one collection held an otherwise complete 133-document
+   * branch at "no duration", indefinitely.
+   *
+   * A missing child contributes nothing to a total, and the walks already
+   * treat it that way, so a subtree whose only unhydrated members are known
+   * missing is exactly computable.
+   */
+  isKnownMissing: (id: string) => boolean = () => false,
 ): boolean {
-  const key = collectionId as string;
-  if (visiting.has(key)) return true;
-  // ABSENT is not unhydrated. Details are built from a parent's CLIP, so the
-  // focused root has no entry of its own — its document is the one thing we
-  // certainly hold. Any referenced child does have an entry (with
-  // `hydrated: false` until it loads), so absence only ever means "this is the
-  // root". Failing on absence made the board header permanently timeless.
-  const detail = details[key];
-  if (detail !== undefined && detail.hydrated !== true) return false;
-  visiting.add(key);
-  for (const childId of getChildren(graph, collectionId)) {
-    const node = graph.nodesById.get(childId);
-    if (!node || node.kind !== "collection") continue;
-    if (!collectionSubtreeHydrated(graph, details, childId, visiting)) return false;
-  }
-  visiting.delete(key);
-  return true;
+  const visit = (id: NodeId, visiting: Set<string>): boolean => {
+    const key = id as string;
+    if (visiting.has(key)) return true;
+    // Gone, and known to be gone — see above.
+    if (isKnownMissing(key)) return true;
+    // ABSENT is not unhydrated. Details are built from a parent's CLIP, so the
+    // focused root has no entry of its own — its document is the one thing we
+    // certainly hold. Any referenced child does have an entry (with
+    // `hydrated: false` until it loads), so absence only ever means "this is
+    // the root". Failing on absence made the board header permanently
+    // timeless.
+    const detail = details[key];
+    if (detail !== undefined && detail.hydrated !== true) return false;
+    visiting.add(key);
+    for (const childId of getChildren(graph, id)) {
+      const node = graph.nodesById.get(childId);
+      if (!node || node.kind !== "collection") continue;
+      if (!visit(childId, visiting)) return false;
+    }
+    visiting.delete(key);
+    return true;
+  };
+  return visit(collectionId, new Set());
 }
 
 export function hydratedCollectionDuration(

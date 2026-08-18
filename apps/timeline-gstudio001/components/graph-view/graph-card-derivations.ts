@@ -22,6 +22,7 @@ import { createDerivedCache } from "@/lib/derived-cache";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import { resolveCardProvenance } from "@/lib/card-provenance";
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { isDisabledByAncestor } from "./graph-playhead-model";
@@ -201,7 +202,16 @@ export function useCollectionSubtreeHydrated(id: string): boolean {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const getSnapshot = useCallback(
-    () => collectionSubtreeHydrated(store.getSnapshot().graph, detailsStore.read(), id as NodeId),
+    () =>
+      collectionSubtreeHydrated(
+        store.getSnapshot().graph,
+        detailsStore.read(),
+        id as NodeId,
+        // The gateway is the only place that knows a document is GONE rather
+        // than merely unloaded — the server reports it and `ensureClosure`
+        // keeps the list.
+        graphDocumentsGateway.isKnownMissing,
+      ),
     [store, detailsStore, id],
   );
   const subscribe = useCallback(

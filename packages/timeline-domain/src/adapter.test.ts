@@ -1523,6 +1523,25 @@ describe("collectionSubtreeHydrated", () => {
     expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
   });
 
+  it("treats a DANGLING child as resolved, not as pending forever", () => {
+    // The card this fixed: five dangling references under one collection held
+    // an otherwise complete 133-document branch at "no duration" permanently,
+    // because a document that does not exist can never arrive. Gone is known —
+    // it contributes nothing, and the total is exactly computable without it.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: [collectionClip("c-gone", "gone", "Gone")],
+        },
+      },
+      "root",
+    );
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root", (id) => id === "gone")).toBe(true);
+  });
+
   it("vouches for a one-level tree, which is what a board actually shows", () => {
     // The case that makes the board useful rather than blank: the focused
     // collection plus media-only children is fully in the graph, so its cards
