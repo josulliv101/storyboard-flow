@@ -638,11 +638,23 @@ export function TimelineSidebar() {
               contracting instead of a label being replaced by an abbreviation.
 
               The accessible name comes from `aria-label` on the link, so the
-              split spans are never read out letter by letter. */}
-          S
-          <RevealedLetters show={railExpanded}>toryboard&nbsp;</RevealedLetters>
-          W
-          <RevealedLetters show={railExpanded}>orkbench</RevealedLetters>
+              split spans are never read out letter by letter.
+
+              HIDDEN FROM ASSISTIVE TECH, for the same reason. Collapsed, the
+              mark reads "SW", which is not contained in "Storyboard Workbench
+              home" — Lighthouse flags that as `label-content-name-mismatch`
+              (WCAG 2.5.3 "Label in Name"): someone driving by voice says what
+              they see and matches nothing. The mark is branding, not a label,
+              so the label carries the name and the letters carry none.
+
+              `display: contents` so hiding them costs no layout — the letters
+              keep participating in the link's own flex box. */}
+          <span aria-hidden="true" className="contents">
+            S
+            <RevealedLetters show={railExpanded}>toryboard&nbsp;</RevealedLetters>
+            W
+            <RevealedLetters show={railExpanded}>orkbench</RevealedLetters>
+          </span>
         </Link>
 
         {activeProjectId && (

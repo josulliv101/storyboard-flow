@@ -115,11 +115,24 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           can then be trashed with Delete alongside media. */}
       <CollectionItem.SelectionSurface
         dragActivation={dragActivation === "hold" ? "hold" : "body"}
+        // STARTS WITH THE NAME, so a speech-input user saying what they see
+        // ("Scenes") matches — the substance of WCAG 2.5.3 "Label in Name".
+        //
+        // Lighthouse's `label-content-name-mismatch` still flags this, and
+        // deliberately not chased: the caption's spans carry no whitespace
+        // between them, so axe compares against the concatenation
+        // "Scenes1:29/1 item". Satisfying that literally means an accessible
+        // name no one would want spoken. Two other routes were tried and are
+        // worse — folding the duration in makes the name CHANGE when a branch
+        // finishes loading (announced mid-read), and hiding the readouts from
+        // assistive tech changes nothing, because an `aria-label` on a button
+        // already replaces its content for AT.
+        //
         // Announce the count the card actually SHOWS — the stored summary for a
         // placeholder, the live children once hydrated. The primitive's default
         // reads live childCount alone, which speaks "0 items" over a card
         // displaying "9" until its clips load.
-        ariaLabel={`${displayName} (collection, ${count} ${count === 1 ? "item" : "items"})`}
+        ariaLabel={`${displayName}, collection, ${count} ${count === 1 ? "item" : "items"}`}
         className={[
           // `relative` so the disabled chip below can pin to this card's own
           // top-right corner rather than some ancestor's.
