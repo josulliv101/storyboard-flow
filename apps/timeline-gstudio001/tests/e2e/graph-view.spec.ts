@@ -7773,143 +7773,91 @@ test.describe("graph view E2E", () => {
     );
   });
 
+  test("NO checkbox outside select mode — not hidden, not on hover, absent", async ({
+    page,
+  }) => {
+    // THE WHOLE CHANGE, in one assertion. The checkbox used to be rendered on
+    // every card and revealed by CSS `:hover`, and clicking it armed the mode.
+    // It is gone outside the mode: this is a DRAGGING board, the cursor is over
+    // cards constantly because things are being grabbed and moved rather than
+    // chosen, and a control that materialised under it every time was noise
+    // during the gesture the board is actually for.
+    //
+    // ABSENT rather than transparent, which is the stronger property and the
+    // one worth pinning: a hidden click target is a trap, and three tests used
+    // to exist to prove the opacity and the pointer-events could never drift
+    // apart. Nothing to drift now.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const card = surface.locator('[data-node-id="alpha"]');
+
+    await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
+
+    // A REAL hover, which is the only thing that could have revealed it — CSS
+    // `:hover` is browser state driven by pointer position, so no synthetic
+    // event can stand in for this and no story can cover it.
+    await card.hover();
+    await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
+    // Still nothing after the pointer has settled, so this is not a race with
+    // a transition that simply had not started.
+    await page.waitForTimeout(300);
+    await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
+
+    // And the card still does what a card does under an un-checkboxed cursor.
+    await card.click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  test("select mode shows it on EVERY card, picked or not", async ({ page }) => {
+    // The mode needs every card to show its state at once — unpicked ones
+    // included — which is exactly what a hover reveal could never do for more
+    // than one card at a time, and why the mode pins them all on.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await page.locator("[data-select-mode-toggle]").click();
+    const boxes = surface.locator("[data-selection-indicator]");
+    await expect.poll(() => boxes.count()).toBeGreaterThan(1);
+    // Pointer nowhere near any of them.
+    await page.mouse.move(0, 0);
+    await expect(boxes.first()).toBeVisible();
+    await expect(boxes.first()).toHaveAttribute("data-selection-indicator-reveal", "armed");
+    await expect
+      .poll(() => boxes.first().evaluate((el) => getComputedStyle(el).opacity))
+      .toBe("1");
+
+    // Leaving the mode takes them all away again.
+    await page.locator("[data-select-mode-toggle]").click();
+    await expect(surface.locator("[data-selection-indicator]")).toHaveCount(0);
+  });
+
   test("clicking the checkbox toggles — on a collection, where the rest of the card drills", async ({
     page,
   }) => {
     // THE COLLECTION CASE IS THE POINT. A plain click on a collection card
-    // drills in, so before this the only pointer route to picking one was to
-    // enter select mode first. The checkbox is that route, and it has to work
-    // WITHOUT navigating — a toggle that also drilled would be useless.
+    // drills into it, so inside select mode the checkbox is what says "pick
+    // this one" instead. Outside the mode there is no pointer route to
+    // selecting a collection at all any more — that is the accepted trade for
+    // losing the hover checkbox, and this test is where it is visible.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
     const collection = surface.locator(`[data-node-id="${CHILD_ID}"]`);
+
+    await page.locator("[data-select-mode-toggle]").click();
     const checkbox = collection.locator("[data-selection-indicator]");
+    await expect(checkbox).toBeVisible();
 
-    // Hover to reveal it, then click IT rather than the card.
-    await collection.hover();
-    await expect.poll(() => checkbox.evaluate((e) => getComputedStyle(e).opacity)).toBe("1");
     await checkbox.click();
-
-    // Selected, and still on the project — the drill-in did not fire underneath.
     await expect(collection).toHaveAttribute("data-selected", "true");
-    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
-    await expect(strip(page, PROJECT_ID)).toHaveCount(1);
+    // It selected rather than drilling: the breadcrumb has not moved.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(surface).toBeVisible();
 
-    // And it TOGGLES: a second click takes it back off, still without drilling.
     await checkbox.click();
     await expect(collection).not.toHaveAttribute("data-selected", "true");
-    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
-
-    // The media card's checkbox toggles the same way — one grammar, both kinds.
-    const alpha = surface.locator('[data-node-id="alpha"]');
-    await alpha.hover();
-    await alpha.locator("[data-selection-indicator]").click();
-    await expect(alpha).toHaveAttribute("data-selected", "true");
-  });
-
-  test("the checkbox ARMS the mode — the header swaps its breadcrumbs for the select row", async ({
-    page,
-  }) => {
-    // THE HEADER IS THE BUG. The checkbox filled in, but the row above it is
-    // driven by `multiSelectMode` alone (GraphBoard's `selectModeRow`), and
-    // toggling a selection never armed that — so a picked card got no count, no
-    // verbs and no Done, while the breadcrumb trail sat there as if nothing had
-    // happened. Pressing Select produced the right row; the checkbox did not.
-    await installGraphApi(page);
-    await openGraph(page);
-    const surface = strip(page, PROJECT_ID);
-    const card = surface.locator('[data-node-id="alpha"]');
-    const header = page.locator("[data-graph-board-header]");
-    const checkbox = card.locator("[data-selection-indicator]");
-
-    // The premise: browsing, with the trail showing.
-    await expect(header).toHaveAttribute("data-header-mode", "browse");
-
-    await card.hover();
-    await checkbox.click();
-
-    await expect(card).toHaveAttribute("data-selected", "true");
-    await expect(header).toHaveAttribute("data-header-mode", "select");
-    await expect(page.locator("[data-select-mode-count]")).toHaveText("1 selected");
-
-    // Un-checking the last card does NOT throw you back out. It holds at
-    // "0 selected", which is where pressing Select and picking nothing lands
-    // too — disarming here would yank the row away at the exact moment someone
-    // is correcting a mis-pick, and Done is the deliberate way out.
-    await checkbox.click();
-    await expect(card).not.toHaveAttribute("data-selected", "true");
-    await expect(header).toHaveAttribute("data-header-mode", "select");
-    await expect(page.locator("[data-select-mode-count]")).toHaveText("0 selected");
-  });
-
-  test("a hidden checkbox is not a click trap", async ({ page }) => {
-    // The checkbox is a click target now, and it is revealed by opacity rather
-    // than by mounting — so `pointer-events` has to travel with the opacity or
-    // there is an invisible toggle sitting in every card's corner. Worst on
-    // touch, where the hover gate never opens at all and the control would be
-    // permanently invisible AND permanently clickable.
-    await installGraphApi(page);
-    await openGraph(page);
-    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
-    const checkbox = alpha.locator("[data-selection-indicator]");
-
-    await page.mouse.move(0, 0);
-    await expect
-      .poll(() => checkbox.evaluate((e) => getComputedStyle(e).pointerEvents))
-      .toBe("none");
-    await expect.poll(() => checkbox.evaluate((e) => getComputedStyle(e).opacity)).toBe("0");
-  });
-
-  test("the select checkbox is revealed by a real hover, and pinned on by select mode", async ({
-    page,
-  }) => {
-    // E2E RATHER THAN A STORY, and not by preference. The reveal is CSS
-    // `:hover`, which is browser state driven by real pointer position — no
-    // synthetic event sets it, so a story using `userEvent.hover` measures
-    // opacity 0 forever and fails for a reason that has nothing to do with the
-    // component. Trusted mouse input is this suite's job.
-    //
-    // It is also the only check that the Tailwind class is REAL. The reveal is
-    // a literal `[@media(hover:hover)]:group-hover/media-item:opacity-100`;
-    // Tailwind's JIT scans source text, so a mistyped or interpolated group
-    // name yields a class that is never generated and a checkbox that silently
-    // never appears. Nothing but a computed style catches that.
-    await installGraphApi(page);
-    await openGraph(page);
-    const surface = strip(page, PROJECT_ID);
-    const card = surface.locator('[data-node-id="alpha"]');
-    const checkbox = card.locator("[data-selection-indicator]");
-    const opacity = () =>
-      checkbox.evaluate((element) => getComputedStyle(element).opacity);
-
-    // RENDERED but transparent, with nothing selected and the pointer away. Not
-    // absent: it keeps its box so the reveal cannot relayout the card under the
-    // pointer, which is also why presence is the wrong thing to assert.
-    await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "hover");
-    await page.mouse.move(0, 0);
-    await expect.poll(opacity).toBe("0");
-
-    await card.hover();
-    await expect.poll(opacity).toBe("1");
-
-    // And away again — a checkbox left behind would read as a selection that
-    // is not there.
-    await page.mouse.move(0, 0);
-    await expect.poll(opacity).toBe("0");
-
-    // SELECT MODE pins it on with the pointer nowhere near the card: the mode
-    // needs every card to show its state at once, unpicked ones included, which
-    // a hover reveal can never do for more than one card at a time.
-    //
-    // The mode toggle lives in the anchor's menu, so something has to be
-    // selected first — and a plain click would open this clip's editor rather
-    // than select it.
-    await selectCard(card);
-    await toggleMultiSelect(page);
-    await page.mouse.move(0, 0);
-    await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
-    await expect.poll(opacity).toBe("1");
   });
 
   // Its own context: `hasTouch` sets maxTouchPoints, which is what makes
@@ -7917,47 +7865,34 @@ test.describe("graph view E2E", () => {
   test.describe(() => {
     test.use({ hasTouch: true });
 
-    test("touch gets NO hover checkbox — tapping a card never leaves one stuck on", async ({
+    test("touch reaches selection through the Select control, and a tap still opens", async ({
       page,
     }) => {
-      // The other half of the desktop-only reveal, and the reason the CSS
-      // carries an explicit `@media (hover: hover)` instead of trusting a
-      // framework default. Without the query, a tap sets `:hover` on the
-      // tapped card and Chromium LEAVES IT THERE until something else is
-      // touched — so the checkbox would sit on the last card tapped, saying
-      // "picked" about a card that is not.
+      // The desktop-only hover reveal is gone, so the sticky-hover bug it
+      // carried cannot happen and the `@media (hover: hover)` guard that
+      // existed for it is gone too. What still matters is that touch — the
+      // input that never had the hover route — reaches selection the same way
+      // everything else does now.
       await installGraphApi(page);
       await openGraph(page);
       const surface = strip(page, PROJECT_ID);
       const card = surface.locator('[data-node-id="alpha"]');
-      const checkbox = card.locator("[data-selection-indicator]");
-      const opacity = () =>
-        checkbox.evaluate((element) => getComputedStyle(element).opacity);
 
-      // The premise, asserted first — `hasTouch` is what makes Chromium report
-      // this, and without it the checks below would pass for the wrong reason.
-      expect(await page.evaluate(() => window.matchMedia("(hover: none)").matches)).toBe(true);
+      await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
 
-      await expect.poll(opacity).toBe("0");
-
-      // A tap OPENS rather than selects, and leaves no checkbox behind it —
-      // which is the sticky-hover case: without the media query the tap would
-      // set `:hover` on this card and Chromium would keep it there.
       await card.tap();
       await expect(page.getByRole("dialog")).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog")).toHaveCount(0);
-      await expect.poll(opacity).toBe("0");
+      await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
 
-      // Select mode still works here — it is a mode, not a hover affordance,
-      // and touch is exactly the input that has no other way to select at all.
-      // Reached through the HEADER control, because the anchor menu route
-      // needs something already selected and on touch nothing can be.
       await page.locator("[data-select-mode-toggle]").tap();
+      const checkbox = card.locator("[data-selection-indicator]");
       await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
-      await expect.poll(opacity).toBe("1");
+      await expect
+        .poll(() => checkbox.evaluate((el) => getComputedStyle(el).opacity))
+        .toBe("1");
     });
-
     test("touch gets 44px hit targets on every selection control", async ({ page }) => {
       await installGraphApi(page);
       await openGraph(page);

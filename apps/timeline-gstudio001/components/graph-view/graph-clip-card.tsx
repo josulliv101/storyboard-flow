@@ -23,7 +23,6 @@ import {
   LaneChip,
   LiveDurationPill,
   ProvenanceLabel,
-  SELECT_HOVER_REVEAL_MEDIA,
   SelectionIndicator,
 } from "./graph-card-badges";
 import {
@@ -259,7 +258,6 @@ export const GraphClipContent = memo(function GraphClipContent({
           id={id}
           selected={selected}
           armed={selectMode}
-          revealOnHover={SELECT_HOVER_REVEAL_MEDIA}
         />
       </span>
       {/* Kind tag (R6 #7): a WORD, bottom-left. The glyph version (a 4px film

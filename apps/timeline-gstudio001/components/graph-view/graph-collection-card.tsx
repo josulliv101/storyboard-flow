@@ -28,7 +28,6 @@ import {
 import {
   DisabledChip,
   LaneChip,
-  SELECT_HOVER_REVEAL_COLLECTION,
   SelectionIndicator,
 } from "./graph-card-badges";
 import {
@@ -185,7 +184,6 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             id={id}
             selected={selected}
             armed={selectMode}
-            revealOnHover={SELECT_HOVER_REVEAL_COLLECTION}
           />
           {/* THE COLLECTION MARK, dead centre over the frames.
               A collection's frames are its children's pictures, so at a glance
