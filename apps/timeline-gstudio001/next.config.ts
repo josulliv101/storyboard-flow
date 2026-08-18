@@ -1,6 +1,31 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  /**
+   * KEEP A VISITED BOARD IN THE CLIENT ROUTER CACHE FOR 30 SECONDS.
+   *
+   * Next 15 defaults `staleTimes.dynamic` to 0, so every navigation to a
+   * project re-renders it on the server — including going back to one you just
+   * left. Measured on the 143-document project: the render is 363ms warm and
+   * ships ~475KB of RSC payload, all of it work the session already had, and
+   * "it should be snappy the second time" is exactly the complaint that led
+   * here.
+   *
+   * SAFE BECAUSE THE PRIME IS GUARDED, not because the payload is fresh. A
+   * cached payload is by definition older than the server, and re-priming from
+   * it is what would be dangerous — but `installPrime` already refuses a
+   * payload for the wrong user, refuses one that regresses the revision ledger,
+   * and refuses to overwrite a document with unsaved local edits. A stale
+   * bootstrap is therefore ignored rather than believed.
+   *
+   * THE COST IS ELSEWHERE: a list page revisited inside the window can show
+   * what it showed 30 seconds ago — a project created in another tab may not
+   * appear until the window lapses or something calls `router.refresh()`.
+   * Thirty seconds is chosen to be shorter than it takes to notice.
+   */
+  experimental: {
+    staleTimes: { dynamic: 30 },
+  },
   devIndicators: false,
   reactStrictMode: true,
   distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
