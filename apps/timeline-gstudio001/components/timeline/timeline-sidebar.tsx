@@ -18,6 +18,10 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import {
+  StoryboardMonsterMark,
+  STORYBOARD_MONSTER_ACCENT,
+} from "./storyboard-monster-mark";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
@@ -650,10 +654,20 @@ export function TimelineSidebar() {
               `display: contents` so hiding them costs no layout — the letters
               keep participating in the link's own flex box. */}
           <span aria-hidden="true" className="contents">
-            S
-            <RevealedLetters show={railExpanded}>toryboard&nbsp;</RevealedLetters>
-            W
-            <RevealedLetters show={railExpanded}>orkbench</RevealedLetters>
+            <RevealedLetters show={railExpanded}>storyboard&nbsp;</RevealedLetters>
+            {/* The creature takes the monogram's place: it is what survives the
+                collapse, exactly as "SW" did. The word rebuilds around it —
+                "m" before, "nster" after — so opening the rail grows the name
+                out of the mark rather than swapping one thing for another. */}
+            {/* `contents`, so "m", the creature and "nster" stay FLEX ITEMS of
+                the link rather than becoming one narrow item that wraps inside
+                itself — the same reason the wrapper above uses it. Colour still
+                inherits through a `display: contents` box. */}
+            <span className="contents" style={{ color: STORYBOARD_MONSTER_ACCENT }}>
+              <RevealedLetters show={railExpanded}>m</RevealedLetters>
+              <StoryboardMonsterMark scale={1.6} />
+              <RevealedLetters show={railExpanded}>nster</RevealedLetters>
+            </span>
           </span>
         </Link>
 
