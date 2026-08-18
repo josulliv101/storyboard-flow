@@ -542,6 +542,28 @@ export async function collectOwnedTimelineClips(
  * The count lives on `globalThis` so it survives the dev server's module
  * re-evaluation, which would otherwise reset it on every file save.
  */
+/**
+ * REQUESTS, which is a different number from reads since #449.
+ *
+ * `countRead` counts DOCUMENTS, because that is what Firestore bills and what
+ * the 50,000/day free tier is denominated in. Batching cut round trips without
+ * touching that number — correctly — but it also made the log silent about the
+ * thing it changed: 148 lines either way, and no way to see whether a level
+ * went out as one request or as 148.
+ *
+ * So requests are counted separately and printed per call. The two numbers
+ * answer different questions and are meant to be read together: reads are the
+ * bill, requests are the latency.
+ */
+function countRequest(documents: number, kind: "batch" | "single"): void {
+  if (!process.env.GSTUDIO_COUNT_READS) return;
+  const scope = globalThis as unknown as { __gstudioRequests?: number };
+  scope.__gstudioRequests = (scope.__gstudioRequests ?? 0) + 1;
+  console.log(
+    `[READREQ ${scope.__gstudioRequests}] ${kind} — ${documents} document${documents === 1 ? "" : "s"} in 1 request`,
+  );
+}
+
 function countRead(): number | null {
   if (!process.env.GSTUDIO_COUNT_READS) return null;
   const scope = globalThis as unknown as { __gstudioReads?: number };
@@ -629,6 +651,9 @@ export async function readStoredTimelineEntry(
     return fixtureEntry;
   }
 
+  // One document, one request — the case the batch exists to replace, and the
+  // one worth being able to spot in the log when it happens outside a walk.
+  countRequest(1, "single");
   const snapshot = await withFirebaseTimeout(
     collection().doc(id).get(),
     "Loading timeline document",
@@ -710,12 +735,13 @@ export async function readStoredTimelineEntries(
   }
   const snapshots = (
     await Promise.all(
-      chunks.map((chunk) =>
-        withFirebaseTimeout(
+      chunks.map((chunk) => {
+        countRequest(chunk.length, "batch");
+        return withFirebaseTimeout(
           getFirebaseDb().getAll(...chunk.map((id) => collection().doc(id))),
           "Loading timeline documents",
-        ),
-      ),
+        );
+      }),
     )
   ).flat();
 
