@@ -160,11 +160,13 @@ function batchRequest(
     expectedRevision?: number;
     allowEmptying?: unknown;
   }[],
+  /** Batch-wide, as the board sends it — see the `projectId` tests below. */
+  projectId?: unknown,
 ) {
   return new Request("http://test.local/api/timelines/batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ writes }),
+    body: JSON.stringify(projectId === undefined ? { writes } : { writes, projectId }),
   });
 }
 
@@ -271,6 +273,54 @@ describe("timeline batch writes", () => {
     const { results } = (await response.json()) as { results: { id: string; revision: number }[] };
     expect(results).toEqual([{ id: "doc-new", revision: 1 }]);
     expect(state.docs.get("doc-new")?.ownerUid).toBe("user-a");
+  });
+
+  it("stamps projectId on every document in the batch", async () => {
+    // The prefetch hint that lets one query address a whole subtree in one
+    // round trip instead of nine sequential ones (#458). Batch-wide because a
+    // batch IS one board's edit — a cross-timeline move touches two documents
+    // and both belong to the same project.
+    const response = await batchWrite(
+      batchRequest(
+        [
+          { document: docOf("doc-new", "c1"), expectedRevision: 0 },
+          { document: docOf("doc-two", "c2"), expectedRevision: 0 },
+        ],
+        "project-a",
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(state.docs.get("doc-new")?.projectId).toBe("project-a");
+    expect(state.docs.get("doc-two")?.projectId).toBe("project-a");
+  });
+
+  it("a write without a projectId leaves the stored one alone", async () => {
+    // The MCP tools and the trash routes write without a board's context, and a
+    // correct hint has to survive them — writing undefined over it would send
+    // the next board open back to the nine-level walk for no reason.
+    seedTimeline("doc-1", "user-a", 3);
+    state.docs.set("doc-1", { ...state.docs.get("doc-1"), projectId: "project-a" });
+
+    const response = await batchWrite(batchRequest([{ document: docOf("doc-1", "lww") }]));
+    expect(response.status).toBe(200);
+    expect(state.docs.get("doc-1")?.projectId).toBe("project-a");
+  });
+
+  it("rejects a malformed projectId, and another user's as not-found", async () => {
+    // Validated like any other id the client sends. It carries no authorization
+    // weight — nothing reads it to decide what a project contains — but it must
+    // still stay inside the caller's own scope.
+    const malformed = await batchWrite(
+      batchRequest([{ document: docOf("doc-new", "c1"), expectedRevision: 0 }], 42),
+    );
+    expect(malformed.status).toBe(400);
+    expect(state.docs.has("doc-new")).toBe(false);
+
+    const foreign = await batchWrite(
+      batchRequest([{ document: docOf("doc-new", "c1"), expectedRevision: 0 }], "trash-user-b"),
+    );
+    expect(foreign.status).toBe(404);
+    expect(state.docs.has("doc-new")).toBe(false);
   });
 
   it("expectation-less writes keep last-write-wins semantics", async () => {

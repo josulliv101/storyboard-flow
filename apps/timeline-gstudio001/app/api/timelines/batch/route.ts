@@ -53,6 +53,28 @@ export async function POST(request: Request) {
       );
     }
 
+    // OPTIONAL, and validated like any other id the client sends. A batch that
+    // knows its board stamps every document in it with that project, which is
+    // what lets one query later address a whole subtree in one round trip
+    // (#458).
+    //
+    // TRUST IS NOT REQUIRED HERE, which is why an optional client-supplied
+    // field is acceptable at all: nothing reads `projectId` to decide what a
+    // project contains — the closure walk still does that. A client that sent
+    // the wrong one would mis-file its OWN documents into its OWN other
+    // project's prefetch, costing that board a slower first paint and nothing
+    // else. The user-scoped check keeps it inside the caller's own data.
+    const projectIdRaw = body.projectId;
+    if (projectIdRaw !== undefined) {
+      if (typeof projectIdRaw !== "string" || !isValidTimelineId(projectIdRaw)) {
+        return NextResponse.json({ error: "Invalid projectId." }, { status: 400 });
+      }
+      if (checkUserScopedId(projectIdRaw, user.uid) === false) {
+        return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
+      }
+    }
+    const projectId = typeof projectIdRaw === "string" ? projectIdRaw : undefined;
+
     const writes: TimelineBatchWrite[] = [];
     for (const entry of requested) {
       // Each element is untrusted too — an array of nulls used to throw on the
@@ -118,7 +140,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const results = await saveFirebaseTimelineDocumentsAtomic(writes, user.uid);
+    const results = await saveFirebaseTimelineDocumentsAtomic(writes, user.uid, { projectId });
     // After the commit, never inside it — the log must not be able to fail a
     // save, and must not claim a change that did not land.
     await recordChange({

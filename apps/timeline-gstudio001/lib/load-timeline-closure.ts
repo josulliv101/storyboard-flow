@@ -15,6 +15,12 @@ export type TimelineEntryReader = ((id: string) => Promise<TimelineEntry | null>
   /** Optional bulk path — see `createTimelineEntryReader`. A plain function
    *  still satisfies this type, which is what test readers hand in. */
   many?: (ids: readonly string[]) => Promise<Map<string, TimelineEntry | null>>;
+  /**
+   * Optional single-query prime of a whole project, resolving the returned
+   * count. See `readStoredTimelineProjectEntries` — it collapses the walk's
+   * round trips without changing what the walk decides.
+   */
+  prefetchProject?: (projectId: string) => Promise<number>;
 };
 
 // The nested document closure for a timeline: the root plus every document
@@ -137,6 +143,15 @@ export async function loadTimelineClosure(
     options?.rootEntry !== undefined
       ? options.rootEntry
       : await read(rootId).catch(() => null);
+
+  // ONE QUERY BEFORE THE WALK, when the reader can do it.
+  //
+  // The walk below is unchanged and still authoritative: it decides what the
+  // closure IS. This only puts the documents where it will look, so its nine
+  // sequential levels resolve from memory instead of from nine round trips.
+  // Anything the prime missed — a document written before `projectId` existed,
+  // or one whose hint is stale — the walk fetches exactly as it always did.
+  await read.prefetchProject?.(rootId).catch(() => 0);
 
   let frontier: readonly string[] = record(rootId, rootEntry);
 

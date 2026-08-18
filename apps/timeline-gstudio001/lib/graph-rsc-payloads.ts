@@ -71,11 +71,24 @@ export async function loadGraphBootstrapPayloads(
     // A closure too large to walk returns null, and the caller falls back to
     // the project alone — the old behaviour, which still works, just slower.
     const read = createTimelineEntryReader(requesterUid);
-    const closure = await serveTimelineClosure(projectId, requesterUid);
+    // TOGETHER, because the trash is not under the project and never was.
+    //
+    // It was read AFTER the closure, so it waited out all nine levels of the
+    // walk for an answer that depended on none of them — one whole round trip
+    // (~160ms against Firestore) of pure serialisation on every board open.
+    // Nothing orders these: the walk cannot reach `trash-<uid>` (it is a
+    // separate root) and the trash cannot contain the project.
+    //
+    // Latency is the CRITICAL PATH, not the request count. These are still two
+    // requests and still two billed reads' worth of documents; they simply cost
+    // one round trip between them instead of two.
+    const [closure, trash] = await Promise.all([
+      serveTimelineClosure(projectId, requesterUid),
+      serveTrashDocument(`trash-${requesterUid}`, requesterUid, read),
+    ]);
     if (!closure) {
       const project = await serveTimelineDocument(projectId, requesterUid, read);
       if (!project) return null;
-      const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
       return {
         payloads: [
           { ...project, forUid: requesterUid },
@@ -84,9 +97,6 @@ export async function loadGraphBootstrapPayloads(
         missing: [],
       };
     }
-    // The trash is NOT under the project, so it is read separately — through
-    // its own reader, since the closure's is finished with.
-    const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
     // forUid lets the client's prime refuse payloads that survive an auth
     // transition in the router cache.
     return {

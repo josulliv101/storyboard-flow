@@ -151,6 +151,16 @@ export type GraphDocumentsGateway = Readonly<{
    * prime/ensure in an authenticated session.
    */
   bindUser: (uid: string) => void;
+  /**
+   * The board this session is editing, sent with every write so the server can
+   * stamp `projectId` (#458).
+   *
+   * Separate from `bindUser` because it changes far more often — every drill
+   * into a different project — and because it carries no authorization weight:
+   * it is a prefetch hint, and the server validates it against the caller's own
+   * scope regardless.
+   */
+  bindProject: (projectId: string) => void;
   /** The compare-and-set ledger's revision for a document, if known. */
   revisionOf: (timelineId: string) => number | undefined;
   /**
@@ -298,6 +308,8 @@ export function createGraphDocumentsGateway(
    *  dangling childTimelineId, not a document waiting to load. See the note in
    *  `ensureClosure`. */
   const knownMissingIds = new Set<string>();
+  /** The board whose writes this session is sending — see `bindProject`. */
+  let boundProjectId: string | null = null;
   // Documents this session has actually EMPTIED — observed at the moment the
   // clips went from some to none, not inferred later from a projection that
   // happens to be empty. The store refuses an empty-over-non-empty write
@@ -933,7 +945,13 @@ export function createGraphDocumentsGateway(
       }
     };
 
-    const body = JSON.stringify({ writes });
+    // The project rides with the batch, not per write: a batch IS one board's
+    // edit, and a cross-timeline move touches two documents that belong to the
+    // same project. Omitted when unbound, which the server treats as "leave
+    // whatever is stored alone".
+    const body = JSON.stringify(
+      boundProjectId === null ? { writes } : { writes, projectId: boundProjectId },
+    );
     // The keepalive quota is 64 KiB across ALL in-flight keepalive requests,
     // and a request over it is not merely truncated — the fetch is a network
     // error, so asking for keepalive on an oversized body GUARANTEES the loss
@@ -1259,6 +1277,9 @@ export function createGraphDocumentsGateway(
         if (documents[id] !== undefined && !staleIds.has(id)) continue;
         expectedPrimes.set(id, deadline);
       }
+    },
+    bindProject: (projectId) => {
+      boundProjectId = projectId;
     },
     bindUser: (uid) => {
       if (boundUid === uid) return;
