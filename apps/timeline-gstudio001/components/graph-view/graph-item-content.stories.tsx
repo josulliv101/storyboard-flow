@@ -2018,9 +2018,14 @@ const detail = (over: Partial<ClipDetail>): ClipDetail => ({
 /** Renders as text like "8.1s" or "23:21" — either shape counts as a time. */
 const A_TIME = /\d+(\.\d+)?s|\d+:\d{2}/;
 
-const vouchDecorator =
-  (graph: CollectionsGraph, details: Record<string, ClipDetail>): Decorator =>
-  (Story) => (
+function vouchDecorator(
+  graph: CollectionsGraph,
+  details: Record<string, ClipDetail>,
+): Decorator {
+  // NAMED, not a bare arrow returned from a factory: `react/display-name`
+  // cannot infer a name for the latter, and it is an ERROR in this config —
+  // `renderWithDetail` above assigns to a named const for the same reason.
+  const WithVouchFixture: Decorator = (Story) => (
     <DndCollections initialGraph={graph}>
       <GraphDetailsProvider store={createGraphDetailsStore(details)}>
         <div className="h-32 w-40 bg-zinc-950 p-2">
@@ -2029,6 +2034,8 @@ const vouchDecorator =
       </GraphDetailsProvider>
     </DndCollections>
   );
+  return WithVouchFixture;
+}
 
 /**
  * A collection whose branch is fully loaded SHOWS its time.
