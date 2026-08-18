@@ -3,6 +3,7 @@ import "server-only";
 import { collectionChildIds } from "./derive-collection-summaries";
 import type { GraphServerPayload } from "./graph-documents-gateway";
 import {
+  BOARD_OPEN_MAX_DEPTH,
   createTimelineEntryReader,
   serveTimelineClosure,
   serveTimelineDocument,
@@ -33,34 +34,7 @@ const MAX_PATH_PAYLOADS = 16;
  */
 const MAX_PATH_ATTEMPTS = 48;
 
-/**
- * How far below the project the BOARD OPEN reads.
- *
- * The board renders the root's children as cards, and every card below the
- * first level is a placeholder the client hydrates on demand. Reading deeper
- * bought exactly one thing: freshly derived `duration` / `previewItems` /
- * `itemCount` on those cards — 149 documents on a real project to correct four
- * numbers each, which is 96%+ of every read a board open has ever cost.
- *
- * At depth 1 those numbers come from the stored summaries instead. Those are
- * measurably imperfect today (58.4% of collection clips carry at least one
- * stale field), and the fix belongs on the WRITE path where the staleness is
- * actually created — a client whose graph is only partly hydrated writes the
- * stale values it was served straight back. Recomputing the world on every read
- * to paper over a bad write was the expensive half of that bargain.
- *
- * NOT used by the preview/export compile, which genuinely needs every document
- * and must keep reading them.
- *
- * ONE BEHAVIOUR CHANGE WORTH KNOWING: `missing` now reports only dangling
- * references found within the bound. On the project this was measured against
- * it went from 5 to 0 — those five childless ids live deeper than the first
- * level, so the client meets them when it hydrates that branch instead of at
- * boot. Nothing hides them; the discovery just moves to the point of use.
- *
- * Measured on that project: 150 billed reads -> 5.
- */
-export const BOARD_OPEN_MAX_DEPTH = 1;
+
 
 /**
  * The boot payloads: the project document and the user's trash — the two
@@ -177,7 +151,13 @@ export async function loadFocusPathPayloads(
     if (payloads.length >= MAX_PATH_PAYLOADS) return null;
     seen.add(id);
     try {
-      const served = await serveTimelineDocument(id, requesterUid, read);
+      // BOUNDED, like the board open. Deriving this segment's summaries used to
+      // walk everything beneath it, so one focus navigation cost a whole
+      // subtree: measured at 149 reads to serve the project root, billed again
+      // on every click up the breadcrumb.
+      const served = await serveTimelineDocument(id, requesterUid, read, {
+        maxDepth: BOARD_OPEN_MAX_DEPTH,
+      });
       if (!served) return null;
       return { ...served, forUid: requesterUid };
     } catch {

@@ -6,6 +6,7 @@ import { readJsonObject } from "@/lib/read-json-body";
 import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
 import {
   createTimelineEntryReader,
+  BOARD_OPEN_MAX_DEPTH,
   serveTimelineDocument,
   serveTrashDocument,
 } from "@/lib/serve-timeline";
@@ -126,7 +127,9 @@ export async function POST(request: Request) {
             return { id, error: "Invalid timeline id.", status: 400 };
           }
 
-          const served = await serveTimelineDocument(id, user.uid, read);
+          const served = await serveTimelineDocument(id, user.uid, read, {
+            maxDepth: BOARD_OPEN_MAX_DEPTH,
+          });
           if (served) {
             return { id, document: served.document, revision: served.revision };
           }
