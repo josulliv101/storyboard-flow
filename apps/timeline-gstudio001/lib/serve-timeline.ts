@@ -254,38 +254,71 @@ export async function serveTimelineClosure(
   documents: Record<string, ServedTimeline>;
   missing: string[];
 }> | null> {
-  // ONE reader for the whole walk — the property this endpoint exists for.
+  // ONE reader for the whole walk — the property this endpoint exists for, and
+  // what makes a document read for its parent's summaries free when it becomes
+  // a payload of its own.
   const read = createTimelineEntryReader(requesterUid);
   // BEFORE the root read, so the root arrives in the same query as everything
   // else. After it, this would be a second sequential round trip to save nine —
   // still a win, but a needless one when the ordering is free.
+  // PHASE TIMINGS, behind the read counter's own flag.
+  //
+  // Added because a board render reporting "application-code: 1525ms" looked
+  // like a data problem for a whole evening, and was not: warm, this serve is
+  // 60ms of a 339ms request — 43ms walk, 2ms derive, 1ms heal — and the 1525ms
+  // belonged to a COLD render compiling the route (`next.js: 2.2s` on the same
+  // line). One line of log now answers what took an evening to guess at.
+  //
+  // Kept rather than deleted for that reason: the numbers are small, so the
+  // next person who suspects this path can rule it out in one load instead of
+  // instrumenting it again.
+  const probing = process.env.GSTUDIO_COUNT_READS === "1";
+  const mark = (label: string, since: number) => {
+    if (probing) console.log(`[SERVEPROBE] ${label} ${Date.now() - since}ms`);
+    return Date.now();
+  };
+  let at = Date.now();
+
   await read.prefetchProject?.(id).catch(() => 0);
+  at = mark("prefetch", at);
   const entry = await read(id);
   if (!entry) return null;
+  at = mark("root read", at);
 
-  const cloudinaryAssets = await listCloudinaryAssets(requesterUid).catch(() => []);
-  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
+  // STARTED, not awaited. The listing feeds the root's heal and nothing else,
+  // so it has no bearing on the walk — and it was awaited in front of it,
+  // putting a network call to Cloudinary on the critical path ahead of work
+  // that never needed it. Measured before this: 1844ms of an 1887ms serve.
+  const assets = listCloudinaryAssets(requesterUid).catch(() => []);
 
-  const closure = await loadTimelineClosure(id, requesterUid, {
-    rootEntry: entry,
-    read,
-  }).catch((error: unknown) => {
-    if (error instanceof TimelineClosureTooLargeError) return null;
-    throw error;
-  });
+  const [cloudinaryAssets, closure] = await Promise.all([
+    assets,
+    loadTimelineClosure(id, requesterUid, {
+      rootEntry: entry,
+      read,
+    }).catch((error: unknown) => {
+      if (error instanceof TimelineClosureTooLargeError) return null;
+      throw error;
+    }),
+  ]);
   if (closure === null) return null;
+  at = mark(`walk + cloudinary list (${cloudinaryAssets.length} assets), in parallel`, at);
 
+  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
   const missing = new Set(closure.missing);
+  at = mark("heal root", at);
   const summarized = deriveClosureSummaries(
     { ...closure.documents, [id]: healedDocument },
     missing,
   );
 
   const documents: Record<string, ServedTimeline> = {};
+  at = mark("derive summaries", at);
   for (const [documentId, document] of Object.entries(summarized)) {
     if (missing.has(documentId)) continue;
     documents[documentId] = { document, revision: closure.revisions[documentId] ?? 0 };
   }
+  mark("heal + assemble", at);
   return { documents, missing: [...missing] };
 }
 

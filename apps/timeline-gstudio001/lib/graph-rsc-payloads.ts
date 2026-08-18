@@ -70,6 +70,8 @@ export async function loadGraphBootstrapPayloads(
     //
     // A closure too large to walk returns null, and the caller falls back to
     // the project alone — the old behaviour, which still works, just slower.
+    const probing = process.env.GSTUDIO_COUNT_READS === "1";
+    const startedAt = Date.now();
     const read = createTimelineEntryReader(requesterUid);
     // TOGETHER, because the trash is not under the project and never was.
     //
@@ -97,6 +99,7 @@ export async function loadGraphBootstrapPayloads(
         missing: [],
       };
     }
+    if (probing) console.log(`[SERVEPROBE] bootstrap total ${Date.now() - startedAt}ms`);
     // forUid lets the client's prime refuse payloads that survive an auth
     // transition in the router cache.
     return {
