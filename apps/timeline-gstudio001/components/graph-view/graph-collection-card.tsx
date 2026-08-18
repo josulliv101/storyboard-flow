@@ -272,7 +272,31 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
                 src={collectionPreviewFrameUrl(preview)}
                 alt=""
                 draggable={false}
-                loading="lazy"
+                // EAGER, because the grid is virtualized. `VirtualGrid` renders
+                // only the rows at or near the viewport, so a card that exists
+                // in the DOM has already been judged on-screen — `loading=lazy`
+                // then defers a request the browser could have started, and
+                // waits for layout to re-decide what virtualization just
+                // decided. Below-the-fold cards are not lazy, they are absent.
+                //
+                // Measured: this element was the LCP on a board open, and its
+                // request was queued at 1,495ms having taken 0.4ms to download.
+                // The delay was discovery, not transfer.
+                loading="eager"
+                // Only the FIRST frame. All three are visible, but a hint that
+                // marks everything high marks nothing — the leading frame is
+                // the one that carries the card, and on the measured board it
+                // was the LCP element.
+                {...(index === 0 ? { fetchPriority: "high" as const } : {})}
+                // INTRINSIC SIZE, so the browser can reserve the box before the
+                // bytes arrive. CSS already fixes the rendered size (`h-full`,
+                // `flex-1`), but with no width/height the element has no aspect
+                // ratio until decode, and the trace attributed two layout
+                // shifts to exactly that ("An unsized image"). 16:9 is what the
+                // Cloudinary transform emits (w_640,h_360) — see
+                // `collectionPreviewFrameUrl`.
+                width={640}
+                height={360}
                 className="h-full min-w-0 flex-1 rounded-sm object-cover"
               />
             ))
