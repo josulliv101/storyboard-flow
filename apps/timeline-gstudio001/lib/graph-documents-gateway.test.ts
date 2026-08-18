@@ -1017,4 +1017,91 @@ describe("graph-documents-gateway", () => {
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
     expect(gateway.lastError()).toBeNull();
   });
+
+  describe("ensureClosure", () => {
+    /** A collection clip, which is what makes one document part of another's
+     *  closure. The `clip()` helper above builds media clips. */
+    const child = (id: string, childTimelineId: string): TimelineClip => {
+      // BUILT, not spread from `clip()`: a collection clip is a different
+      // member of the union, and a media clip with its `kind` overwritten
+      // carries `src`/`sourceDuration` that `CollectionTimelineClip` refuses.
+      const { id: _id, kind: _kind, ...common } = clip(id);
+      return {
+        ...common,
+        id,
+        kind: "collection",
+        title: `Collection ${id}`,
+        childTimelineId,
+        itemCount: 1,
+      };
+    };
+
+    it("does not walk a closure the session already holds, fresh", async () => {
+      const calls = installFetch(() => jsonResponse({}));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      // Exactly what a server-primed boot arrives with: every document under
+      // the root, installed through the prime path.
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+      gateway.prime(doc("kid", [clip("k1")]), 1, "user-a");
+
+      await gateway.ensureClosure("root");
+
+      // THE WHOLE POINT: no request at all. Asking again walked all 151
+      // documents a second time — 465 reads against the 237 it was meant to
+      // beat (#437).
+      expect(calls).toEqual([]);
+    });
+
+    it("walks it anyway once the cache is marked stale, because stale is why refresh exists", async () => {
+      const calls = installFetch(() => jsonResponse({ results: [], missing: [] }));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+      gateway.prime(doc("kid", [clip("k1")]), 1, "user-a");
+
+      // The legacy boot's first act. It exists to stop an edit made in another
+      // view or another tab being overwritten by a write built from stale
+      // content — so skipping the fetch on PRESENCE alone would trade a
+      // data-loss bug for a saved request.
+      gateway.refresh();
+      await gateway.ensureClosure("root");
+
+      expect(calls.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+    });
+
+    it("walks it when any document under the root is missing from the cache", async () => {
+      const calls = installFetch(() => jsonResponse({ results: [], missing: [] }));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      // The root points at a child this session has never loaded — a partial
+      // prime, which is the ordinary state after a focus-path boot that ships
+      // one eager level rather than the whole tree.
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+
+      await gateway.ensureClosure("root");
+
+      expect(calls.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+    });
+
+    it("treats a dangling reference as resolved, so it does not refetch forever", async () => {
+      const gone = installFetch(() =>
+        jsonResponse({ results: [], missing: ["ghost"] }),
+      );
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("root", [child("c1", "ghost")]), 1, "user-a");
+
+      // First walk learns that `ghost` does not exist...
+      await gateway.ensureClosure("root");
+      expect(gone.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+
+      // ...and the second must not go looking again. A deleted document's id
+      // stays in its parent's clips, so without the missing list an
+      // unresolvable reference is indistinguishable from an unhydrated one and
+      // the closure never counts as complete.
+      await gateway.ensureClosure("root");
+      expect(gone.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+    });
+  });
 });
