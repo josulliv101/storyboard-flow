@@ -813,6 +813,68 @@ export async function readStoredTimelineEntries(
   return out;
 }
 
+/**
+ * Every document stamped with this project, in ONE query.
+ *
+ * THE WATERFALL IS THE POINT. The closure walk can only ask for a level once
+ * the previous level's documents have named it, so opening the 143-document
+ * project costs nine SEQUENTIAL round trips — latency proportional to DEPTH,
+ * independent of width (#458). A query addresses documents by attribute instead
+ * of by walking to them, so it needs nobody's answer first: one round trip,
+ * whatever the shape.
+ *
+ * THE BILL IS UNCHANGED, as ever. Firestore charges per document returned, so
+ * 148 documents cost 148 reads here exactly as they did across nine `getAll`s.
+ * What collapses is the round trips.
+ *
+ * A PREFETCH, NOT AN ANSWER. Callers must not treat this as "what the project
+ * contains" — `projectId` is a hint that can be stale, absent on anything
+ * written before it existed, or wrong. It primes the cache; the closure walk
+ * still decides, and still fetches whatever the prime did not cover. That is
+ * what keeps a bad hint costing latency instead of correctness.
+ *
+ * Empty under fixtures: offline mode has no query engine and no round trips to
+ * save, so the walk simply does its usual work against the local file.
+ */
+export async function readStoredTimelineProjectEntries(
+  projectId: string,
+  requesterUid: string,
+): Promise<Map<string, TimelineEntry>> {
+  const found = new Map<string, TimelineEntry>();
+  if (fixtureStoreEnabled()) return found;
+
+  const snapshot = await withFirebaseTimeout(
+    collection()
+      .where("ownerUid", "==", requesterUid)
+      .where("projectId", "==", projectId)
+      .get(),
+    "Loading project documents",
+  );
+  // Counted AFTER, because the size is only known once it answers — and the
+  // whole point of the line is that one request carried all of them.
+  countRequest(snapshot.size, "batch");
+
+  for (const doc of snapshot.docs) {
+    const total = countRead("firestore");
+    const data = doc.data() as TimelineDocumentRecord;
+    // The query already filtered on `ownerUid`, so this cannot return someone
+    // else's — but the check stays rather than being assumed away: it is the
+    // same boundary every other read enforces, and a query is a longer way to
+    // be wrong about who owns what.
+    if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") {
+      logRead(total, doc.id, null, "firestore", "denied");
+      continue;
+    }
+    const entry = {
+      document: toTimelineDocument(doc.id, data),
+      revision: data.revision ?? 0,
+    };
+    logRead(total, doc.id, entry, "firestore");
+    found.set(doc.id, entry);
+  }
+  return found;
+}
+
 /** `readStoredTimelineEntry` without the revision — same caveats, read them there. */
 export async function readStoredTimelineDocument(id: string, requesterUid: string) {
   const entry = await readStoredTimelineEntry(id, requesterUid);

@@ -16,6 +16,7 @@ import {
 import {
   readStoredTimelineEntries,
   readStoredTimelineEntry,
+  readStoredTimelineProjectEntries,
   type TimelineEntry,
 } from "./firebase-timeline-store";
 import { healTimelineDocument } from "./heal-timeline-document";
@@ -92,6 +93,36 @@ export function createTimelineEntryReader(requesterUid: string): TimelineEntryRe
     for (const id of wanted) out.set(id, entries.get(id) ?? null);
     await Promise.all(joined);
     return out;
+  };
+
+  // PRIME FROM ONE QUERY, through the same `inflight` map everything else uses
+  // — so the walk that follows resolves from memory and issues nothing.
+  //
+  // Recorded as already-resolved promises rather than as documents, because
+  // that is the shape `read` and `read.many` already consult: nothing
+  // downstream needs to know a prefetch happened, and a document the query
+  // missed simply is not there, so the walk fetches it exactly as before.
+  //
+  // Best effort. A query failure, a missing index, or a project whose documents
+  // predate `projectId` all land the same way — nothing primed, and the walk
+  // does its nine round trips. That is the whole safety property: the hint can
+  // fail and only latency changes.
+  const prefetched = new Set<string>();
+  read.prefetchProject = async (projectId) => {
+    // ONCE PER PROJECT PER REQUEST. Both `serveTimelineClosure` and the closure
+    // walk itself ask — the first so the ROOT comes from the query too, the
+    // second so any other caller of the walk gets the same benefit — and two
+    // asks must not mean two queries.
+    if (prefetched.has(projectId)) return 0;
+    prefetched.add(projectId);
+    const entries = await readStoredTimelineProjectEntries(projectId, requesterUid).catch(
+      () => new Map<string, TimelineEntry>(),
+    );
+    for (const [id, entry] of entries) {
+      if (inflight.has(id)) continue;
+      inflight.set(id, Promise.resolve(entry));
+    }
+    return entries.size;
   };
 
   return read;
@@ -225,6 +256,10 @@ export async function serveTimelineClosure(
 }> | null> {
   // ONE reader for the whole walk — the property this endpoint exists for.
   const read = createTimelineEntryReader(requesterUid);
+  // BEFORE the root read, so the root arrives in the same query as everything
+  // else. After it, this would be a second sequential round trip to save nine —
+  // still a win, but a needless one when the ordering is free.
+  await read.prefetchProject?.(id).catch(() => 0);
   const entry = await read(id);
   if (!entry) return null;
 
