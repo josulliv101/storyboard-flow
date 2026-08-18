@@ -16,10 +16,19 @@
 // Anything a user can EDIT gets the editing form; anything they merely read
 // gets the reading form.
 
-/** Reading: "12.4s", "1:23", "1:02:03". */
+/**
+ * Reading: "0:04", "0:25", "1:23", "1:02:03".
+ *
+ * CLOCK NOTATION AT EVERY LENGTH. This used to switch to "25.3s" below a
+ * minute, which put two vocabularies on one board: a project read
+ * "Scenes 1:29 / Locations 25.3s" and the eye had to change units between
+ * neighbouring cards to compare them. The split was meant to keep short
+ * durations precise, but precision is the EDITING register's job — anything a
+ * user can type back gets `formatSeconds`, in hundredths, always in seconds.
+ * What is merely read gets one shape.
+ */
 export function formatDuration(seconds: number): string {
   const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  if (safe < 60) return `${safe.toFixed(1)}s`;
   const hours = Math.floor(safe / 3600);
   const minutes = Math.floor((safe % 3600) / 60);
   const rest = Math.round(safe % 60);
