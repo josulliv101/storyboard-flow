@@ -26,18 +26,39 @@ const nextConfig: NextConfig = {
   experimental: {
     staleTimes: { dynamic: 30 },
   },
+  /**
+   * NO GENERATED AGENT FILES. Next 16 writes `AGENTS.md` and `CLAUDE.md` into
+   * this directory on every `next dev`, and the repo already has an instruction
+   * hierarchy that takes precedence CLOSEST to the files being edited — so a
+   * generated app-level file silently outranks the root `CLAUDE.md` and
+   * `AGENTS.md` for everything in this app. Its content is Next's boilerplate,
+   * not this team's, and its own text asks to be committed.
+   *
+   * The useful part of it — that Next 16 differs from an agent's training data
+   * and ships its docs in `node_modules/next/dist/docs/` — belongs in the
+   * repo's own instructions if it is wanted, written by us.
+   */
+  agentRules: false,
   devIndicators: false,
   reactStrictMode: true,
-  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
-  eslint: {
-    // NOT ignored. The graph code treats react-hooks rules as correctness
-    // constraints, not style — `react-hooks/set-state-in-effect` is why several
-    // components adjust state during render instead of in an effect, and
-    // auth-gate carries a deliberate disable with a written justification. CI
-    // runs `npm run lint`, but a local or alternate deploy path that calls
-    // `next build` directly would have skipped all of it.
-    ignoreDuringBuilds: false,
-  },
+  // `NEXT_DIST_DIR` overrides it so a SECOND dev server can run beside the
+  // usual one — two of them sharing a build directory corrupt each other, which
+  // is why the dev/prod split exists at all. Needed to compare bundlers on the
+  // same checkout without stopping the server you are working in.
+  distDir:
+    process.env.NEXT_DIST_DIR ??
+    (process.env.NODE_ENV === 'development' ? '.next-dev' : '.next'),
+  // THE `eslint` KEY IS GONE, removed from NextConfig in Next 16 along with the
+  // built-in ESLint integration. It carried `ignoreDuringBuilds: false` for a
+  // reason that has NOT gone away: the graph code treats react-hooks rules as
+  // correctness constraints, not style — `react-hooks/set-state-in-effect` is
+  // why several components adjust state during render instead of in an effect,
+  // and auth-gate carries a deliberate disable with a written justification.
+  //
+  // Next 16 simply does not lint during a build, so deleting the key would
+  // quietly retire that protection rather than move it. The `build` script runs
+  // `npm run lint` first instead, which keeps the property the key was there
+  // for: a local or alternate deploy path calling the build cannot skip it.
   typescript: {
     ignoreBuildErrors: false,
   },
@@ -63,6 +84,22 @@ const nextConfig: NextConfig = {
   // `next dev` doesn't bundle node_modules, so it passes locally.
   serverExternalPackages: ['firebase-admin'],
   transpilePackages: ['motion', '@storyboard/ui', '@storyboard/timeline-domain', '@storyboard/timeline-model', '@storyboard/collections-core', '@storyboard/timeline-widget'],
+  /**
+   * EXPLICITLY WEBPACK, via `--webpack` on both `dev` and `build`.
+   *
+   * Next 16 makes Turbopack the default and REFUSES to build when a `webpack`
+   * config is present without a `turbopack` one — the upgrade failed on exactly
+   * that. Passing the flag keeps the bundler constant so this upgrade changes
+   * one thing (the framework) rather than two.
+   *
+   * The config below is why it matters. It is dev-only, and it stops the
+   * watcher treating the app's own writes as source changes: without it, one
+   * offline save produced a recompile, a full page reload and a closure walk —
+   * ~16 reads of pure feedback for an edit that changed nothing in source.
+   * Turbopack has no watchOptions equivalent, so switching the DEV bundler
+   * would bring that back. The build never runs this (`if (dev)`), so moving
+   * only the build to Turbopack is a separate, safe decision to make later.
+   */
   webpack: (config, { dev }) => {
     // HMR is disabled in AI Studio via DISABLE_HMR env var.
     // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
