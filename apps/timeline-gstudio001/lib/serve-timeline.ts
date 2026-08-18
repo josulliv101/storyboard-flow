@@ -254,7 +254,9 @@ export async function serveTimelineClosure(
   documents: Record<string, ServedTimeline>;
   missing: string[];
 }> | null> {
-  // ONE reader for the whole walk — the property this endpoint exists for.
+  // ONE reader for the whole walk — the property this endpoint exists for, and
+  // what makes a document read for its parent's summaries free when it becomes
+  // a payload of its own.
   const read = createTimelineEntryReader(requesterUid);
   // BEFORE the root read, so the root arrives in the same query as everything
   // else. After it, this would be a second sequential round trip to save nine —
@@ -283,22 +285,28 @@ export async function serveTimelineClosure(
   if (!entry) return null;
   at = mark("root read", at);
 
-  const cloudinaryAssets = await listCloudinaryAssets(requesterUid).catch(() => []);
-  at = mark(`cloudinary list (${cloudinaryAssets.length} assets)`, at);
-  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
-  at = mark("heal root", at);
+  // STARTED, not awaited. The listing feeds the root's heal and nothing else,
+  // so it has no bearing on the walk — and it was awaited in front of it,
+  // putting a network call to Cloudinary on the critical path ahead of work
+  // that never needed it. Measured before this: 1844ms of an 1887ms serve.
+  const assets = listCloudinaryAssets(requesterUid).catch(() => []);
 
-  const closure = await loadTimelineClosure(id, requesterUid, {
-    rootEntry: entry,
-    read,
-  }).catch((error: unknown) => {
-    if (error instanceof TimelineClosureTooLargeError) return null;
-    throw error;
-  });
+  const [cloudinaryAssets, closure] = await Promise.all([
+    assets,
+    loadTimelineClosure(id, requesterUid, {
+      rootEntry: entry,
+      read,
+    }).catch((error: unknown) => {
+      if (error instanceof TimelineClosureTooLargeError) return null;
+      throw error;
+    }),
+  ]);
   if (closure === null) return null;
+  at = mark(`walk + cloudinary list (${cloudinaryAssets.length} assets), in parallel`, at);
 
+  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
   const missing = new Set(closure.missing);
-  at = mark("closure walk", at);
+  at = mark("heal root", at);
   const summarized = deriveClosureSummaries(
     { ...closure.documents, [id]: healedDocument },
     missing,

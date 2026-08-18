@@ -150,3 +150,69 @@ describe("Cloudinary project folders", () => {
     expect(((at(requests, 1).body as FormData).get("file") as Blob).size).toBe(1);
   });
 });
+
+describe("the asset listing must not block a render", () => {
+  /** A listing that never answers, standing in for the slow paginated call. */
+  const hangingFetch = () => {
+    let started = 0;
+    vi.stubGlobal(
+      "fetch",
+      (async () => {
+        started += 1;
+        return new Promise<Response>(() => {});
+      }) as typeof fetch,
+    );
+    return () => started;
+  };
+
+  it("gives up on a COLD listing rather than holding the render", async () => {
+    // Measured on a real board open: 1844ms of a 1887ms serve, for a listing
+    // that only feeds a best-effort repair. An empty list means "nothing to
+    // repair against", and the document passes through untouched.
+    const started = hangingFetch();
+    vi.useFakeTimers();
+    try {
+      const pending = listCloudinaryAssets("user-cold", "project-a");
+      await vi.advanceTimersByTimeAsync(500);
+      expect(await pending).toEqual([]);
+      // It still ASKED — the refresh it started is what populates the cache for
+      // the next load. Giving up on waiting is not giving up on fetching.
+      expect(started()).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("serves a STALE listing immediately instead of re-learning it", async () => {
+    // Warm the cache with a real answer.
+    vi.stubGlobal(
+      "fetch",
+      (async (input: string | URL | Request) => {
+        if (String(input).endsWith("/resources/search")) return Response.json({ resources: [] });
+        return Response.json({
+          resources: [
+            {
+              public_id: "timeline-gstudio001/user-stale/project-a/Scenes/frame-1",
+              resource_type: "image",
+              secure_url: "https://cdn.test/frame-1.png",
+            },
+          ],
+        });
+      }) as typeof fetch,
+    );
+    const first = await listCloudinaryAssets("user-stale", "project-a");
+    expect(first).toHaveLength(1);
+
+    // Expire it, then make any refresh hang. The stale answer must come back
+    // WITHOUT waiting on that: the entry expiring does not make it wrong —
+    // uploads and deletes invalidate this cache explicitly.
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    hangingFetch();
+    const stale = await Promise.race([
+      listCloudinaryAssets("user-stale", "project-a"),
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 50)),
+    ]);
+    expect(stale).not.toBe("blocked");
+    expect(stale).toHaveLength(1);
+  });
+});
