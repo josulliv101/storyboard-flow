@@ -667,7 +667,49 @@ export function createGraphDocumentsGateway(
     }
   };
 
+  /**
+   * Does the session already hold every document under `rootId`, all of it
+   * fresh?
+   *
+   * BOTH HALVES MATTER, and the second is the one with teeth. Holding the
+   * documents is not enough: `refresh()` marks the whole cache stale on the
+   * legacy boot precisely so they get refetched, because an edit made in
+   * another view or another tab between graph sessions would otherwise be
+   * overwritten by a full-document write built from stale content. Skipping the
+   * fetch on presence alone would delete that protection — which is a data-loss
+   * bug, not a slow path.
+   *
+   * A known-missing id resolves as an empty document, exactly as the server's
+   * walk does, so a dangling `childTimelineId` does not make the closure look
+   * permanently incomplete and refetch it forever.
+   */
+  const holdsFreshClosure = (rootId: string): boolean => {
+    const seen = new Set<string>();
+    const walk = (id: string): boolean => {
+      if (seen.has(id)) return true;
+      seen.add(id);
+      if (!documents[id]) return knownMissingIds.has(id);
+      if (staleIds.has(id)) return false;
+      for (const clip of documents[id].clips) {
+        if (clip.kind !== "collection" || !clip.childTimelineId) continue;
+        if (!walk(clip.childTimelineId)) return false;
+      }
+      return true;
+    };
+    return walk(rootId);
+  };
+
   const ensureClosure = async (rootId: string): Promise<void> => {
+    // NOTHING TO FETCH, so do not spend a walk finding that out.
+    //
+    // The server-primed boot arrives holding the whole closure already, and
+    // asking again walked all 151 documents a SECOND time — measured at 465
+    // reads against the 237 it was meant to beat (#437). The caller guards that
+    // case too, by not calling this on a primed boot; this is the same
+    // guarantee made STRUCTURAL rather than positional, so deleting the
+    // caller's flag costs a redundant call rather than a doubled bill (#451).
+    if (holdsFreshClosure(rootId)) return;
+
     const gen = generation;
     try {
       const response = await fetch("/api/timelines/closure", {
