@@ -542,9 +542,53 @@ export async function collectOwnedTimelineClips(
  * The count lives on `globalThis` so it survives the dev server's module
  * re-evaluation, which would otherwise reset it on every file save.
  */
-function countRead(): number | null {
+/**
+ * REQUESTS, which is a different number from reads since #449.
+ *
+ * `countRead` counts DOCUMENTS, because that is what Firestore bills and what
+ * the 50,000/day free tier is denominated in. Batching cut round trips without
+ * touching that number — correctly — but it also made the log silent about the
+ * thing it changed: 148 lines either way, and no way to see whether a level
+ * went out as one request or as 148.
+ *
+ * So requests are counted separately and printed per call. The two numbers
+ * answer different questions and are meant to be read together: reads are the
+ * bill, requests are the latency.
+ */
+function countRequest(documents: number, kind: "batch" | "single"): void {
+  if (!process.env.GSTUDIO_COUNT_READS) return;
+  const scope = globalThis as unknown as { __gstudioRequests?: number };
+  scope.__gstudioRequests = (scope.__gstudioRequests ?? 0) + 1;
+  console.log(
+    `[READREQ ${scope.__gstudioRequests}] ${kind} — ${documents} document${documents === 1 ? "" : "s"} in 1 request`,
+  );
+}
+
+/**
+ * TWO COUNTERS, because one number cannot mean two things.
+ *
+ * This used to increment a single total for both stores and tag the SOURCE per
+ * line — so the running number conflated billable Firestore reads with free
+ * reads of a local JSON file. Opening a project offline printed "[READTOTAL
+ * 150]" while touching no quota at all, and flipping fixtures off mid-session
+ * carried the fixture count forward, so the number kept looking like Firestore
+ * usage it had never been.
+ *
+ * `[READTOTAL n]` is now FIRESTORE ONLY and is the billing figure — the one to
+ * compare against the 50,000/day free tier. Fixture reads count under
+ * `[FIXTUREREAD n]`, which costs nothing and is only useful for seeing that the
+ * same code path ran.
+ */
+function countRead(source: "fixture" | "firestore"): number | null {
   if (!process.env.GSTUDIO_COUNT_READS) return null;
-  const scope = globalThis as unknown as { __gstudioReads?: number };
+  const scope = globalThis as unknown as {
+    __gstudioReads?: number;
+    __gstudioFixtureReads?: number;
+  };
+  if (source === "fixture") {
+    scope.__gstudioFixtureReads = (scope.__gstudioFixtureReads ?? 0) + 1;
+    return scope.__gstudioFixtureReads;
+  }
   scope.__gstudioReads = (scope.__gstudioReads ?? 0) + 1;
   return scope.__gstudioReads;
 }
@@ -582,7 +626,11 @@ function logRead(
     : note === "denied"
       ? "DENIED"
       : "MISSING";
-  console.log(`[READTOTAL ${total}] ${id} ${detail} (${source})`);
+  // The LABEL carries the meaning now, not a tag at the end of the line: one is
+  // money, the other is not.
+  console.log(
+    `[${source === "fixture" ? "FIXTUREREAD" : "READTOTAL"} ${total}] ${id} ${detail}`,
+  );
 }
 
 /**
@@ -617,18 +665,22 @@ export async function readStoredTimelineEntry(
   // Counted HERE, before the fixture branch and before the fetch: the metric is
   // read ATTEMPTS, so a miss, a denial and a fixture hit all count. What each
   // attempt turned out to be is reported by `logRead` once it resolves.
-  const readTotal = countRead();
+  const usingFixtures = fixtureStoreEnabled();
+  const readTotal = countRead(usingFixtures ? "fixture" : "firestore");
   // OFFLINE MODE. Dev-only, refused outright in production — see
   // `fixture-timeline-store`. Intercepted HERE rather than per route because
   // this is the single read seam: `serveTimelineDocument`, `serveTrashDocument`,
   // the RSC focus-path loader and the closure walker all come through it, so
   // one branch covers every reader and none of them can drift.
-  if (fixtureStoreEnabled()) {
+  if (usingFixtures) {
     const fixtureEntry = fixtureReadEntry(id);
     logRead(readTotal, id, fixtureEntry, "fixture");
     return fixtureEntry;
   }
 
+  // One document, one request — the case the batch exists to replace, and the
+  // one worth being able to spot in the log when it happens outside a walk.
+  countRequest(1, "single");
   const snapshot = await withFirebaseTimeout(
     collection().doc(id).get(),
     "Loading timeline document",
@@ -689,10 +741,11 @@ export async function readStoredTimelineEntries(
 
   // Counted BEFORE the fetch, per id, so the metric stays "read attempts" —
   // the same rule the single-document path follows.
+  const usingFixtures = fixtureStoreEnabled();
   const totals = new Map<string, number | null>();
-  for (const id of unique) totals.set(id, countRead());
+  for (const id of unique) totals.set(id, countRead(usingFixtures ? "fixture" : "firestore"));
 
-  if (fixtureStoreEnabled()) {
+  if (usingFixtures) {
     for (const id of unique) {
       const entry = fixtureReadEntry(id);
       logRead(totals.get(id) ?? null, id, entry, "fixture");
@@ -710,12 +763,13 @@ export async function readStoredTimelineEntries(
   }
   const snapshots = (
     await Promise.all(
-      chunks.map((chunk) =>
-        withFirebaseTimeout(
+      chunks.map((chunk) => {
+        countRequest(chunk.length, "batch");
+        return withFirebaseTimeout(
           getFirebaseDb().getAll(...chunk.map((id) => collection().doc(id))),
           "Loading timeline documents",
-        ),
-      ),
+        );
+      }),
     )
   ).flat();
 
