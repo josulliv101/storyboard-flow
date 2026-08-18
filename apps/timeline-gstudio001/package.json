@@ -22,6 +22,7 @@
     "inspect:squatted": "node --env-file=.env scripts/inspect-squatted-fixtures.mjs",
     "stamp:ownership": "node --env-file=.env scripts/stamp-ownerless-timelines.mjs",
     "stamp:project-id": "node --env-file=.env scripts/stamp-project-id-on-timeline-documents.mjs",
+    "migrate:durations": "node --env-file=.env scripts/migrate-legacy-video-durations.mjs",
     "bin:orphans": "node --env-file=.env scripts/bin-unreachable-timelines.mjs",
     "correct:aspects": "node --env-file=.env scripts/correct-clip-aspects.mjs",
     "audit:accounts": "node --env-file=.env scripts/audit-foreign-accounts.mjs"

@@ -2,7 +2,6 @@ import "server-only";
 
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
-import { listCloudinaryAssets } from "./cloudinary-media-store";
 import {
   collectionChildIds,
   deriveClosureSummaries,
@@ -19,7 +18,6 @@ import {
   readStoredTimelineProjectEntries,
   type TimelineEntry,
 } from "./firebase-timeline-store";
-import { healTimelineDocument } from "./heal-timeline-document";
 
 // The ONE serve path for a stored timeline document — used by the
 // GET /api/timelines/[id] route AND the RSC payload loaders, so the two
@@ -140,10 +138,32 @@ export async function serveTimelineDocument(
   const entry = await read(id);
   if (!entry) return null;
 
-  const cloudinaryAssets = await listCloudinaryAssets(requesterUid).catch(() => []);
-  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
+  const healedDocument = entry.document;
 
-  // The heal is SERVED, NOT PERSISTED.
+  // THE HEAL IS GONE. What follows records why, because "we used to repair
+  // documents against Cloudinary on every read" is exactly the kind of thing
+  // that gets reintroduced by someone finding a broken thumbnail.
+  //
+  // It did two unrelated jobs under one name. The DURATION backfill fixed clips
+  // stored before the Search API carried durations — a one-time migration, and
+  // `npm run migrate:durations` reports 0 documents to rewrite against live
+  // data, so it is already done. The SRC repair re-pointed clips whose asset
+  // had moved, which this app cannot cause: every upload gets a
+  // timestamp-suffixed public_id, so re-uploading never overwrites, and there
+  // is no rename or move anywhere in the store. Only a change made directly in
+  // Cloudinary can invalidate a stored url, and the owner's call is that such a
+  // clip should visibly break rather than be silently re-pointed.
+  //
+  // It cost 1844ms of an 1887ms serve — a listing of 311 assets fetched on
+  // every board open — to discover it had nothing to do.
+  //
+  // Its src matching also had teeth: for clips predating provenance it keyed on
+  // the bare FILENAME, so two assets named `alley` in different projects
+  // collapsed onto one key. Because the result was persisted then, a plain GET
+  // could repoint a clip at another project's file.
+  //
+  // The old note on why it was served rather than persisted, kept because the
+  // hazard it describes outlives it:
   //
   // It used to write itself back through `saveFirebaseTimelineEntry`, whose
   // single-document path is explicitly last-write-wins — and it did so after
@@ -285,28 +305,22 @@ export async function serveTimelineClosure(
   if (!entry) return null;
   at = mark("root read", at);
 
-  // STARTED, not awaited. The listing feeds the root's heal and nothing else,
-  // so it has no bearing on the walk — and it was awaited in front of it,
-  // putting a network call to Cloudinary on the critical path ahead of work
-  // that never needed it. Measured before this: 1844ms of an 1887ms serve.
-  const assets = listCloudinaryAssets(requesterUid).catch(() => []);
 
-  const [cloudinaryAssets, closure] = await Promise.all([
-    assets,
+  const closure = await ((async () =>
     loadTimelineClosure(id, requesterUid, {
       rootEntry: entry,
       read,
     }).catch((error: unknown) => {
       if (error instanceof TimelineClosureTooLargeError) return null;
       throw error;
-    }),
-  ]);
+    }))());
   if (closure === null) return null;
-  at = mark(`walk + cloudinary list (${cloudinaryAssets.length} assets), in parallel`, at);
+  at = mark("closure walk", at);
 
-  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
+  // No heal, and so no Cloudinary listing on this path at all — see
+  // `serveTimelineDocument` for what it did and why it went.
+  const healedDocument = entry.document;
   const missing = new Set(closure.missing);
-  at = mark("heal root", at);
   const summarized = deriveClosureSummaries(
     { ...closure.documents, [id]: healedDocument },
     missing,
