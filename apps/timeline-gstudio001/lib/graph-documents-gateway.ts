@@ -440,6 +440,10 @@ export function createGraphDocumentsGateway(
     document?: TimelineDocument;
     revision?: number;
     error?: string;
+    /** The status the equivalent single GET would have returned. 404 is the
+     *  server saying this document does not exist — the one failure worth
+     *  remembering, because asking again cannot change the answer. */
+    status?: number;
   };
 
   /** Install ONE document from a batch response into the cache. Returns the
@@ -450,6 +454,12 @@ export function createGraphDocumentsGateway(
     next: Record<string, TimelineDocument>,
   ): TimelineDocument | null => {
     if (!entry || entry.error !== undefined || !entry.document) {
+      // NOT FOUND is remembered; nothing else is. A 404 is an answer — asking
+      // again cannot change it, and `ensure` skips the id from here on. A
+      // transport failure, a 500 or a timeout is the OPPOSITE: the document may
+      // well exist, and recording it missing would hide it for the session and
+      // let the manifest compile a branch as empty rather than refuse.
+      if (entry?.status === 404) knownMissingIds.add(timelineId);
       setError(
         timelineId,
         entry?.error || `Timeline "${timelineId}" failed to load.`,
@@ -772,6 +782,19 @@ export function createGraphDocumentsGateway(
   const ensure = (timelineId: string): Promise<TimelineDocument | null> => {
     const cached = documents[timelineId];
     if (cached && !staleIds.has(timelineId)) return Promise.resolve(cached);
+    // ALREADY ANSWERED: the server said this id does not exist.
+    //
+    // A dangling `childTimelineId` is normal — the reference stays in its
+    // parent's clips after the document is gone — and the board asks for one
+    // every time it hydrates the branch holding it. Measured on the real
+    // project: five dangling ids fetched TWICE per page load, `POST batch-get`
+    // at 158ms and 114ms, both answering 404 five times over. Against Firestore
+    // that is ten document reads per load for five documents that do not exist.
+    //
+    // Bounded rather than permanent: `refresh()` clears the list, so entering
+    // the view asks again and a document created since is picked up. Within one
+    // session, an id the server has already denied is not asked for twice.
+    if (!cached && knownMissingIds.has(timelineId)) return Promise.resolve(null);
     const pending = inflight.get(timelineId);
     if (pending) return pending;
     // A stale doc may still have writes in flight or queued (flushed on
@@ -1123,6 +1146,10 @@ export function createGraphDocumentsGateway(
   const installPrime = (document: TimelineDocument, revision: number, forUid: string) => {
     const timelineId = document.id;
     if (boundUid === null || forUid !== boundUid) return;
+    // It exists after all, so stop shadowing it. A document can be created at
+    // an id this session already asked about — the negative answer must not
+    // outlive the evidence against it.
+    knownMissingIds.delete(timelineId);
     // Local edits win: a dirty document (or any batch mid-flight, whose write
     // set isn't inspectable here) must not be replaced by a server read that
     // predates it.
@@ -1273,12 +1300,21 @@ export function createGraphDocumentsGateway(
     reportIssue: (key, message) => setError(key, message),
     flushPendingWrites,
     markStale: (timelineId) => {
+      // Named by the revisions endpoint, so it exists — clear the negative
+      // answer even for an id this session never held.
+      knownMissingIds.delete(timelineId);
       if (documents[timelineId] === undefined) return;
       staleIds.add(timelineId);
     },
     refresh: () => {
       flushPendingWrites();
       staleIds = new Set(Object.keys(documents));
+      // WHAT WAS MISSING IS RE-CHECKED. `ensure` skips a known-missing id
+      // outright, so without this a document created elsewhere between graph
+      // sessions would stay invisible for the life of the tab — the same
+      // don't-trust-the-session-cache reasoning that marks everything stale
+      // here, applied to the absences rather than the documents.
+      knownMissingIds.clear();
       // Entering the graph view rebuilds the graph from freshly fetched
       // documents, which is exactly the reconciliation the conflict gate was
       // waiting for — so the block lifts here and nowhere else.

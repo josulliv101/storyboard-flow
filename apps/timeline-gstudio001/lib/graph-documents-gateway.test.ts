@@ -1104,4 +1104,71 @@ describe("graph-documents-gateway", () => {
       expect(gone.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
     });
   });
+
+  describe("known-missing ids", () => {
+    /** The server's answer for a dangling `childTimelineId`: the document is
+     *  gone, but the reference to it stays in its parent's clips. */
+    // The 404 comes from the RESPONSE, exactly as the endpoint sends it — the
+    // batch adapter derives each entry's `status` from it. Putting a `status`
+    // in the body instead would let these pass without the mechanism working.
+    const notFound = () => jsonResponse({ error: "Timeline was not found." }, 404);
+
+    it("does not ask again for an id the server already said is gone", async () => {
+      const calls = installFetch(notFound);
+      const gateway = createGraphDocumentsGateway();
+      // Exactly what the RSC bootstrap reports through `bootstrapMissing`.
+      gateway.recordMissing(["ghost"]);
+
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(await gateway.ensure("ghost")).toBeNull();
+
+      // Measured on the real project before this: five dangling ids fetched
+      // TWICE per page load, two batch-gets answering 404 five times over.
+      expect(getsOf(calls)).toHaveLength(0);
+    });
+
+    it("records them from its own fetch too, so the second ask is free", async () => {
+      const calls = installFetch(notFound);
+      const gateway = createGraphDocumentsGateway();
+
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(getsOf(calls)).toHaveLength(1);
+
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(getsOf(calls)).toHaveLength(1);
+    });
+
+    it("re-checks after refresh, so a document created since is not shadowed", async () => {
+      let exists = false;
+      const calls = installFetch(() =>
+        exists ? jsonResponse({ document: doc("ghost", [clip("g1")]), revision: 1 }) : notFound(),
+      );
+      const gateway = createGraphDocumentsGateway();
+      gateway.recordMissing(["ghost"]);
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(getsOf(calls)).toHaveLength(0);
+
+      // Entering the view distrusts the session cache — the absences included,
+      // or a document created elsewhere stays invisible for the life of the tab.
+      exists = true;
+      gateway.refresh();
+
+      expect(clipIds(await gateway.ensure("ghost"))).toEqual(["g1"]);
+    });
+
+    it("a prime for a missing id wins over the negative answer", async () => {
+      const calls = installFetch(notFound);
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.recordMissing(["ghost"]);
+      expect(await gateway.ensure("ghost")).toBeNull();
+
+      // The server streamed it after all. The negative answer must not outlive
+      // the evidence against it.
+      gateway.prime(doc("ghost", [clip("g1")]), 1, "user-a");
+
+      expect(clipIds(await gateway.ensure("ghost"))).toEqual(["g1"]);
+      expect(getsOf(calls)).toHaveLength(0);
+    });
+  });
 });
