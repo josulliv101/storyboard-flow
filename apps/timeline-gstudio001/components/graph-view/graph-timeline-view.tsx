@@ -62,7 +62,11 @@ import { laneDropIndex, splitLaneRows } from "./graph-lane-rows";
 import { withDefaultLayerFrame } from "./graph-layer-frame";
 import { GraphViewLoadingSkeleton } from "./graph-view-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
-import { FlatClosureHydrator, HydrationController } from "./graph-hydration";
+import {
+  BackgroundClosureHydrator,
+  FlatClosureHydrator,
+  HydrationController,
+} from "./graph-hydration";
 import { GraphItemActionsBridge } from "./graph-item-actions";
 import { RemoteChangesBridge } from "./graph-remote-changes";
 import { McpToolsBridge } from "./graph-mcp-tools";
@@ -842,6 +846,10 @@ export function GraphTimelineView({
             serverPrimed={bootedFromServer}
             onFocusError={setFocusError}
           />
+          {/* Fills in the times the one-level board open cannot vouch for.
+              Disabled while FLAT mode is on, which loads the same closure for
+              its own reasons — two passes would race for the same documents. */}
+          <BackgroundClosureHydrator projectId={projectId} enabled={!flatOn} />
           {/* Flat mode needs the WHOLE closure loaded, not just the focus
               chain — mounted here because the collections store lives only
               inside the provider. */}

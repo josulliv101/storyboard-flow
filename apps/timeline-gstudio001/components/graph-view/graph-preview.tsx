@@ -26,6 +26,7 @@ import {
 import {
   graphChildrenToClips,
   hydratedCollectionPlayableDuration,
+  hydratedCollectionPlayableSpan,
   manifestToClips,
   type DetailsById,
   type FlatItem,
@@ -161,7 +162,17 @@ export function useFocusedTimelineAggregate(
     // longer than the total claimed here whenever something is disabled.
     return {
       count: cards.filter((card) => card.disabled !== true).length,
-      seconds: playableSpanSeconds(cards),
+      // FROM THE GRAPH, not from the card spans. `playableSpanSeconds` measures
+      // what the strip DRAWS, and a card whose descendants are disabled keeps
+      // its full slot — so this readout claimed 23:01 while its own three cards
+      // summed to about 20:45. The spans carry no node id, so the playable
+      // length cannot be recovered from them; it has to be walked.
+      seconds: hydratedCollectionPlayableSpan(
+        graph,
+        details,
+        focusedId as NodeId,
+        graphDocumentsGateway.isKnownMissing,
+      ),
     };
   }, [graph, details, focusedId, spans, pixelsPerSecond, flatItems]);
 }

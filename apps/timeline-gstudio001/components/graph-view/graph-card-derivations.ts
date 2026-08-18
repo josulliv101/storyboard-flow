@@ -9,6 +9,7 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
+  collectionSubtreeHydrated,
   hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
   resolveCollectionPreviews,
@@ -21,6 +22,7 @@ import { createDerivedCache } from "@/lib/derived-cache";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import { resolveCardProvenance } from "@/lib/card-provenance";
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { isDisabledByAncestor } from "./graph-playhead-model";
@@ -182,6 +184,50 @@ export function useCollectionPreviewFrames(
  * when one of them really did. The rounded content key keeps sub-millisecond
  * recompute jitter from churning the value.
  */
+/**
+ * Whether this collection's readouts can be VOUCHED for — it and everything
+ * under it loaded.
+ *
+ * Separate from the card's `hydrated` flag, which only says its own children
+ * arrived. `useHydratedCollectionSeconds` will happily answer for a partly
+ * loaded tree by substituting stored summaries for the missing parts, and those
+ * summaries drift (58.4% of collection clips carry at least one stale field).
+ * This is what lets the card decline to show that answer.
+ *
+ * Recomputed on every graph or details change rather than cached: it is a walk
+ * of nodes already in memory, and it must flip the moment a branch finishes
+ * loading — that flip IS the number appearing.
+ */
+export function useCollectionSubtreeHydrated(id: string): boolean {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const getSnapshot = useCallback(
+    () =>
+      collectionSubtreeHydrated(
+        store.getSnapshot().graph,
+        detailsStore.read(),
+        id as NodeId,
+        // The gateway is the only place that knows a document is GONE rather
+        // than merely unloaded — the server reports it and `ensureClosure`
+        // keeps the list.
+        graphDocumentsGateway.isKnownMissing,
+      ),
+    [store, detailsStore, id],
+  );
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const unsubStore = store.subscribe(onChange);
+      const unsubDetails = detailsStore.subscribe(onChange);
+      return () => {
+        unsubStore();
+        unsubDetails();
+      };
+    },
+    [store, detailsStore],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
 export function useHydratedCollectionSeconds(id: string, enabled: boolean): number | null {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -192,7 +238,15 @@ export function useHydratedCollectionSeconds(id: string, enabled: boolean): numb
       // (`hydratedCollectionDuration`) still drives the clip's duration in the
       // projection, where the disabled slot has to survive.
       compute: (graph: CollectionsGraph, details: DetailsById, nodeId: NodeId) =>
-        hydratedCollectionPlayableDuration(graph, details, nodeId),
+        hydratedCollectionPlayableDuration(
+          graph,
+          details,
+          nodeId,
+          // A dangling reference contributes nothing to what plays. Without
+          // this the readout quotes the stored duration of a document that is
+          // gone — 33.9s of a real collection's 19:24.
+          graphDocumentsGateway.isKnownMissing,
+        ),
       contentKey: (seconds) => String(Math.round(seconds * 1000)),
     }),
   );

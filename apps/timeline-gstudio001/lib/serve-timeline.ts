@@ -126,6 +126,35 @@ export function createTimelineEntryReader(requesterUid: string): TimelineEntryRe
   return read;
 }
 
+/**
+ * How far below the project the BOARD OPEN reads.
+ *
+ * The board renders the root's children as cards, and every card below the
+ * first level is a placeholder the client hydrates on demand. Reading deeper
+ * bought exactly one thing: freshly derived `duration` / `previewItems` /
+ * `itemCount` on those cards — 149 documents on a real project to correct four
+ * numbers each, which is 96%+ of every read a board open has ever cost.
+ *
+ * At depth 1 those numbers come from the stored summaries instead. Those are
+ * measurably imperfect today (58.4% of collection clips carry at least one
+ * stale field), and the fix belongs on the WRITE path where the staleness is
+ * actually created — a client whose graph is only partly hydrated writes the
+ * stale values it was served straight back. Recomputing the world on every read
+ * to paper over a bad write was the expensive half of that bargain.
+ *
+ * NOT used by the preview/export compile, which genuinely needs every document
+ * and must keep reading them.
+ *
+ * ONE BEHAVIOUR CHANGE WORTH KNOWING: `missing` now reports only dangling
+ * references found within the bound. On the project this was measured against
+ * it went from 5 to 0 — those five childless ids live deeper than the first
+ * level, so the client meets them when it hydrates that branch instead of at
+ * boot. Nothing hides them; the discovery just moves to the point of use.
+ *
+ * Measured on that project: 150 billed reads -> 5.
+ */
+export const BOARD_OPEN_MAX_DEPTH = 1;
+
 /** Null when the document doesn't exist; throws TimelineAccessDeniedError
  *  for someone else's (callers map it to their 404). */
 export async function serveTimelineDocument(
@@ -134,6 +163,24 @@ export async function serveTimelineDocument(
   /** Share one across a request to avoid re-reading documents (see
    *  `createTimelineEntryReader`). Defaults to an un-shared direct read. */
   read: TimelineEntryReader = (childId) => readStoredTimelineEntry(childId, requesterUid),
+  options?: Readonly<{
+    /**
+     * Levels below `id` to read when deriving its summaries. Absent = the whole
+     * closure below it.
+     *
+     * EVERY BOARD-SERVING CALLER SHOULD PASS ONE. Deriving a document's
+     * collection summaries means reading everything beneath it, so serving a
+     * single focus segment cost a full subtree walk — measured at 149 reads to
+     * serve the project root, and again on every focus navigation. A drill-in
+     * and two clicks back up the breadcrumb billed 580 reads across 149
+     * documents, every one of them read more than once.
+     *
+     * The preview/export compile is the caller that must NOT bound this: it
+     * flattens the real tree and a stale grandchild would window its parent's
+     * content out of the timeline.
+     */
+    maxDepth?: number;
+  }>,
 ): Promise<ServedTimeline | null> {
   const entry = await read(id);
   if (!entry) return null;
@@ -201,6 +248,7 @@ export async function serveTimelineDocument(
   const closure = await loadTimelineClosure(id, requesterUid, {
     rootEntry: entry,
     read,
+    ...(options?.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
   }).catch((error: unknown) => {
     // A pathological tree must not make the document unopenable. Fall back to
     // the one-level derivation: less fresh at depth, but the same answer this
@@ -226,7 +274,9 @@ export async function serveTimelineDocument(
   // srcs and durations would be thrown away by this substitution.
   const summarized = deriveClosureSummaries(
     { ...closure.documents, [id]: healedDocument },
-    new Set(closure.missing),
+    // Skipped and missing alike cannot be derived FROM — see the note in
+    // `serveTimelineClosure`.
+    new Set([...closure.missing, ...closure.unvisited]),
   );
 
   return { document: summarized[id] ?? healedDocument, revision };
@@ -270,6 +320,15 @@ export async function serveTimelineDocument(
 export async function serveTimelineClosure(
   id: string,
   requesterUid: string,
+  options?: Readonly<{
+    /**
+     * Levels below the root to read. Absent = the whole closure.
+     *
+     * The BOARD passes a bound; the preview/export compile must not. See
+     * `loadTimelineClosure`'s `maxDepth` for why the board can afford to stop.
+     */
+    maxDepth?: number;
+  }>,
 ): Promise<Readonly<{
   documents: Record<string, ServedTimeline>;
   missing: string[];
@@ -310,6 +369,7 @@ export async function serveTimelineClosure(
     loadTimelineClosure(id, requesterUid, {
       rootEntry: entry,
       read,
+      ...(options?.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
     }).catch((error: unknown) => {
       if (error instanceof TimelineClosureTooLargeError) return null;
       throw error;
@@ -321,9 +381,16 @@ export async function serveTimelineClosure(
   // `serveTimelineDocument` for what it did and why it went.
   const healedDocument = entry.document;
   const missing = new Set(closure.missing);
+  // UNRESOLVED IS THE WIDER SET, and the distinction is the whole reason the
+  // walk reports the two separately. A child that is gone and a child the depth
+  // bound skipped are alike in one way — neither can be derived FROM, so both
+  // leave the parent's stored summary standing ("stale beats blank"). They are
+  // nothing alike to the client, which shows a dangling reference differently
+  // from a collection it simply has not loaded yet.
+  const unresolved = new Set([...closure.missing, ...closure.unvisited]);
   const summarized = deriveClosureSummaries(
     { ...closure.documents, [id]: healedDocument },
-    missing,
+    unresolved,
   );
 
   const documents: Record<string, ServedTimeline> = {};

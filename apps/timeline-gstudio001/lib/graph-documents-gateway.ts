@@ -721,7 +721,31 @@ export function createGraphDocumentsGateway(
     return walk(rootId);
   };
 
-  const ensureClosure = async (rootId: string): Promise<void> => {
+  /**
+   * One closure request per root at a time.
+   *
+   * `holdsFreshClosure` is a check on STATE, so it cannot stop callers that
+   * arrive before the first response lands — and they do: React runs an effect
+   * twice in development, a re-render can re-run it, and the observed result
+   * was FIVE identical closure POSTs within 30ms. Each one walks the whole
+   * project, so that is 745 document reads to do a 149-read job. The
+   * single-document `ensure` path has had this dedupe since #437; this is the
+   * same guarantee for the closure.
+   */
+  const closureInflight = new Map<string, Promise<void>>();
+
+  const ensureClosure = (rootId: string): Promise<void> => {
+    if (holdsFreshClosure(rootId)) return Promise.resolve();
+    const existing = closureInflight.get(rootId);
+    if (existing) return existing;
+    const run = runClosure(rootId).finally(() => {
+      closureInflight.delete(rootId);
+    });
+    closureInflight.set(rootId, run);
+    return run;
+  };
+
+  const runClosure = async (rootId: string): Promise<void> => {
     // NOTHING TO FETCH, so do not spend a walk finding that out.
     //
     // The server-primed boot arrives holding the whole closure already, and

@@ -45,3 +45,4 @@ apps/backend/venv/
 apps/backend/.venv/
 __pycache__/
 *.pyc
+.vercel

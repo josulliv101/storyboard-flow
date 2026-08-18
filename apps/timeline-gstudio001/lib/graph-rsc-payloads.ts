@@ -3,6 +3,7 @@ import "server-only";
 import { collectionChildIds } from "./derive-collection-summaries";
 import type { GraphServerPayload } from "./graph-documents-gateway";
 import {
+  BOARD_OPEN_MAX_DEPTH,
   createTimelineEntryReader,
   serveTimelineClosure,
   serveTimelineDocument,
@@ -32,6 +33,8 @@ const MAX_PATH_PAYLOADS = 16;
  * storage read per segment. This is the bound that actually holds.
  */
 const MAX_PATH_ATTEMPTS = 48;
+
+
 
 /**
  * The boot payloads: the project document and the user's trash — the two
@@ -85,7 +88,7 @@ export async function loadGraphBootstrapPayloads(
     // requests and still two billed reads' worth of documents; they simply cost
     // one round trip between them instead of two.
     const [closure, trash] = await Promise.all([
-      serveTimelineClosure(projectId, requesterUid),
+      serveTimelineClosure(projectId, requesterUid, { maxDepth: BOARD_OPEN_MAX_DEPTH }),
       serveTrashDocument(`trash-${requesterUid}`, requesterUid, read),
     ]);
     if (!closure) {
@@ -148,7 +151,13 @@ export async function loadFocusPathPayloads(
     if (payloads.length >= MAX_PATH_PAYLOADS) return null;
     seen.add(id);
     try {
-      const served = await serveTimelineDocument(id, requesterUid, read);
+      // BOUNDED, like the board open. Deriving this segment's summaries used to
+      // walk everything beneath it, so one focus navigation cost a whole
+      // subtree: measured at 149 reads to serve the project root, billed again
+      // on every click up the breadcrumb.
+      const served = await serveTimelineDocument(id, requesterUid, read, {
+        maxDepth: BOARD_OPEN_MAX_DEPTH,
+      });
       if (!served) return null;
       return { ...served, forUid: requesterUid };
     } catch {

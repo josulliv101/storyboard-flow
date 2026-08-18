@@ -1041,6 +1041,42 @@ describe("graph-documents-gateway", () => {
       };
     };
 
+    it("collapses concurrent callers into ONE request", async () => {
+      // `holdsFreshClosure` is a check on state, so it cannot stop callers that
+      // arrive before the first response lands — and they do. React runs an
+      // effect twice in development and a re-render can run it again; the
+      // observed result was FIVE identical closure POSTs inside 30ms, each one
+      // walking the whole project. That is 745 document reads to do a 149-read
+      // job, in the exact code added to REDUCE reads.
+      // Typed from what `jsonResponse` returns, not the DOM `Response`: the
+      // suite's stub is a minimal shape and the gateway only reads json()/ok.
+      let resolveFetch: (value: ReturnType<typeof jsonResponse>) => void = () => {};
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", (url: string) => {
+        calls.push(url);
+        return new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+          resolveFetch = resolve;
+        });
+      });
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+
+      // All five before any of them settles — the case a state check misses.
+      const all = Promise.all([
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+      ]);
+      expect(calls).toHaveLength(1);
+
+      resolveFetch(jsonResponse({ results: [], missing: [] }));
+      await all;
+      expect(calls).toHaveLength(1);
+    });
+
     it("does not walk a closure the session already holds, fresh", async () => {
       const calls = installFetch(() => jsonResponse({}));
       const gateway = createGraphDocumentsGateway();

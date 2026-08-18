@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import {
   getChildren,
@@ -306,6 +306,90 @@ export async function hydrateClosure(
  * Re-runs on focus change as well as on entry: drilling into a different
  * collection while flat is on makes a different closure the subject.
  */
+/**
+ * How long after mount the background closure load starts.
+ *
+ * It is a "did they stay?" filter, not a paint optimisation. A board open now
+ * costs 5 reads; this pass costs the other ~149. Someone who opens the wrong
+ * project and leaves should not pay for it, and someone who stays will not
+ * notice a second.
+ */
+const BACKGROUND_CLOSURE_DELAY_MS = 1200;
+
+/**
+ * Load the rest of the project after first paint, so withheld times appear.
+ *
+ * The board reads one level (`BOARD_OPEN_MAX_DEPTH`), which is what took an
+ * open from 150 billed reads to 5 — but a collection card can only show its
+ * duration once its whole branch is loaded, so most cards start without one.
+ * This fills them in without a click.
+ *
+ * SAME BILL, EARLIER PAINT. The reads move off the critical path rather than
+ * disappearing: a session that stays pays about what it used to, and one that
+ * glances and leaves pays 5.
+ *
+ * THROUGH `ensureClosure`, NOT PER DOCUMENT, and that is the whole design.
+ * `hydrateTimeline` fetches one id at a time through `/api/timelines/[id]`,
+ * and that route runs `serveTimelineDocument`, which walks the closure BELOW
+ * that id to derive its summaries. Hydrating 145 documents that way re-creates
+ * the bug this all started from — measured at 58 requests and ~430 document
+ * reads for one board (#437). `ensureClosure` is one request served by one
+ * shared reader, so every document is read exactly once; the walk below then
+ * hydrates from a warm cache and issues no fetches at all.
+ */
+export function BackgroundClosureHydrator({
+  projectId,
+  enabled,
+}: Readonly<{ projectId: string; enabled: boolean }>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  // Once per project, however often the effect re-runs. The gateway dedupes
+  // the REQUEST, but the hydration walk below is main-thread work over every
+  // document in the closure — measured at ~517ms across three long tasks — and
+  // running it five times because React re-ran an effect is jank, not reads.
+  const done = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const run = async () => {
+      // CLAIMED HERE, NOT AT EFFECT ENTRY, and the difference is the whole
+      // thing working. React runs an effect, tears it down and runs it again in
+      // development; a flag set on entry is claimed by the first run, whose
+      // scheduled work the teardown then cancels, and the second run declines
+      // because the flag is already set. Observed exactly that: zero closure
+      // requests and every card permanently timeless.
+      if (done.current === projectId) return;
+      done.current = projectId;
+      // Best effort throughout: a failure here leaves the board exactly as it
+      // was — correct, with fewer times shown — so nothing is reported.
+      await graphDocumentsGateway.ensureClosure(projectId).catch(() => {});
+      if (cancelled) return;
+      await hydrateClosure(store, detailsStore, projectId).catch(() => {});
+    };
+    // Idle if the browser offers it, with a timeout so a busy tab still gets
+    // there; a plain timer otherwise.
+    const idle = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    if (idle) {
+      const handle = idle(() => void run(), { timeout: BACKGROUND_CLOSURE_DELAY_MS * 2 });
+      return () => {
+        cancelled = true;
+        (window as unknown as { cancelIdleCallback?: (h: number) => void })
+          .cancelIdleCallback?.(handle);
+      };
+    }
+    const timer = setTimeout(() => void run(), BACKGROUND_CLOSURE_DELAY_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [projectId, enabled, store, detailsStore]);
+
+  return null;
+}
+
 export function FlatClosureHydrator({
   enabled,
   focusedId,

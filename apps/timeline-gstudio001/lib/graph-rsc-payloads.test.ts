@@ -167,6 +167,95 @@ describe("loadGraphBootstrapPayloads", () => {
   });
 });
 
+/**
+ * THE DEPTH BOUND, on a project that actually has depth.
+ *
+ * Every bootstrap test above seeds a FLAT project, which is why they all still
+ * passed when the board stopped reading the whole closure — they never
+ * descended a level, so there was nothing for a bound to change. That blind
+ * spot is the reason these exist: the assertions below are about documents NOT
+ * read, and a fixture without grandchildren cannot express that.
+ */
+describe("loadGraphBootstrapPayloads — depth bound", () => {
+  /** Override a collection clip's STORED summary, to tell a derived value
+   *  apart from the one that was already sitting in the parent. */
+  const withSummary = (
+    clip: TimelineClip,
+    summary: Readonly<{ itemCount?: number; duration?: number }>,
+  ): TimelineClip => (clip.kind === "collection" ? { ...clip, ...summary } : clip);
+
+  /** project -> level1 -> level2, with a wrong stored summary at each hop. */
+  const seedThreeLevels = () => {
+    seed("level2", "user-a", [image("x", 0, 4), image("y", 4, 4), image("z", 8, 4)]);
+    seed("level1", "user-a", [
+      withSummary(collectionClip("l2ref", "level2", 0), { itemCount: 99, duration: 99 }),
+      image("solo", 4, 4),
+    ]);
+    seed("project-1", "user-a", [
+      withSummary(collectionClip("l1ref", "level1", 0), { itemCount: 42, duration: 42 }),
+    ]);
+  };
+
+  it("reads the project and one level below it, and nothing deeper", async () => {
+    seedThreeLevels();
+
+    const boot = await loadGraphBootstrapPayloads("project-1", "user-a");
+
+    expect(boot).not.toBeNull();
+    expect(state.reads.get("project-1") ?? 0).toBeGreaterThan(0);
+    expect(state.reads.get("level1") ?? 0).toBeGreaterThan(0);
+    // The whole point: the grandchild is never fetched. On the real project
+    // this is 145 of 149 documents.
+    expect(state.reads.get("level2") ?? 0).toBe(0);
+    expect(boot!.payloads.map((payload) => payload.document.id)).toEqual([
+      "project-1",
+      "level1",
+      "trash-user-a",
+    ]);
+  });
+
+  it("still derives the summaries it CAN — one level is read, so one level is fresh", async () => {
+    seedThreeLevels();
+
+    const boot = await loadGraphBootstrapPayloads("project-1", "user-a");
+    const projectClip = at(at(boot!.payloads, 0).document.clips, 0);
+
+    // level1 was read, so the card for it is computed from its real contents
+    // (two clips) rather than the stored 42.
+    expect(projectClip.kind).toBe("collection");
+    expect(projectClip.kind === "collection" ? projectClip.itemCount : null).toBe(2);
+  });
+
+  it("keeps a skipped child's STORED summary rather than deriving an empty collection", async () => {
+    seedThreeLevels();
+
+    const boot = await loadGraphBootstrapPayloads("project-1", "user-a");
+    const level1 = at(boot!.payloads, 1).document;
+    const level2Clip = at(level1.clips, 0);
+
+    // level2 was not read. "Stale beats blank": an unread child leaves the
+    // stored summary standing. Deriving from its absence would render the
+    // collection as empty, which is a wrong answer rather than an old one.
+    expect(level2Clip.kind === "collection" ? level2Clip.itemCount : null).toBe(99);
+  });
+
+  it("reports a dangling child as missing, and never one the bound merely skipped", async () => {
+    seedThreeLevels();
+    seed("project-1", "user-a", [
+      collectionClip("l1ref", "level1", 0),
+      collectionClip("goneref", "gone", 4),
+    ]);
+
+    const boot = await loadGraphBootstrapPayloads("project-1", "user-a");
+
+    // `gone` has no document — the client shows a dangling reference for it.
+    expect(boot!.missing).toContain("gone");
+    // `level2` exists and was simply not fetched. Reporting it here would tell
+    // the client a healthy collection had vanished.
+    expect(boot!.missing).not.toContain("level2");
+  });
+});
+
 describe("loadFocusPathPayloads", () => {
   it("serves every path segment plus one eager child level under the focused one", async () => {
     seed("grand", "user-a", [image("g", 0, 2)]);
