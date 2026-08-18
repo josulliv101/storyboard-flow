@@ -39,7 +39,15 @@ if (!rootId) {
   process.exit(2);
 }
 
-type Loaded = { documents: Map<string, TimelineDocument>; fixturePath?: string; raw?: unknown };
+type Loaded = {
+  documents: Map<string, TimelineDocument>;
+  /** Stored revision per id — the compare-and-set counter the app writes
+   *  through. A raw write that leaves it alone lets a client still holding the
+   *  OLD revision save over this change and win. */
+  revisions: Map<string, number>;
+  fixturePath?: string;
+  raw?: unknown;
+};
 
 async function load(): Promise<Loaded> {
   if (useFixture) {
@@ -47,7 +55,12 @@ async function load(): Promise<Loaded> {
     const raw = JSON.parse(readFileSync(path, "utf8")) as {
       documents: Record<string, TimelineDocument>;
     };
-    return { documents: new Map(Object.entries(raw.documents)), fixturePath: path, raw };
+    return {
+      documents: new Map(Object.entries(raw.documents)),
+      revisions: new Map(),
+      fixturePath: path,
+      raw,
+    };
   }
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -65,25 +78,34 @@ async function load(): Promise<Loaded> {
     .where("projectId", "==", rootId)
     .get();
   const documents = new Map<string, TimelineDocument>();
+  const revisions = new Map<string, number>();
   for (const doc of snapshot.docs) {
-    const data = doc.data() as { document?: TimelineDocument; clips?: TimelineDocument["clips"] };
+    const data = doc.data() as {
+      document?: TimelineDocument;
+      clips?: TimelineDocument["clips"];
+      revision?: number;
+    };
     const document = data.document ?? { id: doc.id, title: "", clips: data.clips ?? [] };
     documents.set(doc.id, document);
+    revisions.set(doc.id, data.revision ?? 0);
   }
   // The root itself carries its own id as projectId only if stamped; fetch it
   // directly so a partially stamped project still reports honestly.
   if (!documents.has(rootId)) {
     const root = await db.collection(COLLECTION).doc(rootId).get();
     if (root.exists) {
-      const data = root.data() as { document?: TimelineDocument };
-      if (data.document) documents.set(rootId, data.document);
+      const data = root.data() as { document?: TimelineDocument; revision?: number };
+      if (data.document) {
+        documents.set(rootId, data.document);
+        revisions.set(rootId, data.revision ?? 0);
+      }
     }
   }
-  return { documents };
+  return { documents, revisions };
 }
 
 async function main(): Promise<void> {
-  const { documents, fixturePath, raw } = await load();
+  const { documents, revisions, fixturePath, raw } = await load();
   if (!documents.has(rootId)) {
     console.error(`No document "${rootId}" (loaded ${documents.size}).`);
     process.exit(1);
@@ -150,9 +172,14 @@ async function main(): Promise<void> {
       for (const [id, document] of entries.slice(i, i + FIRESTORE_BATCH_LIMIT)) {
         // Both shapes, because readers resolve from either — see
         // `toTimelineDocument`'s precedence.
+        // REVISION BUMPED, not left alone. The app's writes are compare-and-set
+        // against this counter; a raw edit that leaves it unchanged lets a
+        // client still holding the old revision save over this and win
+        // silently. Bumping it means their next save is refused with "changed
+        // in another view", which is the truth — it did.
         batch.set(
           db.collection(COLLECTION).doc(id),
-          { document, clips: document.clips },
+          { document, clips: document.clips, revision: (revisions.get(id) ?? 0) + 1 },
           { merge: true },
         );
       }
