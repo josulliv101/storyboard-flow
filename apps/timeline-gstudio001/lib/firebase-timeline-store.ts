@@ -27,6 +27,20 @@ type TimelineDocumentRecord = {
   lastNonEmptyDocument?: TimelineDocument;
   clips?: TimelineClip[];
   isProject?: boolean;
+  /**
+   * The PROJECT this document belongs to — its root's id, and its own id on the
+   * root itself.
+   *
+   * A PREFETCH HINT, never the source of truth. Nothing reads it to decide what
+   * a project contains; the closure walk still does that, and still decides.
+   * Its only job is to let one query address a whole subtree in one round trip
+   * instead of nine sequential ones, so a stale or missing value costs latency
+   * and never correctness (#458).
+   *
+   * Optional because every document written before this existed lacks it, and
+   * because that has to be survivable rather than migrated-or-broken.
+   */
+  projectId?: string;
   /** Authorization boundary. Optional only because Firestore documents are
    *  untyped at rest — every live record carries one, and a record without an
    *  owner is unreachable rather than up for grabs (see lib/timeline-ownership). */
@@ -807,6 +821,9 @@ export async function readStoredTimelineDocument(id: string, requesterUid: strin
 
 export type SaveOptions = Readonly<{
   isProject?: boolean;
+  /** Stamp `projectId` on this write. Absent leaves whatever is stored alone —
+   *  a write that does not know its project must not erase a correct value. */
+  projectId?: string;
   /**
    * Permit a save that leaves the document with NO clips, and clear the
    * `lastNonEmptyDocument` recovery snapshot with it. Off by default: an empty
@@ -847,6 +864,13 @@ function buildSavePayload(
         ? { lastNonEmptyDocument: FieldValue.delete() }
         : {}),
     isProject: options?.isProject ?? existing?.isProject === true,
+    // KEPT when the caller does not know it. A write that omits `projectId`
+    // leaves the stored value alone rather than writing undefined over it: the
+    // MCP tools and the trash routes write documents without a board's project
+    // context, and a correct hint must survive them.
+    ...(options?.projectId ?? existing?.projectId
+      ? { projectId: options?.projectId ?? existing?.projectId }
+      : {}),
     // Ownership: a save CREATES with the requester as owner, CLAIMS a legacy
     // unowned record, and was refused earlier on someone else's. Children
     // minted implicitly through writes (collection drops) are stamped too.
@@ -1020,6 +1044,15 @@ export async function saveFirebaseTimelineDocument(
 export async function saveFirebaseTimelineDocumentsAtomic(
   writes: readonly TimelineBatchWrite[],
   requesterUid: string,
+  /**
+   * The board that produced this batch, stamped onto every document in it.
+   *
+   * Batch-wide rather than per-write because a batch IS one board's edit — a
+   * cross-timeline move touches two documents and both belong to the same
+   * project. Callers without a board (the MCP tools, the trash routes) omit it,
+   * and omitting leaves any stored value alone.
+   */
+  options?: Readonly<{ projectId?: string }>,
 ): Promise<{ id: string; revision: number }[]> {
   for (const write of writes) {
     if (isUnsavedProjectPlaceholder(write.document)) {
@@ -1145,12 +1178,14 @@ export async function saveFirebaseTimelineDocumentsAtomic(
             existingData,
             requesterUid,
             actualRevision + 1,
+            // `projectId` rides alongside `allowEmptying`: batch-wide, and only
+            // when the caller knows it.
             // Carries through to `lastNonEmptyDocument`, which MUST be dropped
             // for a deliberate empty: `toTimelineDocument` reads that snapshot
             // back whenever a stored document has no clips, so leaving it would
             // re-hydrate the very clips this write removed and the empty would
             // never stick.
-            { allowEmptying: write.allowEmptying },
+            { allowEmptying: write.allowEmptying, projectId: options?.projectId },
           ),
         });
       }

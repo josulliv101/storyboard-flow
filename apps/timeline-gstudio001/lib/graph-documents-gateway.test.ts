@@ -56,6 +56,8 @@ type FetchCall = {
   /** GET: the timeline id from the url. POST: "batch". */
   id: string;
   writes?: BatchWrite[];
+  /** The board a write batch declares, so the server can stamp it (#458). */
+  projectId?: string;
   keepalive?: boolean;
   /** Kept so tests can assert a batch was abandoned (unload takeover). */
   signal?: AbortSignal;
@@ -121,6 +123,9 @@ function installFetch(handler: (call: FetchCall) => Promise<MockResponse> | Mock
       method: init?.method ?? "GET",
       id: decodeURIComponent(url.split("/").pop() ?? ""),
       writes: body ? (JSON.parse(body) as { writes: BatchWrite[] }).writes : undefined,
+      projectId: body
+        ? (JSON.parse(body) as { projectId?: string }).projectId
+        : undefined,
       keepalive: init?.keepalive,
       signal: init?.signal ?? undefined,
       bodyBytes: body ? new TextEncoder().encode(body).length : undefined,
@@ -1169,6 +1174,29 @@ describe("graph-documents-gateway", () => {
 
       expect(clipIds(await gateway.ensure("ghost"))).toEqual(["g1"]);
       expect(getsOf(calls)).toHaveLength(0);
+    });
+  });
+
+  describe("bindProject", () => {
+    it("sends the bound project with a write batch, and nothing when unbound", async () => {
+      // The board's id rides with the batch so the server can stamp `projectId`
+      // — the prefetch hint that lets one query address a whole subtree in one
+      // round trip instead of nine sequential ones (#458).
+      const calls = installFetch(() => jsonResponse({ results: [{ id: "a", revision: 1 }] }));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("a", [clip("a1")]), 0, "user-a");
+
+      // UNBOUND first: the field is absent rather than null or empty, which is
+      // what the server reads as "leave whatever is stored alone".
+      gateway.writeClips("a", [clip("a1"), clip("a2")]);
+      await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+      expect(at(batchesOf(calls), 0).projectId).toBeUndefined();
+
+      gateway.bindProject("project-a");
+      gateway.writeClips("a", [clip("a1")]);
+      await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+      expect(at(batchesOf(calls), 1).projectId).toBe("project-a");
     });
   });
 });

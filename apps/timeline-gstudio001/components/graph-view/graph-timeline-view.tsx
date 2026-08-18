@@ -388,6 +388,14 @@ export function GraphTimelineView({
     }
   }, [user]);
 
+  // The board this session is editing, so writes can carry it and the server
+  // can stamp `projectId` (#458). Its own effect, keyed on the project rather
+  // than the user: drilling into a different project changes this and nothing
+  // else, and a re-bind must not reset the cache the way `bindUser` does.
+  useEffect(() => {
+    graphDocumentsGateway.bindProject(projectId);
+  }, [projectId]);
+
   // RSC payloads prime the gateway (guarded inside it: only for the bound
   // user, never over local edits, never regressing the revision ledger).
   // `user` is a dep so payloads that arrived before the client-side auth
