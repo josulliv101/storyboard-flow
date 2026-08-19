@@ -261,7 +261,11 @@ export const PlaceholderAriaCountMatchesBadge: Story = {
   play: async ({ canvasElement }) => {
     const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
     // The stored summary (itemCount 2), not the live childCount (0).
-    await expect(surface.getAttribute("aria-label")).toBe("A timeline (collection, 2 items)");
+    //
+    // NAME FIRST, then context — a speech-input user says what they see.
+    // The duration is deliberately absent: folding it in makes the accessible
+    // name change when a branch finishes loading (see the card).
+    await expect(surface.getAttribute("aria-label")).toBe("A timeline, collection, 2 items");
     // The COUNT survives on a placeholder and the time does not, which is the
     // asymmetry worth pinning: one level of reading settles a count exactly
     // (measured 0/3 wrong), while a duration sums the whole subtree and cannot
@@ -526,7 +530,7 @@ export const ComposedCardStructure: Story = {
     await userEvent.clear(editor!);
     await userEvent.type(editor!, "Renamed timeline{Enter}");
     await waitFor(() =>
-      expect(surface!.getAttribute("aria-label")).toMatch(/^Renamed timeline \(collection/),
+      expect(surface!.getAttribute("aria-label")).toMatch(/^Renamed timeline,/),
     );
   },
 };

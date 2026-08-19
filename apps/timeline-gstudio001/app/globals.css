@@ -319,3 +319,444 @@ html {
     animation: none;
   }
 }
+
+/* ── The storyboard monster's hop ─────────────────────────────────────────────
+   Collapsing the rail re-lays the creature out rather than moving it: inline in
+   "m…nster" when open, alone and larger when closed. A view transition is what
+   gives the browser two snapshots to interpolate; these rules turn that
+   interpolation into a jump instead of a slide.
+
+   The animation principles it is built from, since the numbers otherwise look
+   arbitrary:
+
+   ANTICIPATION — it squashes DOWN before it goes up. Nothing jumps without
+   crouching first, and without it the launch reads as the creature being
+   yanked rather than deciding to leave.
+
+   SQUASH AND STRETCH — width and height trade against each other and the
+   product stays near 1, so the body keeps its volume. A squash that only
+   flattens looks like a dropped object; one that also widens looks alive.
+
+   SLOW IN AND SLOW OUT — the group's easing is fast out of the crouch and
+   settles into the landing, rather than moving at one speed.
+
+   ARC — the browser interpolates position in a straight line, so the lift is
+   added on top as a translate that peaks mid-flight. A creature that travels
+   flat between two points reads as a sprite being dragged.
+
+   FOLLOW-THROUGH — it overshoots the landing and settles back. The body
+   arrives before the pose does.
+
+   EXAGGERATION — the scales are past what a real body would do (0.72 / 1.24 at
+   the extremes) because at ~20px anything subtler is invisible. */
+
+::view-transition-group(sw-monster) {
+  /* The travel itself: out of the crouch quickly, easing into the landing. */
+  animation-duration: 620ms;
+  animation-timing-function: cubic-bezier(0.34, 0.8, 0.28, 1);
+  /* STAGING: the creature is the only thing that should be moving, so it sits
+     above the rest of the transition rather than under the rail's own chrome. */
+  z-index: 10;
+}
+
+/* STAGING, the other half. Everything else in the page is snapshotted as `root`
+   and cross-faded by default, so the whole app would dip while the creature
+   jumps — the eye would not know where to look. The rest of the UI cuts
+   instantly and the only thing animating is the thing worth watching. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+/* The two snapshots are the SAME drawing, so they must not cross-fade — a
+   dissolve between identical images just dims the creature mid-jump. Both are
+   held opaque and given the same pose, which reads as one object moving. */
+::view-transition-old(sw-monster),
+::view-transition-new(sw-monster) {
+  animation: sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both;
+  mix-blend-mode: normal;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* POSE TO POSE, which is what keyframes are: these eight are the extremes and
+   the browser draws the in-betweens. They are written as poses — crouch,
+   push-off, apex, fall, landing, rebound, settle — not as an interpolation
+   between a start and an end.
+
+   SOLID DRAWING is the rotation. A body that only scales on two axes reads as
+   a flat sticker; tipping it into and out of the arc gives it a front and a
+   back, and the tip reverses on the way down the way a real body rotates
+   around its own mass.
+
+   THE LEAN IS SIGNED. `--sw-hop-dir` is +1 when the creature travels right
+   (opening the rail, out of the centre and into the word) and -1 when it
+   travels left, so every rotation and sideways drift below multiplies by it and
+   the body leans INTO the jump either way. Fixed the other way round it reads
+   as being blown sideways rather than as choosing to go.
+
+   THE STRETCH LEANS, and the ORDER of the functions is the whole reason it
+   does. CSS composes left to right as successive coordinate transforms, so
+   `scale() rotate()` rotates the point first and then scales along the GLOBAL
+   axes — the drawing shears and stays upright. `rotate() scale()` stretches
+   along the element's OWN axis and then turns that axis, which is what tips the
+   elongation into the direction of travel: at the top of the arc the body is
+   not a taller egg, it is a taller egg leaning the way it is going. Swap the
+   two back and the lean survives on the outline while the stretch quietly stops
+   pointing anywhere.
+
+   Kept small on purpose — a few degrees and a couple of percent. At ~20px a
+   lean big enough to notice as a lean is big enough to look like a wobble. */
+@keyframes sw-monster-hop {
+  /* Standing. */
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1, 1);
+  }
+  /* ANTICIPATION: the crouch. Wider and shorter, sinking slightly, and already
+     shifting a hair AGAINST the direction of travel — you rock back before you
+     go. */
+  14% {
+    transform: translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) scale(1.22, 0.78);
+  }
+  /* The push-off — already stretching before it leaves the ground, and tipping
+     into the direction of travel. */
+  26% {
+    transform: translate(calc(var(--sw-hop-dir, 1) * 2%), -22%) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) scale(0.84, 1.22);
+  }
+  /* Top of the arc: fully stretched, highest lift, lean at its greatest.
+     The lift is a share of the creature's OWN height, so it clears its own body
+     and a bit more — enough that the jump reads as a jump at 15px rather than
+     as a bounce, without throwing it out of the rail. */
+  46% {
+    transform: translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) scale(0.82, 1.24);
+  }
+  /* Falling, gathering, and rotating back THROUGH level — the counter-rotation
+     is what makes the landing read as absorbed rather than dropped. */
+  66% {
+    transform: translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) scale(0.92, 1.1);
+  }
+  /* Landing: the squash absorbs it, the tip flattens out. */
+  80% {
+    transform: translate(0, 4%) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) scale(1.2, 0.8);
+  }
+  /* FOLLOW-THROUGH: a small rebound past the resting pose... */
+  91% {
+    transform: translate(0, -3%) rotate(0deg) scale(0.95, 1.06);
+  }
+  /* ...and settle. */
+  100% {
+    transform: translate(0, 0) rotate(0deg) scale(1, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The toggle already skips `startViewTransition` entirely under this query —
+     this is the belt to that braces, for a transition started by some other
+     path. */
+  ::view-transition-group(sw-monster),
+  ::view-transition-old(sw-monster),
+  ::view-transition-new(sw-monster) {
+    animation: none;
+  }
+}
+
+/* ── The eye and the feet ─────────────────────────────────────────────────────
+   SECONDARY ACTION and OVERLAPPING ACTION, and the reason they live here rather
+   than in the hop above: a view transition rasterises the creature into a
+   single IMAGE, so nothing inside it can move independently while it is in
+   flight. The eye and the feet are parts of that picture, not elements.
+
+   That constraint splits them in two, and the split is the whole design:
+
+   A POSE CAN BE CAPTURED INTO THE IMAGE even though motion cannot. So the eye's
+   AIM is set before the transition begins and held until it ends — the pupil is
+   already pointing along the arc in both snapshots, and the creature flies
+   looking where it is going rather than staring straight ahead the whole way.
+
+   MOTION WAITS for the live element. Once the body has arrived the parts have
+   not finished: the eye takes the landing and eases back to centre (secondary
+   action — a reaction that comments on the main one without competing with it),
+   and the feet keep spreading a beat after the landing and draw back
+   (overlapping action — loose parts trail the mass that carried them).
+
+   TIMING is what keeps those two from reading as one event: the eye picks up
+   the instant the flight ends, the feet lag by 110ms and run longer.
+   Simultaneous would look like a single twitch. */
+
+/* THE AIM, which is on for the whole flight rather than after it.
+   `data-aiming` is set BEFORE the transition starts and cleared when it
+   finishes, so both snapshots — the crouch it leaves and the pose it lands in —
+   are rasterised with the pupil already pointing along the arc. The eye leads
+   the body, which is what makes the hop read as chosen: it looks where it is
+   going before it goes, and is still looking there when it arrives.
+
+   It is a plain declaration, not an animation, precisely because the creature
+   is a static image mid-flight — there is nothing to animate then, only a pose
+   to be captured in. */
+[data-storyboard-monster][data-aiming] [data-monster-pupil] {
+  /* THREE PROPERTIES, ONE POSE. `translate`, `scale` and `transform` are
+     separate animatable properties that compose in that order, which is what
+     lets the horizontal flick, the dilation and the vertical bump each run on
+     their own clock below. One `transform` could not: they would have to share
+     a duration and an easing, and all three want different ones. */
+  translate: calc(var(--sw-hop-dir, 1) * 26%) 0;
+  scale: 1.2;
+  transform: translateY(-12%);
+}
+
+/* THE HAT FLIES TRAILING, for the same reason and by the same mechanism.
+   DRAG: a hat is not attached to the head, it rests on it, so when the head
+   leaves the ground the hat is still where the head used to be — lifted a hair
+   clear of the fur and rotated BACK against the direction of travel. It is the
+   one pose that says "this creature jumped" rather than "this creature was
+   moved".
+
+   Signed the opposite way to the body's lean on purpose: the body leans INTO
+   the jump, the hat leans away from it. Loose things trail; that difference
+   between the two is the whole read. */
+[data-storyboard-monster][data-aiming] [data-monster-hat] {
+  transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -3deg));
+}
+
+[data-storyboard-monster][data-settling] [data-monster-pupil] {
+  /* The horizontal is a SACCADE and the vertical is a bump, so they cannot
+     share a timing function — see the two keyframe blocks. `linear` on the
+     saccade is deliberate: its stops carry the velocity profile, and an easing
+     on top would smear the very shape they exist to draw. */
+  animation:
+    sw-pupil-saccade 320ms linear both,
+    sw-pupil-bob 440ms cubic-bezier(0.32, 0.72, 0.3, 1) both,
+    sw-pupil-constrict 900ms cubic-bezier(0.22, 0.6, 0.3, 1) 140ms both;
+}
+
+[data-storyboard-monster][data-settling] [data-monster-foot] {
+  animation: sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+}
+
+/* LAST TO SETTLE, which is the timing point. The eye reacts at once (it is the
+   creature paying attention), the feet lag 110ms (they carried the mass), and
+   the hat — the only part not attached to anything — is still moving after both
+   have stopped. Finishing them together would read as one twitch. */
+[data-storyboard-monster][data-settling] [data-monster-hat] {
+  animation: sw-hat-settle 640ms cubic-bezier(0.3, 0.7, 0.28, 1) 40ms both;
+}
+
+/* ── The eye, horizontally: a SACCADE ────────────────────────────────────────
+   A human eye does not glide back. It FIXATES — holds dead still on what it was
+   looking at — and then flicks, ballistically, in a single movement it cannot
+   correct halfway. The flick has a shape worth copying: it is not linear and it
+   is not a UI ease. Position runs as a skewed sigmoid — slow to break away,
+   peak speed a little before the midpoint, then a decelerating tail noticeably
+   longer than the acceleration was. And it does NOT overshoot; the eye lands on
+   its target and stops, then holds again.
+
+   That is the whole reason the horizontal is on its own animation. The stops
+   below ARE the velocity profile, sampled: 10% of the distance in the first
+   fifth of the flick, 62% by the midpoint, and the last 6% spread across the
+   final fifth. `linear` between them keeps them honest.
+
+   THE PROPORTIONS, in the 320ms this runs: 128ms of fixation still aimed where
+   it jumped, a 122ms flick, then stillness for the remainder while the vertical
+   is still settling. Holding first is what makes it read as an eye deciding to
+   look back rather than a dot sliding home.
+
+   IT NEVER LOOKS BACK PAST CENTRE. An earlier version let the eye overshoot
+   horizontally the way a loose part does, which is correct for a pendulum and
+   wrong for an eye — for the few frames it sat on the far side the creature was
+   looking back the way it came at the moment it was meant to be arriving. Real
+   saccades do not do that either. The overshoot lives in the vertical instead,
+   where it reads as the landing. */
+@keyframes sw-pupil-saccade {
+  /* Fixation: still aimed along the jump. */
+  0%,
+  40% {
+    translate: calc(var(--sw-hop-dir, 1) * 26%) 0;
+  }
+  /* Breaking away — barely moving yet. */
+  47.6% {
+    translate: calc(var(--sw-hop-dir, 1) * 23.4%) 0;
+  }
+  /* Through peak velocity. */
+  55.2% {
+    translate: calc(var(--sw-hop-dir, 1) * 16.1%) 0;
+  }
+  60.9% {
+    translate: calc(var(--sw-hop-dir, 1) * 9.9%) 0;
+  }
+  /* The long decelerating tail. */
+  66.6% {
+    translate: calc(var(--sw-hop-dir, 1) * 4.7%) 0;
+  }
+  72.3% {
+    translate: calc(var(--sw-hop-dir, 1) * 1.6%) 0;
+  }
+  /* Landed, and then held — fixation again, not a drift. */
+  78%,
+  100% {
+    translate: 0 0;
+  }
+}
+
+/* ── The eye, autonomically: the pupil comes back down ───────────────────────
+   The creature flies WIDE-EYED. Arousal dilates a pupil — sympathetic drive on
+   the radial dilator plus the parasympathetic sphincter letting go — and a jump
+   is the most exciting thing that happens to this mark, so the dilation is
+   baked into the aim pose above and both snapshots carry it. The pupil cannot
+   change size mid-flight for the same reason nothing else can: the creature is
+   one rasterised image then.
+
+   WHAT COMES BACK IS THE INTERESTING HALF, and it is nothing like the other two
+   animations on this element:
+
+   IT IS LATE. A pupil does not respond the instant the stimulus ends. The
+   pupillary latency is roughly 200ms in life; 140ms here, which is long enough
+   to read as a beat and short enough not to look stuck. The creature lands, the
+   eye flicks back, the hat settles — and only then does the pupil begin.
+
+   IT IS SLOW. 900ms against the saccade's 320 and the bob's 440, so it is still
+   going when everything else has stopped. That is the right relationship: the
+   mechanical parts stop when the body stops, and the autonomic one keeps going
+   because it is not attached to the landing at all. A task-evoked pupil response
+   takes seconds to return to baseline in life; this is that, compressed.
+
+   IT DOES NOT BOUNCE. Smooth muscle cannot overshoot the way a hat or an eyeball
+   can, so the curve is a decay: gentle onset, most of the change early-middle,
+   and a long tail into baseline. Give this an elastic easing and the eye reads
+   as a shutter rather than as a pupil.
+
+   THE SIZE is 20% of diameter — near the top of what arousal actually produces,
+   which is what it takes to be visible on a pupil 6px across. The glint scales
+   with it, which is not quite true to life (a corneal reflection holds its size
+   while the pupil moves under it) and is not worth fixing at 1px. */
+@keyframes sw-pupil-constrict {
+  0% {
+    scale: 1.2;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+/* ── The eye, vertically: the landing ────────────────────────────────────────
+   This half is not eye physiology, it is the head the eye is riding in. It gets
+   thrown by the impact, overshoots, and comes back level, moving FURTHER than
+   the body did — the exaggeration that makes a 15px mark read as alive.
+
+   Kept inside the white: the pupil is 0.39em within a 0.64em eye, so this can
+   spend about a quarter of the pupil's own width before it would clip. */
+@keyframes sw-pupil-bob {
+  0% {
+    transform: translateY(-12%);
+  }
+  /* The impact drives it down. */
+  30% {
+    transform: translateY(12%);
+  }
+  /* Bounce. */
+  58% {
+    transform: translateY(-6%);
+  }
+  80% {
+    transform: translateY(2%);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+/* The feet splay under the weight, then gather. Volume again: they widen as
+   they flatten. */
+@keyframes sw-foot-settle {
+  0% {
+    transform: scale(1.3, 0.7);
+  }
+  40% {
+    transform: scale(0.88, 1.16);
+  }
+  70% {
+    transform: scale(1.06, 0.95);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+/* The hat takes the landing and gives it back.
+   OVERLAPPING ACTION and FOLLOW-THROUGH, and nothing else — the principles that
+   apply to a loose garment, not the whole twelve. It is drawn about 10px wide,
+   so squash and stretch is unavailable (a felt hat barely deforms, and one
+   pixel of it is a flicker, not a squash); arcs are not a separate dial here
+   because the pivot IS the arc, down at the brim where the hat meets the fur.
+   What is left is drag, weight, and the time it takes to stop.
+
+   These are DELTAS from rest — the fixed -14deg cock lives on an inner element,
+   so 0 here means "sitting normally".
+
+   DELIBERATELY UNDER-PLAYED, and the two channels are dialled SEPARATELY
+   because they fail differently.
+
+   ROTATION is what reads as a hat: the crown's top sits about an em above the
+   pivot, so a few degrees swing it a couple of pixels and the shape of the
+   event — trail, jam, rebound — survives at 8px. It is held at roughly six
+   tenths of the first pass.
+
+   VERTICAL is what reads as VIBRATION. A hat bobbing straight up and down has
+   no silhouette change to sell it, so the eye registers the motion without
+   reading a cause, and two bounces of it look like a rendering glitch rather
+   than like weight. It is cut to about a third again — the whole excursion is
+   now near ±0.2px in the rail, which is felt more than seen. That also puts the
+   flight lift (0.012em) well inside the brim's ~0.03em overhang on the body, so
+   the hat keeps its purchase on the fur instead of appearing to hover. */
+@keyframes sw-hat-settle {
+  /* Where the flight left it: lifted clear, trailing behind the direction of
+     travel. Identical to the aim pose, so the handover from image to element
+     shows no seam. */
+  0% {
+    transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -3deg));
+  }
+  /* THE JAM. The head stops and the hat does not, so it drives DOWN onto the
+     fur, past where it rests, and its own momentum carries it forward — the
+     rotation crosses through rest to the far side, which is the opposite of
+     where it spent the whole flight. */
+  20% {
+    transform: translateY(0.015em) rotate(calc(var(--sw-hop-dir, 1) * 3.5deg));
+  }
+  /* The rebound: the fur gives it back, and the hat lifts and rocks back the
+     way it came. Smaller than the jam, because energy leaves the system. */
+  46% {
+    transform: translateY(-0.007em) rotate(calc(var(--sw-hop-dir, 1) * -1.8deg));
+  }
+  /* A second, much shorter bounce — one is a bump, two is a hat. */
+  70% {
+    transform: translateY(0.004em) rotate(calc(var(--sw-hop-dir, 1) * 0.9deg));
+  }
+  88% {
+    transform: translateY(-0.002em) rotate(0deg);
+  }
+  /* Seated. */
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-storyboard-monster][data-settling] [data-monster-pupil],
+  [data-storyboard-monster][data-settling] [data-monster-foot],
+  [data-storyboard-monster][data-settling] [data-monster-hat] {
+    animation: none;
+  }
+
+  /* Rest for both is no transform: the pupil has none of its own, and the hat's
+     tilt lives on an inner element that this never touches. */
+  [data-storyboard-monster][data-aiming] [data-monster-pupil],
+  [data-storyboard-monster][data-aiming] [data-monster-hat] {
+    transform: none;
+  }
+
+  /* The pupil's aim spends three properties; clearing one would leave it
+     staring sideways, or stuck dilated. */
+  [data-storyboard-monster][data-aiming] [data-monster-pupil] {
+    translate: none;
+    scale: none;
+  }
+}

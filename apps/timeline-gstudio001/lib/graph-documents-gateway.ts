@@ -64,9 +64,29 @@ export type GraphServerPayload = Readonly<{
   forUid: string;
 }>;
 
+/** The empty snapshot the server rendered with — one frozen object, so
+ *  `useSyncExternalStore` sees a stable value. */
+const EMPTY_DOCUMENTS: DocumentsById = Object.freeze({});
+
 export type GraphDocumentsGateway = Readonly<{
   /** Snapshot of every document the session has loaded or written. */
   read: () => DocumentsById;
+  /**
+   * What the SERVER rendered: nothing.
+   *
+   * The third argument to `useSyncExternalStore` has to describe the HTML the
+   * server produced, and every caller was passing `read` — the live store. That
+   * store is EMPTY during SSR and PRIMED by the time hydration runs (the RSC
+   * payloads install themselves during render), so React compared a server tree
+   * built from no documents against a client tree built from all of them.
+   *
+   * In the sidebar that difference is structural — the shortcuts section exists
+   * in one tree and not the other — and Next reported a hydration mismatch.
+   *
+   * Always the same object, because `useSyncExternalStore` re-renders forever if
+   * the snapshot is a fresh value each call.
+   */
+  readServerSnapshot: () => DocumentsById;
   /** The document if already cached, without triggering IO. */
   peek: (timelineId: string) => TimelineDocument | null;
   /**
@@ -1212,6 +1232,7 @@ export function createGraphDocumentsGateway(
 
   return {
     read: () => documents,
+    readServerSnapshot: () => EMPTY_DOCUMENTS,
     peek: (timelineId) => documents[timelineId] ?? null,
     ensure,
     ensureClosure,

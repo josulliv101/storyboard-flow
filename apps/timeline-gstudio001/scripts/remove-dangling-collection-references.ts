@@ -17,14 +17,54 @@
  *   node scripts/remove-dangling-collection-references.ts <rootId> [--fixture] [--apply]
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { config } from "dotenv";
 import { cert, applicationDefault, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
 import { packTimelineClips } from "@storyboard/timeline-model";
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
-config({ path: ".env" });
+/**
+ * `.env` into `process.env`, without `dotenv`.
+ *
+ * The `.mjs` scripts beside this one import `dotenv`, and it is declared in NO
+ * package.json — it only resolves because something else pulled it into
+ * `node_modules`. That works locally and does not survive a clean install:
+ * this file is TypeScript, so `next build` type-checks it, and Vercel failed
+ * with "Cannot find module 'dotenv'". Adding the dependency would fix the
+ * import and risk the per-workspace nesting that breaks the dev server, for a
+ * loader this small.
+ *
+ * Existing environment wins, so a real environment variable is never
+ * overwritten by the file.
+ */
+function loadDotEnv(path: string): void {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return;
+  }
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (key === "" || process.env[key] !== undefined) continue;
+    let value = trimmed.slice(eq + 1).trim();
+    // Quoted values keep their inner whitespace; the private key arrives this
+    // way, and its escaped newlines are unescaped at the point of use.
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadDotEnv(".env");
 
 const COLLECTION = "gstudioTimelineDocuments";
 const FIRESTORE_BATCH_LIMIT = 500;

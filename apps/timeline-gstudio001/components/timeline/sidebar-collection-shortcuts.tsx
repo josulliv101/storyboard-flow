@@ -157,7 +157,11 @@ function ShortcutsHeading({
         // label arriving.
         "transition-[height,background-color,color] duration-200 motion-reduce:transition-none",
         inline
-          ? "h-4 bg-transparent text-zinc-500"
+          ? // zinc-400, not zinc-500. At 10px this is small text, so it needs
+            // 4.5:1 and zinc-500 on the rail's #111113 measures 3.9 — Lighthouse
+            // failed it. zinc-400 measures 7.2. The rule state below keeps
+            // zinc-500 because there it is a BACKGROUND band, not text.
+            "h-4 bg-transparent text-zinc-400"
           : // The rule state: a 1px band of the divider's own colour, with the
             // text still present and simply too short to show.
             "h-px bg-zinc-500 text-transparent",
@@ -283,7 +287,7 @@ export function SidebarCollectionShortcuts({
   const documents = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.read,
-    graphDocumentsGateway.read,
+    graphDocumentsGateway.readServerSnapshot,
   );
   return (
     <CollectionShortcutsGroup

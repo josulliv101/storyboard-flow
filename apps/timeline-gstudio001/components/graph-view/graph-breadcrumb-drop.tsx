@@ -56,7 +56,7 @@ function useDropDestination(): DropDestination | null {
   const documents = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.read,
-    graphDocumentsGateway.read,
+    graphDocumentsGateway.readServerSnapshot,
   );
   const id = useCollectionsSelector((s) => {
     const intent = s.interaction.dropIntent;

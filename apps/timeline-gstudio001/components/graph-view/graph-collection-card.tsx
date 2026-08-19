@@ -115,11 +115,24 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           can then be trashed with Delete alongside media. */}
       <CollectionItem.SelectionSurface
         dragActivation={dragActivation === "hold" ? "hold" : "body"}
+        // STARTS WITH THE NAME, so a speech-input user saying what they see
+        // ("Scenes") matches — the substance of WCAG 2.5.3 "Label in Name".
+        //
+        // Lighthouse's `label-content-name-mismatch` still flags this, and
+        // deliberately not chased: the caption's spans carry no whitespace
+        // between them, so axe compares against the concatenation
+        // "Scenes1:29/1 item". Satisfying that literally means an accessible
+        // name no one would want spoken. Two other routes were tried and are
+        // worse — folding the duration in makes the name CHANGE when a branch
+        // finishes loading (announced mid-read), and hiding the readouts from
+        // assistive tech changes nothing, because an `aria-label` on a button
+        // already replaces its content for AT.
+        //
         // Announce the count the card actually SHOWS — the stored summary for a
         // placeholder, the live children once hydrated. The primitive's default
         // reads live childCount alone, which speaks "0 items" over a card
         // displaying "9" until its clips load.
-        ariaLabel={`${displayName} (collection, ${count} ${count === 1 ? "item" : "items"})`}
+        ariaLabel={`${displayName}, collection, ${count} ${count === 1 ? "item" : "items"}`}
         className={[
           // `relative` so the disabled chip below can pin to this card's own
           // top-right corner rather than some ancestor's.
@@ -259,7 +272,31 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
                 src={collectionPreviewFrameUrl(preview)}
                 alt=""
                 draggable={false}
-                loading="lazy"
+                // EAGER, because the grid is virtualized. `VirtualGrid` renders
+                // only the rows at or near the viewport, so a card that exists
+                // in the DOM has already been judged on-screen — `loading=lazy`
+                // then defers a request the browser could have started, and
+                // waits for layout to re-decide what virtualization just
+                // decided. Below-the-fold cards are not lazy, they are absent.
+                //
+                // Measured: this element was the LCP on a board open, and its
+                // request was queued at 1,495ms having taken 0.4ms to download.
+                // The delay was discovery, not transfer.
+                loading="eager"
+                // Only the FIRST frame. All three are visible, but a hint that
+                // marks everything high marks nothing — the leading frame is
+                // the one that carries the card, and on the measured board it
+                // was the LCP element.
+                {...(index === 0 ? { fetchPriority: "high" as const } : {})}
+                // INTRINSIC SIZE, so the browser can reserve the box before the
+                // bytes arrive. CSS already fixes the rendered size (`h-full`,
+                // `flex-1`), but with no width/height the element has no aspect
+                // ratio until decode, and the trace attributed two layout
+                // shifts to exactly that ("An unsized image"). 16:9 is what the
+                // Cloudinary transform emits (w_640,h_360) — see
+                // `collectionPreviewFrameUrl`.
+                width={640}
+                height={360}
                 className="h-full min-w-0 flex-1 rounded-sm object-cover"
               />
             ))
