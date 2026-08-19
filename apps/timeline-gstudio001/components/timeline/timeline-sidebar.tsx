@@ -211,24 +211,29 @@ const CLOSING: JumpArc = {
  * The result is an apex ~18px up at 57% of the travel, against 11.2px at ~20%.
  */
 const OPENING: JumpArc = {
+  // THE CLOSING ARC, FORESHORTENED. Every setting here except the keyframe name
+  // is the closing one's, because the two directions want the same SHAPE and
+  // differ only in how big that shape reads.
+  //
+  // It was derived from scratch for several rounds — ballistic travel, `linear`
+  // between stops, gravity sampled from a parabola — and each version fixed the
+  // complaint it was aimed at and read wrong overall. Tracing both body centres
+  // is what settled it: the closing arc peaks at 80% of its travel and DROPS
+  // onto the spot at 38deg, while every from-scratch opening arc peaked near
+  // the middle and glided in at around 12deg. That is not a landing, it is an
+  // approach, and no amount of retuning a symmetric parabola makes it one.
+  //
+  // Depth belongs in the SIZE of the arc, which is why only the lift is scaled
+  // (see `sw-monster-hop-open`), and it is scaled DOWN because this direction
+  // ends about 1.45x further from the reader.
   hop: "sw-monster-hop-open",
-  hopEase: "linear",
-  // ENDS AT CONSTANT VELOCITY, which is what stops the path hooking. The
-  // second control point sits at y == x, so the curve's slope at t=1 is 1
-  // rather than 0.67. With the old ease-out the horizontal SLOWED into the
-  // landing while the fall was still accelerating, and the trajectory bent
-  // sharply downward right at the spot -- the descent angle steepened 16.8deg
-  // over the last third, which reads as curving into the landing rather than
-  // arriving at it. It is 6.1deg now.
-  travel: "cubic-bezier(0.42, 0.3, 0.58, 0.58)",
-  // ENDS WITH THE HOP, not 60ms short of it. At the shared 620ms the creature
-  // finished travelling and then dropped straight down for the remaining 60ms,
-  // which is a stop followed by a fall rather than a landing.
-  travelMs: "680ms",
+  hopEase: CLOSING.hopEase,
+  travel: CLOSING.travel,
+  travelMs: CLOSING.travelMs,
   // NO FILLER. It is an opaque rectangle that travels with the group, and this
-  // arc lifts the creature a full box height clear of it — so instead of
-  // hiding a hole it dragged across the wordmark and blanked the letters mid
-  // reveal. Verified by eye that nothing dark appears in its absence here.
+  // direction crosses the wordmark as the letters are revealing, so instead of
+  // hiding a hole it blanks them. Verified by eye that nothing dark appears in
+  // its absence here.
   fill: "transparent",
 };
 

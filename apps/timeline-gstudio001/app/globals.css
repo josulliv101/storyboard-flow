@@ -678,102 +678,48 @@ html {
 }
 
 @keyframes sw-monster-hop-open {
-  /* THE OPENING ARC: ballistic, where the closing one is shaped.
+  /* THE OPENING ARC: the closing one's SHAPE, foreshortened.
 
-     A jump has no horizontal force, so its horizontal velocity is CONSTANT and
-     only the vertical accelerates. Everything about this set follows from that
-     — a near-linear travel curve on the group, `linear` between these stops,
-     and a lift that carries gravity in its VALUES.
+     It used to be derived from scratch — a symmetric ballistic parabola, a
+     near-linear travel, `linear` between stops so gravity lived in the values.
+     All of that was defensible and all of it read wrong, and tracing the two
+     body centres said why: they were different SILHOUETTES, not different
+     heights. The closing arc peaks at 80% of its travel and DROPS onto the
+     spot at 38 degrees. The opening one peaked at 45% and glided in at 12 —
+     not landing, approaching down a long shallow slope.
 
-     THAT LAST PART IS WHY THERE ARE SEVENTEEN OF THEM. `linear` between five
-     stops was the right fix for one problem and the cause of another: it stops
-     the clock re-easing each leg (an eased hop is 92% of the way to a stop half
-     way through the segment, so every leg lands early), but it also makes the
-     vertical velocity piecewise CONSTANT — a rise at one fixed speed, a corner,
-     a fall at another. That is a balloon, not a body, and it read as floaty.
+     Depth should change how BIG a jump looks, not what shape it is. So this is
+     the closing set's stops, read on the closing set's clock
+     (`--sw-hop-ease: cubic-bezier(0.34, 0.8, 0.28, 1)`) over the closing set's
+     travel — and only the lift is scaled, by 0.70, because this direction ends
+     about 1.45x further from the reader.
 
-     So the lift is sampled from a parabola instead: decelerating up, then
-     accelerating down. Measured across the flight the rise goes +4.34 to +0.48
-     into the apex and the fall +0.75 to -3.75 into the ground, where the five
-     stops gave a flat +2.78 and a flat -2.00. Seventeen samples put the
-     straight segments below the eye's resolution.
+     THE LAUNCH LOSES A COMPENSATION THE CLOSE NEEDS. A percentage here resolves
+     against the snapshot being transformed, and the close leaves the 15.05px
+     mark inside the word while this one leaves the 21.88px mark alone in the
+     rail. The close's -57.216% is 22% times 2.6007 for exactly that reason;
+     dividing it back out by 1.6/1.1 is what makes both launches the same number
+     of PIXELS rather than the same percentage.
 
-     The fall gets more of the clock than the rise (0.36 up, 0.50 down), which
-     is the usual cartoon cheat and also what puts the apex at the middle of the
-     TRAVEL rather than past it.
-
-     THE SQUASH TRACKS THE SPEED, NOT THE CLOCK, and that is the second thing
-     gravity exposed. Keyed to time, the stretch peaked at the apex — the
-     creature was at its most elongated exactly where its vertical velocity is
-     ZERO, ballooning at the top of the arc and rounding up as it accelerated
-     down. It was always inverted; it was only invisible while the lift moved at
-     a constant speed, because then nothing contradicted it.
-
-     So the scale is computed from |dy/dt| instead: 1.22 x 0.78 crouched on the
-     ground, unfolding to 0.82 x 1.24 at full speed just after the push-off,
-     ROUND at the apex, and stretching again into the landing as the fall
-     accelerates. The extremes are the ones the arc already used — only what
-     they are keyed to changed.
-
-     It TAPERS BACK TO NEUTRAL over the last sixth, because the settle's own 0%
-     is `scale(1, 1)` on a live element: hand over a stretched creature to a
-     round one and that is a pop in a single frame. Tracking speed alone would
-     have arrived at 1.17. The impact squash is `sw-body-settle`'s job anyway,
-     and it can do it properly, being an element rather than a photograph.
-
-     The yaw and the lean still come from the original control stops,
-     interpolated at the new sample points. Regenerate this block rather than
-     editing a stop by hand. */
+     Regenerate with `mirror.py <scale>` rather than editing a stop. */
   0% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0%), 0%) rotateY(calc(var(--sw-hop-dir, 1) * 0deg)) rotate(calc(var(--sw-hop-dir, 1) * 0deg)) skewX(calc(var(--sw-hop-dir, 1) * 0deg)) scale(1, 1);
+    transform: translate(0, 0) rotate(0deg) scale(1, 1);
   }
-  6.25% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -0.4464%), 3.571%) rotateY(calc(var(--sw-hop-dir, 1) * -1.339deg)) rotate(calc(var(--sw-hop-dir, 1) * -0.4464deg)) skewX(calc(var(--sw-hop-dir, 1) * 0.6696deg)) scale(1.098, 0.9018);
+  17% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
   }
-  12.5% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -0.8929%), 7.143%) rotateY(calc(var(--sw-hop-dir, 1) * -2.679deg)) rotate(calc(var(--sw-hop-dir, 1) * -0.8929deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.339deg)) scale(1.196, 0.8036);
+  32% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -27.54%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
-  18.75% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -0.1094%), -15.28%) rotateY(calc(var(--sw-hop-dir, 1) * 0.5625deg)) rotate(calc(var(--sw-hop-dir, 1) * 0.4844deg)) skewX(calc(var(--sw-hop-dir, 1) * -0.1328deg)) scale(1.041, 0.9835);
+  58% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -44.8%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
   }
-  25% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.062%), -32.1%) rotateY(calc(var(--sw-hop-dir, 1) * 5.25deg)) rotate(calc(var(--sw-hop-dir, 1) * 2.438deg)) skewX(calc(var(--sw-hop-dir, 1) * -2.281deg)) scale(0.875, 1.167);
-  }
-  31.25% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.062%), -45.18%) rotateY(calc(var(--sw-hop-dir, 1) * 9.438deg)) rotate(calc(var(--sw-hop-dir, 1) * 4.125deg)) skewX(calc(var(--sw-hop-dir, 1) * -4.188deg)) scale(0.9062, 1.125);
-  }
-  37.5% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.375%), -54.53%) rotateY(calc(var(--sw-hop-dir, 1) * 11.62deg)) rotate(calc(var(--sw-hop-dir, 1) * 4.75deg)) skewX(calc(var(--sw-hop-dir, 1) * -5.125deg)) scale(0.9375, 1.083);
-  }
-  43.75% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.688%), -60.13%) rotateY(calc(var(--sw-hop-dir, 1) * 13.81deg)) rotate(calc(var(--sw-hop-dir, 1) * 5.375deg)) skewX(calc(var(--sw-hop-dir, 1) * -6.062deg)) scale(0.9688, 1.042);
-  }
-  50% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -62%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(1, 1);
-  }
-  56.25% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.554%), -61.03%) rotateY(calc(var(--sw-hop-dir, 1) * 15.55deg)) rotate(calc(var(--sw-hop-dir, 1) * 4.214deg)) skewX(calc(var(--sw-hop-dir, 1) * -6.107deg)) scale(0.9838, 1.022);
-  }
-  62.5% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.107%), -58.13%) rotateY(calc(var(--sw-hop-dir, 1) * 15.11deg)) rotate(calc(var(--sw-hop-dir, 1) * 2.429deg)) skewX(calc(var(--sw-hop-dir, 1) * -5.214deg)) scale(0.9676, 1.043);
-  }
-  68.75% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.661%), -53.28%) rotateY(calc(var(--sw-hop-dir, 1) * 14.66deg)) rotate(calc(var(--sw-hop-dir, 1) * 0.6429deg)) skewX(calc(var(--sw-hop-dir, 1) * -4.321deg)) scale(0.9514, 1.065);
-  }
-  75% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.214%), -46.5%) rotateY(calc(var(--sw-hop-dir, 1) * 14.21deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.143deg)) skewX(calc(var(--sw-hop-dir, 1) * -3.429deg)) scale(0.9352, 1.086);
-  }
-  81.25% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.8523%), -37.78%) rotateY(calc(var(--sw-hop-dir, 1) * 13.41deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.705deg)) skewX(calc(var(--sw-hop-dir, 1) * -2.557deg)) scale(0.919, 1.108);
-  }
-  87.5% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.5682%), -27.12%) rotateY(calc(var(--sw-hop-dir, 1) * 12.27deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.136deg)) skewX(calc(var(--sw-hop-dir, 1) * -1.705deg)) scale(0.9241, 1.101);
-  }
-  93.75% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.2841%), -14.53%) rotateY(calc(var(--sw-hop-dir, 1) * 11.14deg)) rotate(calc(var(--sw-hop-dir, 1) * -0.5682deg)) skewX(calc(var(--sw-hop-dir, 1) * -0.8523deg)) scale(0.9557, 1.059);
+  82% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -14%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
   }
   100% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0%), -0%) rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(calc(var(--sw-hop-dir, 1) * 0deg)) skewX(calc(var(--sw-hop-dir, 1) * 0deg)) scale(1, 1);
+    transform: perspective(140px) translate(0, 0)
+      rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);
   }
 }
 
