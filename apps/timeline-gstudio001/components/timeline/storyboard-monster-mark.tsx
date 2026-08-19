@@ -206,7 +206,9 @@ const FUR: React.CSSProperties = {
 };
 
 /** Marked so the settle can move the feet after the body has stopped — see
- *  `sw-foot-settle` in globals.css. */
+ *  `sw-foot-settle` in globals.css. The marker also carries WHICH foot: the two
+ *  splay apart in flight, which needs a side, and counting `:nth-child` past the
+ *  fur and the body to work it out would break the next time a part is added. */
 const foot = (left: string): React.CSSProperties => ({
   position: "absolute",
   left,
@@ -401,8 +403,8 @@ export function StoryboardMonsterMark({
           </span>
         </span>
       </span>
-      <span data-monster-foot="" style={foot("0.08em")} />
-      <span data-monster-foot="" style={foot("0.55em")} />
+      <span data-monster-foot="left" style={foot("0.08em")} />
+      <span data-monster-foot="right" style={foot("0.55em")} />
       <span data-monster-hat="" style={HAT_GROUP}>
         <span style={HAT_TILT}>
           {/* The pinched crown. The polygon dents the top twice — up one side, a

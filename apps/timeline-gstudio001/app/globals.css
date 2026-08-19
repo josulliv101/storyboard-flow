@@ -624,6 +624,12 @@ html {
 
 /* THE TOE IS THE ANCHOR, and the toe points AT THE READER.
    The creature is drawn front-on — one eye facing out, two shoes side by side
+   pointing this way — so a shoe's length runs INTO the screen, not across it,
+   and the bottom edge of the pill is the part standing on the floor. The
+   landing splay grows from there rather than from the middle. The FLIGHT pose
+   overrides it to the top edge — see its own note — because a hanging foot
+   hinges at the ankle, not at the toe.
+   The creature is drawn front-on — one eye facing out, two shoes side by side
    pointing this way — so a shoe's length runs INTO the screen, not across it.
    Its near edge is the bottom of the pill and its heel is the far edge at the
    top. Anchoring at 50% 100% is therefore anchoring at the toe: it is the part
@@ -641,35 +647,51 @@ html {
    About 15 degrees, which lifts the heel roughly 2px on the collapsed mark.
    Enough to read as a foot doing something; short of the ballet point that
    would make an 8px shoe look broken. */
-/* ONLY ON THE WAY UP. `data-landing` is set between the two captures, so this
-   selector is true when the departure snapshot is taken and false when the
-   arrival one is — the same element, photographed twice, in two poses.
+/* THE FEET HANG FROM THE ANKLE, and nothing about them is deformed.
 
-   THE SHOE GETS LONGER, which is the opposite of what two earlier builds did
-   and is the whole geometry of this drawing.
+   Four poses were tried that TILTED the shoe toward the reader, and every one
+   failed the same way: the creature is front-on and its shoes are 6x3px pills
+   seen almost end-on, so any 2D transform that tips one toward the camera
+   necessarily changes its projected shape. Rotating in the picture plane stood
+   it on the outside edge of a shoe; the same rotation flipped put it on its
+   heels; `rotateX` pressed it into the floor; a toe-anchored stretch turned it
+   to rubber. One fact in four costumes — a front-on tilt cannot be drawn
+   without altering the silhouette.
 
-   The creature is front-on and its shoes point AT the reader, so a standing
-   shoe is drawn already foreshortened: that 0.38 x 0.2em pill is a whole foot
-   seen almost end-on. Point the toe and the foot swings from near-horizontal
-   toward vertical — and a vertical foot presents its FULL length to the camera.
-   Its projection grows. That is why the reference photograph of someone on
-   tiptoe shows long extended feet and not stubby ones.
+   So the shoes keep their silhouette EXACTLY and swing instead. A rotation is
+   rigid: same shape, same size, same corners, no squash anywhere in it.
 
-   So the pose is a stretch anchored at the toe, not a rotation. `rotateX` was
-   the previous attempt and it can only ever shrink a flat pill — cos(theta)
-   times its height, whichever way it is signed — which read as the shoe being
-   squashed into the floor. Rotating in the picture plane, the attempt before
-   that, stood the creature on the outside edge of one shoe.
+   ANCHORED AT THE TOP INNER CORNER, and the corner matters as much as the top.
+   A PURE rotation is used — no translate, no scale — so the pivot point does
+   not move at all and the shoe cannot float free below the creature; anything
+   added to the transform would carry the join with it.
 
-   Slightly narrower as it goes: a foot turning toward vertical shows less of
-   its width, and the taper is what keeps the stretch from reading as the shoe
-   simply being scaled up.
+   But pivoting at the top CENTRE is not enough. Rotating a 5.7 x 3.0 pill 22
+   degrees about its own top-middle swings one top corner down and the other UP,
+   by 2.86 * sin(22deg) = 1.07px — straight into the body. Measured, and it is
+   exactly the creep this was meant to remove. Pivoting at the corner NEAREST
+   the creature's centre puts the whole shoe on one side of the hinge, so every
+   part of it moves down and out and nothing rises. Which corner that is depends
+   on the foot, so the two sides get mirrored origins as well as mirrored
+   angles.
 
-   NO `--sw-hop-dir` HERE, and its absence is the point: toward the reader is
-   the same direction whichever way the creature is travelling. Both shoes do
-   the same thing, because both are pointing the same way. */
-[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-foot] {
-  transform: scale(0.9, 1.85);
+   THE ORIGIN IS OVERRIDDEN HERE, not in the base rule. The landing splay below
+   scales the shoe and has to grow from the FLOOR, so the resting origin stays
+   at the bottom edge; only this pose moves it to the top. Two poses, two
+   pivots, and each one is where that motion is actually hinged.
+
+   Set on the DEPARTURE capture only (`:not([data-landing])`), so the feet hang
+   on the way up and are back under the body by the time it lands. */
+[data-storyboard-monster][data-aiming]:not([data-landing])
+  [data-monster-foot="left"] {
+  transform-origin: 100% 0;
+  transform: rotate(-22deg);
+}
+
+[data-storyboard-monster][data-aiming]:not([data-landing])
+  [data-monster-foot="right"] {
+  transform-origin: 0 0;
+  transform: rotate(22deg);
 }
 
 [data-storyboard-monster][data-settling] [data-monster-foot] {
