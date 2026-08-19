@@ -790,7 +790,7 @@ async function openSelectionMenu(page: Page): Promise<void> {
  * corner button was a second way to do the easy thing, sitting permanently over
  * the artwork. This keeps the call sites reading the same.
  *
- * Matches the card's own accessible name (`Scene A (collection, 2 items)`)
+ * Matches the card's own accessible name (`Scene A, collection, 2 items`)
  * rather than its node id, because the id is not what a test knows.
  */
 /**
@@ -827,7 +827,7 @@ async function selectCard(card: Locator): Promise<void> {
 const drillButton = (page: Page, timelineName: string): Locator =>
   page
     .getByRole("button", {
-      name: new RegExp(`^${timelineName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(collection`),
+      name: new RegExp(`^${timelineName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, collection`),
     })
     .first();
 
@@ -1035,11 +1035,11 @@ test.describe("graph view E2E", () => {
     // update only the document, so the visible title changed while screen
     // readers kept hearing "Scene A" indefinitely.
     const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
-    await expect(card).toHaveAttribute("aria-label", /^Opening Scene \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Opening Scene, collection/);
 
     // Undo restores BOTH representations rather than splitting them again.
     await undoButton(page).click();
-    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A, collection/);
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
       .toBe("Scene A");
@@ -1051,7 +1051,7 @@ test.describe("graph view E2E", () => {
     const api = await installGraphApi(page);
     await openGraph(page);
     const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
-    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A, collection/);
 
     // ONE click on the card's name label → inline editor; commit with Enter.
     await card.getByText("Scene A", { exact: true }).click();
@@ -1060,7 +1060,7 @@ test.describe("graph view E2E", () => {
     await editor.press("Enter");
 
     // node.name (the accessible name, ghost, and announcements) updates at once.
-    await expect(card).toHaveAttribute("aria-label", /^Heist Plan \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Heist Plan, collection/);
 
     // THE HOVER AFFORDANCE. A one-click target that looks exactly like static
     // text is a trap in both directions — nobody finds the rename, and anyone
@@ -1099,7 +1099,7 @@ test.describe("graph view E2E", () => {
     const api = await installGraphApi(page);
     await openGraph(page);
     const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
-    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A, collection/);
 
     // F2 on a focused collection card is the pointerless twin of double-clicking
     // the label: OpenKeyBoundary turns it into this rename request, which the
@@ -1125,7 +1125,7 @@ test.describe("graph view E2E", () => {
     await editor.fill("Heist Plan");
     await editor.press("Enter");
 
-    await expect(card).toHaveAttribute("aria-label", /^Heist Plan \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Heist Plan, collection/);
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
       .toBe("Heist Plan");
