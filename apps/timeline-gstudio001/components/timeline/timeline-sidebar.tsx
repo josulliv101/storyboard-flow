@@ -136,36 +136,33 @@ function commitRailExpanded(next: boolean): void {
  * Falls back to a plain commit where the API is missing or the reader asked for
  * less motion; the rail still moves, it just cuts.
  */
-/** The opening travel, unchanged since it was first tuned. */
-const OPEN_TRAVEL = "cubic-bezier(0.34, 0.8, 0.28, 1)";
+/**
+ * How hard the creature leaves the ground, as ONE number for both directions.
+ *
+ * Paired with the travel curve on `::view-transition-group(sw-monster)`, this
+ * puts the creature 17px along its 131px trip and 8.6px up at the hop's launch
+ * stop — a climb of about 37deg. Flat at 1 it was 4.8px and 27deg leaving the
+ * rail, 3.3px and 8deg leaving the word: a slide with a bump in it, which is
+ * what "skimming" describes.
+ */
+const LAUNCH = 1.788;
 
 /**
- * The closing travel, and it is a `linear()` because no cubic-bezier does this
- * shape.
+ * The two `scale` values the mark is rendered at, as a ratio — and the entire
+ * reason `LAUNCH` cannot just be set and forgotten.
  *
- * Three things have to be true of it at once, and they fight:
+ * The hop's rise is a PERCENTAGE, so it resolves against the snapshot being
+ * transformed, and early in the flight that is the snapshot the creature is
+ * LEAVING. Leaving the collapsed rail it is 21.88px; leaving the word it is
+ * 15.05px. The same percentage therefore buys a third less lift in one
+ * direction than the other, which is why the two jumps used to read as
+ * different jumps.
  *
- *   17%   3% across   the crouch happens in PLACE, not while sliding sideways
- *   32%  13% across   paired with the rise, a 37deg climb out of the ground
- *   58%  82% across   the apex sits near the landing rather than back over the
- *                     middle of the trip
- *
- * A cubic-bezier slow enough for the first two decelerates through the third —
- * `cubic-bezier(0.65, 0, 0.35, 1)` held the launch beautifully and then put the
- * apex at 71% of the travel, so the creature topped out over open ground and
- * came down a long way short of where it was going. `linear()` can hold a flat
- * start AND a fast middle AND a settle, which is exactly a jump.
- *
- * Generated as a monotone cubic through those control points and sampled at 19
- * stops — monotone so the interpolation can never overshoot and send the
- * creature briefly backwards, and 19 so the segments are below the eye's
- * resolution at this speed. Regenerate it rather than hand-editing a stop.
+ * The direction that leaves the smaller snapshot gets `LAUNCH` multiplied by
+ * this, so both arrive at the same 8.6px. If either `scale` at the call site
+ * moves, this is the line that moves with it.
  */
-const CLOSE_TRAVEL =
-  "linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%," +
-  " 0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%," +
-  " 0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%," +
-  " 0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)";
+const MARK_SCALE_RATIO = 1.6 / 1.1;
 
 function writeRailExpanded(next: boolean): void {
   const doc = document as Document & {
@@ -185,33 +182,19 @@ function writeRailExpanded(next: boolean): void {
   // being blown sideways rather than as choosing to go.
   document.documentElement.style.setProperty("--sw-hop-dir", next ? "1" : "-1");
 
-  // HOW HARD IT LEAVES THE GROUND, and how much ground goes by while it does.
-  // Neither is the same in both directions, and both had to be told so.
+  // HOW HARD IT LEAVES THE GROUND. Both directions want the same launch; they
+  // need different numbers to get it, because the percentage resolves against
+  // the snapshot each one is LEAVING and those are different sizes. See
+  // `LAUNCH` and `MARK_SCALE_RATIO`.
   //
-  // THE HORIZONTAL WAS THE REAL PROBLEM. The group's own easing carries the
-  // travel, and it is front-loaded: measured on the closing jump, the creature
-  // was 55px into a 131px trip — 42% of the way — while still 1.2px BELOW the
-  // ground in its crouch, and 75% of the way by the time it had risen 4.8px.
-  // The launch read as -1.2deg then 8deg, which is a slide with a bump in it.
-  // Holding the horizontal back is what makes the lift mean anything.
-  //
-  // THE RISE THEN CARRIES TWO CORRECTIONS. The hop's lift is a PERCENTAGE, so
-  // it resolves against the snapshot being transformed, and the creature is two
-  // sizes: `scale` 1.1 inside the word, 1.6 alone in the rail. Early on you see
-  // the OLD snapshot, so opening rose 22% of 21.88px = 4.8px and closing only
-  // 22% of 15.05px = 3.3px. 1.6 / 1.1 = 1.4545 of the number below is that
-  // compensation; the rest is the steeper launch, and together they put the
-  // creature 17px across and 8.6px up at the same stop — a 36deg climb.
-  //
-  // Opening gets the identity values, so it resolves to exactly what it always
-  // did rather than to something newly computed.
+  // The horizontal is not set here at all any more — it is one shaped curve on
+  // the group, shared by both directions, and holding it back is what made the
+  // lift mean anything. Before it, the creature was 55px into a 131px trip while
+  // still below the ground in its crouch, and 75% of the way across by the time
+  // it had risen at all.
   document.documentElement.style.setProperty(
     "--sw-hop-rise",
-    next ? "1" : "2.6",
-  );
-  document.documentElement.style.setProperty(
-    "--sw-group-ease",
-    next ? OPEN_TRAVEL : CLOSE_TRAVEL,
+    String(next ? LAUNCH : LAUNCH * MARK_SCALE_RATIO),
   );
 
   // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this

@@ -366,20 +366,36 @@ html {
      a slight bump in it, which is exactly what "skimming" describes. No amount
      of extra height fixes a launch that has already happened.
 
-     So it is a variable now, and the closing direction gets its own travel —
-     a `linear()` shaped to hold the ground under the creature until it has
-     actually left it, and then to put the APEX near the landing instead of back
-     over the middle of the trip. The three points it is solved for, and why a
-     cubic-bezier could not hit all three, are in `CLOSE_TRAVEL` in
-     `timeline-sidebar.tsx`.
+     So it is shaped rather than eased. Three things have to be true of the
+     travel at once, and no cubic-bezier holds all three:
 
-     Opening keeps this one — it reads correctly, and the fallback here is that
-     same value so a missing property cannot change it. */
+       17%    3% across   the crouch happens IN PLACE, not while sliding
+       32%   13% across   paired with the rise, a ~37deg climb out of the ground
+       58%   82% across   the apex sits near the landing, not back over the
+                          middle of the trip
+
+     Anything slow enough for the first two decelerates through the third.
+     `cubic-bezier(0.65, 0, 0.35, 1)` held the launch beautifully and then put
+     the apex at 71% of the travel, so the creature topped out over open ground.
+     A slow start AND a fast middle AND a settle is not a shape a single cubic
+     has; `linear()` is.
+
+     BOTH DIRECTIONS USE IT, which is why this is a literal and not a variable
+     any more. Travel is a progress curve — it says how much of the trip has
+     happened, not which way — so the same shape serves the jump out of the rail
+     and the jump back into the word. The only thing that differs by direction
+     is `--sw-hop-rise`, and it differs for a reason that is about the snapshot
+     SIZES rather than about the arc (see the 32% stop below).
+
+     Generated as a monotone cubic through those control points and sampled at
+     19 stops: monotone so the interpolation can never overshoot and send the
+     creature briefly backwards, and 19 so the segments sit below the eye's
+     resolution at this speed. Regenerate it rather than hand-editing a stop. */
   animation-duration: 620ms;
-  animation-timing-function: var(
-    --sw-group-ease,
-    cubic-bezier(0.34, 0.8, 0.28, 1)
-  );
+  animation-timing-function: linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%,
+    0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%,
+    0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%,
+    0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%);
   /* STAGING: the creature is the only thing that should be moving, so it sits
      above the rest of the transition rather than under the rail's own chrome. */
   z-index: 10;
@@ -620,22 +636,25 @@ html {
      same 131px of travel, which reads as skimming the ground rather than
      jumping off it.
 
-     `--sw-hop-rise` is the close's own number for this one stop, and it is 1
-     when opening so that direction resolves to the -22% it always had.
+     `--sw-hop-rise` is how hard it leaves, and it is the ONE number in this
+     animation that has to differ by direction.
 
-     It carries TWO corrections at once. 1.4545 of it (= 1.6 / 1.1, the two
-     `scale` values the sidebar renders the mark at) is pure compensation, and
-     brings the close's 3.3px up to the open's 4.8px. The rest is the LAUNCH:
-     paired with the slow-start group curve above, 2.6 puts the creature 17px
-     across and 8.6px up at this stop, which is a 36deg climb out of the crouch
-     where it used to be 98px across and 4.8px up, a 8deg slide.
+     Not because the two jumps should look different — they should look
+     identical, and now do — but because the percentage means different things
+     in each. The creature is two sizes (`scale` 1.1 inside the word, 1.6 alone
+     in the rail), and early in the flight you are looking at the OLD snapshot,
+     so the same 22% buys 4.8px leaving the rail and only 3.3px leaving the
+     word. The sidebar sets one LAUNCH constant and multiplies it by the size
+     ratio for the direction that leaves the smaller snapshot; both then rise
+     8.6px here, for a ~37deg climb where the old flat 22% gave 27deg and 8deg
+     respectively.
 
      ONLY THIS STOP IS SCALED. By the apex the cross-fade has handed most of the
-     way to the NEW snapshot — the larger one when closing — so the apex is
-     already 12.4px and needs nothing; scaling it too would put the creature
-     through the ceiling and flatten the arc's second half into a drop. A steep
-     rise into an unchanged apex is what makes it read as ballistic: fast out of
-     the ground, decelerating into the top. */
+     way to the NEW snapshot, so the apexes already sit at 12.4px and 11.2px and
+     need nothing; scaling them too would put the creature through the ceiling
+     and flatten the arc's second half into a drop. A steep rise into an
+     unchanged apex is what makes it read as ballistic: fast out of the ground,
+     decelerating into the top. */
   32% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), calc(-22% * var(--sw-hop-rise, 1))) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
