@@ -366,36 +366,32 @@ html {
      a slight bump in it, which is exactly what "skimming" describes. No amount
      of extra height fixes a launch that has already happened.
 
-     So it is shaped rather than eased. Three things have to be true of the
-     travel at once, and no cubic-bezier holds all three:
+     A JUMP HAS NO HORIZONTAL FORCE, so its horizontal velocity is CONSTANT
+     and only the vertical accelerates. That one fact is the whole specification
+     for this curve, and two earlier attempts got it wrong in opposite
+     directions.
 
-       17%    3% across   the crouch happens IN PLACE, not while sliding
-       32%   13% across   paired with the rise, a ~37deg climb out of the ground
-       58%   82% across   the apex sits near the landing, not back over the
-                          middle of the trip
+     `cubic-bezier(0.34, 0.8, 0.28, 1)` was heavily front-loaded: the creature
+     was 42% of the way across while still below the ground in its crouch, and
+     75% of the way by the time it had risen at all. That is a skim.
 
-     Anything slow enough for the first two decelerates through the third.
-     `cubic-bezier(0.65, 0, 0.35, 1)` held the launch beautifully and then put
-     the apex at 71% of the travel, so the creature topped out over open ground.
-     A slow start AND a fast middle AND a settle is not a shape a single cubic
-     has; `linear()` is.
+     Over-correcting with a shaped `linear()` that held the ground until 32% of
+     the time then caught up made it worse in a subtler way — peak speed 3.4x
+     the mean around the midpoint, against 0.15x at the start. It read as a
+     creature being fired out of something.
 
-     BOTH DIRECTIONS USE IT, which is why this is a literal and not a variable
-     any more. Travel is a progress curve — it says how much of the trip has
-     happened, not which way — so the same shape serves the jump out of the rail
-     and the jump back into the word. The only thing that differs by direction
-     is `--sw-hop-rise`, and it differs for a reason that is about the snapshot
-     SIZES rather than about the arc (see the 32% stop below).
+     So: near-linear, with only enough ease at the ends to cover the crouch and
+     the landing. Peak speed is 1.22x the mean across the whole flight, which is
+     as close to ballistic as a transition with a start and a stop gets. The
+     ARC comes from the keyframes now, not from a distorted clock — which is
+     where it belonged all along.
 
-     Generated as a monotone cubic through those control points and sampled at
-     19 stops: monotone so the interpolation can never overshoot and send the
-     creature briefly backwards, and 19 so the segments sit below the eye's
-     resolution at this speed. Regenerate it rather than hand-editing a stop. */
+     BOTH DIRECTIONS USE IT. Travel is a progress curve; it says how much of the
+     trip has happened, not which way. The only thing that differs by direction
+     is `--sw-hop-rise`, and it differs because of the snapshot SIZES rather
+     than because the two arcs should differ (see the launch stop below). */
   animation-duration: 620ms;
-  animation-timing-function: linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%,
-    0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%,
-    0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%,
-    0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%);
+  animation-timing-function: cubic-bezier(0.42, 0.3, 0.58, 0.72);
   /* STAGING: the creature is the only thing that should be moving, so it sits
      above the rest of the transition rather than under the rail's own chrome. */
   z-index: 10;
@@ -462,13 +458,31 @@ html {
    in it. */
 ::view-transition-old(sw-monster) {
   animation:
-    sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both,
+    /* LINEAR ON PURPOSE, and this was the single largest distortion in the
+       whole jump. `animation-timing-function` applies between EVERY pair of
+       keyframes, not once across the animation, so an eased hop re-eased each
+       leg of the arc: with the old easeOutQuint the creature was 77% of the way
+       to a stop a third into the segment and 92% of the way half way through.
+       Every leg landed early and then held, which is exactly what "reaches the
+       apex too early" describes — it reached every stop too early.
+       Linear hands the shape back to the keyframe values, where it can be read
+       and reasoned about. */
+    sw-monster-hop 680ms linear both,
     sw-monster-depart 680ms linear both;
 }
 
 ::view-transition-new(sw-monster) {
   animation:
-    sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both,
+    /* LINEAR ON PURPOSE, and this was the single largest distortion in the
+       whole jump. `animation-timing-function` applies between EVERY pair of
+       keyframes, not once across the animation, so an eased hop re-eased each
+       leg of the arc: with the old easeOutQuint the creature was 77% of the way
+       to a stop a third into the segment and 92% of the way half way through.
+       Every leg landed early and then held, which is exactly what "reaches the
+       apex too early" describes — it reached every stop too early.
+       Linear hands the shape back to the keyframe values, where it can be read
+       and reasoned about. */
+    sw-monster-hop 680ms linear both,
     sw-monster-arrive 680ms linear both;
 }
 
@@ -598,71 +612,59 @@ html {
 @keyframes sw-monster-hop {
   /* IT ENDS ON CONTACT, and that is a timing decision rather than a trim.
 
-     This animation used to run through the landing: 80% was the squash, 91% the
-     rebound, 100% standing. All three were BAKED, because the flight is a
-     view-transition snapshot and a snapshot cannot deform. Worse, they cost
+     This animation used to run through the landing: the squash, the rebound and
+     standing were all keyframes here. All three were BAKED, because the flight
+     is a view-transition snapshot and a snapshot cannot deform. Worse, they cost
      176ms — the feet touched down at 80% of 680ms and the live element did not
      take over until 680, so the body's real squash and the antennae's whip both
      began long after the impact they were reacting to. It read as land, pause,
-     sway.
-
-     So the flight is cut at the moment of contact and hands over there, with the
-     same 680ms and the same apex: every stop below is the old one divided by
-     0.8, which stretches what used to be the airborne 80% across the whole
-     animation. The impact and the rebound now belong to `sw-body-settle` and
+     sway. The impact and the rebound belong to `sw-body-settle` and
      `sw-antennae-settle`, which run on live elements and can actually deform.
 
      THE LAST POSE MUST BE NEUTRAL SCALE, because the settle's own 0% is
      `scale(1, 1)` and any difference between them is a pop at the handover. The
-     yaw is the exception and is carried over deliberately — `sw-monster-untwist`
-     picks it up from exactly this value. */
+     yaw is the exception and is carried over deliberately —
+     `sw-monster-untwist` picks it up from exactly this value.
+
+     THE STOPS ARE THE ARC NOW. Paired with the near-constant travel on the
+     group and `linear` above, the vertical values below are read directly as a
+     trajectory rather than being re-eased into one: the apex lands 18.1px up at
+     57% of the travel, which is a jump. The previous numbers put it 11.2px up
+     while the creature was already three quarters of the way across, and the
+     per-segment easing then delivered even that early. */
   0% {
     transform: translate(0, 0) rotate(0deg) scale(1, 1);
   }
-  17% {
+  /* The crouch, and it barely moves: 11% of the trip, still on the ground. */
+  14% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
   }
   /* THE LAUNCH, and the one stop that needs a per-direction number.
 
-     A percentage here resolves against the SNAPSHOT it is transforming, and
-     the two snapshots are different sizes: the mark is 15.05px inside the word
-     and 21.88px alone in the rail, a ratio of 1.454. Before the cross-fade
-     starts at 34% you are looking at the OLD snapshot, so this stop's rise is
-     22% of whichever size the creature is LEAVING.
-
-     Which made the two directions physically different jumps. Opening, it
-     leaves the collapsed rail and rises 22% of 21.88px = 4.8px. Closing, it
-     leaves the word and rises 22% of 15.05px = 3.3px — a third lower, over the
-     same 131px of travel, which reads as skimming the ground rather than
-     jumping off it.
-
-     `--sw-hop-rise` is how hard it leaves, and it is the ONE number in this
-     animation that has to differ by direction.
-
-     Not because the two jumps should look different — they should look
-     identical, and now do — but because the percentage means different things
-     in each. The creature is two sizes (`scale` 1.1 inside the word, 1.6 alone
-     in the rail), and early in the flight you are looking at the OLD snapshot,
-     so the same 22% buys 4.8px leaving the rail and only 3.3px leaving the
-     word. The sidebar sets one LAUNCH constant and multiplies it by the size
-     ratio for the direction that leaves the smaller snapshot; both then rise
-     8.6px here, for a ~37deg climb where the old flat 22% gave 27deg and 8deg
-     respectively.
+     A percentage here resolves against the SNAPSHOT it is transforming, and the
+     two snapshots are different sizes: the mark is 15.05px inside the word and
+     21.88px alone in the rail. Before the cross-fade starts at 34% you are
+     looking at the OLD snapshot, so this stop's rise is a share of whichever
+     size the creature is LEAVING — which made the two directions physically
+     different jumps until `--sw-hop-rise` compensated for it. The sidebar sets
+     one launch constant and multiplies it by the size ratio for the direction
+     that leaves the smaller snapshot; both then rise 12px here, a 33deg climb
+     out of the crouch.
 
      ONLY THIS STOP IS SCALED. By the apex the cross-fade has handed most of the
-     way to the NEW snapshot, so the apexes already sit at 12.4px and 11.2px and
-     need nothing; scaling them too would put the creature through the ceiling
-     and flatten the arc's second half into a drop. A steep rise into an
-     unchanged apex is what makes it read as ballistic: fast out of the ground,
-     decelerating into the top. */
-  32% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), calc(-22% * var(--sw-hop-rise, 1))) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+     way across, so the two apexes land within a pixel of each other on their
+     own (18.1 and 18.8) and scaling them would pull them apart again. */
+  30% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), calc(-55% * var(--sw-hop-rise, 1))) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
-  58% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
+  /* THE APEX, over the middle of the trip where a thrown thing has it. */
+  55% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -100%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
   }
-  82% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
+  /* Coming down, and steeper than it went up — which is what landing ON a spot
+     looks like as opposed to sailing past one. */
+  80% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -42%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
   }
   /* CONTACT. Standing on its feet, still yawed, not yet deformed — the next
      frame is a live element and the squash starts there. */

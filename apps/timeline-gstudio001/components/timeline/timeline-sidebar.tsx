@@ -139,13 +139,13 @@ function commitRailExpanded(next: boolean): void {
 /**
  * How hard the creature leaves the ground, as ONE number for both directions.
  *
- * Paired with the travel curve on `::view-transition-group(sw-monster)`, this
- * puts the creature 17px along its 131px trip and 8.6px up at the hop's launch
- * stop — a climb of about 37deg. Flat at 1 it was 4.8px and 27deg leaving the
- * rail, 3.3px and 8deg leaving the word: a slide with a bump in it, which is
- * what "skimming" describes.
+ * It is 1 because the ARC now lives in the keyframes where it belongs — see
+ * `sw-monster-hop` — rather than being manufactured by multiplying one stop.
+ * What survives here is the correction below, which is not about the arc at
+ * all but about the two directions measuring their percentages against
+ * different-sized snapshots.
  */
-const LAUNCH = 1.788;
+const LAUNCH = 1;
 
 /**
  * The two `scale` values the mark is rendered at, as a ratio — and the entire
