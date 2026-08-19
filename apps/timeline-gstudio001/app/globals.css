@@ -623,6 +623,59 @@ html {
    It is a plain declaration, not an animation, precisely because the creature
    is a static image mid-flight — there is nothing to animate then, only a pose
    to be captured in. */
+
+/* HE LOOKS AT WHERE HE IS GOING BEFORE HE GOES, and this is the declaration
+   that makes it symmetric.
+
+   The aim below already throws the pupil along the direction of travel, but it
+   is a DELTA on top of wherever the pupil rests — and the resting gaze depends
+   on the rail state, which differs between the two directions. Leaving the word
+   for the collapsed rail, the pupil starts centred and only gets the delta;
+   returning to the word it starts already looking at the breadcrumb and gets
+   the delta on top. The same jump read twice as strong in one direction as the
+   other, which is why the outbound one never quite said "destination".
+
+   Setting `left` here overrides the resting gaze for the DEPARTURE capture
+   only, so both directions start from the same place and the look toward the
+   destination is the same size whichever way he is about to go. Absolute, not a
+   transform, for the reason the gaze itself is: the aim, the flick and the
+   dilation are all transforms, and they compose on top of wherever this puts
+   the pupil.
+
+   `:not([data-landing])` is what makes it a BEFORE. The arrival snapshot has
+   the attribute and therefore not this rule, so the eye leads on the way out
+   and arrives at whatever the new rail state calls resting. */
+/* THE WHOLE EYE TURNS, not just the pupil sliding inside a fixed white. An eye
+   looking somewhere rotates in its socket — the white goes too, and the pupil
+   rides it and then leads a little further. Moving only the pupil is the thing
+   that reads as a googly eye rather than as attention.
+
+   The white can travel (0.98 - 0.64) / 2 = 0.17em before it reaches the body's
+   edge, so 0.05em is well inside it and the eye stays an eye. */
+[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-eye] {
+  transform: translateX(calc(var(--sw-hop-dir, 1) * 0.06em));
+}
+
+/* And the pupil leads the white it is riding — which is why this is SMALLER
+   than it was when the pupil carried the whole look alone. Together they come
+   to the same total offset; separately, one of them is the eye TURNING and the
+   other is it LOOKING.
+
+   Sized so the pupil stays wholly inside its white. It can travel
+   (0.64 - 0.39) / 2 = 0.125em from centre before the rim clips it, and the aim
+   below already spends 26% of the pupil's own width getting there — 2.2px of
+   the 2.74px available on the collapsed mark. This gets the remaining 0.44px
+   and not a tenth more. Push it and the leading edge of the pupil is shaved off
+   for the whole flight, which at this size reads as a rendering fault rather
+   than as a hard look. */
+[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-pupil] {
+  /* Re-declares the component's gaze property ON the pupil. It is set on the
+     MARK there and inherits down, so a value declared directly on this element
+     wins — which is how a stylesheet takes back a position an inline style
+     would otherwise own outright. */
+  --monster-gaze-x: calc(var(--sw-hop-dir, 1) * 0.02em);
+}
+
 [data-storyboard-monster][data-aiming] [data-monster-pupil] {
   /* THREE PROPERTIES, ONE POSE. `translate`, `scale` and `transform` are
      separate animatable properties that compose in that order, which is what
@@ -631,7 +684,7 @@ html {
      a duration and an easing, and all three want different ones. */
   translate: calc(var(--sw-hop-dir, 1) * 26%) 0;
   scale: 1.2;
-  transform: translateY(-12%);
+  transform: translateY(-5%);
 }
 
 /* THE HAT FLIES TRAILING, for the same reason and by the same mechanism.
@@ -886,25 +939,29 @@ html {
 
 /* ── The eye, vertically: the landing ────────────────────────────────────────
    This half is not eye physiology, it is the head the eye is riding in. It gets
-   thrown by the impact, overshoots, and comes back level, moving FURTHER than
-   the body did — the exaggeration that makes a 15px mark read as alive.
+   thrown by the impact, overshoots, and comes back level.
+
+   DIALLED TO ABOUT A THIRD of the first pass, which ran +/-12% and read as the
+   pupil rattling in its socket. The whole travel is now under half a pixel on
+   the in-word mark — the impact is FELT rather than watched, and the horizontal
+   flick beside it gets to be the thing the eye is actually doing.
 
    Kept inside the white: the pupil is 0.39em within a 0.64em eye, so this can
    spend about a quarter of the pupil's own width before it would clip. */
 @keyframes sw-pupil-bob {
   0% {
-    transform: translateY(-12%);
+    transform: translateY(-5%);
   }
   /* The impact drives it down. */
   30% {
-    transform: translateY(12%);
+    transform: translateY(5%);
   }
   /* Bounce. */
   58% {
-    transform: translateY(-6%);
+    transform: translateY(-2.5%);
   }
   80% {
-    transform: translateY(2%);
+    transform: translateY(1%);
   }
   100% {
     transform: translateY(0);
@@ -1007,6 +1064,7 @@ html {
   }
 
   [data-storyboard-monster][data-aiming] [data-monster-crown],
+  [data-storyboard-monster][data-aiming] [data-monster-eye],
   [data-storyboard-monster][data-aiming] [data-monster-foot] {
     transform: none;
   }

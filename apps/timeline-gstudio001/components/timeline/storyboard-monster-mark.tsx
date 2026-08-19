@@ -156,9 +156,8 @@ const BODY_LIFT = BODY_H - BODY_W;
  * a pupil cannot leave an eye, and the next person to touch these numbers
  * should not have to rediscover that.
  */
-const PUPIL_CENTRED = (0.64 - 0.39) / 2;
-const GAZE_X = 0.075;
-const GAZE_Y = 0;
+/* The numbers themselves are in `globals.css` — see the note above. Centred is
+   (0.64 - 0.39) / 2 = 0.125em, and the breadcrumb gaze adds 0.075em to it. */
 
 /**
  * The fur ring: a conic gradient of spikes, masked to an annulus.
@@ -269,16 +268,30 @@ export function StoryboardMonsterMark({
    *  belongs to the collapsed rail. See the GAZE_X note above. */
   gaze?: "ahead" | "breadcrumb";
 }>) {
-  const gazeX = gaze === "breadcrumb" ? GAZE_X : 0;
-  const gazeY = gaze === "breadcrumb" ? GAZE_Y : 0;
+  // THE GAZE TRAVELS AS A CUSTOM PROPERTY, which is the one channel a stylesheet
+  // can still take back. Written as an inline `left` it worked everywhere and
+  // could be overridden nowhere — inline beats any rule — so the pre-jump look
+  // in `globals.css` silently did nothing. Written only in `globals.css` it was
+  // overridable but invisible in Storybook, which loads its own Tailwind entry
+  // and never sees the app's stylesheet; the mark's own story failed on it.
+  //
+  // A custom property set HERE and read by the pupil's `left` below satisfies
+  // both: the component still owns its resting positions and renders correctly
+  // anywhere, and `globals.css` re-declares the property ON THE PUPIL for the
+  // flight pose, where a value set directly on the element beats one inherited
+  // from this ancestor.
   return (
     <span
       data-storyboard-monster=""
+      data-monster-gaze={gaze}
       // The growth between rail states. Everything about the creature is sized
       // off its own font-size, so animating that one property scales the whole
       // drawing — fur, eye, glint, hat and feet together.
       className="transition-[font-size] duration-200 motion-reduce:transition-none"
       style={{
+        // Read by the pupil's `left`, and re-declared by the flight pose — see
+        // the note above.
+        ["--monster-gaze-x" as string]: gaze === "breadcrumb" ? "0.075em" : "0em",
         display: "inline-block",
         width: "1em",
         height: "1em",
@@ -353,8 +366,11 @@ export function StoryboardMonsterMark({
             transformOrigin: "50% 100%",
           }}
         />
-        {/* eye white */}
+        {/* eye white — marked because the WHOLE eye turns before a jump, not
+            just the pupil sliding inside a fixed one. See the departure pose in
+            globals.css. */}
         <span
+          data-monster-eye=""
           style={{
             position: "absolute",
             left: "0.17em",
@@ -379,8 +395,10 @@ export function StoryboardMonsterMark({
             data-monster-pupil=""
             style={{
               position: "absolute",
-              left: `${PUPIL_CENTRED + gazeX}em`,
-              top: `${PUPIL_CENTRED + gazeY}em`,
+              // Centred is (0.64 - 0.39) / 2: the pupil is 0.39em inside a
+              // 0.64em eye. The gaze rides on top as a custom property.
+              left: "calc(0.125em + var(--monster-gaze-x, 0em))",
+              top: "0.125em",
               width: "0.39em",
               height: "0.39em",
               borderRadius: "999px",
