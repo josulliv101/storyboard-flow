@@ -369,39 +369,30 @@ export function StoryboardMonsterMark({
           background: SAGE,
         }}
       >
-        {/* THE CROWN OF THE HEAD, and the only way this drawing can BEND.
-            Every transform is affine, so no amount of rotating or skewing turns
-            an ellipse into a banana — it maps ellipses to ellipses. A curve
-            needs geometry, and a view transition freezes the geometry, so it
-            has to be here rather than in a keyframe.
+        {/* NO SECOND ELLIPSE HERE, and the empty space is the point.
 
-            This is a second ellipse in the SAME sage, sitting entirely inside
-            the body at rest and therefore invisible. Lean it over the body's
-            base and the union of the two is a curve: it juts out on the leading
-            side above the midpoint while the body's own outline still shows
-            below and behind, which is exactly the shape of a head arcing over
-            feet that have not moved.
+            There used to be one: a narrower sage ellipse hidden inside the body
+            that the flight pose leaned over the base, so the union of the two
+            read as a head arcing over feet that had not moved. It was the only
+            way this drawing could BEND -- every transform is affine, so no
+            amount of rotating or skewing turns an ellipse into a banana, and a
+            view transition freezes the geometry, so a curve could not be
+            keyframed either.
 
-            Narrower than the body on purpose. Same width would put its widest
-            point outside the body's own edge at that height — the body is
-            0.98 x 1.12, so at this ellipse's centre the body has only about
-            0.92 of width to give — and the crown would show as a bulge at rest
-            rather than hiding. */}
-        <span
-          data-monster-crown=""
-          style={{
-            position: "absolute",
-            left: `${(BODY_W - 0.9) / 2}em`,
-            top: 0,
-            width: "0.9em",
-            height: "0.74em",
-            borderRadius: "999px",
-            background: SAGE,
-            // Pivots where it meets the body it grows out of, so leaning it
-            // swings the top and leaves the join alone.
-            transformOrigin: "50% 100%",
-          }}
-        />
+            It did not survive being looked at. The body is 0.98 x 1.12 and the
+            ellipse was 0.9 wide, which leaves it about 0.01em of clearance at
+            its widest point -- so the moment the pose translated it 5% and
+            rotated it 7deg it broke the silhouette, measured at 0.049-0.092em
+            past the body's leading edge and up to 0.049em over the top, for
+            EVERY frame of the flight including the first. At rail size that is
+            a ~3px green lump beside the head, and it reads as a second body
+            showing through rather than as a bend.
+
+            So the lean is the body's own, carried by the `rotate` and `skewX`
+            already in `sw-monster-hop`. Straight rather than curved, and
+            honest: one shape, one outline. Anything that wants a real arc back
+            has to change the GEOMETRY -- a border-radius that differs per
+            corner, or a clip-path -- not stack a second copy behind it. */}
         {/* eye white — marked because the WHOLE eye turns before a jump, not
             just the pupil sliding inside a fixed one. See the departure pose in
             globals.css. */}

@@ -251,9 +251,7 @@ export const WithoutTheHat: Story = {
     // body. Measured on the body itself rather than the mark, whose box also
     // contains the hat's overhang.
     const bodyOf = (mark: Element) =>
-      mark.querySelector("[data-monster-crown]")?.parentElement ??
-      mark.querySelector("[data-monster-eye]")?.parentElement ??
-      null;
+      mark.querySelector("[data-monster-eye]")?.parentElement ?? null;
     const hattedBody = bodyOf(hatted);
     const bareBody = bodyOf(bare);
     expect(hattedBody).toBeTruthy();
