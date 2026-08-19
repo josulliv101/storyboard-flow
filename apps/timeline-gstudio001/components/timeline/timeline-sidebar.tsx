@@ -154,22 +154,33 @@ function writeRailExpanded(next: boolean): void {
   // being blown sideways rather than as choosing to go.
   document.documentElement.style.setProperty("--sw-hop-dir", next ? "1" : "-1");
 
-  // HOW HARD IT LEAVES THE GROUND, which is not the same in both directions and
-  // has to be told so.
+  // HOW HARD IT LEAVES THE GROUND, and how much ground goes by while it does.
+  // Neither is the same in both directions, and both had to be told so.
   //
-  // The hop's rise is a PERCENTAGE, so it resolves against the snapshot being
-  // transformed — and the creature is two different sizes: `scale` 1.1 inside
-  // the word, 1.6 alone in the rail. Early in the flight the OLD snapshot is
-  // what is on screen, so opening (leaving the collapsed rail) rose 4.8px while
-  // closing (leaving the word) rose only 3.3px over the same travel. The close
-  // looked like it was skimming the ground instead of jumping off it.
+  // THE HORIZONTAL WAS THE REAL PROBLEM. The group's own easing carries the
+  // travel, and it is front-loaded: measured on the closing jump, the creature
+  // was 55px into a 131px trip — 42% of the way — while still 1.2px BELOW the
+  // ground in its crouch, and 75% of the way by the time it had risen 4.8px.
+  // The launch read as -1.2deg then 8deg, which is a slide with a bump in it.
+  // Holding the horizontal back is what makes the lift mean anything.
   //
-  // 1.6 / 1.1 is exactly the discrepancy, so closing gets it and opening gets
-  // 1. Written as the ratio rather than a tuned number: if either `scale` at
-  // the call site moves, this is the line that has to move with it.
+  // THE RISE THEN CARRIES TWO CORRECTIONS. The hop's lift is a PERCENTAGE, so
+  // it resolves against the snapshot being transformed, and the creature is two
+  // sizes: `scale` 1.1 inside the word, 1.6 alone in the rail. Early on you see
+  // the OLD snapshot, so opening rose 22% of 21.88px = 4.8px and closing only
+  // 22% of 15.05px = 3.3px. 1.6 / 1.1 = 1.4545 of the number below is that
+  // compensation; the rest is the steeper launch, and together they put the
+  // creature 17px across and 8.6px up at the same stop — a 36deg climb.
+  //
+  // Opening gets the identity values, so it resolves to exactly what it always
+  // did rather than to something newly computed.
   document.documentElement.style.setProperty(
     "--sw-hop-rise",
-    next ? "1" : String(1.6 / 1.1),
+    next ? "1" : "2.6",
+  );
+  document.documentElement.style.setProperty(
+    "--sw-group-ease",
+    next ? "cubic-bezier(0.34, 0.8, 0.28, 1)" : "cubic-bezier(0.65, 0, 0.35, 1)",
   );
 
   // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
