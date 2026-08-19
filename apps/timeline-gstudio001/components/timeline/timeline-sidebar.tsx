@@ -154,6 +154,24 @@ function writeRailExpanded(next: boolean): void {
   // being blown sideways rather than as choosing to go.
   document.documentElement.style.setProperty("--sw-hop-dir", next ? "1" : "-1");
 
+  // HOW HARD IT LEAVES THE GROUND, which is not the same in both directions and
+  // has to be told so.
+  //
+  // The hop's rise is a PERCENTAGE, so it resolves against the snapshot being
+  // transformed — and the creature is two different sizes: `scale` 1.1 inside
+  // the word, 1.6 alone in the rail. Early in the flight the OLD snapshot is
+  // what is on screen, so opening (leaving the collapsed rail) rose 4.8px while
+  // closing (leaving the word) rose only 3.3px over the same travel. The close
+  // looked like it was skimming the ground instead of jumping off it.
+  //
+  // 1.6 / 1.1 is exactly the discrepancy, so closing gets it and opening gets
+  // 1. Written as the ratio rather than a tuned number: if either `scale` at
+  // the call site moves, this is the line that has to move with it.
+  document.documentElement.style.setProperty(
+    "--sw-hop-rise",
+    next ? "1" : String(1.6 / 1.1),
+  );
+
   // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
   // attribute set — the pose it leaves from and the pose it lands in — so the
   // pupil points along the arc for the WHOLE flight rather than only reacting
@@ -752,7 +770,7 @@ export function TimelineSidebar() {
             ? // OPENING: decisive, then eases hard into rest — what a drawer
               // pulled open and let go of does. Unchanged.
               `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS} duration-[440ms] ease-[cubic-bezier(0.22,1,0.36,1)]`
-            : // CLOSING: a long slow ramp, then commit.
+            : // CLOSING: an early creep, then commit.
               //
               // It used to close on the opening curve, and that curve is
               // easeOutQuint — 62px of the 168px travel gone in the FIRST 40ms
@@ -770,7 +788,14 @@ export function TimelineSidebar() {
               // 440ms has to make the time up somewhere, and it did — 145px in
               // the 200ms through the middle, which read as a lurch rather than
               // as a drawer.
-              `${RAIL_WIDTH_CLASS.collapsed} duration-[660ms] ease-[cubic-bezier(0.8,0,0.3,1)]`,
+              //
+              // THE FIRST VERSION OF THIS RAMP WAS TOO DEAD. At (0.8, 0, 0.3, 1)
+              // the rail was 0% closed at 60ms and 7% at 200ms — a hold, not a
+              // ramp, and a control that visibly does nothing for a fifth of a
+              // second reads as one that missed the click. This one creeps: 1%
+              // at 60ms, 5% at 120ms, 16% at 200ms. Still nothing like the
+              // opening curve, which was 37% and 84% at those marks.
+              `${RAIL_WIDTH_CLASS.collapsed} duration-[660ms] ease-[cubic-bezier(0.6,0.04,0.3,1)]`,
         )}
       >
         <Link

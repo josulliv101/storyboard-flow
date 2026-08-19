@@ -580,8 +580,28 @@ html {
   17% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
   }
+  /* THE LAUNCH, and the one stop that needs a per-direction number.
+
+     A percentage here resolves against the SNAPSHOT it is transforming, and
+     the two snapshots are different sizes: the mark is 15.05px inside the word
+     and 21.88px alone in the rail, a ratio of 1.454. Before the cross-fade
+     starts at 34% you are looking at the OLD snapshot, so this stop's rise is
+     22% of whichever size the creature is LEAVING.
+
+     Which made the two directions physically different jumps. Opening, it
+     leaves the collapsed rail and rises 22% of 21.88px = 4.8px. Closing, it
+     leaves the word and rises 22% of 15.05px = 3.3px — a third lower, over the
+     same 131px of travel, which reads as skimming the ground rather than
+     jumping off it.
+
+     `--sw-hop-rise` is 1.4545 (= 1.6 / 1.1, the two `scale` values the sidebar
+     renders the mark at) when closing and 1 when opening, so the close leaves
+     the ground at the same 4.8px the open always did. Only this stop is scaled:
+     by the apex the cross-fade has handed most of the way to the NEW snapshot,
+     which is the larger one when closing, so the two apexes already agree
+     within a pixel (12.4 against 11.2) and scaling that too would overshoot. */
   32% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -22%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), calc(-22% * var(--sw-hop-rise, 1))) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
   58% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
