@@ -681,51 +681,81 @@ html {
   /* THE OPENING ARC: ballistic, where the closing one is shaped.
 
      A jump has no horizontal force, so its horizontal velocity is CONSTANT and
-     only the vertical accelerates. This set is authored to be read against that
-     — a near-linear travel curve and `linear` between keyframes — so the values
-     below ARE the trajectory rather than a starting point a clock then
-     distorts. The apex lands ~18px up at 57% of the travel.
+     only the vertical accelerates. Everything about this set follows from that
+     — a near-linear travel curve on the group, `linear` between these stops,
+     and a lift that carries gravity in its VALUES.
 
-     TWO DISTORTIONS ARE ABSENT ON PURPOSE, and both were in the opening jump
-     before this. `animation-timing-function` applies between EVERY pair of
-     keyframes, so the eased hop the closing direction uses re-eases each leg:
-     77% of the way to a stop a third into the segment, 92% half way through.
-     Every leg landed early and held, which is what "reaches the apex too early"
-     described. And the travel curve was front-loaded, putting the creature 42%
-     of the way across while still crouching.
+     THAT LAST PART IS WHY THERE ARE SEVENTEEN OF THEM. `linear` between five
+     stops was the right fix for one problem and the cause of another: it stops
+     the clock re-easing each leg (an eased hop is 92% of the way to a stop half
+     way through the segment, so every leg lands early), but it also makes the
+     vertical velocity piecewise CONSTANT — a rise at one fixed speed, a corner,
+     a fall at another. That is a balloon, not a body, and it read as floaty.
 
-     No `--sw-hop-rise` here: this set is authored for the size this direction
-     actually leaves (21.88px, the mark alone in the rail), so there is nothing
-     to compensate. The closing set does the same for its own size. */
+     So the lift is sampled from a parabola instead: decelerating up, then
+     accelerating down. Measured across the flight the rise goes +4.34 to +0.48
+     into the apex and the fall +0.75 to -3.75 into the ground, where the five
+     stops gave a flat +2.78 and a flat -2.00. Seventeen samples put the
+     straight segments below the eye's resolution.
+
+     The fall gets more of the clock than the rise (0.36 up, 0.50 down), which
+     is the usual cartoon cheat and also what puts the apex at the middle of the
+     TRAVEL rather than past it.
+
+     Every other channel — the yaw, the lean, the squash — keeps the values it
+     had at the original control stops and is simply interpolated at the new
+     ones, so only the lift changed. Regenerate this block rather than editing a
+     stop by hand. */
   0% {
-    transform: translate(0, 0) rotate(0deg) scale(1, 1);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0%), 0%) rotateY(calc(var(--sw-hop-dir, 1) * 0deg)) rotate(calc(var(--sw-hop-dir, 1) * 0deg)) skewX(calc(var(--sw-hop-dir, 1) * 0deg)) scale(1, 1);
   }
-  /* The crouch, and it barely moves: 11% of the trip, still on the ground. */
-  14% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
+  6.25% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -0.4464%), 3.571%) rotateY(calc(var(--sw-hop-dir, 1) * -1.339deg)) rotate(calc(var(--sw-hop-dir, 1) * -0.4464deg)) skewX(calc(var(--sw-hop-dir, 1) * 0.6696deg)) scale(1.098, 0.9018);
   }
-  /* The launch: 27% across, 12px up, a 33deg climb out of the crouch. */
-  30% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -55%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+  12.5% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -0.8929%), 7.143%) rotateY(calc(var(--sw-hop-dir, 1) * -2.679deg)) rotate(calc(var(--sw-hop-dir, 1) * -0.8929deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.339deg)) scale(1.196, 0.8036);
   }
-  /* The apex, and it sits over the MIDDLE of the trip -- 51% of the travel at
-     51% of the time, which is where a thrown thing has it. It was at 57% and
-     moved back slightly; the arc gets a touch taller as a side effect (19.0px
-     against 18.1) because the climb now finishes sooner against the same
-     stops. */
+  18.75% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -0.1094%), -24.65%) rotateY(calc(var(--sw-hop-dir, 1) * 0.5625deg)) rotate(calc(var(--sw-hop-dir, 1) * 0.4844deg)) skewX(calc(var(--sw-hop-dir, 1) * -0.1328deg)) scale(1.107, 0.9106);
+  }
+  25% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.062%), -51.77%) rotateY(calc(var(--sw-hop-dir, 1) * 5.25deg)) rotate(calc(var(--sw-hop-dir, 1) * 2.438deg)) skewX(calc(var(--sw-hop-dir, 1) * -2.281deg)) scale(0.9587, 1.083);
+  }
+  31.25% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.062%), -72.87%) rotateY(calc(var(--sw-hop-dir, 1) * 9.438deg)) rotate(calc(var(--sw-hop-dir, 1) * 4.125deg)) skewX(calc(var(--sw-hop-dir, 1) * -4.188deg)) scale(0.8387, 1.221);
+  }
+  37.5% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.375%), -87.94%) rotateY(calc(var(--sw-hop-dir, 1) * 11.62deg)) rotate(calc(var(--sw-hop-dir, 1) * 4.75deg)) skewX(calc(var(--sw-hop-dir, 1) * -5.125deg)) scale(0.8325, 1.228);
+  }
+  43.75% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.688%), -96.99%) rotateY(calc(var(--sw-hop-dir, 1) * 13.81deg)) rotate(calc(var(--sw-hop-dir, 1) * 5.375deg)) skewX(calc(var(--sw-hop-dir, 1) * -6.062deg)) scale(0.8262, 1.234);
+  }
   50% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -100%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
   }
-  /* Coming down, steeper than it went up — landing ON a spot rather than
-     sailing past one. */
-  78% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -42%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
+  56.25% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.554%), -98.44%) rotateY(calc(var(--sw-hop-dir, 1) * 15.55deg)) rotate(calc(var(--sw-hop-dir, 1) * 4.214deg)) skewX(calc(var(--sw-hop-dir, 1) * -6.107deg)) scale(0.8423, 1.209);
   }
-  /* CONTACT. Standing, still yawed, not yet deformed — the next frame is a live
-     element and the squash starts there. */
+  62.5% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.107%), -93.75%) rotateY(calc(var(--sw-hop-dir, 1) * 15.11deg)) rotate(calc(var(--sw-hop-dir, 1) * 2.429deg)) skewX(calc(var(--sw-hop-dir, 1) * -5.214deg)) scale(0.8646, 1.177);
+  }
+  68.75% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.661%), -85.94%) rotateY(calc(var(--sw-hop-dir, 1) * 14.66deg)) rotate(calc(var(--sw-hop-dir, 1) * 0.6429deg)) skewX(calc(var(--sw-hop-dir, 1) * -4.321deg)) scale(0.887, 1.146);
+  }
+  75% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.214%), -75%) rotateY(calc(var(--sw-hop-dir, 1) * 14.21deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.143deg)) skewX(calc(var(--sw-hop-dir, 1) * -3.429deg)) scale(0.9093, 1.115);
+  }
+  81.25% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.8523%), -60.94%) rotateY(calc(var(--sw-hop-dir, 1) * 13.41deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.705deg)) skewX(calc(var(--sw-hop-dir, 1) * -2.557deg)) scale(0.9318, 1.085);
+  }
+  87.5% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.5682%), -43.75%) rotateY(calc(var(--sw-hop-dir, 1) * 12.27deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.136deg)) skewX(calc(var(--sw-hop-dir, 1) * -1.705deg)) scale(0.9545, 1.057);
+  }
+  93.75% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.2841%), -23.44%) rotateY(calc(var(--sw-hop-dir, 1) * 11.14deg)) rotate(calc(var(--sw-hop-dir, 1) * -0.5682deg)) skewX(calc(var(--sw-hop-dir, 1) * -0.8523deg)) scale(0.9773, 1.028);
+  }
   100% {
-    transform: perspective(140px) translate(0, 0)
-      rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0%), -0%) rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(calc(var(--sw-hop-dir, 1) * 0deg)) skewX(calc(var(--sw-hop-dir, 1) * 0deg)) scale(1, 1);
   }
 }
 
