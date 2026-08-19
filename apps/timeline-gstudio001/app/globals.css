@@ -622,14 +622,14 @@ html {
     sw-pupil-constrict 900ms cubic-bezier(0.22, 0.6, 0.3, 1) 140ms both;
 }
 
-/* THE TOE IS THE PIVOT, and which end that is depends on where the creature is
-   going. `calc(50% + dir * 50%)` resolves to the right edge travelling right and
-   the left edge travelling left, so the foot always turns about the end that
-   stays on the ground longest. Declared unconditionally — it costs nothing at
-   rest, and an origin that only existed during the aim would snap the foot to
-   its centre the moment the settle took over. */
+/* THE TOE IS THE PIVOT, and the toe points AT THE READER.
+   The creature is drawn front-on — one eye facing out, two shoes side by side
+   pointing this way — so a shoe's length runs INTO the screen, not across it.
+   Its near edge is the bottom of the pill and its heel is the far edge at the
+   top. Pivoting at 50% 100% is therefore pivoting at the toe. */
 [data-storyboard-monster] [data-monster-foot] {
-  transform-origin: calc(50% + var(--sw-hop-dir, 1) * 50%) 100%;
+  transform-origin: 50% 100%;
+  transform-style: flat;
 }
 
 /* TOE-OFF. A jump does not leave the ground flat-footed: it rolls up the foot,
@@ -643,9 +643,25 @@ html {
    would make an 8px shoe look broken. */
 /* ONLY ON THE WAY UP. `data-landing` is set between the two captures, so this
    selector is true when the departure snapshot is taken and false when the
-   arrival one is — the same element, photographed twice, in two poses. */
+   arrival one is — the same element, photographed twice, in two poses.
+
+   THE SHOE TIPS TOWARD THE READER, not toward the side of the screen. An
+   earlier build rotated it in the picture plane, which stood the creature on
+   the outside edge of one shoe and read as a stumble; the correction after that
+   put it up on its heels. Both were the same mistake — treating a shoe pointing
+   out of the screen as though it lay along it.
+
+   `rotateX` about the toe edge is the one that matches the drawing: the heel
+   swings up and back, the toe stays on the floor, and the shoe foreshortens as
+   it goes. That foreshortening is the whole read at this size — a 4px shape
+   cannot show an angle, but it can visibly get shorter while its bottom edge
+   holds still, which is exactly what a shoe rising onto its toe does head-on.
+
+   NO `--sw-hop-dir` HERE, and its absence is the point: toward the reader is
+   the same direction whichever way the creature is travelling. Both shoes do
+   the same thing, because both are pointing the same way. */
 [data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-foot] {
-  transform: rotate(calc(var(--sw-hop-dir, 1) * -15deg));
+  transform: perspective(1.6em) rotateX(-52deg);
 }
 
 [data-storyboard-monster][data-settling] [data-monster-foot] {
