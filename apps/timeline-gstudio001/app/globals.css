@@ -366,8 +366,13 @@ html {
      a slight bump in it, which is exactly what "skimming" describes. No amount
      of extra height fixes a launch that has already happened.
 
-     So it is a variable now, and the closing direction gets a slow-start curve
-     that keeps the ground under the creature until it has actually left it.
+     So it is a variable now, and the closing direction gets its own travel —
+     a `linear()` shaped to hold the ground under the creature until it has
+     actually left it, and then to put the APEX near the landing instead of back
+     over the middle of the trip. The three points it is solved for, and why a
+     cubic-bezier could not hit all three, are in `CLOSE_TRAVEL` in
+     `timeline-sidebar.tsx`.
+
      Opening keeps this one — it reads correctly, and the fallback here is that
      same value so a missing property cannot change it. */
   animation-duration: 620ms;

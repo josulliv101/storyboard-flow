@@ -136,6 +136,37 @@ function commitRailExpanded(next: boolean): void {
  * Falls back to a plain commit where the API is missing or the reader asked for
  * less motion; the rail still moves, it just cuts.
  */
+/** The opening travel, unchanged since it was first tuned. */
+const OPEN_TRAVEL = "cubic-bezier(0.34, 0.8, 0.28, 1)";
+
+/**
+ * The closing travel, and it is a `linear()` because no cubic-bezier does this
+ * shape.
+ *
+ * Three things have to be true of it at once, and they fight:
+ *
+ *   17%   3% across   the crouch happens in PLACE, not while sliding sideways
+ *   32%  13% across   paired with the rise, a 37deg climb out of the ground
+ *   58%  82% across   the apex sits near the landing rather than back over the
+ *                     middle of the trip
+ *
+ * A cubic-bezier slow enough for the first two decelerates through the third —
+ * `cubic-bezier(0.65, 0, 0.35, 1)` held the launch beautifully and then put the
+ * apex at 71% of the travel, so the creature topped out over open ground and
+ * came down a long way short of where it was going. `linear()` can hold a flat
+ * start AND a fast middle AND a settle, which is exactly a jump.
+ *
+ * Generated as a monotone cubic through those control points and sampled at 19
+ * stops — monotone so the interpolation can never overshoot and send the
+ * creature briefly backwards, and 19 so the segments are below the eye's
+ * resolution at this speed. Regenerate it rather than hand-editing a stop.
+ */
+const CLOSE_TRAVEL =
+  "linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%," +
+  " 0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%," +
+  " 0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%," +
+  " 0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)";
+
 function writeRailExpanded(next: boolean): void {
   const doc = document as Document & {
     startViewTransition?: (callback: () => void) => unknown;
@@ -180,7 +211,7 @@ function writeRailExpanded(next: boolean): void {
   );
   document.documentElement.style.setProperty(
     "--sw-group-ease",
-    next ? "cubic-bezier(0.34, 0.8, 0.28, 1)" : "cubic-bezier(0.65, 0, 0.35, 1)",
+    next ? OPEN_TRAVEL : CLOSE_TRAVEL,
   );
 
   // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
