@@ -403,14 +403,32 @@ function RevealedLetters({
     <span
       aria-hidden="true"
       className={cn(
-        // OVERLAPPING ACTION. The word does not move in lockstep with the rail:
-        // opening, it trails the creature's launch by a beat, so the name reads
-        // as being pulled out behind it; closing, it goes FIRST and quickly,
-        // clearing the space before the creature jumps back into it. Loose parts
-        // lag the thing driving them, and which part is loose depends on which
-        // way the motion runs.
-        "grid transition-[grid-template-columns] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        show ? "delay-[90ms] duration-[420ms]" : "delay-0 duration-[220ms]",
+        // THE TWO DIRECTIONS DO DIFFERENT THINGS, so the pacing lives on the
+        // branch rather than above it.
+        //
+        // OPENING, THE WORD CARRIES THE CREATURE. It used to trail the launch by
+        // a beat and finish in 420ms against a jump that lands at 680, so the
+        // gap the creature is aiming for arrived first and sat waiting while the
+        // creature caught up. Matching the group's own travel — same curve, same
+        // 680ms, no delay — makes the creature sit IN the "o" slot the whole way
+        // across instead of merely ending up there.
+        //
+        // It works out exactly, which is worth writing down because it looks
+        // like a coincidence. The creature's group interpolates its box from
+        // x=22 (alone in the rail) to x=153 (inside the word), so its position
+        // is 22 + 131p. The slot's left edge is 22 plus the revealed width of
+        // "storyboard " and "m", and that width is 131 when fully revealed — so
+        // the slot is 22 + 131q. Same form: give p and q the same curve and the
+        // two are the same number at every instant.
+        //
+        // CLOSING IS STILL OVERLAPPING ACTION, and deliberately unchanged: the
+        // word goes FIRST and quickly, clearing the space before the creature
+        // jumps back into it. Loose parts lag the thing driving them, and which
+        // part is loose depends on which way the motion runs.
+        "grid transition-[grid-template-columns] motion-reduce:transition-none",
+        show
+          ? "delay-0 duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.72)]"
+          : "delay-0 duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
     >
@@ -876,10 +894,17 @@ export function TimelineSidebar() {
               // jump instead of ahead of it, and the slow start is what buys
               // that: the creature gets the first fifth of a second to itself.
               //
-              // 660ms rather than 440ms for the same reason. A slow ramp inside
+              // 680ms rather than 440ms for the same reason. A slow ramp inside
               // 440ms has to make the time up somewhere, and it did — 145px in
               // the 200ms through the middle, which read as a lurch rather than
               // as a drawer.
+              //
+              // It matches the opening rail exactly, and both match the jump:
+              // 680ms is the hop's own length, so neither direction of the
+              // toggle is a different length of event. The two still FEEL
+              // different, and that is the easing rather than the clock — this
+              // one ramps and commits, so it is visually done around 600ms
+              // while the opening one is still arriving at 670.
               //
               // THE FIRST VERSION OF THIS RAMP WAS TOO DEAD. At (0.8, 0, 0.3, 1)
               // the rail was 0% closed at 60ms and 7% at 200ms — a hold, not a
@@ -887,7 +912,7 @@ export function TimelineSidebar() {
               // second reads as one that missed the click. This one creeps: 1%
               // at 60ms, 5% at 120ms, 16% at 200ms. Still nothing like the
               // opening curve, which was 37% and 84% at those marks.
-              `${RAIL_WIDTH_CLASS.collapsed} duration-[660ms] ease-[cubic-bezier(0.6,0.04,0.3,1)]`,
+              `${RAIL_WIDTH_CLASS.collapsed} duration-[680ms] ease-[cubic-bezier(0.6,0.04,0.3,1)]`,
         )}
       >
         <Link
