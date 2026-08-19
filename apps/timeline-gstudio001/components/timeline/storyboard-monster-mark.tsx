@@ -42,15 +42,31 @@ const PUPIL = "oklch(0.27 0.03 145)";
  */
 export const STORYBOARD_MONSTER_ACCENT = "oklch(0.78 0.10 45)";
 /**
- * `--color-accent`: the crown and the brim.
+ * The crown and the brim.
  *
- * The base step of the ramp that `STORYBOARD_MONSTER_ACCENT` is the 300 of, so
- * it has to sit deeper and stronger than the band it carries — level with it
- * and the band disappears into the crown, leaving the hat one flat shape. It
- * also has to clear the rail's own ~0.19 lightness, the constraint that already
- * killed two candidate foot colours.
+ * STANDS OFF THE SOURCE'S RAMP ON PURPOSE. The document paints both from
+ * `--color-accent` with `--color-accent-300` as the band — a darker hat wearing
+ * a lighter stripe, which is right on its own pale ground. On the rail's
+ * near-black it is not: a 0.62-lightness crown sits closer to the rail than to
+ * the 0.86 sage body directly beneath it, so the hat reads as a shadow ON the
+ * creature rather than as something the creature is wearing. Collapsed, where
+ * the whole mark is 22px and the crown about 8, it half-disappeared.
+ *
+ * So the pair is lifted TOGETHER and the contrast between them is what is
+ * preserved, not the absolute values: crown to 0.70 with the chroma pushed to
+ * hold its identity against the sage, band to 0.89 so it stays the lighter
+ * stripe the source drew. Raising only the crown would have closed the gap to
+ * the band and flattened the hat into one shape, which is the failure the old
+ * comment here was guarding against from the other direction.
+ *
+ * The wordmark keeps `STORYBOARD_MONSTER_ACCENT` untouched. It sits on the same
+ * black but at 19px with letterforms behind it, which is a different legibility
+ * problem and one it was already solving.
  */
-const HAT = "oklch(0.62 0.16 42)";
+const HAT = "oklch(0.70 0.18 45)";
+/** The band. Lighter than the crown by more than the source needed — see above.
+ *  Still terracotta, so the hat stays one object rather than two stacked ones. */
+const HAT_BAND = "oklch(0.89 0.08 48)";
 /**
  * The source's literal denim (turn 32, kept by turn 34).
  *
@@ -83,6 +99,53 @@ const BODY_H = 1.12;
 const BODY_TOP = 0.99 - BODY_H;
 /** How much taller than the source, and so how far the hat rides up with it. */
 const BODY_LIFT = BODY_H - BODY_W;
+
+/**
+ * WHERE THE CREATURE IS LOOKING WHEN NOTHING IS HAPPENING.
+ *
+ * At rest it watches the breadcrumb — the back arrow and project name at the
+ * top of the board, which is the thing a reader arriving at this corner is
+ * about to use. Measured rather than guessed, in both rail states: from the
+ * eye's centre to the project title is +161px x by -2px y with the rail open
+ * and +155 by -3 collapsed. Both are within a degree of straight right, so the
+ * gaze does NOT need to flip with the rail — a fact worth writing down, because
+ * "it must need to mirror when it collapses" is the obvious wrong assumption.
+ *
+ * IT IS A POSITION, NOT A TRANSFORM, and that is the whole reason it composes.
+ * The aim and the settle in `globals.css` are transforms, so they read as
+ * deltas from wherever the pupil sits — the eye still throws itself along the
+ * jump and still comes home to `translate(0, 0)`, which now means "back to
+ * watching the breadcrumb" instead of "dead centre". Putting the gaze in the
+ * transform would have meant every keyframe carrying it too.
+ *
+ * ONLY WHEN THE RAIL IS COLLAPSED. Open, the creature stands inside the word —
+ * it IS the "o" of "monster" — and a letterform with its counter shoved to one
+ * side stops being a letter. So it looks front and centre there, the way the
+ * source draws it, and turns its head only once the word is gone and it is
+ * alone in the corner with nothing left to be part of.
+ *
+ * THE WHOLE RANGE IS ABOUT 2.7px, which is why this number is larger than
+ * "slightly" sounds. The pupil can travel (0.64 - 0.39) / 2 = 0.125em before it
+ * reaches the white's rim, and on the collapsed mark that is 2.7px end to end.
+ * At 60% of it the gaze is about 1.6px — the smallest offset that survives
+ * rounding at this size. Anything genuinely subtle here is simply invisible.
+ *
+ * NO VERTICAL COMPONENT, because the measurement did not ask for one: the
+ * breadcrumb sits within a degree of level with the eye in both rail states. A
+ * tilt would be invention dressed as observation, and the glint already keeps
+ * the eye from reading flat.
+ *
+ * It composes cleanly with the jump, and only because it is collapsed-only: the
+ * aim in `globals.css` throws the pupil 26% of its own width ALONG travel, and
+ * the creature only ever ARRIVES collapsed by travelling left — so the aim
+ * subtracts from a rightward gaze rather than stacking onto it, and the pupil
+ * never reaches the rim. The eye white keeps its `overflow: hidden` regardless:
+ * a pupil cannot leave an eye, and the next person to touch these numbers
+ * should not have to rediscover that.
+ */
+const PUPIL_CENTRED = (0.64 - 0.39) / 2;
+const GAZE_X = 0.075;
+const GAZE_Y = 0;
 
 /**
  * The fur ring: a conic gradient of spikes, masked to an annulus.
@@ -142,13 +205,22 @@ const foot = (left: string): React.CSSProperties => ({
 });
 
 /**
- * The hat, as one rotated group.
+ * The hat, as TWO nested groups — and the split is load-bearing.
  *
- * The tilt is on the GROUP rather than on each piece, so crown, brim and band
- * stay registered to each other however far it is cocked — turn 28's whole
- * point. The origin sits low, down at the brim line, so the hat pivots where it
- * touches the head instead of swinging about its own middle; that is what keeps
- * the brim resting on the fur rather than lifting off it.
+ * The outer one holds no transform of its own. That is what lets `globals.css`
+ * own the hat's motion: an inline `transform` beats any stylesheet rule, so a
+ * hat whose resting tilt lives on the animated element cannot be animated from
+ * CSS at all. The outer group therefore expresses DELTAS from rest — the lag,
+ * the jam-down, the bounce — and rest is simply no transform.
+ *
+ * The inner one carries turn 34's fixed -14deg cock. Keeping the tilt on the
+ * group rather than on each piece is turn 28's point: crown, brim and band stay
+ * registered to each other however far it leans.
+ *
+ * BOTH pivot about the same low origin, down at the brim line where the hat
+ * touches the head, so it swings where it actually rests instead of about its
+ * own middle. That one number is why the brim stays on the fur through a lean
+ * that would otherwise lift it clear.
  */
 const HAT_GROUP: React.CSSProperties = {
   position: "absolute",
@@ -158,11 +230,32 @@ const HAT_GROUP: React.CSSProperties = {
   // Raised by exactly what the body grew, so the brim keeps the same purchase
   // on the fur that turn 34 drew it with.
   top: `${-BODY_LIFT}em`,
+  transformOrigin: "50% 72%",
+};
+
+/** Turn 34's fixed cock, held off the animated element — see above. */
+const HAT_TILT: React.CSSProperties = {
+  position: "absolute",
+  left: 0,
+  top: 0,
+  width: "1em",
+  height: "1em",
   transform: "rotate(-14deg)",
   transformOrigin: "50% 72%",
 };
 
-export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }>) {
+export function StoryboardMonsterMark({
+  scale = 1,
+  gaze = "ahead",
+}: Readonly<{
+  scale?: number;
+  /** Where the pupil rests. `"ahead"` is the source's centred eye, which is what
+   *  the wordmark needs; `"breadcrumb"` turns it toward the board's header and
+   *  belongs to the collapsed rail. See the GAZE_X note above. */
+  gaze?: "ahead" | "breadcrumb";
+}>) {
+  const gazeX = gaze === "breadcrumb" ? GAZE_X : 0;
+  const gazeY = gaze === "breadcrumb" ? GAZE_Y : 0;
   return (
     <span
       data-storyboard-monster=""
@@ -225,6 +318,12 @@ export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }
             height: "0.64em",
             borderRadius: "999px",
             background: CREAM,
+            // A PUPIL CANNOT LEAVE THE EYE. With the resting gaze offset added
+            // to the settle's own excursion, the far edge of the pupil reaches
+            // about half a pixel past the white and would otherwise be drawn on
+            // the sage. Clipping it to the circle is both the fix and what
+            // actually happens to an eye looking hard to one side.
+            overflow: "hidden",
           }}
         >
           {/* pupil */}
@@ -232,8 +331,8 @@ export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }
             data-monster-pupil=""
             style={{
               position: "absolute",
-              left: "0.125em",
-              top: "0.125em",
+              left: `${PUPIL_CENTRED + gazeX}em`,
+              top: `${PUPIL_CENTRED + gazeY}em`,
               width: "0.39em",
               height: "0.39em",
               borderRadius: "999px",
@@ -259,45 +358,48 @@ export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }
       <span data-monster-foot="" style={foot("0.08em")} />
       <span data-monster-foot="" style={foot("0.55em")} />
       <span data-monster-hat="" style={HAT_GROUP}>
-        {/* The pinched crown. The polygon dents the top twice — up one side, a
+        <span style={HAT_TILT}>
+          {/* The pinched crown. The polygon dents the top twice — up one side, a
             dip in the middle, up the other — which is the whole difference
             between a cowboy hat and a bucket. */}
-        <span
-          style={{
-            position: "absolute",
-            left: "0.23em",
-            top: "-0.3em",
-            width: "0.54em",
-            height: "0.42em",
-            background: HAT,
-            clipPath: "polygon(0 100%, 0 34%, 22% 8%, 50% 26%, 78% 8%, 100% 34%, 100% 100%)",
-          }}
-        />
-        {/* The brim, wider than the head so it overlaps the fur on both sides —
+          <span
+            style={{
+              position: "absolute",
+              left: "0.23em",
+              top: "-0.3em",
+              width: "0.54em",
+              height: "0.42em",
+              background: HAT,
+              clipPath:
+                "polygon(0 100%, 0 34%, 22% 8%, 50% 26%, 78% 8%, 100% 34%, 100% 100%)",
+            }}
+          />
+          {/* The brim, wider than the head so it overlaps the fur on both sides —
             turn 27's rule, and the reason the hat sits ON the creature instead
             of hovering above it. */}
-        <span
-          style={{
-            position: "absolute",
-            left: "-0.02em",
-            top: "0.08em",
-            width: "1.04em",
-            height: "0.16em",
-            background: HAT,
-            borderRadius: "999px",
-          }}
-        />
-        {/* The band, in the wordmark's own colour. */}
-        <span
-          style={{
-            position: "absolute",
-            left: "0.23em",
-            top: "0.01em",
-            width: "0.54em",
-            height: "0.08em",
-            background: STORYBOARD_MONSTER_ACCENT,
-          }}
-        />
+          <span
+            style={{
+              position: "absolute",
+              left: "-0.02em",
+              top: "0.08em",
+              width: "1.04em",
+              height: "0.16em",
+              background: HAT,
+              borderRadius: "999px",
+            }}
+          />
+          {/* The band. */}
+          <span
+            style={{
+              position: "absolute",
+              left: "0.23em",
+              top: "0.01em",
+              width: "0.54em",
+              height: "0.08em",
+              background: HAT_BAND,
+            }}
+          />
+        </span>
       </span>
     </span>
   );

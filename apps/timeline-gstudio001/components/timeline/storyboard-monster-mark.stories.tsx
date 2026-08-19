@@ -1,7 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, within } from "storybook/test";
 
-import { StoryboardMonsterMark, STORYBOARD_MONSTER_ACCENT } from "./storyboard-monster-mark";
+import {
+  StoryboardMonsterMark,
+  STORYBOARD_MONSTER_ACCENT,
+} from "./storyboard-monster-mark";
 
 // The creature in the rail's wordmark.
 //
@@ -22,10 +25,26 @@ function Plate({
 }: Readonly<{ children: React.ReactNode; label: string }>) {
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="flex min-h-[132px] items-center justify-center">{children}</div>
+      <div className="flex min-h-[132px] items-center justify-center">
+        {children}
+      </div>
       <span className="font-mono text-[11px] text-white/70">{label}</span>
     </div>
   );
+}
+
+/**
+ * Poses one rendered hat by writing straight to its style.
+ *
+ * A callback ref rather than a prop, because the component deliberately does
+ * not take one: the hat's transform belongs to the stylesheet, and adding a
+ * prop so a story could set it would put a second owner on the same property.
+ */
+function hatPose(transform: string) {
+  return (node: HTMLElement | null) => {
+    const hat = node?.querySelector<HTMLElement>("[data-monster-hat]");
+    if (hat) hat.style.transform = transform;
+  };
 }
 
 const meta = {
@@ -52,16 +71,18 @@ export const RailSizes: Story = {
   args: { scale: 1.1 },
   render: () => (
     <>
-      <Plate label="in the word (1.1)">
-        <StoryboardMonsterMark scale={1.1} />
+      <Plate label="in the word (1.1, looking ahead)">
+        <StoryboardMonsterMark scale={1.1} gaze="ahead" />
       </Plate>
-      <Plate label="alone, collapsed (1.6)">
-        <StoryboardMonsterMark scale={1.6} />
+      <Plate label="alone, collapsed (1.6, at the breadcrumb)">
+        <StoryboardMonsterMark scale={1.6} gaze="breadcrumb" />
       </Plate>
     </>
   ),
   play: async ({ canvasElement }) => {
-    const marks = Array.from(canvasElement.querySelectorAll("[data-storyboard-monster]"));
+    const marks = Array.from(
+      canvasElement.querySelectorAll("[data-storyboard-monster]"),
+    );
     expect(marks).toHaveLength(2);
     const [inWord, alone] = marks as [Element, Element];
     // The collapsed mark is the bigger of the two — the rail loses the word, so
@@ -72,6 +93,21 @@ export const RailSizes: Story = {
     );
     // Both feet, both eyes' worth of parts, and the hat — the drawing is only
     // ever wrong by a piece going missing.
+    // The two states differ by where the eye rests, and the difference is about
+    // 1.6px — small enough that only a measurement can tell whether the prop is
+    // still wired. In the word the pupil must be CENTRED, because the creature
+    // is the letter's counter there.
+    const pupilOffset = (mark: Element) => {
+      const pupil = mark.querySelector("[data-monster-pupil]");
+      if (!pupil) return NaN;
+      const white = pupil.parentElement;
+      if (!white) return NaN;
+      const p = pupil.getBoundingClientRect();
+      const w = white.getBoundingClientRect();
+      return p.x + p.width / 2 - (w.x + w.width / 2);
+    };
+    expect(Math.abs(pupilOffset(inWord))).toBeLessThan(0.5);
+    expect(pupilOffset(alone)).toBeGreaterThan(0.5);
     expect(alone.querySelectorAll("[data-monster-foot]")).toHaveLength(2);
     expect(alone.querySelector("[data-monster-pupil]")).toBeTruthy();
     expect(alone.querySelector("[data-monster-hat]")).toBeTruthy();
@@ -115,6 +151,54 @@ export const InTheWordmark: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     expect(canvas.getByText(/storyboard/)).toBeTruthy();
-    expect(canvasElement.querySelector("[data-storyboard-monster]")).toBeTruthy();
+    expect(
+      canvasElement.querySelector("[data-storyboard-monster]"),
+    ).toBeTruthy();
+  },
+};
+
+/**
+ * The hat's four poses across a jump, laid out side by side.
+ *
+ * The motion itself lives in `globals.css` (`sw-hat-settle`) and only runs
+ * inside a real view transition, which a story cannot stage. What a story CAN
+ * do is hold each pose still, which is the only way to see whether the jam
+ * actually presses the brim into the head rather than detaching it — the one
+ * failure a 640ms animation hides by being fast.
+ *
+ * The transforms are the keyframes' own values at `--sw-hop-dir: 1`. If they
+ * drift from the stylesheet this story stops describing the animation, which is
+ * the trade for being able to look at it at all.
+ */
+export const HatPoses: Story = {
+  args: { scale: 1 },
+  render: () => (
+    <>
+      {(
+        [
+          ["rest", "none"],
+          ["in flight (drag)", "translateY(-0.035em) rotate(-3deg)"],
+          ["the jam", "translateY(0.042em) rotate(3.5deg)"],
+          ["rebound", "translateY(-0.02em) rotate(-1.8deg)"],
+        ] as const
+      ).map(([label, transform]) => (
+        <Plate key={label} label={label}>
+          <span className="text-[4em]" ref={hatPose(transform)}>
+            <StoryboardMonsterMark scale={1} />
+          </span>
+        </Plate>
+      ))}
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    const hats = canvasElement.querySelectorAll("[data-monster-hat]");
+    expect(hats).toHaveLength(4);
+    const y = (n: Element) => n.getBoundingClientRect().top;
+    const [rest, flight, jam] = Array.from(hats) as [Element, Element, Element];
+    // The jam is BELOW rest and the flight pose is ABOVE it. Signs, not
+    // magnitudes: a keyframe edit that inverts the bounce is the regression
+    // worth catching, and it is invisible in a still screenshot.
+    expect(y(flight)).toBeLessThan(y(rest));
+    expect(y(jam)).toBeGreaterThan(y(rest));
   },
 };

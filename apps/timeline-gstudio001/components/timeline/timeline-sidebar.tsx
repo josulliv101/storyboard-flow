@@ -140,7 +140,8 @@ function writeRailExpanded(next: boolean): void {
   const doc = document as Document & {
     startViewTransition?: (callback: () => void) => unknown;
   };
-  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  const reduced =
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
   if (typeof doc.startViewTransition !== "function" || reduced) {
     commitRailExpanded(next);
     return;
@@ -193,7 +194,13 @@ function writeRailExpanded(next: boolean): void {
       // captured image to live element is invisible.
       mark.removeAttribute("data-aiming");
       mark.setAttribute("data-settling", "");
-      window.setTimeout(() => mark.removeAttribute("data-settling"), 620);
+      // Outlasts the longest part, which is now the PUPIL: it constricts over
+      // 900ms after a 140ms autonomic latency, so it is still moving 400ms
+      // after the hat has stopped. Pulling the attribute early does not shorten
+      // the flourish, it truncates it — at the old 620ms the hat's final bounce
+      // was cut mid-air, and at 760ms the eye would snap the last of its
+      // dilation off in one frame.
+      window.setTimeout(() => mark.removeAttribute("data-settling"), 1160);
     })
     .catch(() => {
       // A transition skipped or superseded by a faster second click. The rail
@@ -229,7 +236,9 @@ function writeRailExpanded(next: boolean): void {
  * click with no pointer anywhere near the tile, so no `pointerenter` would ever
  * arrive to clear the flag and that tile would go quiet for good.
  */
-function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): void {
+function suppressTipUntilPointerReturns(
+  event: React.MouseEvent<HTMLElement>,
+): void {
   if (event.detail === 0) return;
   const tile = (event.target as HTMLElement | null)?.closest("button, a");
   if (!(tile instanceof HTMLElement)) return;
@@ -242,7 +251,6 @@ function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): v
     { once: true },
   );
 }
-
 
 /**
  * Letters that grow from nothing to their natural width, and back.
@@ -767,7 +775,9 @@ export function TimelineSidebar() {
               `display: contents` so hiding them costs no layout — the letters
               keep participating in the link's own flex box. */}
           <span aria-hidden="true" className="contents">
-            <RevealedLetters show={railExpanded}>storyboard&nbsp;</RevealedLetters>
+            <RevealedLetters show={railExpanded}>
+              storyboard&nbsp;
+            </RevealedLetters>
             {/* The creature takes the monogram's place: it is what survives the
                 collapse, exactly as "SW" did. The word rebuilds around it —
                 "m" before, "nster" after — so opening the rail grows the name
@@ -776,7 +786,10 @@ export function TimelineSidebar() {
                 the link rather than becoming one narrow item that wraps inside
                 itself — the same reason the wrapper above uses it. Colour still
                 inherits through a `display: contents` box. */}
-            <span className="contents" style={{ color: STORYBOARD_MONSTER_ACCENT }}>
+            <span
+              className="contents"
+              style={{ color: STORYBOARD_MONSTER_ACCENT }}
+            >
               <RevealedLetters show={railExpanded}>m</RevealedLetters>
               {/* SMALL IN THE WORD, BIG ALONE. Expanded it is the source's own
                   proportion (0.72em), which is what makes it read as the "o" of
@@ -785,7 +798,10 @@ export function TimelineSidebar() {
                   the rail needs — and past the 19px floor the design document
                   measured, below which "the fur spikes and the glint start to
                   merge". */}
-              <StoryboardMonsterMark scale={railExpanded ? 1.1 : 1.6} />
+              <StoryboardMonsterMark
+                scale={railExpanded ? 1.1 : 1.6}
+                gaze={railExpanded ? "ahead" : "breadcrumb"}
+              />
               <RevealedLetters show={railExpanded}>nster</RevealedLetters>
             </span>
           </span>
@@ -841,10 +857,10 @@ export function TimelineSidebar() {
             const tooltipId = `sidebar-tooltip-utility-${item.id}`;
             const isPressed = isTrashOpen;
             // Through a view transition, so the drawer RISES instead of
-          // appearing. Same helper the trim modal uses — including the root
-          // flag the e2e waits on.
-          const handleClick = () =>
-            void withViewTransition(() => setIsTrashOpen(!isTrashOpen));
+            // appearing. Same helper the trim modal uses — including the root
+            // flag the e2e waits on.
+            const handleClick = () =>
+              void withViewTransition(() => setIsTrashOpen(!isTrashOpen));
 
             // WARM THE BIN ON INTENT, so the drawer opens at its final height
             // rather than growing when the fetch lands.
@@ -967,9 +983,9 @@ export function TimelineSidebar() {
                 alt={user.name || user.email || "Profile"}
                 className={cn(
                   // `relative` for the same reason the glyphs carry it: the tile's pill is
-                // an absolute ::before and would otherwise paint a 40% black veil over
-                // this face. Same bug the collection thumbnails had.
-                "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
+                  // an absolute ::before and would otherwise paint a 40% black veil over
+                  // this face. Same bug the collection thumbnails had.
+                  "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
                   SIDEBAR_AVATAR_INSET,
                 )}
               />
