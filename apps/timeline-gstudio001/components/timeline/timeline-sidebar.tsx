@@ -830,9 +830,20 @@ export function TimelineSidebar() {
           // From RAIL_WIDTH_CLASS, which holds the literals Tailwind's scanner
           // needs — see the note there on why these cannot be built by template.
           railExpanded
-            ? // OPENING: decisive, then eases hard into rest — what a drawer
-              // pulled open and let go of does. Unchanged.
-              `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS} duration-[440ms] ease-[cubic-bezier(0.22,1,0.36,1)]`
+            ? // OPENING: the rail arrives exactly as the creature lands, because
+              // it travels on the creature's own profile.
+              //
+              // It used to be 440ms of easeOutQuint, which is 99% done by 287ms
+              // against a jump that does not touch down until 680 — the rail
+              // was parked and waiting for most of the flight.
+              //
+              // MATCHING THE DURATION ALONE WOULD NOT HAVE FIXED IT. Stretched
+              // to 680ms that curve still LOOKS finished at 443ms; an ease-out
+              // spends its last 1% over a third of its time. So it takes the
+              // same near-linear travel the hop's group uses (see `OPENING`),
+              // which is 99% done at 670ms — the rail and the creature come to
+              // rest together rather than merely stopping at the same instant.
+              `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS} duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.72)]`
             : // CLOSING: an early creep, then commit.
               //
               // It used to close on the opening curve, and that curve is
