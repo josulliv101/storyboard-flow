@@ -856,20 +856,28 @@ html {
   }
 }
 
-/* The feet splay under the weight, then gather. Volume again: they widen as
-   they flatten. */
+/* The feet take the weight, then gather. Volume as always — they widen as they
+   flatten — but only just.
+
+   DIALLED TO ABOUT A QUARTER of the first pass, which ran 1.3/0.7 and read as
+   the shoes being made of rubber. A shoe is the stiffest thing on this creature
+   and the smallest: 5.7 x 3.0px, so the old +30% width was nearly two pixels of
+   travel on a shape three pixels tall, and the eye read deformation rather than
+   impact. At 1.08/0.93 the peak is under half a pixel each way — felt as the
+   landing having weight, not seen as the shoe changing shape. The body already
+   carries the visible squash; the feet only have to agree with it. */
 
 /* The splay under the weight. On the `scale` PROPERTY rather than inside a
    transform, so it can run on its own clock alongside the roll above. */
 @keyframes sw-foot-settle {
   0% {
-    scale: 1.3 0.7;
+    scale: 1.08 0.93;
   }
   40% {
-    scale: 0.88 1.16;
+    scale: 0.97 1.04;
   }
   70% {
-    scale: 1.06 0.95;
+    scale: 1.015 0.99;
   }
   100% {
     scale: 1 1;
