@@ -567,8 +567,38 @@ html {
     sw-pupil-constrict 900ms cubic-bezier(0.22, 0.6, 0.3, 1) 140ms both;
 }
 
+/* THE TOE IS THE PIVOT, and which end that is depends on where the creature is
+   going. `calc(50% + dir * 50%)` resolves to the right edge travelling right and
+   the left edge travelling left, so the foot always turns about the end that
+   stays on the ground longest. Declared unconditionally — it costs nothing at
+   rest, and an origin that only existed during the aim would snap the foot to
+   its centre the moment the settle took over. */
+[data-storyboard-monster] [data-monster-foot] {
+  transform-origin: calc(50% + var(--sw-hop-dir, 1) * 50%) 100%;
+}
+
+/* TOE-OFF. A jump does not leave the ground flat-footed: it rolls up the foot,
+   heel first, and the front of the shoe is the last thing in contact. Rotating
+   about the toe lifts the heel and leaves the toe where it was, which is that
+   roll held as a pose — and it stays true through the whole flight, because a
+   jumping figure keeps its toes trailing in the air.
+
+   About 15 degrees, which lifts the heel roughly 2px on the collapsed mark.
+   Enough to read as a foot doing something; short of the ballet point that
+   would make an 8px shoe look broken. */
+[data-storyboard-monster][data-aiming] [data-monster-foot] {
+  transform: rotate(calc(var(--sw-hop-dir, 1) * -15deg));
+}
+
 [data-storyboard-monster][data-settling] [data-monster-foot] {
-  animation: sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+  /* TWO CLOCKS, and the split is the point. The ROLL is the contact itself, so
+     it starts the instant the creature lands. The SQUASH is the mass arriving
+     behind it, so it lags 110ms — the foot is flat again before it has finished
+     absorbing the weight, which is the order it happens in. Separate properties
+     so the two can compose; one `transform` would force them to share. */
+  animation:
+    sw-foot-roll 300ms cubic-bezier(0.25, 0.7, 0.3, 1) both,
+    sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
 }
 
 /* LAST TO SETTLE, which is the timing point. The eye reacts at once (it is the
@@ -726,18 +756,36 @@ html {
 
 /* The feet splay under the weight, then gather. Volume again: they widen as
    they flatten. */
-@keyframes sw-foot-settle {
+/* The foot rolls back down. It arrives still angled off the toe, drops the heel
+   THROUGH flat and a little past it — a heel slapping down does not stop dead —
+   and comes back level. Monotonic apart from that one overshoot; a foot that
+   oscillates reads as a wobble, not as weight. */
+@keyframes sw-foot-roll {
   0% {
-    transform: scale(1.3, 0.7);
+    transform: rotate(calc(var(--sw-hop-dir, 1) * -15deg));
   }
-  40% {
-    transform: scale(0.88, 1.16);
-  }
-  70% {
-    transform: scale(1.06, 0.95);
+  62% {
+    transform: rotate(calc(var(--sw-hop-dir, 1) * 3deg));
   }
   100% {
-    transform: scale(1, 1);
+    transform: rotate(0deg);
+  }
+}
+
+/* The splay under the weight. On the `scale` PROPERTY rather than inside a
+   transform, so it can run on its own clock alongside the roll above. */
+@keyframes sw-foot-settle {
+  0% {
+    scale: 1.3 0.7;
+  }
+  40% {
+    scale: 0.88 1.16;
+  }
+  70% {
+    scale: 1.06 0.95;
+  }
+  100% {
+    scale: 1 1;
   }
 }
 
@@ -807,7 +855,8 @@ html {
     animation: none;
   }
 
-  [data-storyboard-monster][data-aiming] [data-monster-crown] {
+  [data-storyboard-monster][data-aiming] [data-monster-crown],
+  [data-storyboard-monster][data-aiming] [data-monster-foot] {
     transform: none;
   }
 
