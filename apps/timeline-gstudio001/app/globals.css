@@ -554,45 +554,43 @@ html {
    Kept small on purpose — a few degrees and a couple of percent. At ~20px a
    lean big enough to notice as a lean is big enough to look like a wobble. */
 @keyframes sw-monster-hop {
-  /* Standing. */
+  /* IT ENDS ON CONTACT, and that is a timing decision rather than a trim.
+
+     This animation used to run through the landing: 80% was the squash, 91% the
+     rebound, 100% standing. All three were BAKED, because the flight is a
+     view-transition snapshot and a snapshot cannot deform. Worse, they cost
+     176ms — the feet touched down at 80% of 680ms and the live element did not
+     take over until 680, so the body's real squash and the antennae's whip both
+     began long after the impact they were reacting to. It read as land, pause,
+     sway.
+
+     So the flight is cut at the moment of contact and hands over there, with the
+     same 680ms and the same apex: every stop below is the old one divided by
+     0.8, which stretches what used to be the airborne 80% across the whole
+     animation. The impact and the rebound now belong to `sw-body-settle` and
+     `sw-antennae-settle`, which run on live elements and can actually deform.
+
+     THE LAST POSE MUST BE NEUTRAL SCALE, because the settle's own 0% is
+     `scale(1, 1)` and any difference between them is a pop at the handover. The
+     yaw is the exception and is carried over deliberately — `sw-monster-untwist`
+     picks it up from exactly this value. */
   0% {
     transform: translate(0, 0) rotate(0deg) scale(1, 1);
   }
-  /* ANTICIPATION: the crouch. Wider and shorter, sinking slightly, and already
-     shifting a hair AGAINST the direction of travel — you rock back before you
-     go. */
-  14% {
+  17% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
   }
-  /* The push-off — already stretching before it leaves the ground, and tipping
-     into the direction of travel. */
-  26% {
+  32% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -22%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
-  /* Top of the arc: fully stretched, highest lift, lean at its greatest.
-     The lift is a share of the creature's OWN height, so it clears its own body
-     and a bit more — enough that the jump reads as a jump at 15px rather than
-     as a bounce, without throwing it out of the rail. */
-  46% {
+  58% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
   }
-  /* Falling, gathering, and rotating back THROUGH level — the counter-rotation
-     is what makes the landing read as absorbed rather than dropped. */
-  66% {
+  82% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
   }
-  /* Landing: the squash absorbs it, the tip flattens out. */
-  80% {
-    transform: perspective(140px) translate(0, 4%) rotateY(calc(var(--sw-hop-dir, 1) * 12deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 2deg)) scale(1.2, 0.8);
-  }
-  /* FOLLOW-THROUGH: a small rebound past the resting pose... */
-  91% {
-    transform: perspective(140px) translate(0, -3%) rotateY(calc(var(--sw-hop-dir, 1) * 11deg)) rotate(0deg) skewX(calc(var(--sw-hop-dir, 1) * 0.5deg)) scale(0.95, 1.06);
-  }
-  /* ...and settle. */
-  /* STILL TURNED. The hop ends mid-twist on purpose — squaring up is a beat of
-     its own, and it belongs after the landing rather than inside it. The live
-     element picks up from exactly this angle; see `sw-monster-untwist`. */
+  /* CONTACT. Standing on its feet, still yawed, not yet deformed — the next
+     frame is a live element and the squash starts there. */
   100% {
     transform: perspective(140px) translate(0, 0)
       rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);
@@ -736,18 +734,49 @@ html {
   transform: translateY(-5%);
 }
 
-/* THE HAT FLIES TRAILING, for the same reason and by the same mechanism.
-   DRAG: a hat is not attached to the head, it rests on it, so when the head
-   leaves the ground the hat is still where the head used to be — lifted a hair
-   clear of the fur and rotated BACK against the direction of travel. It is the
-   one pose that says "this creature jumped" rather than "this creature was
-   moved".
+/* THE BEND HAS TO BE DECLARED BEFORE IT CAN BE ANIMATED.
 
-   Signed the opposite way to the body's lean on purpose: the body leans INTO
-   the jump, the hat leans away from it. Loose things trail; that difference
-   between the two is the whole read. */
-[data-storyboard-monster][data-aiming] [data-monster-hat] {
-  transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -1.4deg));
+   A plain custom property is a token to CSS, so it would JUMP from one keyframe
+   value to the next instead of interpolating. Registering it as an `<angle>`
+   makes the browser tween it like any other animatable value, which is what
+   turns the four beats below into a continuous whip. */
+@property --sw-antenna-bend {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
+}
+
+/* THE ANTENNAE FLY BENT BACK, for the same reason the pupil flies thrown.
+   DRAG: they are attached to the head but not stiff, so when the head leaves
+   the ground the knobs are still where the head used to be. It is the one pose
+   that says "this creature jumped" rather than "this creature was moved".
+
+   AN ARC, NOT A LEAN, and getting there took three tries worth recording. A
+   rotation swings the pair rigidly, which is what a hat brim does. A skew
+   shears it, which moves the tops further than the roots but leaves every edge
+   straight — both are affine, and an affine map takes a straight bar to a
+   straight bar. Neither is a bend. What bends is the CHAIN each stalk is built
+   from: three segments, each a child of the one below and each turned by this
+   same angle, so the turns compound (b, 2b, 3b) and the chords approximate an
+   arc. See `SEG_BEND` in `storyboard-monster-mark.tsx`.
+
+   ONE DECLARATION MOVES ALL SIX SEGMENTS, because they read it by inheritance
+   rather than being selected individually. That is also why it is set here on
+   the group and not on the segments: an inline `transform` beats any rule, and
+   every segment needs one to read this property at all.
+
+   MEASURED. Ten degrees a segment is thirty at the tip, and on the collapsed
+   21.9px mark that carries a knob 3.03px back from rest. The hat's inherited
+   1.4deg, which this replaces, moved it 0.34px.
+
+   NO CEILING ANY MORE, which is the third reason to prefer the chain. Both
+   earlier versions turned the whole GROUP, so each stalk's root travelled with
+   it and the root is buried only 0.05em in the head — past about 16deg the
+   stalk tore out of the skull. A segment turns about its own bottom edge, so
+   the root is a FIXED POINT of the bend and no angle can detach it. If a louder
+   version is ever wanted, it is safe to just raise this number. */
+[data-storyboard-monster][data-aiming] [data-monster-antennae] {
+  --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * -10deg);
 }
 
 [data-storyboard-monster][data-settling] [data-monster-pupil] {
@@ -839,15 +868,48 @@ html {
      four pixels tall and read as the foot flailing rather than as weight. The
      handover between snapshots now puts it flat before the ground arrives, so
      all that is left to do here is take the impact. */
-  animation: sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+  animation: sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
 }
 
 /* LAST TO SETTLE, which is the timing point. The eye reacts at once (it is the
-   creature paying attention), the feet lag 110ms (they carried the mass), and
+   creature paying attention), the feet lag 40ms (they carried the mass), and
    the hat — the only part not attached to anything — is still moving after both
    have stopped. Finishing them together would read as one twitch. */
-[data-storyboard-monster][data-settling] [data-monster-hat] {
-  animation: sw-hat-settle 640ms cubic-bezier(0.3, 0.7, 0.28, 1) 40ms both;
+/* THE WEIGHT LANDS ON THE BODY, not on everything equally.
+
+   Through the flight the whole creature is ONE BITMAP — a view-transition
+   snapshot — so `sw-monster-hop`'s squash and stretch necessarily applies to
+   the body, the antennae and the feet in exactly the same proportion. There is
+   no "inside" of a snapshot to weight differently, and a static counter-pose
+   cannot cancel a scale that changes over time. That ratio is fixed for those
+   680ms, and the only way to change it is to give the antennae their own
+   `view-transition-name` so they are snapshotted separately.
+
+   The SETTLE is a live element, and it is two thirds of the animation. Here the
+   parts ARE separable, and this is where the difference in weight is spent: the
+   body takes a real landing squash — a tenth wider and a tenth shorter at the
+   bottom of it — while the antennae above it only sway. A jump lands on the
+   mass, and the mass is the green part.
+
+   IT REACHES THE EYE AND NOTHING ELSE, which is a fact about the markup rather
+   than about this rule. The eye and its pupil are CHILDREN of the body, so they
+   squash with the head the way an eye in a squashing head should; the antennae
+   and the feet are siblings, so they are untouched. Splitting them any other
+   way would have needed a wrapper. */
+[data-storyboard-monster][data-settling] [data-monster-body],
+/* THE FUR RIDES THE SAME ANIMATION, and must. It is a sibling of the body, not
+   a child, and its masked ring clears the body's silhouette by 0.0021em — a
+   twentieth of a pixel at rail size. Squash the body without it and the head's
+   top edge drops out from under the ring: 2.10px of bare starburst above the
+   skull at the bottom of the squash. Same keyframes, same origin point
+   (expressed as 50%/85.5% of its own larger box), so the margin holds at every
+   frame instead of only at rest. */
+[data-storyboard-monster][data-settling] [data-monster-fur] {
+  animation: sw-body-settle 640ms cubic-bezier(0.3, 0.7, 0.28, 1) both;
+}
+
+[data-storyboard-monster][data-settling] [data-monster-antennae] {
+  animation: sw-antennae-settle 640ms cubic-bezier(0.3, 0.7, 0.28, 1) both;
 }
 
 /* ── The eye, horizontally: a SACCADE ────────────────────────────────────────
@@ -1010,64 +1072,136 @@ html {
   }
 }
 
-/* The hat takes the landing and gives it back.
-   OVERLAPPING ACTION and FOLLOW-THROUGH, and nothing else — the principles that
-   apply to a loose garment, not the whole twelve. It is drawn about 10px wide,
-   so squash and stretch is unavailable (a felt hat barely deforms, and one
-   pixel of it is a flicker, not a squash); arcs are not a separate dial here
-   because the pivot IS the arc, down at the brim where the hat meets the fur.
-   What is left is drag, weight, and the time it takes to stop.
+/* The body's landing, and the reason the antennae keyframes carry a
+   `translateY` they would otherwise have no use for.
 
-   These are DELTAS from rest — the fixed -14deg cock lives on an inner element,
-   so 0 here means "sitting normally".
+   Scaled about `50% 100%` — its own bottom edge, the line it shares with the
+   feet — so a squash presses the head DOWN onto its feet instead of sinking the
+   whole creature into the floor. Width and height are signed opposite at every
+   stop: volume is roughly conserved, which is the difference between a squash
+   and a shrink.
 
-   DELIBERATELY UNDER-PLAYED, and the two channels are dialled SEPARATELY
-   because they fail differently.
-
-   ROTATION is what reads as a hat: the crown's top sits about an em above the
-   pivot, so even a degree or two swings it visibly and the shape of the event —
-   trail, jam, rebound — survives at 8px. That leverage is also why it needed
-   cutting TWICE. Six tenths of the first pass still swung the crown tip about
-   1.3px at the collapsed mark, which at that size is a wobble rather than a
-   settle; it is now under half that. The hat should look like it is finding its
-   place again, not like it is loose.
-
-   VERTICAL is what reads as VIBRATION. A hat bobbing straight up and down has
-   no silhouette change to sell it, so the eye registers the motion without
-   reading a cause, and two bounces of it look like a rendering glitch rather
-   than like weight. It is cut to about a third again — the whole excursion is
-   now near ±0.2px in the rail, which is felt more than seen. That also puts the
-   flight lift (0.012em) well inside the brim's ~0.03em overhang on the body, so
-   the hat keeps its purchase on the fur instead of appearing to hover. */
-@keyframes sw-hat-settle {
-  /* Where the flight left it: lifted clear, trailing behind the direction of
-     travel. Identical to the aim pose, so the handover from image to element
-     shows no seam. */
+   SAME DURATION AND EASING AS `sw-antennae-settle`, AND NEITHER IS DELAYED. The
+   antennae have to stay rooted in a head whose top edge is moving, and the only
+   cheap way to guarantee that is to give both animations one clock and put the
+   correction at the same percentages. Each antenna keyframe's `translateY` is
+   exactly -0.98 * (sy - 1) em, the negative of how far this rule moves the
+   body's top: at 20% the head squashes to 0.90 and its top drops 0.098em, so
+   the antennae drop 0.098em with it. Change an `sy` here and the matching
+   `translateY` there has to change with it or the stalks tear out of the skull
+   — the root is buried only 0.05em (1.09px at rail size), which is less than a
+   single one of these stops moves it. */
+@keyframes sw-body-settle {
+  /* The flight ends at scale(1, 1), so this starts there and the handover from
+     image to element shows no seam. */
   0% {
-    transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -1.4deg));
+    transform: scale(1, 1);
   }
-  /* THE JAM. The head stops and the hat does not, so it drives DOWN onto the
-     fur, past where it rests, and its own momentum carries it forward — the
-     rotation crosses through rest to the far side, which is the opposite of
-     where it spent the whole flight. */
-  20% {
-    transform: translateY(0.015em) rotate(calc(var(--sw-hop-dir, 1) * 1.6deg));
+  /* THE IMPACT. Widest and shortest — the mass arrives and the head spreads
+     over the feet. */
+  12% {
+    transform: scale(1.1, 0.9);
   }
-  /* The rebound: the fur gives it back, and the hat lifts and rocks back the
-     way it came. Smaller than the jam, because energy leaves the system. */
-  46% {
-    transform: translateY(-0.007em) rotate(calc(var(--sw-hop-dir, 1) * -0.8deg));
+  /* The recoil: taller than rest and narrower, which is what a squashed thing
+     does on the way back. Smaller than the impact, because energy leaves the
+     system. */
+  38% {
+    transform: scale(0.96, 1.05);
   }
-  /* A second, much shorter bounce — one is a bump, two is a hat. */
-  70% {
-    transform: translateY(0.004em) rotate(calc(var(--sw-hop-dir, 1) * 0.4deg));
+  /* A second, much shorter beat — one is a bump, two is a body. */
+  64% {
+    transform: scale(1.02, 0.98);
   }
-  88% {
-    transform: translateY(-0.002em) rotate(0deg);
+  84% {
+    transform: scale(0.995, 1.005);
   }
-  /* Seated. */
+  /* Standing. */
   100% {
-    transform: translateY(0) rotate(0deg);
+    transform: scale(1, 1);
+  }
+}
+
+/* The antennae take the landing and give it back.
+   OVERLAPPING ACTION and FOLLOW-THROUGH, and nothing else — the principles that
+   apply to something light on the end of a springy stem, not the whole twelve.
+   A knob is drawn about 3.5px across, so squash and stretch is unavailable (one
+   pixel of it is a flicker, not a squash); arcs are not a separate dial here
+   because the whole animation IS an arc. What is left is drag, weight, and the
+   time it takes to stop.
+
+   TWO CHANNELS ON TWO DIFFERENT ELEMENTS, which is the thing to understand
+   before editing this.
+
+   `--sw-antenna-bend` is the whip, and it is read by the six chain segments
+   (see the `@property` note above). It carries the entire sway: bent back
+   through the flight, whipping through rest to the far side as the head stops,
+   rocking back smaller, one short second beat, still.
+
+   THE TAIL HALVES EACH TIME — 7, 3.5, 1.75 — which is what tempering the jam
+   bought besides a quieter landing. The hat's ratios this inherited decayed
+   0.5 from the jam and then only 0.5 again from a peak that was itself too
+   loud, so pulling the peak down without pulling the tail down with it left a
+   shallow 0.81 step that rang rather than settled. One constant ratio through
+   the whole decay is both simpler to reason about and the shape a damped
+   spring actually has.
+
+   `translateY` is NOT part of the sway. It exists only to keep the pair rooted
+   in a head that is squashing underneath them, and every value is derived from
+   `sw-body-settle` rather than chosen: it is exactly -0.98 * (sy - 1) em, the
+   negative of how far that animation moves the body's top edge. At 20% the head
+   squashes to 0.90 and its top drops 0.098em, so the antennae drop 0.098em with
+   it. Change an `sy` there and the matching number here has to change or the
+   stalks tear out of the skull — the root is buried only 0.05em (1.09px at rail
+   size), which is less than a single one of these stops moves it. The two
+   animations share a duration, a delay and an easing for the same reason. */
+@keyframes sw-antennae-settle {
+  /* Where the flight left it: bent back behind the direction of travel.
+     Identical to the aim pose, so the handover from image to element shows no
+     seam. */
+  0% {
+    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * -10deg);
+    transform: translateY(0);
+  }
+  /* THE JAM. The head stops and the knobs do not, so they whip through to the
+     far side — the bend crosses rest and ends up opposite to where it spent the
+     whole flight. This is also the deepest point of the body's squash, hence
+     the largest tracking offset.
+
+     AT 12%, NOT 20%, and the flight's own trim is why. Now that the hop hands
+     over ON contact rather than 176ms after it, this beat is the impact itself
+     and has to land close to it: 12% of 640ms is 77ms after touchdown, which
+     reads as the same event. At 20% it was 128ms later and read as a separate
+     one.
+
+     AND SMALLER THAN THE POSE IT REACTS TO. At 11.4deg this was the single
+     loudest moment in the animation — the knob moved 3.43px against the flight
+     pose's 3.03px, and covered 6.46px of round trip inside 77ms, which read as
+     a snap rather than a landing. A reaction that overshoots its cause is the
+     tell. At 7deg it is 2.16px, comfortably under the flight, and the landing
+     reads as the antennae catching up rather than as a separate event. */
+  12% {
+    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * 7deg);
+    transform: translateY(0.098em);
+  }
+  /* The rebound: the stalks give it back and the knobs rock the way they came.
+     Smaller than the jam, because energy leaves the system. */
+  38% {
+    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * -3.5deg);
+    transform: translateY(-0.049em);
+  }
+  /* A second, much shorter beat — one is a bump, two is a spring. */
+  64% {
+    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * 1.75deg);
+    transform: translateY(0.0196em);
+  }
+  84% {
+    --sw-antenna-bend: 0deg;
+    transform: translateY(-0.0049em);
+  }
+  /* Still. */
+  100% {
+    --sw-antenna-bend: 0deg;
+    transform: translateY(0);
   }
 }
 
@@ -1075,7 +1209,9 @@ html {
   [data-storyboard-monster][data-settling],
   [data-storyboard-monster][data-settling] [data-monster-pupil],
   [data-storyboard-monster][data-settling] [data-monster-foot],
-  [data-storyboard-monster][data-settling] [data-monster-hat] {
+  [data-storyboard-monster][data-settling] [data-monster-body],
+  [data-storyboard-monster][data-settling] [data-monster-fur],
+  [data-storyboard-monster][data-settling] [data-monster-antennae] {
     animation: none;
   }
 
@@ -1087,7 +1223,10 @@ html {
   /* Rest for both is no transform: the pupil has none of its own, and the hat's
      tilt lives on an inner element that this never touches. */
   [data-storyboard-monster][data-aiming] [data-monster-pupil],
-  [data-storyboard-monster][data-aiming] [data-monster-hat] {
+  [data-storyboard-monster][data-aiming] [data-monster-antennae] {
+    /* The bend is a property, not a transform, so `transform: none` would leave
+       the chain arced with nothing animating it. */
+    --sw-antenna-bend: 0deg;
     transform: none;
   }
 

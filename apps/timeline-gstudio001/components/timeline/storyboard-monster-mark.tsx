@@ -1,30 +1,42 @@
 /**
  * The storyboard monster — the creature that sits in the "o" of "monster".
  *
- * Ported from the logo design document's TURN 34 ("28c hat, denim feet"), its
- * latest direction: the same one-eyed fuzzball, now in a pinched-crown hat and
- * standing on denim-blue feet. It is drawn in CSS rather than SVG, exactly as
- * the source is: a masked `repeating-conic-gradient` makes the fur spikes, the
- * eye is four nested circles, and the hat is three boxes — a clip-path crown, a
- * pill brim and a band — inside one rotated group.
+ * Ported from the logo design document's TURN 54, variant 48a ("antenna pair"),
+ * its latest direction: the same one-eyed fuzzball, now with two stalks and
+ * round knobs where the pinched-crown hat used to be. It is drawn in CSS rather
+ * than SVG, exactly as the source is: a masked `repeating-conic-gradient` makes
+ * the fur spikes and the eye is four nested circles. The antennae are the one
+ * place this file departs from the source's construction — 48a draws each as a
+ * single leaning bar, and a single bar cannot bend, so each is rebuilt as a
+ * chain of three that arcs. It resolves to the same drawing at rest; see
+ * `SEG_BEND`.
  *
- * THE GEOMETRY IS THE SOURCE'S, VERBATIM. Turn 34 re-expresses the drawing
- * against a 1em box where earlier turns used 0.72em; every inner number is the
- * old one times 1/0.72, so the creature itself did not change size, only the
- * unit it is quoted in. Keeping the source's numbers rather than re-deriving
- * them is what lets the next turn be diffed against this file.
+ * THE GEOMETRY IS THE SOURCE'S, VERBATIM. 48a re-expresses the drawing against
+ * a 1em box where earlier turns used 0.72em; every inner number is the old one
+ * times 1/0.72, so the creature itself did not change size, only the unit it is
+ * quoted in. Keeping the source's numbers rather than re-deriving them is what
+ * lets the next turn be diffed against this file.
  *
  * WHICH IS WHY `scale` IS FOLDED INTO THE FONT-SIZE AT 0.72. `scale` keeps
  * meaning what it has always meant to the callers — 1.1 in the word, 1.6 alone
- * in the rail — and the 0.72 converts that expectation into turn 34's basis.
+ * in the rail — and the 0.72 converts that expectation into the source's basis.
  * Drop it and every call site silently grows by 39%.
  *
- * COLOURS: the file gives two as literals and the rest as design-system tokens
+ * THE HEAD IS ROUND AGAIN, and that is the largest thing this turn changed
+ * besides the antennae. The body was stretched into an egg (1.12 against a
+ * width of 0.98) for exactly one reason: headroom between the eye and the hat's
+ * BRIM. Antennae have no brim — they leave the top of the head from a point, so
+ * they need no clearance at all — and the stretch with nothing left to buy just
+ * reads as a tall head. So the body, the fur that tracks it and the eye centred
+ * in it all go back to the source's own circle, and `bodyTopFor`, `BODY_LIFT`
+ * and the hatted/bare pair of heights go with them.
+ *
+ * COLOURS: the file gives one as a literal and the rest as design-system tokens
  * it does not ship — `_ds/organic-…/styles.css` is not in the export, and the
  * document renders black-on-black without it, so there are no frames to sample
- * either. The sage and the feet below are therefore the source's own values;
- * the cream, the pupil and the hat are matched to those tokens' roles in the
- * ramp and are the three worth checking against the real palette.
+ * either. The sage below is the source's own value; the cream, the pupil, the
+ * antennae and the feet are matched to those tokens' roles in the ramp, and the
+ * last two are the ones worth checking against the real palette.
  */
 
 /** The source's literal, unchanged since turn 9: fur and body. */
@@ -38,93 +50,75 @@ const PUPIL = "oklch(0.27 0.03 145)";
  *
  * TAILWIND'S `blue-400`, RESOLVED, and deliberately not the source's colour.
  * The design document paints the word in `--color-accent-300`, the same pale
- * terracotta as the hat band. That reads beautifully in the document and makes
- * the wordmark a stranger in this app: the projects list already labels itself
- * `text-blue-400`, so that blue is what the product calls a heading, and the
- * rail's wordmark was the last place still speaking the logo's private dialect.
+ * terracotta as the antenna knobs. That reads beautifully in the document and
+ * makes the wordmark a stranger in this app: the projects list already labels
+ * itself `text-blue-400`, so that blue is what the product calls a heading, and
+ * the rail's wordmark was the last place still speaking the logo's private
+ * dialect.
  *
  * Written as the resolved value rather than the class because it is consumed as
  * an inline `color` on a span inside the lockup, not as a utility. If the app's
  * blue ever moves this has to move with it by hand — the PAIRING is the point,
  * not the number.
  *
- * The hat keeps its own terracotta (`HAT_BAND` below). One token in the source,
- * two here on purpose: the hat belongs to the creature, the word belongs to the
- * product.
+ * The antennae keep their own terracotta (`ANTENNA_KNOB` below). One token in
+ * the source, two here on purpose: the antennae belong to the creature, the
+ * word belongs to the product.
  */
 export const STORYBOARD_MONSTER_ACCENT = "oklch(0.707 0.165 254.624)";
 /**
- * The crown and the brim.
+ * The stalks.
  *
- * STANDS OFF THE SOURCE'S RAMP ON PURPOSE. The document paints both from
- * `--color-accent` with `--color-accent-300` as the band — a darker hat wearing
- * a lighter stripe, which is right on its own pale ground. On the rail's
- * near-black it is not: a 0.62-lightness crown sits closer to the rail than to
- * the 0.86 sage body directly beneath it, so the hat reads as a shadow ON the
- * creature rather than as something the creature is wearing. Collapsed, where
- * the whole mark is 22px and the crown about 8, it half-disappeared.
+ * STANDS OFF THE SOURCE'S RAMP ON PURPOSE, and the reasoning the hat needed is
+ * MORE pressing here, not less. The document paints the stalks from
+ * `--color-accent` with `--color-accent-300` as the knob — a darker stem under
+ * a lighter head, which is right on its own pale ground. On the rail's
+ * near-black it is not: a 0.62-lightness stalk sits closer to the rail than to
+ * anything it is attached to, and a stalk is 0.055em WIDE. On the collapsed
+ * mark that is about 1.2px, which is a single antialiased column of pixels —
+ * the thinnest thing in the whole drawing, and the first to disappear.
  *
  * So the pair is lifted TOGETHER and the contrast between them is what is
- * preserved, not the absolute values: crown to 0.70 with the chroma pushed to
- * hold its identity against the sage, band to 0.89 so it stays the lighter
- * stripe the source drew. Raising only the crown would have closed the gap to
- * the band and flattened the hat into one shape, which is the failure the old
- * comment here was guarding against from the other direction.
- *
- * The wordmark no longer follows the hat at all — see
- * `STORYBOARD_MONSTER_ACCENT`. It is the product's blue now, on the same black
- * but at 19px with letterforms, which is a different legibility problem from an
- * 8px crown and was already solved.
+ * preserved, not the absolute values: stalk to 0.70 with the chroma pushed to
+ * hold its identity against the near-black, knob to 0.89 so it stays the
+ * lighter head the source drew. Raising only the stalk would have closed the
+ * gap to the knob and flattened each antenna into one shape.
  */
-const HAT = "oklch(0.70 0.18 45)";
-/** The band. Lighter than the crown by more than the source needed — see above.
- *  Still terracotta, so the hat stays one object rather than two stacked ones. */
-const HAT_BAND = "oklch(0.89 0.08 48)";
+const ANTENNA_STALK = "oklch(0.70 0.18 45)";
+/** The knobs. Lighter than the stalks by more than the source needed — see
+ *  above. Still terracotta, so each antenna stays one object and not two. */
+const ANTENNA_KNOB = "oklch(0.89 0.08 48)";
 /**
- * The source's literal denim (turn 32, kept by turn 34).
+ * The feet: the SAME terracotta as the antenna knobs, which is the source's own
+ * scheme restored.
  *
- * Arrived at by elimination, and the reasoning is worth keeping because it
- * applies to anything drawn under the body: terracotta is the same value as the
- * word the creature stands in, so the feet read as part of the letters; cream is
- * the brightest thing in the rail, so the feet end up louder than the eye they
- * belong to; and anything near-black vanishes outright — the feet sit BELOW the
- * body, against the rail rather than against the sage, so there is nothing
- * behind them to separate from. They are also about 4px tall here, and a small
- * shape needs MORE contrast than a large one, not less.
+ * They were denim for a long time, and the argument for it had quietly expired
+ * before this turn removed it — worth recording so nobody re-derives the dead
+ * version. Denim was chosen when terracotta was also the WORD's colour, so
+ * terracotta feet read as part of the letters rather than as part of the
+ * creature. The word went blue (see `STORYBOARD_MONSTER_ACCENT`), and with it
+ * the only thing that clash was ever about.
+ *
+ * What the source's scheme buys instead is a BOOKEND: the same pale terracotta
+ * at the top of the creature and at the bottom of it, with the sage body
+ * between, so the drawing reads as one object with two ends rather than as
+ * three unrelated bands. It also means the two smallest shapes in the mark —
+ * a 3.5px knob and a 4px foot — carry the same value, so they hold or fail
+ * together instead of one of them going first.
+ *
+ * The rest of the old reasoning still applies as written, and is why this is
+ * the LIGHT terracotta and not the stalks' darker one: cream would make the
+ * feet the brightest thing in the rail, anything near-black vanishes outright
+ * because the feet sit BELOW the body against the rail rather than against the
+ * sage, and at about 4px tall a small shape needs MORE contrast than a large
+ * one, not less.
  */
-const FEET = "oklch(0.68 0.115 245)";
+const FEET = ANTENNA_KNOB;
 
-/**
- * THE BODY IS AN EGG, not the source's circle.
- *
- * Turn 34 draws it round at 0.98em square. Stretched a seventh taller and
- * anchored at the bottom — the feet have to stay where they stand — it gains
- * headroom between the eye and the brim, which is the difference between a
- * creature wearing a hat and a creature with a hat resting on its eyeball.
- *
- * Everything that has to follow the shape derives from these three numbers: the
- * fur collar, the eye's vertical centring, and the lift the hat needs so it
- * still sits on the head rather than sinking into it.
- */
-const BODY_W = 0.98;
-/**
- * TALLER ONLY WHEN THERE IS A BRIM TO CLEAR.
- *
- * 1.12 is the egg, and it exists for one reason: to open headroom between the
- * eye and the hat's brim. Take the hat off and that reason goes with it —
- * headroom over nothing reads as a tall head — so the bare creature goes back
- * to the source's own 0.98, which is turn 34's drawing exactly.
- *
- * Everything shaped by it follows: the fur collar, the eye's vertical centring,
- * and where the body's bottom sits. The hat's own lift is derived from the same
- * pair and is simply unused when there is no hat.
- */
-const BODY_H_HATTED = 1.12;
-const BODY_H_BARE = BODY_W;
-/** Bottom edge pinned where the round body had it (0.99em), top pulled up. */
-const bodyTopFor = (bodyH: number) => 0.99 - bodyH;
-/** How much taller than the source, and so how far the hat rides up with it. */
-const BODY_LIFT = BODY_H_HATTED - BODY_W;
+/** The source's circle, restored — see the head note in the header. */
+const BODY = 0.98;
+/** Bottom edge where it has always been (0.99em), so the feet keep their line. */
+const BODY_TOP = 0.99 - BODY;
 
 /**
  * WHERE THE CREATURE IS LOOKING WHEN NOTHING IS HAPPENING.
@@ -198,24 +192,29 @@ const BODY_LIFT = BODY_H_HATTED - BODY_W;
  * the source rather than papering over locally — the element is kept so that a
  * later turn changing the ratios brings the fur back on its own.
  */
-
 const FUR_MASK =
   "radial-gradient(circle at 50% 50%, transparent 0 35%, #000 35% 50%, transparent 50%)";
 
-const furFor = (bodyH: number): React.CSSProperties => ({
+const FUR: React.CSSProperties = {
   position: "absolute",
-  // Held a uniform 0.2em outside the body on every side, tracking the egg the
-  // way the source held it around the circle. Nothing shows today (above), but
-  // a box that has drifted out of register with the body is a worse starting
-  // point for whoever picks the fur back up.
+  // A uniform 0.2em outside the body on every side, the way the source holds it
+  // around the circle. Nothing shows today (above), but a box that has drifted
+  // out of register with the body is a worse starting point for whoever picks
+  // the fur back up.
   left: "-0.19em",
-  top: `${bodyTopFor(bodyH) - 0.2}em`,
-  width: `${BODY_W + 0.4}em`,
-  height: `${bodyH + 0.4}em`,
+  top: `${BODY_TOP - 0.2}em`,
+  width: `${BODY + 0.4}em`,
+  height: `${BODY + 0.4}em`,
   background: `repeating-conic-gradient(from 0deg, ${SAGE} 0deg 11deg, transparent 11deg 22deg)`,
   WebkitMaskImage: FUR_MASK,
   maskImage: FUR_MASK,
-});
+  // THE BODY'S SCALE ORIGIN, EXPRESSED IN THIS BOX. The body scales about its
+  // own bottom edge, at (0.5em, 0.99em) in the mark; this box runs from -0.19em
+  // for 1.38em, so the same point is 50% across and (0.99 + 0.19) / 1.38 =
+  // 85.5% down. Sharing the origin is what lets `sw-body-settle` drive both
+  // and keep them registered — see the marker note below.
+  transformOrigin: "50% 85.5%",
+};
 
 /** Marked so the settle can move the feet after the body has stopped — see
  *  `sw-foot-settle` in globals.css. The marker also carries WHICH foot: the two
@@ -232,49 +231,157 @@ const foot = (left: string): React.CSSProperties => ({
 });
 
 /**
- * The hat, as TWO nested groups — and the split is load-bearing.
+ * The pair, as ONE group — and the group being transform-free is load-bearing.
  *
- * The outer one holds no transform of its own. That is what lets `globals.css`
- * own the hat's motion: an inline `transform` beats any stylesheet rule, so a
- * hat whose resting tilt lives on the animated element cannot be animated from
- * CSS at all. The outer group therefore expresses DELTAS from rest — the lag,
- * the jam-down, the bounce — and rest is simply no transform.
+ * It holds no transform of its own. That is what lets `globals.css` own the
+ * antennae's motion: an inline `transform` beats any stylesheet rule, so a pair
+ * whose resting pose lived on the animated element could not be animated from
+ * CSS at all. The group therefore expresses DELTAS from rest, and rest is
+ * simply no transform.
  *
- * The inner one carries turn 34's fixed -14deg cock. Keeping the tilt on the
- * group rather than on each piece is turn 28's point: crown, brim and band stay
- * registered to each other however far it leans.
+ * IT CARRIES ONLY ONE THING NOW, and that is worth knowing before adding to it.
+ * The bend lives on the segments (see `SEG_BEND`), so the whole pair's swing
+ * and shear are gone from here; what is left is a `translateY` that tracks the
+ * body's landing squash, so the antennae ride a head whose top edge is moving.
+ * The two are derived from each other in `globals.css` and have to stay that
+ * way.
  *
- * BOTH pivot about the same low origin, down at the brim line where the hat
- * touches the head, so it swings where it actually rests instead of about its
- * own middle. That one number is why the brim stays on the fur through a lean
- * that would otherwise lift it clear.
+ * The origin is where the antennae attach — each stalk's root is 0.06em from
+ * the mark's top — so anything that IS added here turns about the right point
+ * rather than about the group's middle.
  */
-const HAT_GROUP: React.CSSProperties = {
-  position: "absolute",
-  left: 0,
-  width: "1em",
-  height: "1em",
-  // Raised by exactly what the body grew, so the brim keeps the same purchase
-  // on the fur that turn 34 drew it with.
-  top: `${-BODY_LIFT}em`,
-  transformOrigin: "50% 72%",
-};
-
-/** Turn 34's fixed cock, held off the animated element — see above. */
-const HAT_TILT: React.CSSProperties = {
+const ANTENNA_GROUP: React.CSSProperties = {
   position: "absolute",
   left: 0,
   top: 0,
   width: "1em",
   height: "1em",
-  transform: "rotate(-14deg)",
-  transformOrigin: "50% 72%",
+  transformOrigin: "50% 6%",
 };
+
+/**
+ * EACH STALK IS A CHAIN OF THREE, and that is what lets it ARC.
+ *
+ * A stalk drawn as one bar can lean and it can shear, but it cannot bend: both
+ * are affine, and an affine map takes a straight edge to a straight edge. What
+ * actually bends is a chain — three short segments, each a child of the one
+ * below it and each rotated by the SAME angle, so the rotations compound down
+ * the chain (b, 2b, 3b) and the three chords approximate an arc. Ten degrees a
+ * segment is thirty at the tip, which on the collapsed mark carries the knob
+ * 3.0px back from where it rests.
+ *
+ * THE ROOT IS A FIXED POINT OF IT, which is the second reason to prefer this
+ * over the shear it replaces. The first segment turns about its own bottom
+ * edge, so no amount of bend moves where the antenna enters the head — the
+ * root-lift ceiling that a rotating group has (see `sw-antennae-settle`) simply
+ * does not exist here. The knob rides the last segment and therefore ROTATES
+ * rather than shearing, so it stays a circle at every angle; the old skew
+ * ovalised it by a pixel at full lean.
+ *
+ * THE BEND ARRIVES AS A CUSTOM PROPERTY, `--sw-antenna-bend`, for the same
+ * reason the gaze does: an inline `transform` beats any stylesheet rule, and
+ * every one of these segments needs an inline transform to read the property at
+ * all. So the component owns the expression and `globals.css` owns the VALUE,
+ * set on an ancestor and inherited down. One declaration there bends all six
+ * segments at once.
+ */
+const SEG_BEND = "rotate(var(--sw-antenna-bend, 0deg))";
+
+/**
+ * Where each antenna leaves the head, and how long its chain is.
+ *
+ * DERIVED FROM THE SOURCE'S OWN NUMBERS rather than replacing them. 48a draws
+ * each stalk as a bar at a fixed lean and then FLOATS the knob near its tip,
+ * by eye and not quite symmetrically — the left knob sits 0.0875em outboard of
+ * its root and the right one 0.1025em, over the same 0.40em rise. Rebuilding
+ * the stalk as a chain means the knob has to ride it, so the chain's angle and
+ * length are solved from where the source put that knob: 12.34deg over 0.4095em
+ * on the left, 14.37deg over 0.4129em on the right. At rest this lands both
+ * knobs within 0.0015em of the source's own positions, asymmetry included.
+ *
+ * The chain is LONGER than the source's 0.32em bar because it runs to the knob's
+ * CENTRE rather than to its edge. The extra 0.09em is covered by the knob, which
+ * is painted after it, so the visible stalk is the source's length exactly.
+ */
+const ANTENNA = {
+  left: { x: 0.3275, splay: -12.34, seg: 0.1365 },
+  right: { x: 0.6775, splay: 14.37, seg: 0.1376 },
+} as const;
+
+/** The anchor each chain grows out of: a zero-size point at the root, carrying
+ *  the fixed splay. The splay is inline because nothing animates it — the bend
+ *  and the pair's tracking are separate channels on separate elements. */
+const antennaRoot = (side: keyof typeof ANTENNA): React.CSSProperties => ({
+  position: "absolute",
+  left: `${ANTENNA[side].x}em`,
+  top: "0.06em",
+  width: 0,
+  height: 0,
+  transform: `rotate(${ANTENNA[side].splay}deg)`,
+  transformOrigin: "0 0",
+});
+
+/** The first segment: bottom edge on the root point, centred across it. */
+const segRoot = (side: keyof typeof ANTENNA): React.CSSProperties => ({
+  position: "absolute",
+  left: "-0.0275em",
+  bottom: 0,
+  width: "0.055em",
+  height: `${ANTENNA[side].seg}em`,
+  background: ANTENNA_STALK,
+  borderRadius: "999px",
+  transform: SEG_BEND,
+  transformOrigin: "50% 100%",
+});
+
+/** Every segment after the first: same bar, standing on the one below. */
+const segNext = (side: keyof typeof ANTENNA): React.CSSProperties => ({
+  position: "absolute",
+  left: 0,
+  bottom: "100%",
+  width: "100%",
+  height: `${ANTENNA[side].seg}em`,
+  background: ANTENNA_STALK,
+  borderRadius: "999px",
+  transform: SEG_BEND,
+  transformOrigin: "50% 100%",
+});
+
+/** The knob, centred on the chain's tip: `bottom: 100%` puts its bottom edge
+ *  there and the negative margin pulls it down by its own radius. It inherits
+ *  the last segment's rotation, so it turns with the arc and stays circular. */
+const KNOB: React.CSSProperties = {
+  position: "absolute",
+  left: "50%",
+  bottom: "100%",
+  width: "0.16em",
+  height: "0.16em",
+  marginLeft: "-0.08em",
+  marginBottom: "-0.08em",
+  borderRadius: "999px",
+  background: ANTENNA_KNOB,
+};
+
+/** One antenna: the root anchor, three segments nested so their bends compound,
+ *  and the knob riding the last one. */
+function Antenna({ side }: Readonly<{ side: keyof typeof ANTENNA }>) {
+  return (
+    <span data-monster-antenna={side} style={antennaRoot(side)}>
+      <span style={segRoot(side)}>
+        <span style={segNext(side)}>
+          <span style={segNext(side)}>
+            <span data-monster-knob="" style={KNOB} />
+          </span>
+        </span>
+      </span>
+    </span>
+  );
+}
 
 export function StoryboardMonsterMark({
   scale = 1,
   gaze = "ahead",
-  hat = true,
+  antennae = true,
 }: Readonly<{
   scale?: number;
   /** Where the pupil rests. `"ahead"` is the source's centred eye, which is what
@@ -282,27 +389,24 @@ export function StoryboardMonsterMark({
    *  belongs to the collapsed rail. See the GAZE_X note above. */
   gaze?: "ahead" | "breadcrumb";
   /**
-   * Whether the creature wears its hat. Turn 34's direction, so `true` by
+   * Whether the creature has its antennae. Turn 54's direction, so `true` by
    * default.
    *
-   * Removing it is genuinely free: the hat is its own absolutely-positioned
-   * layer above the body, and every rule that animates it in `globals.css` —
-   * the flight pose, `sw-hat-settle`, the reduced-motion guard — keys off
-   * `[data-monster-hat]`, so with nothing rendered they match nothing and do
-   * nothing. No orphaned animation, no layout shift.
+   * Removing them is genuinely free, and freer than removing the hat was. The
+   * antennae are their own absolutely-positioned layer above the body, and
+   * every rule that animates them in `globals.css` — the flight pose,
+   * `sw-antennae-settle`, the reduced-motion guard — keys off
+   * `[data-monster-antennae]`, so with nothing rendered they match nothing and
+   * do nothing. No orphaned animation, no layout shift.
    *
-   * IT ALSO RESHAPES THE HEAD, which the first version of this prop deliberately
-   * did not. The body was stretched into an egg (1.12 against a source width of
-   * 0.98) for exactly one reason — headroom between the eye and the brim — so
-   * with no brim to clear, the stretch has nothing to buy and the creature just
-   * reads tall. Bare, it goes back to the source's own 0.98. See
-   * `BODY_H_HATTED`, and the `WithoutTheHat` story for the two side by side.
+   * AND IT NO LONGER RESHAPES THE HEAD, which the hat's version of this prop
+   * did. The egg existed to clear a brim; antennae leave the skull from a point
+   * and need no clearance, so the body is the source's circle either way and
+   * bare-versus-not is now purely a question of whether two stalks are drawn.
+   * See the `WithoutTheAntennae` story for the two side by side.
    */
-  hat?: boolean;
+  antennae?: boolean;
 }>) {
-  // The egg is the hat's, not the creature's — see BODY_H_HATTED.
-  const bodyH = hat ? BODY_H_HATTED : BODY_H_BARE;
-
   // THE GAZE TRAVELS AS A CUSTOM PROPERTY, which is the one channel a stylesheet
   // can still take back. Written as an inline `left` it worked everywhere and
   // could be overridden nowhere — inline beats any rule — so the pre-jump look
@@ -321,7 +425,7 @@ export function StoryboardMonsterMark({
       data-monster-gaze={gaze}
       // The growth between rail states. Everything about the creature is sized
       // off its own font-size, so animating that one property scales the whole
-      // drawing — fur, eye, glint, hat and feet together.
+      // drawing — fur, eye, glint, antennae and feet together.
       className="transition-[font-size] duration-200 motion-reduce:transition-none"
       style={{
         // Read by the pupil's `left`, and re-declared by the flight pose — see
@@ -337,7 +441,7 @@ export function StoryboardMonsterMark({
         lineHeight: 1,
         // The creature's own box drives its parts, so one number scales the
         // whole drawing without touching the geometry below. See the 0.72 note
-        // in the header: it converts `scale` into turn 34's 1em basis.
+        // in the header: it converts `scale` into the source's 1em basis.
         fontSize: `${scale * 0.72}em`,
         // NAMED FOR THE VIEW TRANSITION. Collapsing the rail does not move this
         // element, it re-lays it out — inline in the word, then alone and
@@ -357,16 +461,37 @@ export function StoryboardMonsterMark({
         top: `${0.14 * scale}em`,
       }}
     >
-      <span style={furFor(bodyH)} />
+      {/* MARKED SO IT CAN FOLLOW THE BODY'S SQUASH, which is not decoration.
+          The masked ring lands 0.4879em out against a body radius of 0.4900em,
+          so it clears the silhouette by 0.0021em — 0.05px at rail size. It is a
+          SIBLING of the body, so when `sw-body-settle` squashed the head and
+          the fur did not follow, the head's top dropped out from under it and
+          the ring showed: 2.10px of bare starburst above the skull at the
+          bottom of the squash, which is exactly the artifact that put this
+          marker here. Both elements now run the same animation about the same
+          point, so the 0.05px margin holds at every frame instead of only at
+          rest. */}
+      <span data-monster-fur="" style={FUR} />
+      {/* MARKED SO THE BODY CAN SQUASH WITHOUT THE ANTENNAE SQUASHING WITH IT.
+          The antenna group is a SIBLING of this element, not a child, so a
+          scale here reaches the eye and the glint inside the head and nothing
+          above it. That separation is the whole reason the landing can be
+          heavy on the body and light on the stalks — see `sw-body-settle` in
+          globals.css, and the tracking note beside it for how the antennae
+          stay rooted while this moves under them. */}
       <span
+        data-monster-body=""
         style={{
           position: "absolute",
           left: "0.01em",
-          top: `${bodyTopFor(bodyH)}em`,
-          width: `${BODY_W}em`,
-          height: `${bodyH}em`,
+          top: `${BODY_TOP}em`,
+          width: `${BODY}em`,
+          height: `${BODY}em`,
           borderRadius: "999px",
           background: SAGE,
+          // Stands on its own feet: a squash presses the head DOWN onto the
+          // line it shares with them rather than sinking the whole creature.
+          transformOrigin: "50% 100%",
         }}
       >
         {/* NO SECOND ELLIPSE HERE, and the empty space is the point.
@@ -379,14 +504,14 @@ export function StoryboardMonsterMark({
             view transition freezes the geometry, so a curve could not be
             keyframed either.
 
-            It did not survive being looked at. The body is 0.98 x 1.12 and the
-            ellipse was 0.9 wide, which leaves it about 0.01em of clearance at
-            its widest point -- so the moment the pose translated it 5% and
-            rotated it 7deg it broke the silhouette, measured at 0.049-0.092em
-            past the body's leading edge and up to 0.049em over the top, for
-            EVERY frame of the flight including the first. At rail size that is
-            a ~3px green lump beside the head, and it reads as a second body
-            showing through rather than as a bend.
+            It did not survive being looked at. The body is 0.98 wide and the
+            ellipse was 0.9, which leaves it about 0.01em of clearance at its
+            widest point -- so the moment the pose translated it 5% and rotated
+            it 7deg it broke the silhouette, measured at 0.049-0.092em past the
+            body's leading edge and up to 0.049em over the top, for EVERY frame
+            of the flight including the first. At rail size that is a ~3px green
+            lump beside the head, and it reads as a second body showing through
+            rather than as a bend.
 
             So the lean is the body's own, carried by the `rotate` and `skewX`
             already in `sw-monster-hop`. Straight rather than curved, and
@@ -401,10 +526,9 @@ export function StoryboardMonsterMark({
           style={{
             position: "absolute",
             left: "0.17em",
-            // CENTRED IN THE EGG, not held at the source's 0.17em. Keeping that
-            // number would have pinned the eye to the top of a taller head and
-            // spent the whole stretch below it, where nothing needed the room.
-            top: `${(bodyH - 0.64) / 2}em`,
+            // Centred in the body, which is the source's own 0.17em now that
+            // the head is round again.
+            top: `${(BODY - 0.64) / 2}em`,
             width: "0.64em",
             height: "0.64em",
             borderRadius: "999px",
@@ -450,50 +574,10 @@ export function StoryboardMonsterMark({
       </span>
       <span data-monster-foot="left" style={foot("0.08em")} />
       <span data-monster-foot="right" style={foot("0.55em")} />
-      {hat ? (
-        <span data-monster-hat="" style={HAT_GROUP}>
-          <span style={HAT_TILT}>
-            {/* The pinched crown. The polygon dents the top twice — up one side, a
-            dip in the middle, up the other — which is the whole difference
-            between a cowboy hat and a bucket. */}
-            <span
-              style={{
-                position: "absolute",
-                left: "0.23em",
-                top: "-0.3em",
-                width: "0.54em",
-                height: "0.42em",
-                background: HAT,
-                clipPath:
-                  "polygon(0 100%, 0 34%, 22% 8%, 50% 26%, 78% 8%, 100% 34%, 100% 100%)",
-              }}
-            />
-            {/* The brim, wider than the head so it overlaps the fur on both sides —
-            turn 27's rule, and the reason the hat sits ON the creature instead
-            of hovering above it. */}
-            <span
-              style={{
-                position: "absolute",
-                left: "-0.02em",
-                top: "0.08em",
-                width: "1.04em",
-                height: "0.16em",
-                background: HAT,
-                borderRadius: "999px",
-              }}
-            />
-            {/* The band. */}
-            <span
-              style={{
-                position: "absolute",
-                left: "0.23em",
-                top: "0.01em",
-                width: "0.54em",
-                height: "0.08em",
-                background: HAT_BAND,
-              }}
-            />
-          </span>
+      {antennae ? (
+        <span data-monster-antennae="" style={ANTENNA_GROUP}>
+          <Antenna side="left" />
+          <Antenna side="right" />
         </span>
       ) : null}
     </span>
