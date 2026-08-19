@@ -51,13 +51,35 @@ const FUR: React.CSSProperties = {
     "radial-gradient(circle at 50% 50%, transparent 0 35%, #000 35% 50%, transparent 50%)",
 };
 
+/**
+ * A LIGHT BLUE, off the document's palette and arrived at by elimination.
+ *
+ * Terracotta (turn 21's first dark treatment) is the same value as the word the
+ * creature stands in, so the feet read as part of the letters. Cream (its
+ * second) separates cleanly but is the brightest thing in the rail — the feet
+ * ended up louder than the eye they belong to. Dark navy disappeared outright,
+ * which is the failure turn 21 already documented for near-black: "the
+ * near-black feet can't survive on a dark ground".
+ *
+ * The constraint the document is pointing at: the feet sit BELOW the body,
+ * against the rail rather than against the sage, so anything near the rail's own
+ * value has nothing behind it to separate from. And they are small — about 3px
+ * tall at this size — which needs MORE contrast than a large shape, not less.
+ *
+ * So the value is chosen for LIGHTNESS first and hue second: 0.72 against the
+ * rail's ~0.19. A dark blue was tried at 0.34 and vanished, which is the same
+ * failure as the near-black. The hue also has to stay clear of the sage body it
+ * sits under and the terracotta type it sits beside, which a blue does.
+ */
+const FEET = "oklch(0.72 0.13 250)";
+
 const foot = (left: string): React.CSSProperties => ({
   position: "absolute",
   left,
   bottom: "-0.08em",
   width: "0.28em",
   height: "0.15em",
-  background: STORYBOARD_MONSTER_ACCENT,
+  background: FEET,
   borderRadius: "999px",
 });
 
@@ -70,6 +92,10 @@ export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }
   return (
     <span
       data-storyboard-monster=""
+      // The growth between rail states. Everything about the creature is sized
+      // off its own font-size, so animating that one property scales the whole
+      // drawing — fur, eye, glint and feet together.
+      className="transition-[font-size] duration-200 motion-reduce:transition-none"
       style={{
         display: "inline-block",
         width: size,

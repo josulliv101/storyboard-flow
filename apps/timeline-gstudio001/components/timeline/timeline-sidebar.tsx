@@ -632,7 +632,11 @@ export function TimelineSidebar() {
           // in the 72px rail already put it within a pixel of 22px, so pinning
           // it there costs nothing closed and is what lets the name grow to the
           // right rather than the whole mark sliding.
-          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-lg font-bold text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
+          // 22px, not `text-lg`. The wordmark used 186px of the rail's 239px
+          // at 18px, so there was room, and at 18px "storyboard monster" was
+          // hard to read against everything else in the rail. Measured after:
+          // see the note on the creature's scale for the other half of the fit.
+          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-[22px] font-bold text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
           {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
               nothing, so closing slides the S and the W together into "SW"
@@ -665,7 +669,14 @@ export function TimelineSidebar() {
                 inherits through a `display: contents` box. */}
             <span className="contents" style={{ color: STORYBOARD_MONSTER_ACCENT }}>
               <RevealedLetters show={railExpanded}>m</RevealedLetters>
-              <StoryboardMonsterMark scale={1.6} />
+              {/* SMALL IN THE WORD, BIG ALONE. Expanded it is the source's own
+                  proportion (0.72em), which is what makes it read as the "o" of
+                  "monster" rather than a creature parked beside it. Collapsed
+                  there is no word left to belong to, so it grows into the mark
+                  the rail needs — and past the 19px floor the design document
+                  measured, below which "the fur spikes and the glint start to
+                  merge". */}
+              <StoryboardMonsterMark scale={railExpanded ? 1.1 : 1.6} />
               <RevealedLetters show={railExpanded}>nster</RevealedLetters>
             </span>
           </span>
