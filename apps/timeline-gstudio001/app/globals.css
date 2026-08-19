@@ -499,10 +499,18 @@ html {
    stretched body leans it as one rigid shape — the middle travels as far as the
    head, which reads as the whole creature tipping rather than as the head
    leading. `skewX` about the foot pivot displaces the top WITHOUT moving the
-   base, so the head arcs over ahead of the body: the tallest point is furthest
-   along, the feet are still where they pushed off, and the silhouette curves
-   between them. The sign is negative for a rightward hop because CSS y grows
-   downward, so a negative skew is the one that throws the TOP forward.
+   base, so the head gets out ahead of the body: the tallest point is furthest
+   along and the feet are still where they pushed off. The sign is negative for
+   a rightward hop because CSS y grows downward, so a negative skew is the one
+   that throws the TOP forward.
+
+   IT LEANS, IT DOES NOT CURVE, and that is now the whole of it. A skew is
+   affine — every straight line stays straight and every ellipse stays an
+   ellipse — so the silhouette between the feet and the head is a slant, not an
+   arc. A second sage ellipse used to be leaned over the base to fake the curve;
+   it broke the outline instead (see the note where it was, in
+   `storyboard-monster-mark.tsx`), and a straight lean from one honest shape
+   turned out to read better than a bend made of two.
 
    It peaks at the apex and reverses at the crouch and the landing, where the
    body is compressing rather than reaching — a bend held flat through those
@@ -738,19 +746,6 @@ html {
    Signed the opposite way to the body's lean on purpose: the body leans INTO
    the jump, the hat leans away from it. Loose things trail; that difference
    between the two is the whole read. */
-/* THE BEND, held for the flight.
-   `skewX` in the hop leans the whole body as one straight shape, which gets the
-   head out in front but leaves the middle travelling just as far. This is the
-   part that curves: the crown of the head swings over the base while the body's
-   own outline stays put beneath it, so the silhouette bends from about the
-   midpoint up and the feet keep their place. Baked rather than keyframed for
-   the usual reason — geometry cannot change inside a snapshot, only be captured
-   in it. */
-[data-storyboard-monster][data-aiming] [data-monster-crown] {
-  transform: translateX(calc(var(--sw-hop-dir, 1) * 5%))
-    rotate(calc(var(--sw-hop-dir, 1) * 7deg));
-}
-
 [data-storyboard-monster][data-aiming] [data-monster-hat] {
   transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -1.4deg));
 }
@@ -851,10 +846,6 @@ html {
    creature paying attention), the feet lag 110ms (they carried the mass), and
    the hat — the only part not attached to anything — is still moving after both
    have stopped. Finishing them together would read as one twitch. */
-[data-storyboard-monster][data-settling] [data-monster-crown] {
-  animation: sw-crown-unbend 380ms cubic-bezier(0.3, 0.75, 0.3, 1) both;
-}
-
 [data-storyboard-monster][data-settling] [data-monster-hat] {
   animation: sw-hat-settle 640ms cubic-bezier(0.3, 0.7, 0.28, 1) 40ms both;
 }
@@ -912,24 +903,6 @@ html {
   78%,
   100% {
     translate: 0 0;
-  }
-}
-
-/* The head straightens once it lands. Quick — it is a stretch coming out of a
-   body, not a part with mass of its own — and it goes slightly PAST straight
-   before settling, which is the same follow-through the hat and the eye get.
-   Starts from the flight pose exactly, so the handover shows no seam. */
-@keyframes sw-crown-unbend {
-  0% {
-    transform: translateX(calc(var(--sw-hop-dir, 1) * 5%))
-      rotate(calc(var(--sw-hop-dir, 1) * 7deg));
-  }
-  55% {
-    transform: translateX(calc(var(--sw-hop-dir, 1) * -1%))
-      rotate(calc(var(--sw-hop-dir, 1) * -1.5deg));
-  }
-  100% {
-    transform: translateX(0) rotate(0deg);
   }
 }
 
@@ -1102,12 +1075,10 @@ html {
   [data-storyboard-monster][data-settling],
   [data-storyboard-monster][data-settling] [data-monster-pupil],
   [data-storyboard-monster][data-settling] [data-monster-foot],
-  [data-storyboard-monster][data-settling] [data-monster-crown],
   [data-storyboard-monster][data-settling] [data-monster-hat] {
     animation: none;
   }
 
-  [data-storyboard-monster][data-aiming] [data-monster-crown],
   [data-storyboard-monster][data-aiming] [data-monster-eye],
   [data-storyboard-monster][data-aiming] [data-monster-foot] {
     transform: none;
