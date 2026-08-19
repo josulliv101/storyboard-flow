@@ -211,13 +211,13 @@ export const JumpPoses: Story = {
           ["in flight (bent back)", "-10deg", "none", "scale(1, 1)"],
           [
             "the impact",
-            "11.4deg",
+            "7deg",
             "translateY(0.098em)",
             "scale(1.1, 0.9)",
           ],
           [
             "rebound",
-            "-5.7deg",
+            "-3.5deg",
             "translateY(-0.049em)",
             "scale(0.96, 1.05)",
           ],

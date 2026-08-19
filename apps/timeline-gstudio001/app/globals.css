@@ -1135,10 +1135,15 @@ html {
    `--sw-antenna-bend` is the whip, and it is read by the six chain segments
    (see the `@property` note above). It carries the entire sway: bent back
    through the flight, whipping through rest to the far side as the head stops,
-   rocking back smaller, one short second beat, still. The four beats keep the
-   ratios that were tuned twice by eye on the hat this replaced; the size is
-   about seven times larger, because the part changed. A felt hat swinging
-   several degrees looks silly, and an antenna that does NOT is a wire.
+   rocking back smaller, one short second beat, still.
+
+   THE TAIL HALVES EACH TIME — 7, 3.5, 1.75 — which is what tempering the jam
+   bought besides a quieter landing. The hat's ratios this inherited decayed
+   0.5 from the jam and then only 0.5 again from a peak that was itself too
+   loud, so pulling the peak down without pulling the tail down with it left a
+   shallow 0.81 step that rang rather than settled. One constant ratio through
+   the whole decay is both simpler to reason about and the shape a damped
+   spring actually has.
 
    `translateY` is NOT part of the sway. It exists only to keep the pair rooted
    in a head that is squashing underneath them, and every value is derived from
@@ -1166,20 +1171,27 @@ html {
      over ON contact rather than 176ms after it, this beat is the impact itself
      and has to land close to it: 12% of 640ms is 77ms after touchdown, which
      reads as the same event. At 20% it was 128ms later and read as a separate
-     one. */
+     one.
+
+     AND SMALLER THAN THE POSE IT REACTS TO. At 11.4deg this was the single
+     loudest moment in the animation — the knob moved 3.43px against the flight
+     pose's 3.03px, and covered 6.46px of round trip inside 77ms, which read as
+     a snap rather than a landing. A reaction that overshoots its cause is the
+     tell. At 7deg it is 2.16px, comfortably under the flight, and the landing
+     reads as the antennae catching up rather than as a separate event. */
   12% {
-    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * 11.4deg);
+    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * 7deg);
     transform: translateY(0.098em);
   }
   /* The rebound: the stalks give it back and the knobs rock the way they came.
      Smaller than the jam, because energy leaves the system. */
   38% {
-    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * -5.7deg);
+    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * -3.5deg);
     transform: translateY(-0.049em);
   }
   /* A second, much shorter beat — one is a bump, two is a spring. */
   64% {
-    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * 2.9deg);
+    --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * 1.75deg);
     transform: translateY(0.0196em);
   }
   84% {
