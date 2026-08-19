@@ -305,6 +305,39 @@ export function StoryboardMonsterMark({
           background: SAGE,
         }}
       >
+        {/* THE CROWN OF THE HEAD, and the only way this drawing can BEND.
+            Every transform is affine, so no amount of rotating or skewing turns
+            an ellipse into a banana — it maps ellipses to ellipses. A curve
+            needs geometry, and a view transition freezes the geometry, so it
+            has to be here rather than in a keyframe.
+
+            This is a second ellipse in the SAME sage, sitting entirely inside
+            the body at rest and therefore invisible. Lean it over the body's
+            base and the union of the two is a curve: it juts out on the leading
+            side above the midpoint while the body's own outline still shows
+            below and behind, which is exactly the shape of a head arcing over
+            feet that have not moved.
+
+            Narrower than the body on purpose. Same width would put its widest
+            point outside the body's own edge at that height — the body is
+            0.98 x 1.12, so at this ellipse's centre the body has only about
+            0.92 of width to give — and the crown would show as a bulge at rest
+            rather than hiding. */}
+        <span
+          data-monster-crown=""
+          style={{
+            position: "absolute",
+            left: `${(BODY_W - 0.9) / 2}em`,
+            top: 0,
+            width: "0.9em",
+            height: "0.74em",
+            borderRadius: "999px",
+            background: SAGE,
+            // Pivots where it meets the body it grows out of, so leaning it
+            // swings the top and leaves the join alone.
+            transformOrigin: "50% 100%",
+          }}
+        />
         {/* eye white */}
         <span
           style={{
