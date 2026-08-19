@@ -701,21 +701,29 @@ html {
      dividing it back out by 1.6/1.1 is what makes both launches the same number
      of PIXELS rather than the same percentage.
 
+     ONE THING IS NOT THE CLOSE'S: THE SQUASH. Its scales are keyed to the
+     clock and peak at its apex -- most stretched exactly where the vertical
+     velocity reverses through zero -- and copying the shape copied that too.
+     Here the stretch comes from the lift's own segment speeds instead: round at
+     the top, stretched where the creature is actually moving, neutral at
+     contact because the settle's 0% is scale(1, 1) on a live element and
+     anything else is a pop.
+
      Regenerate with `mirror.py <scale>` rather than editing a stop. */
   0% {
     transform: translate(0, 0) rotate(0deg) scale(1, 1);
   }
   17% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.220, 0.780);
   }
   32% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -27.54%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -27.54%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.820, 1.240);
   }
   58% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -44.8%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -44.8%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(1.000, 1.000);
   }
   82% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -14%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -14%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.902, 1.130);
   }
   100% {
     transform: perspective(140px) translate(0, 0)
