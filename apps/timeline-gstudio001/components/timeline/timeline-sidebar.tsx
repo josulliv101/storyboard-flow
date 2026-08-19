@@ -209,13 +209,13 @@ function writeRailExpanded(next: boolean): void {
       mark.removeAttribute("data-aiming");
       mark.removeAttribute("data-landing");
       mark.setAttribute("data-settling", "");
-      // Outlasts the longest part, which is now the PUPIL: it constricts over
-      // 900ms after a 140ms autonomic latency, so it is still moving 400ms
-      // after the hat has stopped. Pulling the attribute early does not shorten
-      // the flourish, it truncates it — at the old 620ms the hat's final bounce
-      // was cut mid-air, and at 760ms the eye would snap the last of its
+      // Outlasts the longest part, which is the PUPIL: it now waits for the eye
+      // to finish moving (460ms) and then constricts over 800ms, so it is still
+      // going 620ms after the hat has stopped. Pulling the attribute early does
+      // not shorten the flourish, it truncates it — at 620ms the hat's final
+      // bounce was cut mid-air, and anything under 1260 snaps the last of the
       // dilation off in one frame.
-      window.setTimeout(() => mark.removeAttribute("data-settling"), 1160);
+      window.setTimeout(() => mark.removeAttribute("data-settling"), 1360);
     })
     .catch(() => {
       // A transition skipped or superseded by a faster second click. The rail

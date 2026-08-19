@@ -619,7 +619,7 @@ html {
   animation:
     sw-pupil-saccade 320ms linear both,
     sw-pupil-bob 440ms cubic-bezier(0.32, 0.72, 0.3, 1) both,
-    sw-pupil-constrict 900ms cubic-bezier(0.22, 0.6, 0.3, 1) 140ms both;
+    sw-pupil-constrict 800ms cubic-bezier(0.22, 0.6, 0.3, 1) 460ms both;
 }
 
 /* THE TOE IS THE ANCHOR, and the toe points AT THE READER.
@@ -800,16 +800,21 @@ html {
    WHAT COMES BACK IS THE INTERESTING HALF, and it is nothing like the other two
    animations on this element:
 
-   IT IS LATE. A pupil does not respond the instant the stimulus ends. The
-   pupillary latency is roughly 200ms in life; 140ms here, which is long enough
-   to read as a beat and short enough not to look stuck. The creature lands, the
-   eye flicks back, the hat settles — and only then does the pupil begin.
+   IT WAITS FOR THE EYE TO STOP. Not a physiological latency any more — 460ms,
+   which is 20ms after the vertical bump ends at 440 and therefore the first
+   instant the pupil is not still travelling. Overlapped, the two read as one
+   muddled event: a dot that is moving and resizing at once is just a dot
+   changing, and neither the flick nor the dilation lands. Sequenced, they are
+   two beats — the eye goes home, stops, and THEN comes down. The wait is doing
+   the work that the old 140ms latency was too short to do.
 
-   IT IS SLOW. 900ms against the saccade's 320 and the bob's 440, so it is still
-   going when everything else has stopped. That is the right relationship: the
-   mechanical parts stop when the body stops, and the autonomic one keeps going
-   because it is not attached to the landing at all. A task-evoked pupil response
-   takes seconds to return to baseline in life; this is that, compressed.
+   IT IS SLOW. 800ms, and it does not even BEGIN until the saccade (320) and the
+   bob (440) are finished, so the pupil is the only thing still moving for the
+   last 800ms of the flourish. That is the right relationship: the mechanical
+   parts stop when the body stops, and the autonomic one runs on its own clock
+   because it is not attached to the landing at all. A task-evoked pupil
+   response takes seconds to return to baseline in life; this is that,
+   compressed, and now cleanly after the event rather than during it.
 
    IT DOES NOT BOUNCE. Smooth muscle cannot overshoot the way a hat or an eyeball
    can, so the curve is a decay: gentle onset, most of the change early-middle,
