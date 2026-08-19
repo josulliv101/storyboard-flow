@@ -368,6 +368,34 @@ html {
   animation: none;
 }
 
+/* THE CREATURE LEAVES A HOLE, AND THIS FILLS IT.
+
+   A view transition does not composite over the live page — the page is not
+   painted at all while one runs, only the snapshots are. Proved it by hiding
+   `::view-transition-old/new(root)`: everything went black except the creature.
+
+   The root snapshot has the named element CUT OUT of it, a transparent rectangle
+   exactly the size of the mark's box, sitting at the mark's layout position. In
+   an ordinary transition that hole is harmless because the element is drawn
+   inside it. This one is not ordinary: the hop carries the creature up to 64% of
+   its own height out of that box, so for most of the flight the hole has nothing
+   in front of it and shows the base canvas — a dark square, the size of the
+   drawing, exactly where it normally stands. That is the artifact.
+
+   So the group gets a background, and it has to be what the PAGE paints at that
+   spot rather than a plausible dark: the body's colour with the rail's
+   translucent layer over it, in that order, which is the same two-layer stack
+   the browser composites there. Re-derive with
+   `getComputedStyle(document.querySelector(".rail")).backgroundColor` and the
+   body's own if either ever moves — and the failure mode is at least loud, since
+   a mismatch shows up as this same square rather than as nothing. */
+::view-transition-group(sw-monster) {
+  background-color: rgb(9 9 11);
+  background-image: linear-gradient(
+    oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%
+  );
+}
+
 /* THE TWO SNAPSHOTS NOW CARRY DIFFERENT POSES, and that is the only way this
    creature can change shape in mid-air.
 
@@ -499,8 +527,21 @@ html {
    slid sideways.
 
    `perspective()` has to lead the list or the yaw is orthographic and reads as
-   a plain horizontal squash. 2.2em is far enough back that the near edge does
-   not balloon at 16 degrees and close enough that the turn is felt at all.
+   a plain horizontal squash.
+
+   IT IS IN PIXELS, NOT em, and that is a correction rather than a preference.
+   `em` on `::view-transition-old/new` resolves against the pseudo-element's own
+   font-size, which inherits from `::view-transition` on the ROOT — 16px, not
+   the mark's 15-22px. So `2.2em` put the camera 35px from a 22px drawing,
+   about 1.6x its own size, which is a fisheye: the near edge balloons and the
+   far edge collapses. Worse, `sw-monster-untwist` runs on the LIVE mark where
+   the same `2.2em` resolved against the MARK's font-size instead, so the two
+   halves of one continuous turn were shot on different lenses and popped at the
+   handover.
+
+   140px is about six times the collapsed mark — far enough back to be a turn
+   rather than a distortion, and the same distance on both sides of the
+   handover, which is the part that actually had to match.
 
    Kept small on purpose — a few degrees and a couple of percent. At ~20px a
    lean big enough to notice as a lean is big enough to look like a wobble. */
@@ -513,39 +554,39 @@ html {
      shifting a hair AGAINST the direction of travel — you rock back before you
      go. */
   14% {
-    transform: perspective(2.2em) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
   }
   /* The push-off — already stretching before it leaves the ground, and tipping
      into the direction of travel. */
   26% {
-    transform: perspective(2.2em) translate(calc(var(--sw-hop-dir, 1) * 2%), -22%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -22%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
   /* Top of the arc: fully stretched, highest lift, lean at its greatest.
      The lift is a share of the creature's OWN height, so it clears its own body
      and a bit more — enough that the jump reads as a jump at 15px rather than
      as a bounce, without throwing it out of the rail. */
   46% {
-    transform: perspective(2.2em) translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
   }
   /* Falling, gathering, and rotating back THROUGH level — the counter-rotation
      is what makes the landing read as absorbed rather than dropped. */
   66% {
-    transform: perspective(2.2em) translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
   }
   /* Landing: the squash absorbs it, the tip flattens out. */
   80% {
-    transform: perspective(2.2em) translate(0, 4%) rotateY(calc(var(--sw-hop-dir, 1) * 12deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 2deg)) scale(1.2, 0.8);
+    transform: perspective(140px) translate(0, 4%) rotateY(calc(var(--sw-hop-dir, 1) * 12deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 2deg)) scale(1.2, 0.8);
   }
   /* FOLLOW-THROUGH: a small rebound past the resting pose... */
   91% {
-    transform: perspective(2.2em) translate(0, -3%) rotateY(calc(var(--sw-hop-dir, 1) * 11deg)) rotate(0deg) skewX(calc(var(--sw-hop-dir, 1) * 0.5deg)) scale(0.95, 1.06);
+    transform: perspective(140px) translate(0, -3%) rotateY(calc(var(--sw-hop-dir, 1) * 11deg)) rotate(0deg) skewX(calc(var(--sw-hop-dir, 1) * 0.5deg)) scale(0.95, 1.06);
   }
   /* ...and settle. */
   /* STILL TURNED. The hop ends mid-twist on purpose — squaring up is a beat of
      its own, and it belongs after the landing rather than inside it. The live
      element picks up from exactly this angle; see `sw-monster-untwist`. */
   100% {
-    transform: perspective(2.2em) translate(0, 0)
+    transform: perspective(140px) translate(0, 0)
       rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);
   }
 }
@@ -580,13 +621,13 @@ html {
 
 @keyframes sw-monster-untwist {
   0% {
-    transform: perspective(2.2em) rotateY(calc(var(--sw-hop-dir, 1) * 10deg));
+    transform: perspective(140px) rotateY(calc(var(--sw-hop-dir, 1) * 10deg));
   }
   62% {
-    transform: perspective(2.2em) rotateY(calc(var(--sw-hop-dir, 1) * -2.5deg));
+    transform: perspective(140px) rotateY(calc(var(--sw-hop-dir, 1) * -2.5deg));
   }
   100% {
-    transform: perspective(2.2em) rotateY(0deg);
+    transform: perspective(140px) rotateY(0deg);
   }
 }
 
@@ -623,6 +664,59 @@ html {
    It is a plain declaration, not an animation, precisely because the creature
    is a static image mid-flight — there is nothing to animate then, only a pose
    to be captured in. */
+
+/* HE LOOKS AT WHERE HE IS GOING BEFORE HE GOES, and this is the declaration
+   that makes it symmetric.
+
+   The aim below already throws the pupil along the direction of travel, but it
+   is a DELTA on top of wherever the pupil rests — and the resting gaze depends
+   on the rail state, which differs between the two directions. Leaving the word
+   for the collapsed rail, the pupil starts centred and only gets the delta;
+   returning to the word it starts already looking at the breadcrumb and gets
+   the delta on top. The same jump read twice as strong in one direction as the
+   other, which is why the outbound one never quite said "destination".
+
+   Setting `left` here overrides the resting gaze for the DEPARTURE capture
+   only, so both directions start from the same place and the look toward the
+   destination is the same size whichever way he is about to go. Absolute, not a
+   transform, for the reason the gaze itself is: the aim, the flick and the
+   dilation are all transforms, and they compose on top of wherever this puts
+   the pupil.
+
+   `:not([data-landing])` is what makes it a BEFORE. The arrival snapshot has
+   the attribute and therefore not this rule, so the eye leads on the way out
+   and arrives at whatever the new rail state calls resting. */
+/* THE WHOLE EYE TURNS, not just the pupil sliding inside a fixed white. An eye
+   looking somewhere rotates in its socket — the white goes too, and the pupil
+   rides it and then leads a little further. Moving only the pupil is the thing
+   that reads as a googly eye rather than as attention.
+
+   The white can travel (0.98 - 0.64) / 2 = 0.17em before it reaches the body's
+   edge, so 0.05em is well inside it and the eye stays an eye. */
+[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-eye] {
+  transform: translateX(calc(var(--sw-hop-dir, 1) * 0.06em));
+}
+
+/* And the pupil leads the white it is riding — which is why this is SMALLER
+   than it was when the pupil carried the whole look alone. Together they come
+   to the same total offset; separately, one of them is the eye TURNING and the
+   other is it LOOKING.
+
+   Sized so the pupil stays wholly inside its white. It can travel
+   (0.64 - 0.39) / 2 = 0.125em from centre before the rim clips it, and the aim
+   below already spends 26% of the pupil's own width getting there — 2.2px of
+   the 2.74px available on the collapsed mark. This gets the remaining 0.44px
+   and not a tenth more. Push it and the leading edge of the pupil is shaved off
+   for the whole flight, which at this size reads as a rendering fault rather
+   than as a hard look. */
+[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-pupil] {
+  /* Re-declares the component's gaze property ON the pupil. It is set on the
+     MARK there and inherits down, so a value declared directly on this element
+     wins — which is how a stylesheet takes back a position an inline style
+     would otherwise own outright. */
+  --monster-gaze-x: calc(var(--sw-hop-dir, 1) * 0.02em);
+}
+
 [data-storyboard-monster][data-aiming] [data-monster-pupil] {
   /* THREE PROPERTIES, ONE POSE. `translate`, `scale` and `transform` are
      separate animatable properties that compose in that order, which is what
@@ -631,7 +725,7 @@ html {
      a duration and an easing, and all three want different ones. */
   translate: calc(var(--sw-hop-dir, 1) * 26%) 0;
   scale: 1.2;
-  transform: translateY(-12%);
+  transform: translateY(-5%);
 }
 
 /* THE HAT FLIES TRAILING, for the same reason and by the same mechanism.
@@ -658,7 +752,7 @@ html {
 }
 
 [data-storyboard-monster][data-aiming] [data-monster-hat] {
-  transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -3deg));
+  transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -1.4deg));
 }
 
 [data-storyboard-monster][data-settling] [data-monster-pupil] {
@@ -886,25 +980,29 @@ html {
 
 /* ── The eye, vertically: the landing ────────────────────────────────────────
    This half is not eye physiology, it is the head the eye is riding in. It gets
-   thrown by the impact, overshoots, and comes back level, moving FURTHER than
-   the body did — the exaggeration that makes a 15px mark read as alive.
+   thrown by the impact, overshoots, and comes back level.
+
+   DIALLED TO ABOUT A THIRD of the first pass, which ran +/-12% and read as the
+   pupil rattling in its socket. The whole travel is now under half a pixel on
+   the in-word mark — the impact is FELT rather than watched, and the horizontal
+   flick beside it gets to be the thing the eye is actually doing.
 
    Kept inside the white: the pupil is 0.39em within a 0.64em eye, so this can
    spend about a quarter of the pupil's own width before it would clip. */
 @keyframes sw-pupil-bob {
   0% {
-    transform: translateY(-12%);
+    transform: translateY(-5%);
   }
   /* The impact drives it down. */
   30% {
-    transform: translateY(12%);
+    transform: translateY(5%);
   }
   /* Bounce. */
   58% {
-    transform: translateY(-6%);
+    transform: translateY(-2.5%);
   }
   80% {
-    transform: translateY(2%);
+    transform: translateY(1%);
   }
   100% {
     transform: translateY(0);
@@ -954,9 +1052,12 @@ html {
    because they fail differently.
 
    ROTATION is what reads as a hat: the crown's top sits about an em above the
-   pivot, so a few degrees swing it a couple of pixels and the shape of the
-   event — trail, jam, rebound — survives at 8px. It is held at roughly six
-   tenths of the first pass.
+   pivot, so even a degree or two swings it visibly and the shape of the event —
+   trail, jam, rebound — survives at 8px. That leverage is also why it needed
+   cutting TWICE. Six tenths of the first pass still swung the crown tip about
+   1.3px at the collapsed mark, which at that size is a wobble rather than a
+   settle; it is now under half that. The hat should look like it is finding its
+   place again, not like it is loose.
 
    VERTICAL is what reads as VIBRATION. A hat bobbing straight up and down has
    no silhouette change to sell it, so the eye registers the motion without
@@ -970,23 +1071,23 @@ html {
      travel. Identical to the aim pose, so the handover from image to element
      shows no seam. */
   0% {
-    transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -3deg));
+    transform: translateY(-0.012em) rotate(calc(var(--sw-hop-dir, 1) * -1.4deg));
   }
   /* THE JAM. The head stops and the hat does not, so it drives DOWN onto the
      fur, past where it rests, and its own momentum carries it forward — the
      rotation crosses through rest to the far side, which is the opposite of
      where it spent the whole flight. */
   20% {
-    transform: translateY(0.015em) rotate(calc(var(--sw-hop-dir, 1) * 3.5deg));
+    transform: translateY(0.015em) rotate(calc(var(--sw-hop-dir, 1) * 1.6deg));
   }
   /* The rebound: the fur gives it back, and the hat lifts and rocks back the
      way it came. Smaller than the jam, because energy leaves the system. */
   46% {
-    transform: translateY(-0.007em) rotate(calc(var(--sw-hop-dir, 1) * -1.8deg));
+    transform: translateY(-0.007em) rotate(calc(var(--sw-hop-dir, 1) * -0.8deg));
   }
   /* A second, much shorter bounce — one is a bump, two is a hat. */
   70% {
-    transform: translateY(0.004em) rotate(calc(var(--sw-hop-dir, 1) * 0.9deg));
+    transform: translateY(0.004em) rotate(calc(var(--sw-hop-dir, 1) * 0.4deg));
   }
   88% {
     transform: translateY(-0.002em) rotate(0deg);
@@ -1007,6 +1108,7 @@ html {
   }
 
   [data-storyboard-monster][data-aiming] [data-monster-crown],
+  [data-storyboard-monster][data-aiming] [data-monster-eye],
   [data-storyboard-monster][data-aiming] [data-monster-foot] {
     transform: none;
   }

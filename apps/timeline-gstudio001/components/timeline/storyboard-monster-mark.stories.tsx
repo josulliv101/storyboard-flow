@@ -202,3 +202,70 @@ export const HatPoses: Story = {
     expect(y(jam)).toBeGreaterThan(y(rest));
   },
 };
+
+/**
+ * Hatted and bare, side by side, at the size the rail actually renders.
+ *
+ * The prop is free to use — every rule that animates the hat keys off
+ * `[data-monster-hat]`, so with nothing rendered they match nothing.
+ *
+ * It also RESHAPES THE HEAD, which is the part worth looking at here. The egg
+ * (1.12 tall against a 0.98 width) exists for one reason: headroom between the
+ * eye and the brim. With no brim to clear it buys nothing and just reads tall,
+ * so the bare creature goes back to the source's own round body. Side by side
+ * is the only way to check that the round one still looks like the same
+ * character.
+ */
+export const WithoutTheHat: Story = {
+  args: { scale: 1.6 },
+  render: () => (
+    <>
+      <Plate label="with the hat">
+        <StoryboardMonsterMark scale={1.6} />
+      </Plate>
+      <Plate label="hat={false}">
+        <StoryboardMonsterMark scale={1.6} hat={false} />
+      </Plate>
+      <Plate label="bare, blown up">
+        <span className="text-[4em]">
+          <StoryboardMonsterMark scale={1} hat={false} />
+        </span>
+      </Plate>
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    const marks = Array.from(
+      canvasElement.querySelectorAll("[data-storyboard-monster]"),
+    );
+    expect(marks).toHaveLength(3);
+    const [hatted, bare] = marks as [Element, Element];
+    expect(hatted.querySelector("[data-monster-hat]")).toBeTruthy();
+    expect(bare.querySelector("[data-monster-hat]")).toBeNull();
+    // The parts all survive — the hat is its own layer, so dropping it must not
+    // cost the creature anything else.
+    expect(bare.querySelectorAll("[data-monster-foot]")).toHaveLength(2);
+    expect(bare.querySelector("[data-monster-eye]")).toBeTruthy();
+
+    // But the HEAD is shorter, and that is the point of this story. The egg
+    // exists to clear the brim; with no brim it goes back to the source's round
+    // body. Measured on the body itself rather than the mark, whose box also
+    // contains the hat's overhang.
+    const bodyOf = (mark: Element) =>
+      mark.querySelector("[data-monster-crown]")?.parentElement ??
+      mark.querySelector("[data-monster-eye]")?.parentElement ??
+      null;
+    const hattedBody = bodyOf(hatted);
+    const bareBody = bodyOf(bare);
+    expect(hattedBody).toBeTruthy();
+    expect(bareBody).toBeTruthy();
+    const hattedH = hattedBody!.getBoundingClientRect().height;
+    const bareH = bareBody!.getBoundingClientRect().height;
+    expect(bareH).toBeLessThan(hattedH);
+    // 0.98 against 1.12 — about an eighth shorter, and the width is untouched.
+    expect(bareH / hattedH).toBeCloseTo(0.98 / 1.12, 2);
+    expect(bareBody!.getBoundingClientRect().width).toBeCloseTo(
+      hattedBody!.getBoundingClientRect().width,
+      1,
+    );
+  },
+};
