@@ -319,3 +319,185 @@ html {
     animation: none;
   }
 }
+
+/* ── The storyboard monster's hop ─────────────────────────────────────────────
+   Collapsing the rail re-lays the creature out rather than moving it: inline in
+   "m…nster" when open, alone and larger when closed. A view transition is what
+   gives the browser two snapshots to interpolate; these rules turn that
+   interpolation into a jump instead of a slide.
+
+   The animation principles it is built from, since the numbers otherwise look
+   arbitrary:
+
+   ANTICIPATION — it squashes DOWN before it goes up. Nothing jumps without
+   crouching first, and without it the launch reads as the creature being
+   yanked rather than deciding to leave.
+
+   SQUASH AND STRETCH — width and height trade against each other and the
+   product stays near 1, so the body keeps its volume. A squash that only
+   flattens looks like a dropped object; one that also widens looks alive.
+
+   SLOW IN AND SLOW OUT — the group's easing is fast out of the crouch and
+   settles into the landing, rather than moving at one speed.
+
+   ARC — the browser interpolates position in a straight line, so the lift is
+   added on top as a translate that peaks mid-flight. A creature that travels
+   flat between two points reads as a sprite being dragged.
+
+   FOLLOW-THROUGH — it overshoots the landing and settles back. The body
+   arrives before the pose does.
+
+   EXAGGERATION — the scales are past what a real body would do (0.72 / 1.24 at
+   the extremes) because at ~20px anything subtler is invisible. */
+
+::view-transition-group(sw-monster) {
+  /* The travel itself: out of the crouch quickly, easing into the landing. */
+  animation-duration: 620ms;
+  animation-timing-function: cubic-bezier(0.34, 0.8, 0.28, 1);
+  /* STAGING: the creature is the only thing that should be moving, so it sits
+     above the rest of the transition rather than under the rail's own chrome. */
+  z-index: 10;
+}
+
+/* STAGING, the other half. Everything else in the page is snapshotted as `root`
+   and cross-faded by default, so the whole app would dip while the creature
+   jumps — the eye would not know where to look. The rest of the UI cuts
+   instantly and the only thing animating is the thing worth watching. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+/* The two snapshots are the SAME drawing, so they must not cross-fade — a
+   dissolve between identical images just dims the creature mid-jump. Both are
+   held opaque and given the same pose, which reads as one object moving. */
+::view-transition-old(sw-monster),
+::view-transition-new(sw-monster) {
+  animation: sw-monster-hop 620ms cubic-bezier(0.34, 0.8, 0.28, 1) both;
+  mix-blend-mode: normal;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* POSE TO POSE, which is what keyframes are: these eight are the extremes and
+   the browser draws the in-betweens. They are written as poses — crouch,
+   push-off, apex, fall, landing, rebound, settle — not as an interpolation
+   between a start and an end.
+
+   SOLID DRAWING is the rotation. A body that only scales on two axes reads as
+   a flat sticker; tipping it into and out of the arc gives it a front and a
+   back, and the tip reverses on the way down the way a real body rotates
+   around its own mass. */
+@keyframes sw-monster-hop {
+  /* Standing. */
+  0% {
+    transform: translateY(0) scale(1, 1) rotate(0deg);
+  }
+  /* ANTICIPATION: the crouch. Wider and shorter, sinking slightly. */
+  14% {
+    transform: translateY(8%) scale(1.22, 0.78) rotate(0deg);
+  }
+  /* The push-off — already stretching before it leaves the ground, and tipping
+     into the direction of travel. */
+  26% {
+    transform: translateY(-14%) scale(0.84, 1.22) rotate(-5deg);
+  }
+  /* Top of the arc: fully stretched, highest lift, tip at its greatest. */
+  46% {
+    transform: translateY(-42%) scale(0.82, 1.24) rotate(-7deg);
+  }
+  /* Falling, gathering, and rotating back through level. */
+  66% {
+    transform: translateY(-12%) scale(0.92, 1.1) rotate(3deg);
+  }
+  /* Landing: the squash absorbs it, the tip flattens out. */
+  80% {
+    transform: translateY(4%) scale(1.2, 0.8) rotate(1deg);
+  }
+  /* FOLLOW-THROUGH: a small rebound past the resting pose... */
+  91% {
+    transform: translateY(-3%) scale(0.95, 1.06) rotate(0deg);
+  }
+  /* ...and settle. */
+  100% {
+    transform: translateY(0) scale(1, 1) rotate(0deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The toggle already skips `startViewTransition` entirely under this query —
+     this is the belt to that braces, for a transition started by some other
+     path. */
+  ::view-transition-group(sw-monster),
+  ::view-transition-old(sw-monster),
+  ::view-transition-new(sw-monster) {
+    animation: none;
+  }
+}
+
+/* ── The settle, after the creature lands ─────────────────────────────────────
+   SECONDARY ACTION and OVERLAPPING ACTION, and the reason they live here rather
+   than in the hop above: a view transition rasterises the creature into a
+   single IMAGE, so nothing inside it can move independently while it is in
+   flight. The eye and the feet are parts of that picture, not elements.
+
+   So they act once the transition hands control back to the live element. The
+   body has arrived; the parts have not finished. The eye jolts and re-centres
+   (secondary action — a reaction that comments on the main one without
+   competing with it), and the feet keep spreading a beat after the landing and
+   draw back (overlapping action — loose parts trail the mass that carried
+   them).
+
+   TIMING is what keeps them from reading as one event: the eye leads by 50ms,
+   the feet lag by 110ms and run longer. Simultaneous would look like a single
+   twitch. */
+
+[data-storyboard-monster][data-settling] [data-monster-pupil] {
+  animation: sw-pupil-settle 380ms cubic-bezier(0.22, 1, 0.36, 1) 50ms both;
+}
+
+[data-storyboard-monster][data-settling] [data-monster-foot] {
+  animation: sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+}
+
+/* The eye is thrown by the landing, overshoots, and comes back level. It moves
+   FURTHER than the body did, which is the exaggeration that makes a small mark
+   read as alive at 15px. */
+@keyframes sw-pupil-settle {
+  0% {
+    transform: translateY(-22%);
+  }
+  45% {
+    transform: translateY(9%);
+  }
+  75% {
+    transform: translateY(-3%);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+/* The feet splay under the weight, then gather. Volume again: they widen as
+   they flatten. */
+@keyframes sw-foot-settle {
+  0% {
+    transform: scale(1.3, 0.7);
+  }
+  40% {
+    transform: scale(0.88, 1.16);
+  }
+  70% {
+    transform: scale(1.06, 0.95);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-storyboard-monster][data-settling] [data-monster-pupil],
+  [data-storyboard-monster][data-settling] [data-monster-foot] {
+    animation: none;
+  }
+}

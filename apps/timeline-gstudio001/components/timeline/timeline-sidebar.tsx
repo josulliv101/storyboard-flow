@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { flushSync } from "react-dom";
 import {
   StoryboardMonsterMark,
   STORYBOARD_MONSTER_ACCENT,
@@ -106,7 +107,7 @@ function subscribeRailExpanded(onChange: () => void): () => void {
   };
 }
 
-function writeRailExpanded(next: boolean): void {
+function commitRailExpanded(next: boolean): void {
   try {
     window.localStorage.setItem(RAIL_EXPANDED_STORAGE_KEY, String(next));
   } catch {
@@ -114,6 +115,59 @@ function writeRailExpanded(next: boolean): void {
     // the event still fires, so the rail still moves for this session.
   }
   window.dispatchEvent(new Event(RAIL_EXPANDED_EVENT));
+}
+
+/**
+ * Toggle the rail INSIDE a view transition, so the monster can jump between its
+ * two homes rather than teleport.
+ *
+ * The creature's two positions are genuinely different DOM layouts — inline in
+ * "m…nster" when open, alone and larger when closed — so nothing about the
+ * change is animatable by ordinary means: the element does not move, it is
+ * re-laid-out. A view transition snapshots both states and gives the browser
+ * something to interpolate between, and `globals.css` styles that interpolation
+ * as a hop (see the `sw-monster-*` keyframes).
+ *
+ * `flushSync` is not optional. `startViewTransition` captures the "after" state
+ * when its callback returns, and the callback here only dispatches an event —
+ * React's re-render would land after the capture, so the transition would
+ * animate from a state to itself.
+ *
+ * Falls back to a plain commit where the API is missing or the reader asked for
+ * less motion; the rail still moves, it just cuts.
+ */
+function writeRailExpanded(next: boolean): void {
+  const doc = document as Document & {
+    startViewTransition?: (callback: () => void) => unknown;
+  };
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  if (typeof doc.startViewTransition !== "function" || reduced) {
+    commitRailExpanded(next);
+    return;
+  }
+  const transition = doc.startViewTransition(() => {
+    flushSync(() => commitRailExpanded(next));
+  }) as { finished?: Promise<unknown> };
+
+  // THE SETTLE, once the flight is over. The eye and the feet cannot move
+  // during the transition — the creature is a rasterised snapshot then, not
+  // elements — so the parts that should still be moving when the body stops are
+  // handed back to the live element here. See `sw-pupil-settle` and
+  // `sw-foot-settle`.
+  //
+  // Attribute rather than React state on purpose: this is a 500ms flourish, and
+  // routing it through the store would re-render the sidebar twice more for it.
+  void transition.finished
+    ?.then(() => {
+      const mark = document.querySelector("[data-storyboard-monster]");
+      if (!mark) return;
+      mark.setAttribute("data-settling", "");
+      window.setTimeout(() => mark.removeAttribute("data-settling"), 620);
+    })
+    .catch(() => {
+      // A transition skipped or superseded by a faster second click. The rail
+      // still moved; only the flourish is lost.
+    });
 }
 
 /**
@@ -193,11 +247,22 @@ function RevealedLetters({
     <span
       aria-hidden="true"
       className={cn(
-        "grid transition-[grid-template-columns] duration-200 motion-reduce:transition-none",
+        // OVERLAPPING ACTION. The word does not move in lockstep with the rail:
+        // opening, it trails the creature's launch by a beat, so the name reads
+        // as being pulled out behind it; closing, it goes FIRST and quickly,
+        // clearing the space before the creature jumps back into it. Loose parts
+        // lag the thing driving them, and which part is loose depends on which
+        // way the motion runs.
+        "grid transition-[grid-template-columns] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        show ? "delay-[90ms] duration-[420ms]" : "delay-0 duration-[220ms]",
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
     >
-      <span className="overflow-hidden font-semibold opacity-90">{children}</span>
+      {/* NO WEIGHT of its own. This was `font-semibold`, which was right when
+          the mark was two capitals in the UI's sans face — but Caprasimo ships
+          a single 400, so 600 only bought a synthesised bold smeared over a
+          face that is already heavy. */}
+      <span className="overflow-hidden opacity-90">{children}</span>
     </span>
   );
 }
@@ -617,7 +682,15 @@ export function TimelineSidebar() {
           // Width alone is animated. `transition-all` here would also catch the
           // backdrop filter, which is expensive to interpolate over a sticky
           // full-height surface.
-          "transition-[width] duration-200 motion-reduce:transition-none",
+          // Paced against the creature's 620ms hop rather than left at the
+          // default 200ms — the rail used to finish long before the creature
+          // landed, so it jumped to a place that had already stopped moving.
+          //
+          // SLOW IN AND SLOW OUT, weighted to the out: a decisive move that
+          // eases hard into rest, which is what a drawer pulled open and let go
+          // of does. The default `ease` is symmetric and reads mechanical
+          // against a body that accelerates and settles.
+          "transition-[width] duration-[440ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
           // From RAIL_WIDTH_CLASS, which holds the literals Tailwind's scanner
           // needs — see the note there on why these cannot be built by template.
           railExpanded
@@ -636,7 +709,10 @@ export function TimelineSidebar() {
           // at 18px, so there was room, and at 18px "storyboard monster" was
           // hard to read against everything else in the rail. Measured after:
           // see the note on the creature's scale for the other half of the fit.
-          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-[22px] font-bold text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
+          // CAPRASIMO, the face the logo document is set in, and no
+          // `font-bold`: it ships a single 400 weight, so asking for 700 buys a
+          // synthesised bold on top of a face that is already heavy.
+          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] font-[family-name:var(--font-caprasimo)] text-[19px] text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
           {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
               nothing, so closing slides the S and the W together into "SW"

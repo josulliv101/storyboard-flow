@@ -73,6 +73,8 @@ const FUR: React.CSSProperties = {
  */
 const FEET = "oklch(0.72 0.13 250)";
 
+/** Marked so the settle can move the feet after the body has stopped — see
+ *  `sw-foot-settle` in globals.css. */
 const foot = (left: string): React.CSSProperties => ({
   position: "absolute",
   left,
@@ -103,6 +105,12 @@ export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }
         // The creature's own box drives its parts, so one number scales the
         // whole drawing without touching the geometry below.
         fontSize: `${scale}em`,
+        // NAMED FOR THE VIEW TRANSITION. Collapsing the rail does not move this
+        // element, it re-lays it out — inline in the word, then alone and
+        // larger — so there is nothing for a normal transition to animate
+        // between. A name lets the browser snapshot both and interpolate; the
+        // hop itself is styled in `globals.css`.
+        viewTransitionName: "sw-monster",
         // NUDGED, NOT BASELINE-ALIGNED. The lockup is a flex row, and the
         // pieces around this are `RevealedLetters` — `display: grid`, so they
         // can only be flex items and the whole row is laid out by flex, not by
@@ -141,6 +149,7 @@ export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }
         >
           {/* pupil */}
           <span
+            data-monster-pupil=""
             style={{
               position: "absolute",
               left: "0.09em",
@@ -167,8 +176,8 @@ export function StoryboardMonsterMark({ scale = 1 }: Readonly<{ scale?: number }
           </span>
         </span>
       </span>
-      <span style={foot("0.04em")} />
-      <span style={foot("0.4em")} />
+      <span data-monster-foot="" style={foot("0.04em")} />
+      <span data-monster-foot="" style={foot("0.4em")} />
     </span>
   );
 }
