@@ -136,12 +136,66 @@ function commitRailExpanded(next: boolean): void {
  * Falls back to a plain commit where the API is missing or the reader asked for
  * less motion; the rail still moves, it just cuts.
  */
+/**
+ * How long the creature gets to load up before the rail moves.
+ *
+ * The collapse used to be instantaneous: `::view-transition-old/new(root)` are
+ * set to `animation: none`, so every part of the page except the creature CUTS
+ * at t=0 and the jump then played out over a layout that had already finished
+ * changing. Backwards — the leap should come first and the rail should shut
+ * under it.
+ *
+ * Delaying the CUT is the obvious fix and is wrong: the root snapshot has the
+ * mark cut out of it at its layout position, and the only thing filling that
+ * hole is the group's own background, which travels with the creature. Holding
+ * the old root while the group moves bares the hole (see the `sw-monster` notes
+ * in `globals.css`). So the beat goes BEFORE the transition instead, where the
+ * page is still live and there are no snapshots to punch holes in.
+ *
+ * 300ms is the ask and it is also about the ceiling: it is spent on visible
+ * motion — the crouch, the eye turning, the antennae bending back — so the
+ * click still reads as answered on the frame it happens, but a control whose
+ * LAYOUT waits much longer than this starts to feel unresponsive.
+ */
+const ANTICIPATION_MS = 300;
+
+/**
+ * The pending beat, so a second click during it cannot stack a second
+ * transition on the first. Clearing the timer and re-entering means the newest
+ * click wins, which is what a reader jabbing the toggle expects; letting both
+ * run would start a transition whose "before" state is another transition.
+ */
+let anticipationTimer: number | undefined;
+
+/**
+ * Which interaction owns the creature's pose right now.
+ *
+ * A transition's `finished` handler strips `data-aiming`/`data-landing` and
+ * hands over to the settle. Traced on the live app, one of those handlers fired
+ * 8ms AFTER a newer click had already set its own aim — stripping it, so the
+ * new jump flew with a centred eye and un-splayed feet, then settled twice.
+ *
+ * The 300ms beat makes this ordinary rather than exotic: there is now a visible
+ * window in which a second click is a natural thing to do. Every handler reads
+ * the generation it was created under and does nothing if a newer one has
+ * started, so the newest interaction always owns the mark.
+ */
+let railGeneration = 0;
+
 function writeRailExpanded(next: boolean): void {
   const doc = document as Document & {
     startViewTransition?: (callback: () => void) => unknown;
   };
   const reduced =
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  const generation = ++railGeneration;
+  if (anticipationTimer !== undefined) {
+    window.clearTimeout(anticipationTimer);
+    anticipationTimer = undefined;
+    document
+      .querySelector("[data-storyboard-monster]")
+      ?.removeAttribute("data-anticipating");
+  }
   if (typeof doc.startViewTransition !== "function" || reduced) {
     commitRailExpanded(next);
     return;
@@ -165,9 +219,36 @@ function writeRailExpanded(next: boolean): void {
   // because mid-flight the creature is a rasterised image and nothing inside it
   // can move. A pose can still be captured INTO that image; motion cannot.
   const mark = document.querySelector("[data-storyboard-monster]");
-  mark?.setAttribute("data-aiming", "");
 
-  const transition = doc.startViewTransition(() => {
+  // THE BEAT. Live elements, eased by the `[data-anticipating]` rules — this is
+  // the only motion in the whole jump that is not inside a snapshot. Without a
+  // mark to pose there is nothing to wait for, so that path goes straight
+  // through.
+  if (!mark) {
+    beginRailTransition(doc, next, null, generation);
+    return;
+  }
+  mark.setAttribute("data-anticipating", "");
+  anticipationTimer = window.setTimeout(() => {
+    anticipationTimer = undefined;
+    if (generation !== railGeneration) return;
+    // Swapped in ONE frame. The aim rules restate every value the anticipation
+    // just eased into, so the capture that happens moments later sees the pose
+    // already settled rather than mid-transition.
+    mark.removeAttribute("data-anticipating");
+    mark.setAttribute("data-aiming", "");
+    beginRailTransition(doc, next, mark, generation);
+  }, ANTICIPATION_MS);
+}
+
+/** The transition itself, once the creature has finished loading up. */
+function beginRailTransition(
+  doc: Document & { startViewTransition?: (callback: () => void) => unknown },
+  next: boolean,
+  mark: Element | null,
+  generation: number,
+): void {
+  const transition = doc.startViewTransition!(() => {
     flushSync(() => commitRailExpanded(next));
     // THE SECOND POSE, and the reason there is one at all. The browser captures
     // the OLD state before this callback runs and the NEW state after it
@@ -195,6 +276,7 @@ function writeRailExpanded(next: boolean): void {
     // Nothing to hang the settle off. Drop the aim on a timer regardless — a
     // pupil left staring sideways is worse than no flourish at all.
     window.setTimeout(() => {
+      if (generation !== railGeneration) return;
       mark?.removeAttribute("data-aiming");
       mark?.removeAttribute("data-landing");
     }, 620);
@@ -202,7 +284,10 @@ function writeRailExpanded(next: boolean): void {
   }
   void finished
     .then(() => {
-      if (!mark) return;
+      // A NEWER CLICK OWNS THE MARK NOW. Without this the settle strips an aim
+      // that belongs to a jump still in the air -- traced 8ms after the newer
+      // pose was set, which flew it with a centred eye and settled it twice.
+      if (!mark || generation !== railGeneration) return;
       // Swapped in ONE frame, and the settle's first pose is the aim, so the
       // pupil is never briefly re-centred between the two — the handover from
       // captured image to live element is invisible.
@@ -215,12 +300,17 @@ function writeRailExpanded(next: boolean): void {
       // not shorten the flourish, it truncates it — at 620ms the hat's final
       // bounce was cut mid-air, and anything under 1260 snaps the last of the
       // dilation off in one frame.
-      window.setTimeout(() => mark.removeAttribute("data-settling"), 1360);
+      window.setTimeout(() => {
+        if (generation !== railGeneration) return;
+        mark.removeAttribute("data-settling");
+      }, 1360);
     })
     .catch(() => {
       // A transition skipped or superseded by a faster second click. The rail
       // still moved; only the flourish is lost — but the aim must come off, or
-      // the eye is left pointing at a jump that never happened.
+      // the eye is left pointing at a jump that never happened. Unless the
+      // superseding click is already posing it, in which case leave it alone.
+      if (generation !== railGeneration) return;
       mark?.removeAttribute("data-aiming");
       mark?.removeAttribute("data-landing");
     });
