@@ -739,20 +739,38 @@ export function TimelineSidebar() {
           // Width alone is animated. `transition-all` here would also catch the
           // backdrop filter, which is expensive to interpolate over a sticky
           // full-height surface.
-          // Paced against the creature's 620ms hop rather than left at the
-          // default 200ms — the rail used to finish long before the creature
-          // landed, so it jumped to a place that had already stopped moving.
+          "transition-[width] motion-reduce:transition-none",
+          // OPENING AND CLOSING ARE NOT THE SAME MOVE, so the pacing lives on
+          // the state rather than here. A transition reads its duration and
+          // easing from the AFTER-change style, so whichever branch below is
+          // being switched TO is the one that times the move — which is what
+          // makes this direction-aware without a single line of JavaScript.
           //
-          // SLOW IN AND SLOW OUT, weighted to the out: a decisive move that
-          // eases hard into rest, which is what a drawer pulled open and let go
-          // of does. The default `ease` is symmetric and reads mechanical
-          // against a body that accelerates and settles.
-          "transition-[width] duration-[440ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
           // From RAIL_WIDTH_CLASS, which holds the literals Tailwind's scanner
           // needs — see the note there on why these cannot be built by template.
           railExpanded
-            ? `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS}`
-            : RAIL_WIDTH_CLASS.collapsed,
+            ? // OPENING: decisive, then eases hard into rest — what a drawer
+              // pulled open and let go of does. Unchanged.
+              `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS} duration-[440ms] ease-[cubic-bezier(0.22,1,0.36,1)]`
+            : // CLOSING: a long slow ramp, then commit.
+              //
+              // It used to close on the opening curve, and that curve is
+              // easeOutQuint — 62px of the 168px travel gone in the FIRST 40ms
+              // and 79% shut by 120ms. The rail was always going to beat the
+              // creature to a standstill, because it did most of its move
+              // before the creature had finished crouching.
+              //
+              // Measured against the hop's own beats, this one is 2% closed at
+              // the crouch (116ms), 9% at the push-off (218ms), 71% at the apex
+              // (394ms) and 100% at contact (680ms). The rail closes WITH the
+              // jump instead of ahead of it, and the slow start is what buys
+              // that: the creature gets the first fifth of a second to itself.
+              //
+              // 660ms rather than 440ms for the same reason. A slow ramp inside
+              // 440ms has to make the time up somewhere, and it did — 145px in
+              // the 200ms through the middle, which read as a lurch rather than
+              // as a drawer.
+              `${RAIL_WIDTH_CLASS.collapsed} duration-[660ms] ease-[cubic-bezier(0.8,0,0.3,1)]`,
         )}
       >
         <Link
