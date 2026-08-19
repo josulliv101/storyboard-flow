@@ -157,6 +157,11 @@ type JumpArc = {
   hopEase: string;
   /** How the ground goes by underneath: the group's own position curve. */
   travel: string;
+  /** How long that travel takes. Ends with the hop, or short of it. */
+  travelMs: string;
+  /** The group's hole-filler: an opaque rect that travels with it, so it helps
+   *  only while the creature is on top of it. See the note in globals.css. */
+  fill: string;
 };
 
 /**
@@ -183,6 +188,8 @@ const CLOSING: JumpArc = {
     " 0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%," +
     " 0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%," +
     " 0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)",
+  travelMs: "620ms",
+  fill: "rgb(9 9 11) linear-gradient(oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%)",
 };
 
 /**
@@ -207,6 +214,15 @@ const OPENING: JumpArc = {
   hop: "sw-monster-hop-open",
   hopEase: "linear",
   travel: "cubic-bezier(0.42, 0.3, 0.58, 0.72)",
+  // ENDS WITH THE HOP, not 60ms short of it. At the shared 620ms the creature
+  // finished travelling and then dropped straight down for the remaining 60ms,
+  // which is a stop followed by a fall rather than a landing.
+  travelMs: "680ms",
+  // NO FILLER. It is an opaque rectangle that travels with the group, and this
+  // arc lifts the creature a full box height clear of it — so instead of
+  // hiding a hole it dragged across the wordmark and blanked the letters mid
+  // reveal. Verified by eye that nothing dark appears in its absence here.
+  fill: "transparent",
 };
 
 function writeRailExpanded(next: boolean): void {
@@ -234,6 +250,8 @@ function writeRailExpanded(next: boolean): void {
   root.setProperty("--sw-hop-name", arc.hop);
   root.setProperty("--sw-hop-ease", arc.hopEase);
   root.setProperty("--sw-group-ease", arc.travel);
+  root.setProperty("--sw-group-ms", arc.travelMs);
+  root.setProperty("--sw-group-fill", arc.fill);
 
   // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
   // attribute set — the pose it leaves from and the pose it lands in — so the

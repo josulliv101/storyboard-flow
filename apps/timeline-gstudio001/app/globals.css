@@ -380,7 +380,7 @@ html {
      The fallback is the closing curve, so a missing property cannot silently
      turn either of them into the front-loaded easing this replaced — that one
      had the creature 42% of the way across while still crouching. */
-  animation-duration: 620ms;
+  animation-duration: var(--sw-group-ms, 620ms);
   animation-timing-function: var(
     --sw-group-ease,
     linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%,
@@ -424,9 +424,31 @@ html {
    body's own if either ever moves — and the failure mode is at least loud, since
    a mismatch shows up as this same square rather than as nothing. */
 ::view-transition-group(sw-monster) {
-  background-color: rgb(9 9 11);
-  background-image: linear-gradient(
-    oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%
+  /* AND IT IS NOT ALWAYS A FIX, which is why it is a variable.
+
+     This is an OPAQUE rectangle at `z-index: 10`, sized to the mark's box and
+     TRAVELLING with the group. It hides the hole only while the hole is under
+     it — and the hole is at the mark's LAYOUT position while the group is
+     wherever the interpolation has got to, so the two coincide at the ends of
+     the flight and nowhere in between.
+
+     That went unnoticed for as long as the creature stayed inside its own box:
+     the filler was behind the drawing, so whatever it covered was covered
+     anyway. The opening arc lifts the creature a full box height clear, and the
+     filler came out from under it — measured mid-flight as a 19.4px opaque
+     `rgb(9 9 11)` rectangle dragging across the wordmark and blanking the
+     letters the transition was in the middle of revealing.
+
+     So the OPENING direction sets it to `transparent`, which was verified by
+     eye: with the filler off the lockup reads "storyboard m nster" with the
+     creature airborne over the gap and no dark square anywhere. The hole this
+     was added for does not occur in that direction.
+
+     The CLOSING direction keeps it, and the default below is that value, so a
+     missing property cannot silently reintroduce the black square it fixed. */
+  background: var(
+    --sw-group-fill,
+    rgb(9 9 11) linear-gradient(oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%)
   );
 }
 
@@ -686,13 +708,17 @@ html {
   30% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -55%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
-  /* The apex, over the middle of the trip where a thrown thing has it. */
-  55% {
+  /* The apex, and it sits over the MIDDLE of the trip -- 51% of the travel at
+     51% of the time, which is where a thrown thing has it. It was at 57% and
+     moved back slightly; the arc gets a touch taller as a side effect (19.0px
+     against 18.1) because the climb now finishes sooner against the same
+     stops. */
+  50% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -100%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
   }
   /* Coming down, steeper than it went up — landing ON a spot rather than
      sailing past one. */
-  80% {
+  78% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -42%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
   }
   /* CONTACT. Standing, still yawed, not yet deformed — the next frame is a live
