@@ -368,6 +368,34 @@ html {
   animation: none;
 }
 
+/* THE CREATURE LEAVES A HOLE, AND THIS FILLS IT.
+
+   A view transition does not composite over the live page — the page is not
+   painted at all while one runs, only the snapshots are. Proved it by hiding
+   `::view-transition-old/new(root)`: everything went black except the creature.
+
+   The root snapshot has the named element CUT OUT of it, a transparent rectangle
+   exactly the size of the mark's box, sitting at the mark's layout position. In
+   an ordinary transition that hole is harmless because the element is drawn
+   inside it. This one is not ordinary: the hop carries the creature up to 64% of
+   its own height out of that box, so for most of the flight the hole has nothing
+   in front of it and shows the base canvas — a dark square, the size of the
+   drawing, exactly where it normally stands. That is the artifact.
+
+   So the group gets a background, and it has to be what the PAGE paints at that
+   spot rather than a plausible dark: the body's colour with the rail's
+   translucent layer over it, in that order, which is the same two-layer stack
+   the browser composites there. Re-derive with
+   `getComputedStyle(document.querySelector(".rail")).backgroundColor` and the
+   body's own if either ever moves — and the failure mode is at least loud, since
+   a mismatch shows up as this same square rather than as nothing. */
+::view-transition-group(sw-monster) {
+  background-color: rgb(9 9 11);
+  background-image: linear-gradient(
+    oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%
+  );
+}
+
 /* THE TWO SNAPSHOTS NOW CARRY DIFFERENT POSES, and that is the only way this
    creature can change shape in mid-air.
 
