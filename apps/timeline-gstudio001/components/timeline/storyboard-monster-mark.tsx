@@ -261,12 +261,31 @@ const HAT_TILT: React.CSSProperties = {
 export function StoryboardMonsterMark({
   scale = 1,
   gaze = "ahead",
+  hat = true,
 }: Readonly<{
   scale?: number;
   /** Where the pupil rests. `"ahead"` is the source's centred eye, which is what
    *  the wordmark needs; `"breadcrumb"` turns it toward the board's header and
    *  belongs to the collapsed rail. See the GAZE_X note above. */
   gaze?: "ahead" | "breadcrumb";
+  /**
+   * Whether the creature wears its hat. Turn 34's direction, so `true` by
+   * default.
+   *
+   * Removing it is genuinely free: the hat is its own absolutely-positioned
+   * layer above the body, and every rule that animates it in `globals.css` —
+   * the flight pose, `sw-hat-settle`, the reduced-motion guard — keys off
+   * `[data-monster-hat]`, so with nothing rendered they match nothing and do
+   * nothing. No orphaned animation, no layout shift.
+   *
+   * ONE JUDGEMENT CALL COMES WITH IT, and it is deliberately not made here: the
+   * body was stretched into an egg (`BODY_H` 1.12 against a source width of
+   * 0.98) specifically to open headroom between the eye and the brim. Bare, the
+   * head reads a little tall. The geometry is left identical so this prop is
+   * purely additive — see the `WithoutTheHat` story to judge whether a hatless
+   * creature also wants `BODY_H` back toward 0.98.
+   */
+  hat?: boolean;
 }>) {
   // THE GAZE TRAVELS AS A CUSTOM PROPERTY, which is the one channel a stylesheet
   // can still take back. Written as an inline `left` it worked everywhere and
@@ -291,7 +310,8 @@ export function StoryboardMonsterMark({
       style={{
         // Read by the pupil's `left`, and re-declared by the flight pose — see
         // the note above.
-        ["--monster-gaze-x" as string]: gaze === "breadcrumb" ? "0.075em" : "0em",
+        ["--monster-gaze-x" as string]:
+          gaze === "breadcrumb" ? "0.075em" : "0em",
         display: "inline-block",
         width: "1em",
         height: "1em",
@@ -423,50 +443,52 @@ export function StoryboardMonsterMark({
       </span>
       <span data-monster-foot="left" style={foot("0.08em")} />
       <span data-monster-foot="right" style={foot("0.55em")} />
-      <span data-monster-hat="" style={HAT_GROUP}>
-        <span style={HAT_TILT}>
-          {/* The pinched crown. The polygon dents the top twice — up one side, a
+      {hat ? (
+        <span data-monster-hat="" style={HAT_GROUP}>
+          <span style={HAT_TILT}>
+            {/* The pinched crown. The polygon dents the top twice — up one side, a
             dip in the middle, up the other — which is the whole difference
             between a cowboy hat and a bucket. */}
-          <span
-            style={{
-              position: "absolute",
-              left: "0.23em",
-              top: "-0.3em",
-              width: "0.54em",
-              height: "0.42em",
-              background: HAT,
-              clipPath:
-                "polygon(0 100%, 0 34%, 22% 8%, 50% 26%, 78% 8%, 100% 34%, 100% 100%)",
-            }}
-          />
-          {/* The brim, wider than the head so it overlaps the fur on both sides —
+            <span
+              style={{
+                position: "absolute",
+                left: "0.23em",
+                top: "-0.3em",
+                width: "0.54em",
+                height: "0.42em",
+                background: HAT,
+                clipPath:
+                  "polygon(0 100%, 0 34%, 22% 8%, 50% 26%, 78% 8%, 100% 34%, 100% 100%)",
+              }}
+            />
+            {/* The brim, wider than the head so it overlaps the fur on both sides —
             turn 27's rule, and the reason the hat sits ON the creature instead
             of hovering above it. */}
-          <span
-            style={{
-              position: "absolute",
-              left: "-0.02em",
-              top: "0.08em",
-              width: "1.04em",
-              height: "0.16em",
-              background: HAT,
-              borderRadius: "999px",
-            }}
-          />
-          {/* The band. */}
-          <span
-            style={{
-              position: "absolute",
-              left: "0.23em",
-              top: "0.01em",
-              width: "0.54em",
-              height: "0.08em",
-              background: HAT_BAND,
-            }}
-          />
+            <span
+              style={{
+                position: "absolute",
+                left: "-0.02em",
+                top: "0.08em",
+                width: "1.04em",
+                height: "0.16em",
+                background: HAT,
+                borderRadius: "999px",
+              }}
+            />
+            {/* The band. */}
+            <span
+              style={{
+                position: "absolute",
+                left: "0.23em",
+                top: "0.01em",
+                width: "0.54em",
+                height: "0.08em",
+                background: HAT_BAND,
+              }}
+            />
+          </span>
         </span>
-      </span>
+      ) : null}
     </span>
   );
 }

@@ -202,3 +202,52 @@ export const HatPoses: Story = {
     expect(y(jam)).toBeGreaterThan(y(rest));
   },
 };
+
+/**
+ * Hatted and bare, side by side, at the size the rail actually renders.
+ *
+ * The prop is free to use — every rule that animates the hat keys off
+ * `[data-monster-hat]`, so with nothing rendered they match nothing. What this
+ * story exists to show is the thing the prop CANNOT decide for you: the body
+ * was stretched into an egg to open headroom between the eye and the brim, and
+ * with the brim gone that headroom reads as a tall head. Whether a permanently
+ * hatless creature wants `BODY_H` back toward the source's 0.98 is a judgement
+ * to make by looking, which is what these two are for.
+ */
+export const WithoutTheHat: Story = {
+  args: { scale: 1.6 },
+  render: () => (
+    <>
+      <Plate label="with the hat">
+        <StoryboardMonsterMark scale={1.6} />
+      </Plate>
+      <Plate label="hat={false}">
+        <StoryboardMonsterMark scale={1.6} hat={false} />
+      </Plate>
+      <Plate label="bare, blown up">
+        <span className="text-[4em]">
+          <StoryboardMonsterMark scale={1} hat={false} />
+        </span>
+      </Plate>
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    const marks = Array.from(
+      canvasElement.querySelectorAll("[data-storyboard-monster]"),
+    );
+    expect(marks).toHaveLength(3);
+    const [hatted, bare] = marks as [Element, Element];
+    expect(hatted.querySelector("[data-monster-hat]")).toBeTruthy();
+    expect(bare.querySelector("[data-monster-hat]")).toBeNull();
+    // Everything else is untouched — the hat is its own layer, so dropping it
+    // must not move the body, the eye or the feet.
+    expect(bare.querySelectorAll("[data-monster-foot]")).toHaveLength(2);
+    expect(bare.querySelector("[data-monster-eye]")).toBeTruthy();
+    expect(
+      Math.abs(
+        hatted.getBoundingClientRect().height -
+          bare.getBoundingClientRect().height,
+      ),
+    ).toBeLessThan(0.5);
+  },
+};
