@@ -213,7 +213,14 @@ const CLOSING: JumpArc = {
 const OPENING: JumpArc = {
   hop: "sw-monster-hop-open",
   hopEase: "linear",
-  travel: "cubic-bezier(0.42, 0.3, 0.58, 0.72)",
+  // ENDS AT CONSTANT VELOCITY, which is what stops the path hooking. The
+  // second control point sits at y == x, so the curve's slope at t=1 is 1
+  // rather than 0.67. With the old ease-out the horizontal SLOWED into the
+  // landing while the fall was still accelerating, and the trajectory bent
+  // sharply downward right at the spot -- the descent angle steepened 16.8deg
+  // over the last third, which reads as curving into the landing rather than
+  // arriving at it. It is 6.1deg now.
+  travel: "cubic-bezier(0.42, 0.3, 0.58, 0.58)",
   // ENDS WITH THE HOP, not 60ms short of it. At the shared 620ms the creature
   // finished travelling and then dropped straight down for the remaining 60ms,
   // which is a stop followed by a fall rather than a landing.
@@ -427,7 +434,7 @@ function RevealedLetters({
         // part is loose depends on which way the motion runs.
         "grid transition-[grid-template-columns] motion-reduce:transition-none",
         show
-          ? "delay-0 duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.72)]"
+          ? "delay-0 duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.58)]"
           : "delay-0 duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
