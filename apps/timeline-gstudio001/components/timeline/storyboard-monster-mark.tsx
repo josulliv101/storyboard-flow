@@ -34,13 +34,25 @@ const CREAM = "oklch(0.96 0.02 95)";
 /** `--color-accent-2-900`: the pupil, near-black. */
 const PUPIL = "oklch(0.27 0.03 145)";
 /**
- * `--color-accent-300`: pale terracotta.
+ * The word "monster" in the rail's lockup.
  *
- * The word "monster" AND the hat band are this one token in the source, which
- * is what ties the hat to the wordmark. Export it so the lockup cannot drift
- * from the creature.
+ * TAILWIND'S `blue-400`, RESOLVED, and deliberately not the source's colour.
+ * The design document paints the word in `--color-accent-300`, the same pale
+ * terracotta as the hat band. That reads beautifully in the document and makes
+ * the wordmark a stranger in this app: the projects list already labels itself
+ * `text-blue-400`, so that blue is what the product calls a heading, and the
+ * rail's wordmark was the last place still speaking the logo's private dialect.
+ *
+ * Written as the resolved value rather than the class because it is consumed as
+ * an inline `color` on a span inside the lockup, not as a utility. If the app's
+ * blue ever moves this has to move with it by hand — the PAIRING is the point,
+ * not the number.
+ *
+ * The hat keeps its own terracotta (`HAT_BAND` below). One token in the source,
+ * two here on purpose: the hat belongs to the creature, the word belongs to the
+ * product.
  */
-export const STORYBOARD_MONSTER_ACCENT = "oklch(0.78 0.10 45)";
+export const STORYBOARD_MONSTER_ACCENT = "oklch(0.707 0.165 254.624)";
 /**
  * The crown and the brim.
  *
@@ -59,9 +71,10 @@ export const STORYBOARD_MONSTER_ACCENT = "oklch(0.78 0.10 45)";
  * the band and flattened the hat into one shape, which is the failure the old
  * comment here was guarding against from the other direction.
  *
- * The wordmark keeps `STORYBOARD_MONSTER_ACCENT` untouched. It sits on the same
- * black but at 19px with letterforms behind it, which is a different legibility
- * problem and one it was already solving.
+ * The wordmark no longer follows the hat at all — see
+ * `STORYBOARD_MONSTER_ACCENT`. It is the product's blue now, on the same black
+ * but at 19px with letterforms, which is a different legibility problem from an
+ * 8px crown and was already solved.
  */
 const HAT = "oklch(0.70 0.18 45)";
 /** The band. Lighter than the crown by more than the source needed — see above.

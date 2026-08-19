@@ -169,6 +169,17 @@ function writeRailExpanded(next: boolean): void {
 
   const transition = doc.startViewTransition(() => {
     flushSync(() => commitRailExpanded(next));
+    // THE SECOND POSE, and the reason there is one at all. The browser captures
+    // the OLD state before this callback runs and the NEW state after it
+    // returns, so anything set here lands in the arrival snapshot and not the
+    // departure one. That is the only lever that makes a part of the creature
+    // LOOK like it moved during a transition that freezes it: photograph the
+    // same element twice, in two poses, and hand over between the images.
+    //
+    // Today it is the feet — they leave angled off the toe and arrive flat, so
+    // the toe-off reads as a launch gesture rather than a permanent point. See
+    // `sw-monster-depart` / `sw-monster-arrive` for the handover itself.
+    mark?.setAttribute("data-landing", "");
   }) as { finished?: Promise<unknown> };
 
   // THE SETTLE, once the flight is over. The eye and the feet cannot move
@@ -183,7 +194,10 @@ function writeRailExpanded(next: boolean): void {
   if (!finished) {
     // Nothing to hang the settle off. Drop the aim on a timer regardless — a
     // pupil left staring sideways is worse than no flourish at all.
-    window.setTimeout(() => mark?.removeAttribute("data-aiming"), 620);
+    window.setTimeout(() => {
+      mark?.removeAttribute("data-aiming");
+      mark?.removeAttribute("data-landing");
+    }, 620);
     return;
   }
   void finished
@@ -193,6 +207,7 @@ function writeRailExpanded(next: boolean): void {
       // pupil is never briefly re-centred between the two — the handover from
       // captured image to live element is invisible.
       mark.removeAttribute("data-aiming");
+      mark.removeAttribute("data-landing");
       mark.setAttribute("data-settling", "");
       // Outlasts the longest part, which is now the PUPIL: it constricts over
       // 900ms after a 140ms autonomic latency, so it is still moving 400ms
@@ -207,6 +222,7 @@ function writeRailExpanded(next: boolean): void {
       // still moved; only the flourish is lost — but the aim must come off, or
       // the eye is left pointing at a jump that never happened.
       mark?.removeAttribute("data-aiming");
+      mark?.removeAttribute("data-landing");
     });
 }
 

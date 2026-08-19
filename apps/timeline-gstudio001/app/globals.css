@@ -368,12 +368,42 @@ html {
   animation: none;
 }
 
-/* The two snapshots are the SAME drawing, so they must not cross-fade — a
-   dissolve between identical images just dims the creature mid-jump. Both are
-   held opaque and given the same pose, which reads as one object moving. */
+/* THE TWO SNAPSHOTS NOW CARRY DIFFERENT POSES, and that is the only way this
+   creature can change shape in mid-air.
+
+   Nothing inside a view transition can animate — the creature is a rasterised
+   image for the whole 680ms. But there are TWO images, captured a beat apart:
+   the old at take-off and the new at arrival. Give them different poses and
+   hand over between them, and the parts appear to move without ever animating.
+   That is how the feet leave angled off the toe and arrive flat, which is what
+   a real jump does — the toe-off is a launch gesture, and the feet are back in
+   landing position well before the ground arrives.
+
+   IT IS A CROSS-FADE, WHICH THIS RULE USED TO FORBID, and the old reasoning was
+   half right: the DEFAULT dissolve dims the creature, because both sides ease
+   independently and their opacities do not sum to 1 through the middle. The
+   pair below is complementary and linear — one leaves exactly as fast as the
+   other arrives — so the total stays at 1 and there is no dip. The images are
+   the same drawing in the same place, differing only in the poses that are
+   meant to change, so what reads is the change and not the blend.
+
+   The handover runs 34% to 72%, which puts the creature in its landing pose by
+   about three quarters of the way through and leaves the last quarter to fall
+   in it. */
+::view-transition-old(sw-monster) {
+  animation:
+    sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both,
+    sw-monster-depart 680ms linear both;
+}
+
+::view-transition-new(sw-monster) {
+  animation:
+    sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both,
+    sw-monster-arrive 680ms linear both;
+}
+
 ::view-transition-old(sw-monster),
 ::view-transition-new(sw-monster) {
-  animation: sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both;
   mix-blend-mode: normal;
   height: 100%;
   object-fit: contain;
@@ -384,6 +414,31 @@ html {
      slides the whole body sideways — both read as a sticker being manipulated
      rather than as a body pushing off something. */
   transform-origin: 50% 88%;
+}
+
+/* Complementary and LINEAR, so the two opacities sum to 1 at every instant of
+   the handover. Any easing here — even the same easing on both — breaks that
+   sum and the creature dips. */
+@keyframes sw-monster-depart {
+  0%,
+  34% {
+    opacity: 1;
+  }
+  72%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes sw-monster-arrive {
+  0%,
+  34% {
+    opacity: 0;
+  }
+  72%,
+  100% {
+    opacity: 1;
+  }
 }
 
 /* POSE TO POSE, which is what keyframes are: these eight are the extremes and
@@ -586,19 +641,20 @@ html {
    About 15 degrees, which lifts the heel roughly 2px on the collapsed mark.
    Enough to read as a foot doing something; short of the ballet point that
    would make an 8px shoe look broken. */
-[data-storyboard-monster][data-aiming] [data-monster-foot] {
+/* ONLY ON THE WAY UP. `data-landing` is set between the two captures, so this
+   selector is true when the departure snapshot is taken and false when the
+   arrival one is — the same element, photographed twice, in two poses. */
+[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-foot] {
   transform: rotate(calc(var(--sw-hop-dir, 1) * -15deg));
 }
 
 [data-storyboard-monster][data-settling] [data-monster-foot] {
-  /* TWO CLOCKS, and the split is the point. The ROLL is the contact itself, so
-     it starts the instant the creature lands. The SQUASH is the mass arriving
-     behind it, so it lags 110ms — the foot is flat again before it has finished
-     absorbing the weight, which is the order it happens in. Separate properties
-     so the two can compose; one `transform` would force them to share. */
-  animation:
-    sw-foot-roll 300ms cubic-bezier(0.25, 0.7, 0.3, 1) both,
-    sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+  /* NO ROLL ON LANDING any more. The foot used to arrive still angled off the
+     toe and rotate flat under the creature, which is a lot of motion on a shape
+     four pixels tall and read as the foot flailing rather than as weight. The
+     handover between snapshots now puts it flat before the ground arrives, so
+     all that is left to do here is take the impact. */
+  animation: sw-foot-settle 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
 }
 
 /* LAST TO SETTLE, which is the timing point. The eye reacts at once (it is the
@@ -756,21 +812,6 @@ html {
 
 /* The feet splay under the weight, then gather. Volume again: they widen as
    they flatten. */
-/* The foot rolls back down. It arrives still angled off the toe, drops the heel
-   THROUGH flat and a little past it — a heel slapping down does not stop dead —
-   and comes back level. Monotonic apart from that one overshoot; a foot that
-   oscillates reads as a wobble, not as weight. */
-@keyframes sw-foot-roll {
-  0% {
-    transform: rotate(calc(var(--sw-hop-dir, 1) * -15deg));
-  }
-  62% {
-    transform: rotate(calc(var(--sw-hop-dir, 1) * 3deg));
-  }
-  100% {
-    transform: rotate(0deg);
-  }
-}
 
 /* The splay under the weight. On the `scale` PROPERTY rather than inside a
    transform, so it can run on its own clock alongside the roll above. */
