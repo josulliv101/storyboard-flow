@@ -207,12 +207,14 @@ export const HatPoses: Story = {
  * Hatted and bare, side by side, at the size the rail actually renders.
  *
  * The prop is free to use — every rule that animates the hat keys off
- * `[data-monster-hat]`, so with nothing rendered they match nothing. What this
- * story exists to show is the thing the prop CANNOT decide for you: the body
- * was stretched into an egg to open headroom between the eye and the brim, and
- * with the brim gone that headroom reads as a tall head. Whether a permanently
- * hatless creature wants `BODY_H` back toward the source's 0.98 is a judgement
- * to make by looking, which is what these two are for.
+ * `[data-monster-hat]`, so with nothing rendered they match nothing.
+ *
+ * It also RESHAPES THE HEAD, which is the part worth looking at here. The egg
+ * (1.12 tall against a 0.98 width) exists for one reason: headroom between the
+ * eye and the brim. With no brim to clear it buys nothing and just reads tall,
+ * so the bare creature goes back to the source's own round body. Side by side
+ * is the only way to check that the round one still looks like the same
+ * character.
  */
 export const WithoutTheHat: Story = {
   args: { scale: 1.6 },
@@ -239,15 +241,31 @@ export const WithoutTheHat: Story = {
     const [hatted, bare] = marks as [Element, Element];
     expect(hatted.querySelector("[data-monster-hat]")).toBeTruthy();
     expect(bare.querySelector("[data-monster-hat]")).toBeNull();
-    // Everything else is untouched — the hat is its own layer, so dropping it
-    // must not move the body, the eye or the feet.
+    // The parts all survive — the hat is its own layer, so dropping it must not
+    // cost the creature anything else.
     expect(bare.querySelectorAll("[data-monster-foot]")).toHaveLength(2);
     expect(bare.querySelector("[data-monster-eye]")).toBeTruthy();
-    expect(
-      Math.abs(
-        hatted.getBoundingClientRect().height -
-          bare.getBoundingClientRect().height,
-      ),
-    ).toBeLessThan(0.5);
+
+    // But the HEAD is shorter, and that is the point of this story. The egg
+    // exists to clear the brim; with no brim it goes back to the source's round
+    // body. Measured on the body itself rather than the mark, whose box also
+    // contains the hat's overhang.
+    const bodyOf = (mark: Element) =>
+      mark.querySelector("[data-monster-crown]")?.parentElement ??
+      mark.querySelector("[data-monster-eye]")?.parentElement ??
+      null;
+    const hattedBody = bodyOf(hatted);
+    const bareBody = bodyOf(bare);
+    expect(hattedBody).toBeTruthy();
+    expect(bareBody).toBeTruthy();
+    const hattedH = hattedBody!.getBoundingClientRect().height;
+    const bareH = bareBody!.getBoundingClientRect().height;
+    expect(bareH).toBeLessThan(hattedH);
+    // 0.98 against 1.12 — about an eighth shorter, and the width is untouched.
+    expect(bareH / hattedH).toBeCloseTo(0.98 / 1.12, 2);
+    expect(bareBody!.getBoundingClientRect().width).toBeCloseTo(
+      hattedBody!.getBoundingClientRect().width,
+      1,
+    );
   },
 };

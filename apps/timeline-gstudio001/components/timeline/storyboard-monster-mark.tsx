@@ -107,11 +107,24 @@ const FEET = "oklch(0.68 0.115 245)";
  * still sits on the head rather than sinking into it.
  */
 const BODY_W = 0.98;
-const BODY_H = 1.12;
+/**
+ * TALLER ONLY WHEN THERE IS A BRIM TO CLEAR.
+ *
+ * 1.12 is the egg, and it exists for one reason: to open headroom between the
+ * eye and the hat's brim. Take the hat off and that reason goes with it —
+ * headroom over nothing reads as a tall head — so the bare creature goes back
+ * to the source's own 0.98, which is turn 34's drawing exactly.
+ *
+ * Everything shaped by it follows: the fur collar, the eye's vertical centring,
+ * and where the body's bottom sits. The hat's own lift is derived from the same
+ * pair and is simply unused when there is no hat.
+ */
+const BODY_H_HATTED = 1.12;
+const BODY_H_BARE = BODY_W;
 /** Bottom edge pinned where the round body had it (0.99em), top pulled up. */
-const BODY_TOP = 0.99 - BODY_H;
+const bodyTopFor = (bodyH: number) => 0.99 - bodyH;
 /** How much taller than the source, and so how far the hat rides up with it. */
-const BODY_LIFT = BODY_H - BODY_W;
+const BODY_LIFT = BODY_H_HATTED - BODY_W;
 
 /**
  * WHERE THE CREATURE IS LOOKING WHEN NOTHING IS HAPPENING.
@@ -189,20 +202,20 @@ const BODY_LIFT = BODY_H - BODY_W;
 const FUR_MASK =
   "radial-gradient(circle at 50% 50%, transparent 0 35%, #000 35% 50%, transparent 50%)";
 
-const FUR: React.CSSProperties = {
+const furFor = (bodyH: number): React.CSSProperties => ({
   position: "absolute",
   // Held a uniform 0.2em outside the body on every side, tracking the egg the
   // way the source held it around the circle. Nothing shows today (above), but
   // a box that has drifted out of register with the body is a worse starting
   // point for whoever picks the fur back up.
   left: "-0.19em",
-  top: `${BODY_TOP - 0.2}em`,
+  top: `${bodyTopFor(bodyH) - 0.2}em`,
   width: `${BODY_W + 0.4}em`,
-  height: `${BODY_H + 0.4}em`,
+  height: `${bodyH + 0.4}em`,
   background: `repeating-conic-gradient(from 0deg, ${SAGE} 0deg 11deg, transparent 11deg 22deg)`,
   WebkitMaskImage: FUR_MASK,
   maskImage: FUR_MASK,
-};
+});
 
 /** Marked so the settle can move the feet after the body has stopped — see
  *  `sw-foot-settle` in globals.css. The marker also carries WHICH foot: the two
@@ -278,15 +291,18 @@ export function StoryboardMonsterMark({
    * `[data-monster-hat]`, so with nothing rendered they match nothing and do
    * nothing. No orphaned animation, no layout shift.
    *
-   * ONE JUDGEMENT CALL COMES WITH IT, and it is deliberately not made here: the
-   * body was stretched into an egg (`BODY_H` 1.12 against a source width of
-   * 0.98) specifically to open headroom between the eye and the brim. Bare, the
-   * head reads a little tall. The geometry is left identical so this prop is
-   * purely additive — see the `WithoutTheHat` story to judge whether a hatless
-   * creature also wants `BODY_H` back toward 0.98.
+   * IT ALSO RESHAPES THE HEAD, which the first version of this prop deliberately
+   * did not. The body was stretched into an egg (1.12 against a source width of
+   * 0.98) for exactly one reason — headroom between the eye and the brim — so
+   * with no brim to clear, the stretch has nothing to buy and the creature just
+   * reads tall. Bare, it goes back to the source's own 0.98. See
+   * `BODY_H_HATTED`, and the `WithoutTheHat` story for the two side by side.
    */
   hat?: boolean;
 }>) {
+  // The egg is the hat's, not the creature's — see BODY_H_HATTED.
+  const bodyH = hat ? BODY_H_HATTED : BODY_H_BARE;
+
   // THE GAZE TRAVELS AS A CUSTOM PROPERTY, which is the one channel a stylesheet
   // can still take back. Written as an inline `left` it worked everywhere and
   // could be overridden nowhere — inline beats any rule — so the pre-jump look
@@ -341,14 +357,14 @@ export function StoryboardMonsterMark({
         top: `${0.14 * scale}em`,
       }}
     >
-      <span style={FUR} />
+      <span style={furFor(bodyH)} />
       <span
         style={{
           position: "absolute",
           left: "0.01em",
-          top: `${BODY_TOP}em`,
+          top: `${bodyTopFor(bodyH)}em`,
           width: `${BODY_W}em`,
-          height: `${BODY_H}em`,
+          height: `${bodyH}em`,
           borderRadius: "999px",
           background: SAGE,
         }}
@@ -397,7 +413,7 @@ export function StoryboardMonsterMark({
             // CENTRED IN THE EGG, not held at the source's 0.17em. Keeping that
             // number would have pinned the eye to the top of a taller head and
             // spent the whole stretch below it, where nothing needed the room.
-            top: `${(BODY_H - 0.64) / 2}em`,
+            top: `${(bodyH - 0.64) / 2}em`,
             width: "0.64em",
             height: "0.64em",
             borderRadius: "999px",
