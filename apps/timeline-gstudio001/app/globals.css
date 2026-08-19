@@ -351,9 +351,43 @@ html {
    the extremes) because at ~20px anything subtler is invisible. */
 
 ::view-transition-group(sw-monster) {
-  /* The travel itself: out of the crouch quickly, easing into the landing. */
-  animation-duration: 620ms;
-  animation-timing-function: cubic-bezier(0.34, 0.8, 0.28, 1);
+  /* THE HORIZONTAL LIVES HERE, and it is the reason one direction skimmed.
+
+     This animation carries the group's POSITION and SIZE — where the creature
+     is — while `sw-monster-hop` on the snapshots inside it carries the lift and
+     the squash. Two clocks, and only this one decides how much ground has gone
+     by when the lift arrives.
+
+     `cubic-bezier(0.34, 0.8, 0.28, 1)` is heavily front-loaded, and measured on
+     the closing jump that meant 55px of a 131px travel — 42% of the way across
+     — while the creature was still 1.2px BELOW the ground, mid-crouch. By the
+     time it had risen 4.8px it was 75% of the way there. The launch angle over
+     those two stops was -1.2deg and then 8deg: a creature sliding sideways with
+     a slight bump in it, which is exactly what "skimming" describes. No amount
+     of extra height fixes a launch that has already happened.
+
+     IT IS PER-DIRECTION, because the two jumps are. Travel is a progress
+     curve — it says how much of the trip has happened, not which way — so a
+     single one would serve both if both wanted the same shape. They do not.
+
+     The CLOSING direction was signed off on a shaped `linear()` that holds the
+     ground under the creature and then puts its apex near the landing; see
+     `CLOSE_TRAVEL` in `timeline-sidebar.tsx` for the three points it is solved
+     for. The OPENING direction is ballistic: a jump has no horizontal force, so
+     its horizontal velocity is constant and only the vertical accelerates, and
+     it gets a near-linear curve whose peak speed is 1.22x its mean.
+
+     The fallback is the closing curve, so a missing property cannot silently
+     turn either of them into the front-loaded easing this replaced — that one
+     had the creature 42% of the way across while still crouching. */
+  animation-duration: var(--sw-group-ms, 620ms);
+  animation-timing-function: var(
+    --sw-group-ease,
+    linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%,
+      0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%,
+      0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%,
+      0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)
+  );
   /* STAGING: the creature is the only thing that should be moving, so it sits
      above the rest of the transition rather than under the rail's own chrome. */
   z-index: 10;
@@ -390,9 +424,31 @@ html {
    body's own if either ever moves — and the failure mode is at least loud, since
    a mismatch shows up as this same square rather than as nothing. */
 ::view-transition-group(sw-monster) {
-  background-color: rgb(9 9 11);
-  background-image: linear-gradient(
-    oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%
+  /* AND IT IS NOT ALWAYS A FIX, which is why it is a variable.
+
+     This is an OPAQUE rectangle at `z-index: 10`, sized to the mark's box and
+     TRAVELLING with the group. It hides the hole only while the hole is under
+     it — and the hole is at the mark's LAYOUT position while the group is
+     wherever the interpolation has got to, so the two coincide at the ends of
+     the flight and nowhere in between.
+
+     That went unnoticed for as long as the creature stayed inside its own box:
+     the filler was behind the drawing, so whatever it covered was covered
+     anyway. The opening arc lifts the creature a full box height clear, and the
+     filler came out from under it — measured mid-flight as a 19.4px opaque
+     `rgb(9 9 11)` rectangle dragging across the wordmark and blanking the
+     letters the transition was in the middle of revealing.
+
+     So the OPENING direction sets it to `transparent`, which was verified by
+     eye: with the filler off the lockup reads "storyboard m nster" with the
+     creature airborne over the gap and no dark square anywhere. The hole this
+     was added for does not occur in that direction.
+
+     The CLOSING direction keeps it, and the default below is that value, so a
+     missing property cannot silently reintroduce the black square it fixed. */
+  background: var(
+    --sw-group-fill,
+    rgb(9 9 11) linear-gradient(oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%)
   );
 }
 
@@ -420,13 +476,39 @@ html {
    in it. */
 ::view-transition-old(sw-monster) {
   animation:
-    sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both,
+    /* NAME AND CLOCK BOTH COME FROM THE DIRECTION.
+
+       `animation-timing-function` applies between EVERY pair of keyframes, not
+       once across the animation, so it is part of the arc's shape rather than a
+       finish on top of it: with an eased hop each leg is re-eased and lands
+       early. The closing arc was authored WITH that and reads correctly; the
+       opening one is authored against `linear` so its keyframe values are the
+       trajectory. Neither survives being given the other's clock, which is why
+       this is a variable and not a constant.
+
+       Defaults are the closing pair, so a missing property degrades to the
+       signed-off shape rather than to a new one. */
+    var(--sw-hop-name, sw-monster-hop) 680ms
+      var(--sw-hop-ease, cubic-bezier(0.34, 0.8, 0.28, 1)) both,
     sw-monster-depart 680ms linear both;
 }
 
 ::view-transition-new(sw-monster) {
   animation:
-    sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both,
+    /* NAME AND CLOCK BOTH COME FROM THE DIRECTION.
+
+       `animation-timing-function` applies between EVERY pair of keyframes, not
+       once across the animation, so it is part of the arc's shape rather than a
+       finish on top of it: with an eased hop each leg is re-eased and lands
+       early. The closing arc was authored WITH that and reads correctly; the
+       opening one is authored against `linear` so its keyframe values are the
+       trajectory. Neither survives being given the other's clock, which is why
+       this is a variable and not a constant.
+
+       Defaults are the closing pair, so a missing property degrades to the
+       signed-off shape rather than to a new one. */
+    var(--sw-hop-name, sw-monster-hop) 680ms
+      var(--sw-hop-ease, cubic-bezier(0.34, 0.8, 0.28, 1)) both,
     sw-monster-arrive 680ms linear both;
 }
 
@@ -554,26 +636,26 @@ html {
    Kept small on purpose — a few degrees and a couple of percent. At ~20px a
    lean big enough to notice as a lean is big enough to look like a wobble. */
 @keyframes sw-monster-hop {
-  /* IT ENDS ON CONTACT, and that is a timing decision rather than a trim.
+  /* THE CLOSING ARC, and it is deliberately NOT the opening one.
 
-     This animation used to run through the landing: 80% was the squash, 91% the
-     rebound, 100% standing. All three were BAKED, because the flight is a
-     view-transition snapshot and a snapshot cannot deform. Worse, they cost
-     176ms — the feet touched down at 80% of 680ms and the live element did not
-     take over until 680, so the body's real squash and the antennae's whip both
-     began long after the impact they were reacting to. It read as land, pause,
-     sway.
+     The two directions were unified for a while and then split again, because
+     unified they could not both be right: this shape was signed off, the
+     opening one was not, and the fix the opening needed changed the shape
+     rather than a parameter. Sharing a set of keyframes meant every correction
+     to one silently rewrote the other. Two sets, two names, two clocks — the
+     sidebar picks by direction.
 
-     So the flight is cut at the moment of contact and hands over there, with the
-     same 680ms and the same apex: every stop below is the old one divided by
-     0.8, which stretches what used to be the airborne 80% across the whole
-     animation. The impact and the rebound now belong to `sw-body-settle` and
-     `sw-antennae-settle`, which run on live elements and can actually deform.
+     -57.216% at the launch is 22% times 2.6007, and that multiplier used to be
+     a custom property. It exists because a percentage here resolves against the
+     SNAPSHOT being transformed, and this direction leaves the 15.05px mark
+     inside the word rather than the 21.88px one alone in the rail — so the same
+     percentage buys a third less lift. With a keyframe set per direction there
+     is nothing left for it to vary, so it is folded in. It puts the creature
+     8.61px up at this stop.
 
-     THE LAST POSE MUST BE NEUTRAL SCALE, because the settle's own 0% is
-     `scale(1, 1)` and any difference between them is a pop at the handover. The
-     yaw is the exception and is carried over deliberately — `sw-monster-untwist`
-     picks it up from exactly this value. */
+     Read with `--sw-hop-ease: cubic-bezier(0.34, 0.8, 0.28, 1)` and the shaped
+     `linear()` travel — see `CLOSE_TRAVEL`. Change any of the three and this
+     shape is gone. */
   0% {
     transform: translate(0, 0) rotate(0deg) scale(1, 1);
   }
@@ -581,7 +663,7 @@ html {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
   }
   32% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -22%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -57.216%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
   58% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
@@ -589,8 +671,74 @@ html {
   82% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
   }
-  /* CONTACT. Standing on its feet, still yawed, not yet deformed — the next
-     frame is a live element and the squash starts there. */
+  100% {
+    transform: perspective(140px) translate(0, 0)
+      rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);
+  }
+}
+
+@keyframes sw-monster-hop-open {
+  /* THE OPENING ARC: the closing one's SHAPE, foreshortened, with a descent
+     that actually accelerates.
+
+     The rise is the closing set's, scaled by 0.70 because this direction ends
+     about 1.45x further from the reader. Tracing both body centres is what
+     settled that: every arc derived from scratch here peaked near the middle
+     and glided in at about 12deg, where the closing one peaks at 80% of its
+     travel and DROPS at 38. Depth belongs in how BIG an arc is, not in what
+     shape it is.
+
+     THE DESCENT IS SAMPLED, which is the one place this departs from a copy.
+     `animation-timing-function` applies between EVERY pair of keyframes, so a
+     long segment front-loads its own motion and then coasts. Carried by two
+     stops the fall measured 24.7deg, 9.3, 4.0, 0.1, then 46.0, 23.1, 3.3 --
+     drop, flatten, drop, flatten, arriving almost HORIZONTAL. Sampled at eight,
+     each segment is short enough that the easing stops shaping it, and the
+     values carry a fall whose speed grows all the way into contact.
+
+     THE LAUNCH LOSES A COMPENSATION THE CLOSE NEEDS. A percentage here resolves
+     against the snapshot being transformed, and the close leaves the 15.05px
+     mark inside the word while this one leaves the 21.88px mark alone in the
+     rail. The close's -57.216% is 22% times 2.6007 for exactly that reason;
+     dividing it back out by 1.6/1.1 makes both launches the same number of
+     PIXELS rather than the same percentage.
+
+     THE SQUASH IS KEYED TO SPEED. The close's scales peak at its apex, which is
+     where its vertical velocity reverses through zero, and copying its shape
+     once copied that inversion with it. Round at the top, stretched where the
+     creature is actually moving, neutral at contact.
+
+     Regenerate with `mirror.py <scale>` rather than editing a stop. */
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1, 1);
+  }
+  17% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.220, 0.780);
+  }
+  32% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -27.54%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.820, 1.240);
+  }
+  58% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -44.8%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(1.000, 1.000);
+  }
+  66% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2.333%), -43.17%) rotateY(calc(var(--sw-hop-dir, 1) * 15.33deg)) rotate(calc(var(--sw-hop-dir, 1) * 3.333deg)) skewX(calc(var(--sw-hop-dir, 1) * -5.667deg)) scale(0.966, 1.046);
+  }
+  73% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.75%), -39.09%) rotateY(calc(var(--sw-hop-dir, 1) * 14.75deg)) rotate(calc(var(--sw-hop-dir, 1) * 1deg)) skewX(calc(var(--sw-hop-dir, 1) * -4.5deg)) scale(0.936, 1.086);
+  }
+  80% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1.167%), -32.51%) rotateY(calc(var(--sw-hop-dir, 1) * 14.17deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.333deg)) skewX(calc(var(--sw-hop-dir, 1) * -3.333deg)) scale(0.906, 1.126);
+  }
+  86% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.7778%), -24.89%) rotateY(calc(var(--sw-hop-dir, 1) * 13.11deg)) rotate(calc(var(--sw-hop-dir, 1) * -1.556deg)) skewX(calc(var(--sw-hop-dir, 1) * -2.333deg)) scale(0.880, 1.160);
+  }
+  91% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.5%), -17.14%) rotateY(calc(var(--sw-hop-dir, 1) * 12deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * -1.5deg)) scale(0.859, 1.189);
+  }
+  96% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 0.2222%), -8.127%) rotateY(calc(var(--sw-hop-dir, 1) * 10.89deg)) rotate(calc(var(--sw-hop-dir, 1) * -0.4444deg)) skewX(calc(var(--sw-hop-dir, 1) * -0.6667deg)) scale(0.837, 1.217);
+  }
   100% {
     transform: perspective(140px) translate(0, 0)
       rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);

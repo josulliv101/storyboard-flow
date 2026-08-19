@@ -136,6 +136,107 @@ function commitRailExpanded(next: boolean): void {
  * Falls back to a plain commit where the API is missing or the reader asked for
  * less motion; the rail still moves, it just cuts.
  */
+/**
+ * THE TWO DIRECTIONS ARE TWO DIFFERENT JUMPS, and each is three settings.
+ *
+ * They were one for a while. Unifying them was tempting — the arithmetic worked
+ * out, one launch constant explained both — but it meant every correction to
+ * one silently rewrote the other, and the closing jump had already been signed
+ * off. The opening one needed a change of SHAPE rather than of parameter, so
+ * there was nothing left to share.
+ *
+ * Each direction therefore names its own keyframes, its own clock between them,
+ * and its own travel curve. All three have to move together: the arcs are
+ * authored against their own clocks and neither survives being given the
+ * other's.
+ */
+type JumpArc = {
+  /** The keyframe set that draws the arc. */
+  hop: string;
+  /** The clock BETWEEN its keyframes — part of the shape, not a finish on it. */
+  hopEase: string;
+  /** How the ground goes by underneath: the group's own position curve. */
+  travel: string;
+  /** How long that travel takes. Ends with the hop, or short of it. */
+  travelMs: string;
+  /** The group's hole-filler: an opaque rect that travels with it, so it helps
+   *  only while the creature is on top of it. See the note in globals.css. */
+  fill: string;
+};
+
+/**
+ * CLOSING: shaped, and signed off as-is. Do not retune without being asked.
+ *
+ * The travel is a `linear()` because three things have to be true at once and
+ * no cubic-bezier holds all three — anything slow enough to keep the crouch in
+ * place decelerates through the middle and parks the apex over open ground:
+ *
+ *   17%    3% across   the crouch happens IN PLACE, not while sliding sideways
+ *   32%   13% across   paired with the rise, a ~37deg climb out of the ground
+ *   58%   82% across   the apex sits near the landing
+ *
+ * Generated as a monotone cubic through those points and sampled at 19 stops:
+ * monotone so the interpolation can never send the creature briefly backwards,
+ * 19 so the segments sit below the eye's resolution. Regenerate it rather than
+ * hand-editing a stop.
+ */
+const CLOSING: JumpArc = {
+  hop: "sw-monster-hop",
+  hopEase: "cubic-bezier(0.34, 0.8, 0.28, 1)",
+  travel:
+    "linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%," +
+    " 0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%," +
+    " 0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%," +
+    " 0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)",
+  travelMs: "620ms",
+  fill: "rgb(9 9 11) linear-gradient(oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%)",
+};
+
+/**
+ * OPENING: ballistic.
+ *
+ * A jump has no horizontal force, so its horizontal velocity is CONSTANT and
+ * only the vertical accelerates. Both settings here follow from that one fact:
+ * a near-linear travel whose peak speed is 1.22x its mean, and `linear` between
+ * keyframes so the arc is the keyframe VALUES rather than something a clock
+ * manufactures out of them.
+ *
+ * Both were wrong before, in opposite ways. The travel was front-loaded — 42%
+ * of the way across while still crouching. And `animation-timing-function`
+ * applies between EVERY pair of keyframes, so the eased hop re-eased each leg:
+ * 77% of the way to a stop a third into the segment, 92% half way through.
+ * Every leg landed early and held, which is what "reaches the apex too early"
+ * was describing.
+ *
+ * The result is an apex ~18px up at 57% of the travel, against 11.2px at ~20%.
+ */
+const OPENING: JumpArc = {
+  // THE CLOSING ARC, FORESHORTENED. Every setting here except the keyframe name
+  // is the closing one's, because the two directions want the same SHAPE and
+  // differ only in how big that shape reads.
+  //
+  // It was derived from scratch for several rounds — ballistic travel, `linear`
+  // between stops, gravity sampled from a parabola — and each version fixed the
+  // complaint it was aimed at and read wrong overall. Tracing both body centres
+  // is what settled it: the closing arc peaks at 80% of its travel and DROPS
+  // onto the spot at 38deg, while every from-scratch opening arc peaked near
+  // the middle and glided in at around 12deg. That is not a landing, it is an
+  // approach, and no amount of retuning a symmetric parabola makes it one.
+  //
+  // Depth belongs in the SIZE of the arc, which is why only the lift is scaled
+  // (see `sw-monster-hop-open`), and it is scaled DOWN because this direction
+  // ends about 1.45x further from the reader.
+  hop: "sw-monster-hop-open",
+  hopEase: CLOSING.hopEase,
+  travel: CLOSING.travel,
+  travelMs: CLOSING.travelMs,
+  // NO FILLER. It is an opaque rectangle that travels with the group, and this
+  // direction crosses the wordmark as the letters are revealing, so instead of
+  // hiding a hole it blanks them. Verified by eye that nothing dark appears in
+  // its absence here.
+  fill: "transparent",
+};
+
 function writeRailExpanded(next: boolean): void {
   const doc = document as Document & {
     startViewTransition?: (callback: () => void) => unknown;
@@ -153,6 +254,16 @@ function writeRailExpanded(next: boolean): void {
   // always tipping the same way. A creature that leans the wrong way reads as
   // being blown sideways rather than as choosing to go.
   document.documentElement.style.setProperty("--sw-hop-dir", next ? "1" : "-1");
+
+  // WHICH JUMP THIS IS. Three properties, set together, because the arc is all
+  // three: see `CLOSING` and `OPENING`.
+  const arc = next ? OPENING : CLOSING;
+  const root = document.documentElement.style;
+  root.setProperty("--sw-hop-name", arc.hop);
+  root.setProperty("--sw-hop-ease", arc.hopEase);
+  root.setProperty("--sw-group-ease", arc.travel);
+  root.setProperty("--sw-group-ms", arc.travelMs);
+  root.setProperty("--sw-group-fill", arc.fill);
 
   // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
   // attribute set — the pose it leaves from and the pose it lands in — so the
@@ -304,14 +415,32 @@ function RevealedLetters({
     <span
       aria-hidden="true"
       className={cn(
-        // OVERLAPPING ACTION. The word does not move in lockstep with the rail:
-        // opening, it trails the creature's launch by a beat, so the name reads
-        // as being pulled out behind it; closing, it goes FIRST and quickly,
-        // clearing the space before the creature jumps back into it. Loose parts
-        // lag the thing driving them, and which part is loose depends on which
-        // way the motion runs.
-        "grid transition-[grid-template-columns] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        show ? "delay-[90ms] duration-[420ms]" : "delay-0 duration-[220ms]",
+        // THE TWO DIRECTIONS DO DIFFERENT THINGS, so the pacing lives on the
+        // branch rather than above it.
+        //
+        // OPENING, THE WORD CARRIES THE CREATURE. It used to trail the launch by
+        // a beat and finish in 420ms against a jump that lands at 680, so the
+        // gap the creature is aiming for arrived first and sat waiting while the
+        // creature caught up. Matching the group's own travel — same curve, same
+        // 680ms, no delay — makes the creature sit IN the "o" slot the whole way
+        // across instead of merely ending up there.
+        //
+        // It works out exactly, which is worth writing down because it looks
+        // like a coincidence. The creature's group interpolates its box from
+        // x=22 (alone in the rail) to x=153 (inside the word), so its position
+        // is 22 + 131p. The slot's left edge is 22 plus the revealed width of
+        // "storyboard " and "m", and that width is 131 when fully revealed — so
+        // the slot is 22 + 131q. Same form: give p and q the same curve and the
+        // two are the same number at every instant.
+        //
+        // CLOSING IS STILL OVERLAPPING ACTION, and deliberately unchanged: the
+        // word goes FIRST and quickly, clearing the space before the creature
+        // jumps back into it. Loose parts lag the thing driving them, and which
+        // part is loose depends on which way the motion runs.
+        "grid transition-[grid-template-columns] motion-reduce:transition-none",
+        show
+          ? "delay-0 duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.58)]"
+          : "delay-0 duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
     >
@@ -739,20 +868,63 @@ export function TimelineSidebar() {
           // Width alone is animated. `transition-all` here would also catch the
           // backdrop filter, which is expensive to interpolate over a sticky
           // full-height surface.
-          // Paced against the creature's 620ms hop rather than left at the
-          // default 200ms — the rail used to finish long before the creature
-          // landed, so it jumped to a place that had already stopped moving.
+          "transition-[width] motion-reduce:transition-none",
+          // OPENING AND CLOSING ARE NOT THE SAME MOVE, so the pacing lives on
+          // the state rather than here. A transition reads its duration and
+          // easing from the AFTER-change style, so whichever branch below is
+          // being switched TO is the one that times the move — which is what
+          // makes this direction-aware without a single line of JavaScript.
           //
-          // SLOW IN AND SLOW OUT, weighted to the out: a decisive move that
-          // eases hard into rest, which is what a drawer pulled open and let go
-          // of does. The default `ease` is symmetric and reads mechanical
-          // against a body that accelerates and settles.
-          "transition-[width] duration-[440ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
           // From RAIL_WIDTH_CLASS, which holds the literals Tailwind's scanner
           // needs — see the note there on why these cannot be built by template.
           railExpanded
-            ? `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS}`
-            : RAIL_WIDTH_CLASS.collapsed,
+            ? // OPENING: the rail arrives exactly as the creature lands, because
+              // it travels on the creature's own profile.
+              //
+              // It used to be 440ms of easeOutQuint, which is 99% done by 287ms
+              // against a jump that does not touch down until 680 — the rail
+              // was parked and waiting for most of the flight.
+              //
+              // MATCHING THE DURATION ALONE WOULD NOT HAVE FIXED IT. Stretched
+              // to 680ms that curve still LOOKS finished at 443ms; an ease-out
+              // spends its last 1% over a third of its time. So it takes the
+              // same near-linear travel the hop's group uses (see `OPENING`),
+              // which is 99% done at 670ms — the rail and the creature come to
+              // rest together rather than merely stopping at the same instant.
+              `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS} duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.72)]`
+            : // CLOSING: an early creep, then commit.
+              //
+              // It used to close on the opening curve, and that curve is
+              // easeOutQuint — 62px of the 168px travel gone in the FIRST 40ms
+              // and 79% shut by 120ms. The rail was always going to beat the
+              // creature to a standstill, because it did most of its move
+              // before the creature had finished crouching.
+              //
+              // Measured against the hop's own beats, this one is 2% closed at
+              // the crouch (116ms), 9% at the push-off (218ms), 71% at the apex
+              // (394ms) and 100% at contact (680ms). The rail closes WITH the
+              // jump instead of ahead of it, and the slow start is what buys
+              // that: the creature gets the first fifth of a second to itself.
+              //
+              // 680ms rather than 440ms for the same reason. A slow ramp inside
+              // 440ms has to make the time up somewhere, and it did — 145px in
+              // the 200ms through the middle, which read as a lurch rather than
+              // as a drawer.
+              //
+              // It matches the opening rail exactly, and both match the jump:
+              // 680ms is the hop's own length, so neither direction of the
+              // toggle is a different length of event. The two still FEEL
+              // different, and that is the easing rather than the clock — this
+              // one ramps and commits, so it is visually done around 600ms
+              // while the opening one is still arriving at 670.
+              //
+              // THE FIRST VERSION OF THIS RAMP WAS TOO DEAD. At (0.8, 0, 0.3, 1)
+              // the rail was 0% closed at 60ms and 7% at 200ms — a hold, not a
+              // ramp, and a control that visibly does nothing for a fifth of a
+              // second reads as one that missed the click. This one creeps: 1%
+              // at 60ms, 5% at 120ms, 16% at 200ms. Still nothing like the
+              // opening curve, which was 37% and 84% at those marks.
+              `${RAIL_WIDTH_CLASS.collapsed} duration-[680ms] ease-[cubic-bezier(0.6,0.04,0.3,1)]`,
         )}
       >
         <Link
