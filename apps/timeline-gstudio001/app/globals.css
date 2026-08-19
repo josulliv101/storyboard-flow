@@ -366,32 +366,28 @@ html {
      a slight bump in it, which is exactly what "skimming" describes. No amount
      of extra height fixes a launch that has already happened.
 
-     A JUMP HAS NO HORIZONTAL FORCE, so its horizontal velocity is CONSTANT
-     and only the vertical accelerates. That one fact is the whole specification
-     for this curve, and two earlier attempts got it wrong in opposite
-     directions.
+     IT IS PER-DIRECTION, because the two jumps are. Travel is a progress
+     curve — it says how much of the trip has happened, not which way — so a
+     single one would serve both if both wanted the same shape. They do not.
 
-     `cubic-bezier(0.34, 0.8, 0.28, 1)` was heavily front-loaded: the creature
-     was 42% of the way across while still below the ground in its crouch, and
-     75% of the way by the time it had risen at all. That is a skim.
+     The CLOSING direction was signed off on a shaped `linear()` that holds the
+     ground under the creature and then puts its apex near the landing; see
+     `CLOSE_TRAVEL` in `timeline-sidebar.tsx` for the three points it is solved
+     for. The OPENING direction is ballistic: a jump has no horizontal force, so
+     its horizontal velocity is constant and only the vertical accelerates, and
+     it gets a near-linear curve whose peak speed is 1.22x its mean.
 
-     Over-correcting with a shaped `linear()` that held the ground until 32% of
-     the time then caught up made it worse in a subtler way — peak speed 3.4x
-     the mean around the midpoint, against 0.15x at the start. It read as a
-     creature being fired out of something.
-
-     So: near-linear, with only enough ease at the ends to cover the crouch and
-     the landing. Peak speed is 1.22x the mean across the whole flight, which is
-     as close to ballistic as a transition with a start and a stop gets. The
-     ARC comes from the keyframes now, not from a distorted clock — which is
-     where it belonged all along.
-
-     BOTH DIRECTIONS USE IT. Travel is a progress curve; it says how much of the
-     trip has happened, not which way. The only thing that differs by direction
-     is `--sw-hop-rise`, and it differs because of the snapshot SIZES rather
-     than because the two arcs should differ (see the launch stop below). */
+     The fallback is the closing curve, so a missing property cannot silently
+     turn either of them into the front-loaded easing this replaced — that one
+     had the creature 42% of the way across while still crouching. */
   animation-duration: 620ms;
-  animation-timing-function: cubic-bezier(0.42, 0.3, 0.58, 0.72);
+  animation-timing-function: var(
+    --sw-group-ease,
+    linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%,
+      0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%,
+      0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%,
+      0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)
+  );
   /* STAGING: the creature is the only thing that should be moving, so it sits
      above the rest of the transition rather than under the rail's own chrome. */
   z-index: 10;
@@ -458,31 +454,39 @@ html {
    in it. */
 ::view-transition-old(sw-monster) {
   animation:
-    /* LINEAR ON PURPOSE, and this was the single largest distortion in the
-       whole jump. `animation-timing-function` applies between EVERY pair of
-       keyframes, not once across the animation, so an eased hop re-eased each
-       leg of the arc: with the old easeOutQuint the creature was 77% of the way
-       to a stop a third into the segment and 92% of the way half way through.
-       Every leg landed early and then held, which is exactly what "reaches the
-       apex too early" describes — it reached every stop too early.
-       Linear hands the shape back to the keyframe values, where it can be read
-       and reasoned about. */
-    sw-monster-hop 680ms linear both,
+    /* NAME AND CLOCK BOTH COME FROM THE DIRECTION.
+
+       `animation-timing-function` applies between EVERY pair of keyframes, not
+       once across the animation, so it is part of the arc's shape rather than a
+       finish on top of it: with an eased hop each leg is re-eased and lands
+       early. The closing arc was authored WITH that and reads correctly; the
+       opening one is authored against `linear` so its keyframe values are the
+       trajectory. Neither survives being given the other's clock, which is why
+       this is a variable and not a constant.
+
+       Defaults are the closing pair, so a missing property degrades to the
+       signed-off shape rather than to a new one. */
+    var(--sw-hop-name, sw-monster-hop) 680ms
+      var(--sw-hop-ease, cubic-bezier(0.34, 0.8, 0.28, 1)) both,
     sw-monster-depart 680ms linear both;
 }
 
 ::view-transition-new(sw-monster) {
   animation:
-    /* LINEAR ON PURPOSE, and this was the single largest distortion in the
-       whole jump. `animation-timing-function` applies between EVERY pair of
-       keyframes, not once across the animation, so an eased hop re-eased each
-       leg of the arc: with the old easeOutQuint the creature was 77% of the way
-       to a stop a third into the segment and 92% of the way half way through.
-       Every leg landed early and then held, which is exactly what "reaches the
-       apex too early" describes — it reached every stop too early.
-       Linear hands the shape back to the keyframe values, where it can be read
-       and reasoned about. */
-    sw-monster-hop 680ms linear both,
+    /* NAME AND CLOCK BOTH COME FROM THE DIRECTION.
+
+       `animation-timing-function` applies between EVERY pair of keyframes, not
+       once across the animation, so it is part of the arc's shape rather than a
+       finish on top of it: with an eased hop each leg is re-eased and lands
+       early. The closing arc was authored WITH that and reads correctly; the
+       opening one is authored against `linear` so its keyframe values are the
+       trajectory. Neither survives being given the other's clock, which is why
+       this is a variable and not a constant.
+
+       Defaults are the closing pair, so a missing property degrades to the
+       signed-off shape rather than to a new one. */
+    var(--sw-hop-name, sw-monster-hop) 680ms
+      var(--sw-hop-ease, cubic-bezier(0.34, 0.8, 0.28, 1)) both,
     sw-monster-arrive 680ms linear both;
 }
 
@@ -610,28 +614,67 @@ html {
    Kept small on purpose — a few degrees and a couple of percent. At ~20px a
    lean big enough to notice as a lean is big enough to look like a wobble. */
 @keyframes sw-monster-hop {
-  /* IT ENDS ON CONTACT, and that is a timing decision rather than a trim.
+  /* THE CLOSING ARC, and it is deliberately NOT the opening one.
 
-     This animation used to run through the landing: the squash, the rebound and
-     standing were all keyframes here. All three were BAKED, because the flight
-     is a view-transition snapshot and a snapshot cannot deform. Worse, they cost
-     176ms — the feet touched down at 80% of 680ms and the live element did not
-     take over until 680, so the body's real squash and the antennae's whip both
-     began long after the impact they were reacting to. It read as land, pause,
-     sway. The impact and the rebound belong to `sw-body-settle` and
-     `sw-antennae-settle`, which run on live elements and can actually deform.
+     The two directions were unified for a while and then split again, because
+     unified they could not both be right: this shape was signed off, the
+     opening one was not, and the fix the opening needed changed the shape
+     rather than a parameter. Sharing a set of keyframes meant every correction
+     to one silently rewrote the other. Two sets, two names, two clocks — the
+     sidebar picks by direction.
 
-     THE LAST POSE MUST BE NEUTRAL SCALE, because the settle's own 0% is
-     `scale(1, 1)` and any difference between them is a pop at the handover. The
-     yaw is the exception and is carried over deliberately —
-     `sw-monster-untwist` picks it up from exactly this value.
+     -57.216% at the launch is 22% times 2.6007, and that multiplier used to be
+     a custom property. It exists because a percentage here resolves against the
+     SNAPSHOT being transformed, and this direction leaves the 15.05px mark
+     inside the word rather than the 21.88px one alone in the rail — so the same
+     percentage buys a third less lift. With a keyframe set per direction there
+     is nothing left for it to vary, so it is folded in. It puts the creature
+     8.61px up at this stop.
 
-     THE STOPS ARE THE ARC NOW. Paired with the near-constant travel on the
-     group and `linear` above, the vertical values below are read directly as a
-     trajectory rather than being re-eased into one: the apex lands 18.1px up at
-     57% of the travel, which is a jump. The previous numbers put it 11.2px up
-     while the creature was already three quarters of the way across, and the
-     per-segment easing then delivered even that early. */
+     Read with `--sw-hop-ease: cubic-bezier(0.34, 0.8, 0.28, 1)` and the shaped
+     `linear()` travel — see `CLOSE_TRAVEL`. Change any of the three and this
+     shape is gone. */
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1, 1);
+  }
+  17% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
+  }
+  32% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -57.216%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+  }
+  58% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
+  }
+  82% {
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
+  }
+  100% {
+    transform: perspective(140px) translate(0, 0)
+      rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);
+  }
+}
+
+@keyframes sw-monster-hop-open {
+  /* THE OPENING ARC: ballistic, where the closing one is shaped.
+
+     A jump has no horizontal force, so its horizontal velocity is CONSTANT and
+     only the vertical accelerates. This set is authored to be read against that
+     — a near-linear travel curve and `linear` between keyframes — so the values
+     below ARE the trajectory rather than a starting point a clock then
+     distorts. The apex lands ~18px up at 57% of the travel.
+
+     TWO DISTORTIONS ARE ABSENT ON PURPOSE, and both were in the opening jump
+     before this. `animation-timing-function` applies between EVERY pair of
+     keyframes, so the eased hop the closing direction uses re-eases each leg:
+     77% of the way to a stop a third into the segment, 92% half way through.
+     Every leg landed early and held, which is what "reaches the apex too early"
+     described. And the travel curve was front-loaded, putting the creature 42%
+     of the way across while still crouching.
+
+     No `--sw-hop-rise` here: this set is authored for the size this direction
+     actually leaves (21.88px, the mark alone in the rail), so there is nothing
+     to compensate. The closing set does the same for its own size. */
   0% {
     transform: translate(0, 0) rotate(0deg) scale(1, 1);
   }
@@ -639,35 +682,21 @@ html {
   14% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) rotateY(calc(var(--sw-hop-dir, 1) * -3deg)) rotate(calc(var(--sw-hop-dir, 1) * -1deg)) skewX(calc(var(--sw-hop-dir, 1) * 1.5deg)) scale(1.22, 0.78);
   }
-  /* THE LAUNCH, and the one stop that needs a per-direction number.
-
-     A percentage here resolves against the SNAPSHOT it is transforming, and the
-     two snapshots are different sizes: the mark is 15.05px inside the word and
-     21.88px alone in the rail. Before the cross-fade starts at 34% you are
-     looking at the OLD snapshot, so this stop's rise is a share of whichever
-     size the creature is LEAVING — which made the two directions physically
-     different jumps until `--sw-hop-rise` compensated for it. The sidebar sets
-     one launch constant and multiplies it by the size ratio for the direction
-     that leaves the smaller snapshot; both then rise 12px here, a 33deg climb
-     out of the crouch.
-
-     ONLY THIS STOP IS SCALED. By the apex the cross-fade has handed most of the
-     way across, so the two apexes land within a pixel of each other on their
-     own (18.1 and 18.8) and scaling them would pull them apart again. */
+  /* The launch: 27% across, 12px up, a 33deg climb out of the crouch. */
   30% {
-    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), calc(-55% * var(--sw-hop-rise, 1))) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
+    transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 2%), -55%) rotateY(calc(var(--sw-hop-dir, 1) * 9deg)) rotate(calc(var(--sw-hop-dir, 1) * 4deg)) skewX(calc(var(--sw-hop-dir, 1) * -4deg)) scale(0.84, 1.22);
   }
-  /* THE APEX, over the middle of the trip where a thrown thing has it. */
+  /* The apex, over the middle of the trip where a thrown thing has it. */
   55% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 3%), -100%) rotateY(calc(var(--sw-hop-dir, 1) * 16deg)) rotate(calc(var(--sw-hop-dir, 1) * 6deg)) skewX(calc(var(--sw-hop-dir, 1) * -7deg)) scale(0.82, 1.24);
   }
-  /* Coming down, and steeper than it went up — which is what landing ON a spot
-     looks like as opposed to sailing past one. */
+  /* Coming down, steeper than it went up — landing ON a spot rather than
+     sailing past one. */
   80% {
     transform: perspective(140px) translate(calc(var(--sw-hop-dir, 1) * 1%), -42%) rotateY(calc(var(--sw-hop-dir, 1) * 14deg)) rotate(calc(var(--sw-hop-dir, 1) * -2deg)) skewX(calc(var(--sw-hop-dir, 1) * -3deg)) scale(0.92, 1.1);
   }
-  /* CONTACT. Standing on its feet, still yawed, not yet deformed — the next
-     frame is a live element and the squash starts there. */
+  /* CONTACT. Standing, still yawed, not yet deformed — the next frame is a live
+     element and the squash starts there. */
   100% {
     transform: perspective(140px) translate(0, 0)
       rotateY(calc(var(--sw-hop-dir, 1) * 10deg)) rotate(0deg) scale(1, 1);

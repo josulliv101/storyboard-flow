@@ -137,32 +137,77 @@ function commitRailExpanded(next: boolean): void {
  * less motion; the rail still moves, it just cuts.
  */
 /**
- * How hard the creature leaves the ground, as ONE number for both directions.
+ * THE TWO DIRECTIONS ARE TWO DIFFERENT JUMPS, and each is three settings.
  *
- * It is 1 because the ARC now lives in the keyframes where it belongs — see
- * `sw-monster-hop` — rather than being manufactured by multiplying one stop.
- * What survives here is the correction below, which is not about the arc at
- * all but about the two directions measuring their percentages against
- * different-sized snapshots.
+ * They were one for a while. Unifying them was tempting — the arithmetic worked
+ * out, one launch constant explained both — but it meant every correction to
+ * one silently rewrote the other, and the closing jump had already been signed
+ * off. The opening one needed a change of SHAPE rather than of parameter, so
+ * there was nothing left to share.
+ *
+ * Each direction therefore names its own keyframes, its own clock between them,
+ * and its own travel curve. All three have to move together: the arcs are
+ * authored against their own clocks and neither survives being given the
+ * other's.
  */
-const LAUNCH = 1;
+type JumpArc = {
+  /** The keyframe set that draws the arc. */
+  hop: string;
+  /** The clock BETWEEN its keyframes — part of the shape, not a finish on it. */
+  hopEase: string;
+  /** How the ground goes by underneath: the group's own position curve. */
+  travel: string;
+};
 
 /**
- * The two `scale` values the mark is rendered at, as a ratio — and the entire
- * reason `LAUNCH` cannot just be set and forgotten.
+ * CLOSING: shaped, and signed off as-is. Do not retune without being asked.
  *
- * The hop's rise is a PERCENTAGE, so it resolves against the snapshot being
- * transformed, and early in the flight that is the snapshot the creature is
- * LEAVING. Leaving the collapsed rail it is 21.88px; leaving the word it is
- * 15.05px. The same percentage therefore buys a third less lift in one
- * direction than the other, which is why the two jumps used to read as
- * different jumps.
+ * The travel is a `linear()` because three things have to be true at once and
+ * no cubic-bezier holds all three — anything slow enough to keep the crouch in
+ * place decelerates through the middle and parks the apex over open ground:
  *
- * The direction that leaves the smaller snapshot gets `LAUNCH` multiplied by
- * this, so both arrive at the same 8.6px. If either `scale` at the call site
- * moves, this is the line that moves with it.
+ *   17%    3% across   the crouch happens IN PLACE, not while sliding sideways
+ *   32%   13% across   paired with the rise, a ~37deg climb out of the ground
+ *   58%   82% across   the apex sits near the landing
+ *
+ * Generated as a monotone cubic through those points and sampled at 19 stops:
+ * monotone so the interpolation can never send the creature briefly backwards,
+ * 19 so the segments sit below the eye's resolution. Regenerate it rather than
+ * hand-editing a stop.
  */
-const MARK_SCALE_RATIO = 1.6 / 1.1;
+const CLOSING: JumpArc = {
+  hop: "sw-monster-hop",
+  hopEase: "cubic-bezier(0.34, 0.8, 0.28, 1)",
+  travel:
+    "linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%," +
+    " 0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%," +
+    " 0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%," +
+    " 0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)",
+};
+
+/**
+ * OPENING: ballistic.
+ *
+ * A jump has no horizontal force, so its horizontal velocity is CONSTANT and
+ * only the vertical accelerates. Both settings here follow from that one fact:
+ * a near-linear travel whose peak speed is 1.22x its mean, and `linear` between
+ * keyframes so the arc is the keyframe VALUES rather than something a clock
+ * manufactures out of them.
+ *
+ * Both were wrong before, in opposite ways. The travel was front-loaded — 42%
+ * of the way across while still crouching. And `animation-timing-function`
+ * applies between EVERY pair of keyframes, so the eased hop re-eased each leg:
+ * 77% of the way to a stop a third into the segment, 92% half way through.
+ * Every leg landed early and held, which is what "reaches the apex too early"
+ * was describing.
+ *
+ * The result is an apex ~18px up at 57% of the travel, against 11.2px at ~20%.
+ */
+const OPENING: JumpArc = {
+  hop: "sw-monster-hop-open",
+  hopEase: "linear",
+  travel: "cubic-bezier(0.42, 0.3, 0.58, 0.72)",
+};
 
 function writeRailExpanded(next: boolean): void {
   const doc = document as Document & {
@@ -182,20 +227,13 @@ function writeRailExpanded(next: boolean): void {
   // being blown sideways rather than as choosing to go.
   document.documentElement.style.setProperty("--sw-hop-dir", next ? "1" : "-1");
 
-  // HOW HARD IT LEAVES THE GROUND. Both directions want the same launch; they
-  // need different numbers to get it, because the percentage resolves against
-  // the snapshot each one is LEAVING and those are different sizes. See
-  // `LAUNCH` and `MARK_SCALE_RATIO`.
-  //
-  // The horizontal is not set here at all any more — it is one shaped curve on
-  // the group, shared by both directions, and holding it back is what made the
-  // lift mean anything. Before it, the creature was 55px into a 131px trip while
-  // still below the ground in its crouch, and 75% of the way across by the time
-  // it had risen at all.
-  document.documentElement.style.setProperty(
-    "--sw-hop-rise",
-    String(next ? LAUNCH : LAUNCH * MARK_SCALE_RATIO),
-  );
+  // WHICH JUMP THIS IS. Three properties, set together, because the arc is all
+  // three: see `CLOSING` and `OPENING`.
+  const arc = next ? OPENING : CLOSING;
+  const root = document.documentElement.style;
+  root.setProperty("--sw-hop-name", arc.hop);
+  root.setProperty("--sw-hop-ease", arc.hopEase);
+  root.setProperty("--sw-group-ease", arc.travel);
 
   // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
   // attribute set — the pose it leaves from and the pose it lands in — so the
