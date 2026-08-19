@@ -145,6 +145,27 @@ function writeRailExpanded(next: boolean): void {
     commitRailExpanded(next);
     return;
   }
+  // WHICH WAY IT IS GOING, for the lean. Opening, the creature travels RIGHT —
+  // out of the collapsed rail's centre and into the middle of the word.
+  // Closing, it travels left. The keyframes multiply their rotation and drift
+  // by this, so the body leans into the direction of the jump instead of
+  // always tipping the same way. A creature that leans the wrong way reads as
+  // being blown sideways rather than as choosing to go.
+  document.documentElement.style.setProperty("--sw-hop-dir", next ? "1" : "-1");
+
+  // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
+  // attribute set — the pose it leaves from and the pose it lands in — so the
+  // pupil points along the arc for the WHOLE flight rather than only reacting
+  // once it is over. That ordering is the whole effect: an eye that moves first
+  // reads as a creature deciding to jump, and an eye that only moves on landing
+  // reads as one that was thrown.
+  //
+  // It has to be an attribute set here rather than a keyframe in the hop,
+  // because mid-flight the creature is a rasterised image and nothing inside it
+  // can move. A pose can still be captured INTO that image; motion cannot.
+  const mark = document.querySelector("[data-storyboard-monster]");
+  mark?.setAttribute("data-aiming", "");
+
   const transition = doc.startViewTransition(() => {
     flushSync(() => commitRailExpanded(next));
   }) as { finished?: Promise<unknown> };
@@ -157,16 +178,28 @@ function writeRailExpanded(next: boolean): void {
   //
   // Attribute rather than React state on purpose: this is a 500ms flourish, and
   // routing it through the store would re-render the sidebar twice more for it.
-  void transition.finished
-    ?.then(() => {
-      const mark = document.querySelector("[data-storyboard-monster]");
+  const finished = transition.finished;
+  if (!finished) {
+    // Nothing to hang the settle off. Drop the aim on a timer regardless — a
+    // pupil left staring sideways is worse than no flourish at all.
+    window.setTimeout(() => mark?.removeAttribute("data-aiming"), 620);
+    return;
+  }
+  void finished
+    .then(() => {
       if (!mark) return;
+      // Swapped in ONE frame, and the settle's first pose is the aim, so the
+      // pupil is never briefly re-centred between the two — the handover from
+      // captured image to live element is invisible.
+      mark.removeAttribute("data-aiming");
       mark.setAttribute("data-settling", "");
       window.setTimeout(() => mark.removeAttribute("data-settling"), 620);
     })
     .catch(() => {
       // A transition skipped or superseded by a faster second click. The rail
-      // still moved; only the flourish is lost.
+      // still moved; only the flourish is lost — but the aim must come off, or
+      // the eye is left pointing at a jump that never happened.
+      mark?.removeAttribute("data-aiming");
     });
 }
 

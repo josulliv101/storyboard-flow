@@ -373,7 +373,7 @@ html {
    held opaque and given the same pose, which reads as one object moving. */
 ::view-transition-old(sw-monster),
 ::view-transition-new(sw-monster) {
-  animation: sw-monster-hop 620ms cubic-bezier(0.34, 0.8, 0.28, 1) both;
+  animation: sw-monster-hop 680ms cubic-bezier(0.34, 0.8, 0.28, 1) both;
   mix-blend-mode: normal;
   height: 100%;
   object-fit: contain;
@@ -387,40 +387,59 @@ html {
    SOLID DRAWING is the rotation. A body that only scales on two axes reads as
    a flat sticker; tipping it into and out of the arc gives it a front and a
    back, and the tip reverses on the way down the way a real body rotates
-   around its own mass. */
+   around its own mass.
+
+   THE LEAN IS SIGNED. `--sw-hop-dir` is +1 when the creature travels right
+   (opening the rail, out of the centre and into the word) and -1 when it
+   travels left, so every rotation and sideways drift below multiplies by it and
+   the body leans INTO the jump either way. Fixed the other way round it reads
+   as being blown sideways rather than as choosing to go.
+
+   Kept small on purpose — a few degrees and a couple of percent. At ~20px a
+   lean big enough to notice as a lean is big enough to look like a wobble. */
 @keyframes sw-monster-hop {
   /* Standing. */
   0% {
-    transform: translateY(0) scale(1, 1) rotate(0deg);
+    transform: translate(0, 0) scale(1, 1) rotate(0deg);
   }
-  /* ANTICIPATION: the crouch. Wider and shorter, sinking slightly. */
+  /* ANTICIPATION: the crouch. Wider and shorter, sinking slightly, and already
+     shifting a hair AGAINST the direction of travel — you rock back before you
+     go. */
   14% {
-    transform: translateY(8%) scale(1.22, 0.78) rotate(0deg);
+    transform: translate(calc(var(--sw-hop-dir, 1) * -1%), 8%) scale(1.22, 0.78)
+      rotate(calc(var(--sw-hop-dir, 1) * -1deg));
   }
   /* The push-off — already stretching before it leaves the ground, and tipping
      into the direction of travel. */
   26% {
-    transform: translateY(-14%) scale(0.84, 1.22) rotate(-5deg);
+    transform: translate(calc(var(--sw-hop-dir, 1) * 2%), -22%) scale(0.84, 1.22)
+      rotate(calc(var(--sw-hop-dir, 1) * 4deg));
   }
-  /* Top of the arc: fully stretched, highest lift, tip at its greatest. */
+  /* Top of the arc: fully stretched, highest lift, lean at its greatest.
+     The lift is a share of the creature's OWN height, so it clears its own body
+     and a bit more — enough that the jump reads as a jump at 15px rather than
+     as a bounce, without throwing it out of the rail. */
   46% {
-    transform: translateY(-42%) scale(0.82, 1.24) rotate(-7deg);
+    transform: translate(calc(var(--sw-hop-dir, 1) * 3%), -64%) scale(0.82, 1.24)
+      rotate(calc(var(--sw-hop-dir, 1) * 6deg));
   }
-  /* Falling, gathering, and rotating back through level. */
+  /* Falling, gathering, and rotating back THROUGH level — the counter-rotation
+     is what makes the landing read as absorbed rather than dropped. */
   66% {
-    transform: translateY(-12%) scale(0.92, 1.1) rotate(3deg);
+    transform: translate(calc(var(--sw-hop-dir, 1) * 1%), -20%) scale(0.92, 1.1)
+      rotate(calc(var(--sw-hop-dir, 1) * -2deg));
   }
   /* Landing: the squash absorbs it, the tip flattens out. */
   80% {
-    transform: translateY(4%) scale(1.2, 0.8) rotate(1deg);
+    transform: translate(0, 4%) scale(1.2, 0.8) rotate(calc(var(--sw-hop-dir, 1) * -1deg));
   }
   /* FOLLOW-THROUGH: a small rebound past the resting pose... */
   91% {
-    transform: translateY(-3%) scale(0.95, 1.06) rotate(0deg);
+    transform: translate(0, -3%) scale(0.95, 1.06) rotate(0deg);
   }
   /* ...and settle. */
   100% {
-    transform: translateY(0) scale(1, 1) rotate(0deg);
+    transform: translate(0, 0) scale(1, 1) rotate(0deg);
   }
 }
 
@@ -435,25 +454,45 @@ html {
   }
 }
 
-/* ── The settle, after the creature lands ─────────────────────────────────────
+/* ── The eye and the feet ─────────────────────────────────────────────────────
    SECONDARY ACTION and OVERLAPPING ACTION, and the reason they live here rather
    than in the hop above: a view transition rasterises the creature into a
    single IMAGE, so nothing inside it can move independently while it is in
    flight. The eye and the feet are parts of that picture, not elements.
 
-   So they act once the transition hands control back to the live element. The
-   body has arrived; the parts have not finished. The eye jolts and re-centres
-   (secondary action — a reaction that comments on the main one without
-   competing with it), and the feet keep spreading a beat after the landing and
-   draw back (overlapping action — loose parts trail the mass that carried
-   them).
+   That constraint splits them in two, and the split is the whole design:
 
-   TIMING is what keeps them from reading as one event: the eye leads by 50ms,
-   the feet lag by 110ms and run longer. Simultaneous would look like a single
-   twitch. */
+   A POSE CAN BE CAPTURED INTO THE IMAGE even though motion cannot. So the eye's
+   AIM is set before the transition begins and held until it ends — the pupil is
+   already pointing along the arc in both snapshots, and the creature flies
+   looking where it is going rather than staring straight ahead the whole way.
+
+   MOTION WAITS for the live element. Once the body has arrived the parts have
+   not finished: the eye takes the landing and eases back to centre (secondary
+   action — a reaction that comments on the main one without competing with it),
+   and the feet keep spreading a beat after the landing and draw back
+   (overlapping action — loose parts trail the mass that carried them).
+
+   TIMING is what keeps those two from reading as one event: the eye picks up
+   the instant the flight ends, the feet lag by 110ms and run longer.
+   Simultaneous would look like a single twitch. */
+
+/* THE AIM, which is on for the whole flight rather than after it.
+   `data-aiming` is set BEFORE the transition starts and cleared when it
+   finishes, so both snapshots — the crouch it leaves and the pose it lands in —
+   are rasterised with the pupil already pointing along the arc. The eye leads
+   the body, which is what makes the hop read as chosen: it looks where it is
+   going before it goes, and is still looking there when it arrives.
+
+   It is a plain declaration, not an animation, precisely because the creature
+   is a static image mid-flight — there is nothing to animate then, only a pose
+   to be captured in. */
+[data-storyboard-monster][data-aiming] [data-monster-pupil] {
+  transform: translate(calc(var(--sw-hop-dir, 1) * 26%), -12%);
+}
 
 [data-storyboard-monster][data-settling] [data-monster-pupil] {
-  animation: sw-pupil-settle 380ms cubic-bezier(0.22, 1, 0.36, 1) 50ms both;
+  animation: sw-pupil-settle 440ms cubic-bezier(0.32, 0.72, 0.3, 1) both;
 }
 
 [data-storyboard-monster][data-settling] [data-monster-foot] {
@@ -462,19 +501,43 @@ html {
 
 /* The eye is thrown by the landing, overshoots, and comes back level. It moves
    FURTHER than the body did, which is the exaggeration that makes a small mark
-   read as alive at 15px. */
+   read as alive at 15px.
+
+   IT NEVER LOOKS BACK. The horizontal component is signed by `--sw-hop-dir` and
+   DECAYS on that one side — it does not cross the centre. An earlier version
+   let the eye overshoot horizontally the way a loose part does, which is
+   correct physics and wrong acting: for the few frames it sat on the far side
+   the creature was looking back the way it came, at the exact moment it was
+   meant to be arriving somewhere. The overshoot lives in the vertical instead,
+   where it still reads as a landing jolt.
+
+   So the pupil picks up where the flight left it — aimed ahead and high — takes
+   the impact downward, bounces, and eases back to centre only once the creature
+   has stopped. Watching the reader again is the resting pose, not the arrival.
+
+   Kept inside the white: the pupil is 0.28em within a 0.46em eye, so a quarter
+   of its own width is about as far as it can travel before it would clip. */
 @keyframes sw-pupil-settle {
+  /* Exactly the aim it flew with, so the handover from image to element is
+     invisible — the same pose, now on an element that can move. */
   0% {
-    transform: translateY(-22%);
+    transform: translate(calc(var(--sw-hop-dir, 1) * 26%), -12%);
   }
-  45% {
-    transform: translateY(9%);
+  /* The impact drives it down. Still looking ahead. */
+  30% {
+    transform: translate(calc(var(--sw-hop-dir, 1) * 22%), 12%);
   }
-  75% {
-    transform: translateY(-3%);
+  /* Bounce, and the aim begins to relax. */
+  58% {
+    transform: translate(calc(var(--sw-hop-dir, 1) * 14%), -6%);
   }
+  /* A last small correction, still on the travel side. */
+  80% {
+    transform: translate(calc(var(--sw-hop-dir, 1) * 6%), 2%);
+  }
+  /* Level, centred, watching the reader again. */
   100% {
-    transform: translateY(0);
+    transform: translate(0, 0);
   }
 }
 
@@ -499,5 +562,9 @@ html {
   [data-storyboard-monster][data-settling] [data-monster-pupil],
   [data-storyboard-monster][data-settling] [data-monster-foot] {
     animation: none;
+  }
+
+  [data-storyboard-monster][data-aiming] [data-monster-pupil] {
+    transform: none;
   }
 }
