@@ -622,14 +622,14 @@ html {
     sw-pupil-constrict 900ms cubic-bezier(0.22, 0.6, 0.3, 1) 140ms both;
 }
 
-/* THE TOE IS THE PIVOT, and the toe points AT THE READER.
+/* THE TOE IS THE ANCHOR, and the toe points AT THE READER.
    The creature is drawn front-on — one eye facing out, two shoes side by side
    pointing this way — so a shoe's length runs INTO the screen, not across it.
    Its near edge is the bottom of the pill and its heel is the far edge at the
-   top. Pivoting at 50% 100% is therefore pivoting at the toe. */
+   top. Anchoring at 50% 100% is therefore anchoring at the toe: it is the part
+   that stays on the ground, so it is the part that must not move. */
 [data-storyboard-monster] [data-monster-foot] {
   transform-origin: 50% 100%;
-  transform-style: flat;
 }
 
 /* TOE-OFF. A jump does not leave the ground flat-footed: it rolls up the foot,
@@ -645,23 +645,31 @@ html {
    selector is true when the departure snapshot is taken and false when the
    arrival one is — the same element, photographed twice, in two poses.
 
-   THE SHOE TIPS TOWARD THE READER, not toward the side of the screen. An
-   earlier build rotated it in the picture plane, which stood the creature on
-   the outside edge of one shoe and read as a stumble; the correction after that
-   put it up on its heels. Both were the same mistake — treating a shoe pointing
-   out of the screen as though it lay along it.
+   THE SHOE GETS LONGER, which is the opposite of what two earlier builds did
+   and is the whole geometry of this drawing.
 
-   `rotateX` about the toe edge is the one that matches the drawing: the heel
-   swings up and back, the toe stays on the floor, and the shoe foreshortens as
-   it goes. That foreshortening is the whole read at this size — a 4px shape
-   cannot show an angle, but it can visibly get shorter while its bottom edge
-   holds still, which is exactly what a shoe rising onto its toe does head-on.
+   The creature is front-on and its shoes point AT the reader, so a standing
+   shoe is drawn already foreshortened: that 0.38 x 0.2em pill is a whole foot
+   seen almost end-on. Point the toe and the foot swings from near-horizontal
+   toward vertical — and a vertical foot presents its FULL length to the camera.
+   Its projection grows. That is why the reference photograph of someone on
+   tiptoe shows long extended feet and not stubby ones.
+
+   So the pose is a stretch anchored at the toe, not a rotation. `rotateX` was
+   the previous attempt and it can only ever shrink a flat pill — cos(theta)
+   times its height, whichever way it is signed — which read as the shoe being
+   squashed into the floor. Rotating in the picture plane, the attempt before
+   that, stood the creature on the outside edge of one shoe.
+
+   Slightly narrower as it goes: a foot turning toward vertical shows less of
+   its width, and the taper is what keeps the stretch from reading as the shoe
+   simply being scaled up.
 
    NO `--sw-hop-dir` HERE, and its absence is the point: toward the reader is
    the same direction whichever way the creature is travelling. Both shoes do
    the same thing, because both are pointing the same way. */
 [data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-foot] {
-  transform: perspective(1.6em) rotateX(-52deg);
+  transform: scale(0.9, 1.85);
 }
 
 [data-storyboard-monster][data-settling] [data-monster-foot] {
