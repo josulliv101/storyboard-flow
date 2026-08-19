@@ -103,7 +103,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   const documents = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.read,
-    graphDocumentsGateway.read,
+    graphDocumentsGateway.readServerSnapshot,
   );
   const trashId = user ? `trash-${user.uid}` : null;
   const cachedClips = trashId ? documents[trashId]?.clips : undefined;

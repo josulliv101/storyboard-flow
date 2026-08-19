@@ -67,7 +67,7 @@ function useGraphPathTitles() {
   return useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.read,
-    graphDocumentsGateway.read,
+    graphDocumentsGateway.readServerSnapshot,
   );
 }
 

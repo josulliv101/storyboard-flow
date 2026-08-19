@@ -137,7 +137,7 @@ export function GraphRenderFormat({ timelineId }: Readonly<{ timelineId: string 
   const documents = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.read,
-    graphDocumentsGateway.read,
+    graphDocumentsGateway.readServerSnapshot,
   );
   return (
     <RenderFormatOptions

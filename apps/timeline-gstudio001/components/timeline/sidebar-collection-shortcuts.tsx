@@ -287,7 +287,7 @@ export function SidebarCollectionShortcuts({
   const documents = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.read,
-    graphDocumentsGateway.read,
+    graphDocumentsGateway.readServerSnapshot,
   );
   return (
     <CollectionShortcutsGroup
