@@ -1,6 +1,7 @@
 import type {Metadata} from 'next';
 import { Grandstander } from 'next/font/google';
 import { Suspense } from 'react';
+import { Analytics } from '@vercel/analytics/next';
 import { AuthGate } from '@/components/auth/auth-gate';
 import { AuthProvider } from '@/components/auth/auth-provider';
 import { getAuthUser } from '@/lib/firebase-auth-session';
@@ -76,6 +77,7 @@ export default async function RootLayout({children}: {children: React.ReactNode}
             </div>
           </AuthGate>
         </AuthProvider>
+        <Analytics />
       </body>
     </html>
   );
