@@ -39,7 +39,7 @@ const NO_DETAILS = {} as DetailsById;
 describe("splitLaneRows", () => {
   it("puts everything on the picture when nothing has a lane", () => {
     const graph = graphOf([collection("scene", [media("a", 4), media("b", 4)])]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.pictureIds).toEqual(["a", "b"]);
     expect(model.layers).toEqual([]);
@@ -51,7 +51,7 @@ describe("splitLaneRows", () => {
 
   it("is empty for a collection with no children", () => {
     const graph = graphOf([collection("scene", [])]);
-    expect(splitLaneRows(graph, NO_DETAILS, "scene")).toEqual({
+    expect(splitLaneRows(graph, NO_DETAILS, "scene", true)).toEqual({
       pictureIds: [],
       pictureTimes: [],
       layers: [],
@@ -66,7 +66,7 @@ describe("splitLaneRows", () => {
         media("shot2", 4),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.pictureIds).toEqual(["shot1", "shot2"]);
     expect(model.layers).toHaveLength(1);
@@ -86,7 +86,7 @@ describe("splitLaneRows", () => {
         media("shot2", 4),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.pictureTimes[1]?.startSeconds).toBe(4 + CLIP_GAP_SECONDS);
   });
@@ -99,7 +99,7 @@ describe("splitLaneRows", () => {
         media("bed", 8, { trackIndex: 1 }),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.pictureTimes[0]?.startSeconds).toBe(0);
     expect(model.layers[0]?.items[0]?.startSeconds).toBe(0);
@@ -113,7 +113,7 @@ describe("splitLaneRows", () => {
         media("vo2", 3, { trackIndex: 1 }),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.layers[0]?.items).toEqual([
       { id: "vo1", startSeconds: 0, durationSeconds: 3 },
@@ -131,7 +131,7 @@ describe("splitLaneRows", () => {
         media("vo", 2, { trackIndex: 1, placedStart: 7.5 }),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.layers[0]?.items).toEqual([
       { id: "vo", startSeconds: 7.5, durationSeconds: 2 },
@@ -148,7 +148,7 @@ describe("splitLaneRows", () => {
         media("tail", 2, { trackIndex: 1 }),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.layers[0]?.items.map((item) => item.startSeconds)).toEqual([
       7.5,
@@ -164,7 +164,7 @@ describe("splitLaneRows", () => {
         media("vo", 4, { trackIndex: 2 }),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.layers.map((layer) => layer.lane)).toEqual([1, 2]);
     expect(model.layers[0]?.items[0]?.id).toBe("music");
@@ -177,7 +177,7 @@ describe("splitLaneRows", () => {
     const graph = graphOf([
       collection("scene", [media("shot", 10), media("bed", 10, { trackIndex: 50 })]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.layers).toHaveLength(1);
     expect(model.layers[0]?.lane).toBe(50);
@@ -191,7 +191,7 @@ describe("splitLaneRows", () => {
         media("c", 4, { trackIndex: -1 }),
       ]),
     ]);
-    const model = splitLaneRows(graph, NO_DETAILS, "scene");
+    const model = splitLaneRows(graph, NO_DETAILS, "scene", true);
 
     expect(model.pictureIds).toEqual(["a", "b", "c"]);
     expect(model.layers).toEqual([]);
@@ -209,7 +209,7 @@ describe("splitLaneRows", () => {
     // once a collection's contents have arrived. It is still a DETAIL: the
     // engine does not model hydration, only lane and placement moved.
     const details: DetailsById = { inner: detail({ hydrated: true }) };
-    const model = splitLaneRows(graph, details, "scene");
+    const model = splitLaneRows(graph, details, "scene", true);
 
     expect(model.pictureIds).toEqual(["inner"]);
     // A collection card is a fixed WIDTH holding an arbitrary span; the row
@@ -273,5 +273,36 @@ describe("laneDropIndex", () => {
 
   it("adds with no drag set at the translated boundary", () => {
     expect(laneDropIndex(pictureIds, siblings, 1, [])).toBe(2);
+  });
+});
+
+describe("with lanes flagged off", () => {
+  it("draws every clip in the picture row instead of hiding it", () => {
+    // THE FAILURE THIS PINS is a stored clip with nowhere to be. Hiding the
+    // lane rows and leaving their clips in them would drop a clip off the
+    // board while it still counts toward the timeline's duration and still
+    // composites into a render — present in the file, absent from the screen.
+    // Off means "no separate rows", not "no clips".
+    const graph = graphOf([
+      collection("scene", [
+        media("shot1", 4),
+        media("bed", 12, { trackIndex: 1 }),
+        media("shot2", 4),
+        media("vo", 3, { trackIndex: 2 }),
+      ]),
+    ]);
+    const on = splitLaneRows(graph, NO_DETAILS, "scene", true);
+    const off = splitLaneRows(graph, NO_DETAILS, "scene", false);
+
+    // On: two beds pulled onto two rows.
+    expect(on.layers.map((l) => l.lane)).toEqual([1, 2]);
+    // Off: no rows, and every one of those clips is in the picture instead.
+    expect(off.layers).toEqual([]);
+    expect(off.pictureIds).toEqual(["shot1", "bed", "shot2", "vo"]);
+    // Nothing lost: on-picture plus on-layers equals off-picture.
+    const laneItems = on.layers.flatMap((l) => l.items.map((i) => i.id));
+    expect(off.pictureIds.length).toBe(on.pictureIds.length + laneItems.length);
+    // Aligned 1:1 — the invariant every consumer of this model reads.
+    expect(off.pictureTimes.length).toBe(off.pictureIds.length);
   });
 });
