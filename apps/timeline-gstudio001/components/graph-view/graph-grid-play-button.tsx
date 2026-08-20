@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Pause, Play } from "lucide-react";
+import { Pause, Play, SkipBack } from "lucide-react";
 
 import {
   getChildren,
@@ -193,8 +193,26 @@ export function GraphGridPlayButton({
   if (!settled || node === null) return null;
   if (card === undefined || card.disabled) return null;
 
+  const discClass = [
+    "pointer-events-auto flex size-7 items-center justify-center",
+    "rounded-full bg-zinc-950/70 text-zinc-100 ring-1 ring-white/25 backdrop-blur-sm",
+    "transition-colors hover:bg-zinc-950/90 hover:text-white",
+    "focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none",
+  ].join(" ");
+
   return (
     <div ref={anchorRef} className="pointer-events-none absolute inset-0">
+      {/* A ROW, so the two controls share one corner and one baseline rather
+          than each finding its own. */}
+      <div
+        style={artworkBottom === null ? undefined : { bottom: `${8 - artworkBottom}px` }}
+        className={[
+          // left-3.5 = the card's own 6px padding plus 8px, so the pair sits
+          // inside the PICTURE's corner rather than on its edge.
+          "pointer-events-none absolute left-3.5 z-20 flex items-center gap-1.5",
+          artworkBottom === null ? "bottom-2" : "",
+        ].join(" ")}
+      >
       <button
         type="button"
         data-grid-play={nodeId as string}
@@ -217,21 +235,21 @@ export function GraphGridPlayButton({
           // ALWAYS FROM THIS CARD'S OWN START, even if the clock is already
           // inside it — "play this" means this clip from its beginning, not
           // "resume wherever the playhead happens to be sitting".
+          //
+          // SEEK, THEN START A FRAME LATER, and the frame is the whole point.
+          // Both writes land in one React batch, so the pane received the new
+          // time and `playing: true` together — and a controlled player
+          // ignores an incoming time while it is playing, or it would fight
+          // its own progress. The seek was dropped and playback ran from
+          // wherever the pane already was: measured, pressing the third card
+          // played from 0.0s instead of its 16.5s start, and because the pause
+          // state is derived from the same window, the button never flipped
+          // either. Letting the seek land while the pane is still paused fixes
+          // both.
           channel.set(card.start);
-          channel.setPlaying(true);
+          requestAnimationFrame(() => channel.setPlaying(true));
         }}
-        style={artworkBottom === null ? undefined : { bottom: `${8 - artworkBottom}px` }}
-        className={[
-          // left-3.5 = the card's own 6px padding plus 8px, so the button sits
-          // inside the PICTURE's corner rather than on its edge.
-          "pointer-events-auto absolute left-3.5 z-20 flex size-7 items-center justify-center",
-          "rounded-full bg-zinc-950/70 text-zinc-100 ring-1 ring-white/25 backdrop-blur-sm",
-          "transition-colors hover:bg-zinc-950/90 hover:text-white",
-          "focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none",
-          // Until the measurement lands it sits at the cell's bottom, which is
-          // close enough for one frame and never off-screen.
-          artworkBottom === null ? "bottom-2" : "",
-        ].join(" ")}
+        className={discClass}
       >
         {playingHere ? (
           <Pause aria-hidden="true" className="size-3.5" fill="currentColor" />
@@ -240,6 +258,33 @@ export function GraphGridPlayButton({
           <Play aria-hidden="true" className="size-3.5 translate-x-px" fill="currentColor" />
         )}
       </button>
+
+      {/* CUE, not play: the playhead moves to this clip's start and stops
+          there. The transport's own "go to start" glyph, reused deliberately —
+          it means the same thing here, and inventing a second symbol for one
+          action is how two controls end up disagreeing about what they do.
+
+          Hidden while THIS clip is playing: the playhead is already inside it,
+          so "go to its start" during playback would be a rewind nobody asked
+          for, and the pause button beside it is the thing you actually want at
+          that moment. */}
+      {!playingHere && (
+        <button
+          type="button"
+          data-grid-cue={nodeId as string}
+          aria-label={`Move the playhead to the start of ${node.name}`}
+          title={`Go to the start of ${node.name}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            channel.set(card.start);
+          }}
+          className={discClass}
+        >
+          <SkipBack aria-hidden="true" className="size-3.5" fill="currentColor" />
+        </button>
+      )}
+      </div>
     </div>
   );
 }

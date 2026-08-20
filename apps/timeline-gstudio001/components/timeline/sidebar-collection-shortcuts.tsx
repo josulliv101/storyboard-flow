@@ -3,7 +3,6 @@
 import { useContext, useSyncExternalStore } from "react";
 import { Home, Layers } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 
 import {
   collectionShortcuts,
@@ -18,7 +17,6 @@ import {
   SIDEBAR_GLYPH,
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
-  SIDEBAR_ICON_PRESSED,
 } from "./sidebar-icon-styles";
 import {
   SidebarLabelsInlineContext,
@@ -191,21 +189,24 @@ function ShortcutsHeading({
  * understands it.
  */
 function ProjectHomeShortcut({ projectId }: Readonly<{ projectId: string }>) {
-  const pathname = usePathname();
-  const href = `/timeline/${projectId}/graph`;
-  // ALREADY HOME is worth showing: every other control in this rail marks
-  // where you are, and a home button that looks identical at the root and six
-  // collections deep is the one that makes you check the breadcrumb instead.
-  const isHome = pathname === href;
   const tooltipId = "sidebar-tooltip-project-home";
+  // NO "YOU ARE HERE" STATE, and that is a decision about which group this
+  // belongs to rather than an oversight. The tiles ABOVE the divider mark
+  // where you are — they are the surfaces, and which one is showing is a fact
+  // about the board. Everything in THIS group is a shortcut: somewhere to go,
+  // not somewhere you are. The collections beside it mark nothing, so a home
+  // that lit up would be the one item here claiming a different kind of
+  // meaning, which reads as inconsistency long before it reads as helpful.
+  //
+  // `aria-current` goes with it. Announcing a state that is deliberately not
+  // drawn would tell a screen reader something the screen does not say.
   return (
     <Link
-      href={href}
-      data-sidebar-project-home={isHome ? "current" : ""}
+      href={`/timeline/${projectId}/graph`}
+      data-sidebar-project-home=""
       aria-label="Project home"
-      aria-current={isHome ? "page" : undefined}
       aria-describedby={tooltipId}
-      className={cn(SIDEBAR_ICON_BASE, isHome ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE)}
+      className={cn(SIDEBAR_ICON_BASE, SIDEBAR_ICON_IDLE)}
     >
       <Home className={SIDEBAR_GLYPH} />
       <SidebarTooltipLabel id={tooltipId} label="Home" description="The top of this project" />
