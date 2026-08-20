@@ -206,7 +206,7 @@ export const InTheWordmark: Story = {
   args: { scale: 1.1 },
   render: () => (
     <span
-      className="flex items-center font-[family-name:var(--font-caprasimo)] text-[19px] text-white"
+      className="flex items-center font-[family-name:var(--font-grandstander)] text-[19px] text-white"
       style={{ lineHeight: 1 }}
     >
       storyboard&nbsp;
