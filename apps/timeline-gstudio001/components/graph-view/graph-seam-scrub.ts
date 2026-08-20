@@ -25,6 +25,15 @@ export type SeamClip = Readonly<{
   /** The whole source length. Defaults to `showingSeconds` — correct for media
    *  with no source window at all, like a still. */
   fullSeconds?: number;
+  /**
+   * A still of this clip, for the bar to label its own section with.
+   *
+   * The bar divides into one span per clip, and until this the only thing
+   * distinguishing them was a hairline: you could see THAT the run of time was
+   * three clips without seeing WHICH. A frame says it at a glance and needs no
+   * legend.
+   */
+  posterSrc?: string;
 }>;
 
 /** One clip's stretch of the bar. */
@@ -43,6 +52,8 @@ export type SeamSpan = Readonly<{
    * playing the wrong part of the shot entirely.
    */
   sourceOffset: number;
+  /** Carried through from the clip so the bar can label the span. */
+  posterSrc?: string;
 }>;
 
 export type SeamTimeline = Readonly<{
@@ -98,6 +109,7 @@ export function buildSeamTimeline(
   if (before && runUp > 0) {
     spans.push({
       clipId: before.id,
+      posterSrc: before.posterSrc,
       from: 0,
       to: runUp,
       // Joined near its END: the last `runUp` seconds of what it shows, which
@@ -117,6 +129,7 @@ export function buildSeamTimeline(
     if (index === subject) centreStart = cursor;
     spans.push({
       clipId: clip.id,
+      posterSrc: clip.posterSrc,
       from: cursor,
       to: cursor + clip.showingSeconds,
       sourceOffset: 0,
@@ -126,7 +139,13 @@ export function buildSeamTimeline(
 
   const runOut = after ? Math.min(lead, Math.max(0, after.showingSeconds)) : 0;
   if (after && runOut > 0) {
-    spans.push({ clipId: after.id, from: cursor, to: cursor + runOut, sourceOffset: 0 });
+    spans.push({
+      clipId: after.id,
+      posterSrc: after.posterSrc,
+      from: cursor,
+      to: cursor + runOut,
+      sourceOffset: 0,
+    });
     cursor += runOut;
   }
 

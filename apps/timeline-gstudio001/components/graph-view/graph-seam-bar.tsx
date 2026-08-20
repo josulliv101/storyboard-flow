@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 
 import type { SeamTimeline } from "./graph-seam-scrub";
@@ -15,6 +15,10 @@ import type { SeamTimeline } from "./graph-seam-scrub";
  * the playhead; the seams are marked, so the boundary you are trying to judge
  * is a place you can aim at rather than a value you have to find.
  */
+/** Wide enough to read a frame from, narrow enough that a short clip's
+ *  section can still hold one. 16:9 at this width is 40px tall, inside h-12. */
+const THUMB_WIDTH_PX = 71;
+
 export function SeamBar({
   timeline,
   seconds,
@@ -30,6 +34,22 @@ export function SeamBar({
 }>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const total = timeline.totalSeconds;
+
+  // MEASURED, so a span can be asked whether it has room for a thumbnail.
+  // Percentages alone cannot answer that: the same 8% of the bar is a wide
+  // section on a monitor and forty pixels on a phone, and a thumbnail crammed
+  // into forty pixels is a smear that makes the bar harder to read rather
+  // than easier.
+  const [trackWidth, setTrackWidth] = useState(0);
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track || typeof ResizeObserver === "undefined") return;
+    const measure = () => setTrackWidth(track.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, []);
 
   const scrubTo = useCallback(
     (clientX: number) => {
@@ -138,7 +158,9 @@ export function SeamBar({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onKeyDown={onKeyDown}
-        className="relative h-8 flex-1 cursor-ew-resize rounded bg-zinc-800/80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+        // h-12 rather than h-8: a bar carrying a frame per section needs the
+        // height for one, and at 32px a 16:9 still is a smudge.
+        className="relative h-12 flex-1 cursor-ew-resize overflow-hidden rounded bg-zinc-800/80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
       >
         {/* THE SEAMS, marked. The cut is the thing being judged, so it gets a
             position on the bar you can aim a pointer at — otherwise finding it
@@ -153,6 +175,39 @@ export function SeamBar({
             className="absolute inset-y-0 w-px bg-white/40"
           />
         ))}
+
+        {/* ONE FRAME PER SECTION, tucked into its right-hand end.
+            The bar divides into one span per clip and, until this, the only
+            thing telling them apart was a hairline — you could see THAT the
+            run of time was three clips without seeing WHICH. A still says it
+            at a glance and needs no legend.
+
+            RIGHT-HAND END, because that is where the section meets its cut:
+            the frame sits against the seam it is about to hand over at, which
+            is the thing the bar exists to let you judge. It is the clip's
+            poster rather than the exact frame under the playhead — a still
+            that changed as you scrubbed would be a second monitor competing
+            with the real one.
+
+            Only when the section is wide enough to hold one. */}
+        {trackWidth > 0 &&
+          timeline.spans.map((span) => {
+            const spanWidth = ((span.to - span.from) / total) * trackWidth;
+            if (span.posterSrc === undefined || spanWidth < THUMB_WIDTH_PX + 8) return null;
+            return (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={`thumb-${span.clipId}`}
+                data-seam-thumb={span.clipId}
+                src={span.posterSrc}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                style={{ left: pct(span.to), width: THUMB_WIDTH_PX }}
+                className="pointer-events-none absolute bottom-0.5 -translate-x-[calc(100%+3px)] rounded-xs object-cover opacity-80 ring-1 ring-black/60 select-none"
+              />
+            );
+          })}
 
         {/* Played-so-far, purely so the bar reads as a clock rather than a
             slider with a dot on it. */}

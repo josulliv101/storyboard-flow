@@ -544,7 +544,12 @@ function DetailsPanel({
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [onClose, beginRename]);
 
+  // THE CONTAINER IS A WRAPPER, not the panel itself, because an element
+  // cannot query its own width — and the panel needs to change its own HEIGHT
+  // when it gets narrow, not merely what it puts inside itself. The wrapper
+  // carries the width and nothing else.
   return (
+      <div className="@container shrink-0" style={{ width }}>
       <div
         // FOCUS WIRING ON THE CENTRE ONLY. Every panel is fully live — the
         // grips trim, the title renames, the video seeks — but "which dialog
@@ -553,7 +558,6 @@ function DetailsPanel({
         // that was opened. The neighbours are working panels, not focus traps.
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
-        style={{ width }}
         data-item-details-live={onScreen ? "" : undefined}
         // WHICH CLIP IS ON SCREEN, marked on the whole panel. The monitor is
         // always the middle picture, so during a run-up the frames on show
@@ -570,32 +574,55 @@ function DetailsPanel({
           // below the strip are short and closely related, and twelve pixels
           // between each of them was reading as four separate regions rather
           // than one foot to the panel.
-          "relative flex shrink-0 flex-col gap-2 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
-          "transition-[box-shadow,border-color] duration-150",
-          // THE OPENED CLIP WEARS A WHITE BORDER, twice the weight of a
-          // neighbour's. Two different questions get two different marks here
-          // and they are often true at once: WHICH CLIP DID I OPEN is the
-          // white border, and WHOSE FRAMES ARE ON SCREEN is the red ring
-          // below. The centre is usually both, so they have to be legible
-          // together rather than one overwriting the other — hence a border
-          // for one and a ring for the other, the ring sitting outside the
-          // border where it cannot hide it.
           //
-          // Thicker on the border-box, so it eats padding rather than growing
-          // the panel: the row's geometry is what the slide animates against,
-          // and a centre panel two pixels wider than its neighbours would put
-          // every landing off by one.
-          centre ? "border-2 border-white/90" : "border border-zinc-700",
+          // `@container`, so what the panel shows depends on how wide the panel
+          // actually IS rather than on how many there are. Five panels on a
+          // large monitor have more room each than three on an iPad, and a
+          // rule counting panels gets that backwards.
+          "relative flex w-full flex-col gap-2 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
+          "transition-[box-shadow,border-color] duration-150",
+          // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
+          //
+          // It carried a heavier white one for a while, on the reasoning that
+          // the opened clip should be marked. Two things were wrong with that.
+          // It was loud — a thick white edge is the strongest mark on a dark
+          // screen and it was spent on the least useful fact, since the centre
+          // panel is already identifiable by being IN THE CENTRE, and by being
+          // the one with a rename field and a close button. And it cost
+          // layout: 2px against the neighbours' 1px pushed its picture down a
+          // pixel and shortened it by two, which matters precisely because
+          // comparing frames across panels is what this view is for.
+          //
+          // The one mark that survives is the red one, and it earns its place
+          // by saying something that changes: whose frames are on screen right
+          // now. It is a box-shadow, so it costs no layout either.
+          "border border-zinc-700",
           // ONE shadow utility per state, both spelled out. Layering a glow on
           // top of `shadow-2xl` would mean two classes setting `box-shadow`,
           // and which one wins is a question about stylesheet order rather
           // than about the order they appear in this string — so the drop
           // shadow is written into both branches and the glow is simply a
           // second layer of the live one.
+          // SKY, AND THINNER. It was red and 3px, which tied it to the
+          // playhead — a nice idea that read as an alarm: red is the loudest
+          // thing on a dark screen and a heavy red edge around the panel you
+          // are watching says something has gone wrong rather than something
+          // is playing. Two pixels of the accent already used for selection
+          // and trim, with a soft halo behind it, says "this one" without
+          // shouting. The playhead stays red; it is a hairline, and being the
+          // one urgent-coloured thing on screen is what makes it findable.
           onScreen
-            ? "ring-2 ring-red-500/70 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_1px_rgba(239,68,68,0.7),0_0_44px_10px_rgba(239,68,68,0.45)]"
+            ? "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_2px_rgba(56,189,248,0.8),0_0_36px_8px_rgba(56,189,248,0.3)]"
             : "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
-          DETAILS_PANEL_HEIGHT_CLASS,
+          // A FIXED 68vh WHILE THE PANEL IS FULL, and fitted to its picture
+          // once it is not. Stripped of its controls a panel is a frame and a
+          // name, and holding it at two thirds of the screen leaves most of it
+          // black — tall empty columns either side of the one you are looking
+          // at, which is the "weird" in a five-up view rather than the
+          // controls being gone. Every panel is the same width and the same
+          // aspect, so fitting them keeps them identical to each other, which
+          // is the property that matters.
+          "@min-[30rem]:h-[68vh] @min-[30rem]:max-h-full h-auto",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -669,14 +696,35 @@ function DetailsPanel({
             </button>
           )}
           <div className="flex items-center gap-3">
-            <span className="font-mono text-[11px] tabular-nums text-zinc-400">
+            {/* PROGRESSIVE, BY THE PANEL'S OWN WIDTH. Each of these earns its
+                place only when there is room for it, and the order they leave
+                in is the order they matter least: the duration is on the trim
+                strip's own label, Disable and the history pair are reachable
+                from the board, and the name is the one thing a panel cannot do
+                without — it is what tells you which clip you are looking at.
+
+                ONE BREAKPOINT, at 30rem, so the panel has two honest states
+                rather than five half-dressed ones: a working panel, or a frame
+                with a name on it. Staggering the thresholds looked tidier in
+                the abstract and worse in practice — controls vanishing one at
+                a time as the count goes up reads as things breaking.
+
+                Container queries rather than a count, because five panels on a
+                large monitor have more room each than three on an iPad and a
+                rule counting panels gets that backwards. On a 1920 screen this
+                lands at: three panels 768px (everything), five 452px (frame
+                and name), nine 218px (frame and name). On a wider desktop five
+                clears 30rem and keeps its controls, which is the point. */}
+            <span className="hidden font-mono text-[11px] tabular-nums text-zinc-400 @min-[30rem]:inline">
               {video ? `${formatSeconds(showing)} of ${formatSeconds(fullDuration)}` : formatSeconds(showing)}
             </span>
-            <ItemDisableToggle nodeId={node.id as string} />
+            <span className="hidden @min-[30rem]:contents">
+              <ItemDisableToggle nodeId={node.id as string} />
+            </span>
             {/* Scoped to this clip's own trims — see useScopedHistory. Each
                 release is one commit, so these step through the adjustments
                 one at a time. */}
-            <div className="flex items-center gap-1">
+            <div className="hidden items-center gap-1 @min-[30rem]:flex">
               <button
                 type="button"
                 data-item-details-undo
@@ -737,6 +785,10 @@ function DetailsPanel({
           onClick={centre ? undefined : () => onAdvance(node.id as string)}
           className={[
             "relative overflow-hidden rounded-md bg-black",
+            // `flex-1` only makes sense against a fixed panel height. Once the
+            // panel fits its content there is nothing to fill, so the picture
+            // states its own shape instead.
+            "aspect-video w-full @min-[30rem]:aspect-auto @min-[30rem]:w-auto",
             DETAILS_HERO_FILL_CLASS,
             centre ? "" : "cursor-pointer",
             // FADED, AND THE COLOUR GOES WITH IT. Opacity alone still leaves a
@@ -842,7 +894,16 @@ function DetailsPanel({
         </div>
 
         {/* The whole source, with the showing window and its grips — the trim
-            handles, at a width the board could never give them. */}
+            handles, at a width the board could never give them.
+
+            THE FIRST THING TO GO WHEN THE PANEL NARROWS, and by some distance
+            the biggest: a filmstrip, a draggable window, two grips and a pair
+            of number fields. Below about 26rem they stop being controls and
+            become texture — the grips are a few pixels apart, the fields
+            collide — and at that width the panel is there to show you a frame
+            beside its neighbours, which is the thing you came for. Trimming
+            stays available on the board and in a wider view. */}
+        <div className="hidden flex-col gap-2 @min-[30rem]:flex">
         {windowed ? (
           <>
             {/* FRAMES, so video only — an audio clip has a source window but
@@ -916,6 +977,7 @@ function DetailsPanel({
               : `still · ${formatSeconds(showing)} on screen`}
           </span>
         )}
+        </div>
 
         {/* WHERE IT DRAWS, for a clip that is under the picture. Only shown
             when it is actually on a lane and actually has a picture: the
@@ -929,7 +991,9 @@ function DetailsPanel({
             `set-node-placement`, so unlike the tag editor below it IS
             undoable. */}
         {(node.trackIndex ?? 0) > 0 && node.mediaKind !== "audio" && (
-          <LayerFramePicker node={node} aspect={detail?.aspect} disabled={live !== null} />
+          <div className="hidden @min-[30rem]:block">
+            <LayerFramePicker node={node} aspect={detail?.aspect} disabled={live !== null} />
+          </div>
         )}
 
         {/* Tags. Here rather than on the card because the card's content
@@ -944,9 +1008,10 @@ function DetailsPanel({
             the control describes itself, and at nine panels the heading was
             nine lines of the word. One hairline stays, because the panel still
             needs a foot to sit on. */}
-        <div className="border-t border-white/10 pt-2">
+        <div className="hidden border-t border-white/10 pt-2 @min-[30rem]:block">
           <TagEditor nodeId={node.id} />
         </div>
+      </div>
       </div>
   );
 }
@@ -1049,6 +1114,14 @@ function DetailsFilmstripModal({
       showingSeconds: mediaDurationSeconds(media),
       trimInSeconds: windowed ? windowed.trimInSeconds : 0,
       fullSeconds: windowed ? windowed.fullDurationSeconds : mediaDurationSeconds(media),
+      // A video's poster, or the still itself. Audio has neither, and gets no
+      // thumbnail rather than a broken one.
+      posterSrc:
+        media.mediaKind === "video"
+          ? media.posterSrcs?.[0]
+          : media.mediaKind === "audio"
+            ? undefined
+            : media.src,
     };
   };
 

@@ -704,14 +704,15 @@ export const TheNeighboursSayWhichFrameTheyShow: Story = {
 };
 
 /**
- * TWO MARKS, TWO QUESTIONS, AND THEY OVERLAP.
+ * ONE MARK, AND IT SAYS SOMETHING THAT CHANGES.
  *
- * "Which clip did I open" is the white border; "whose frames are on screen" is
- * the red ring. The centre panel is usually both at once, so the pair has to
- * survive being true together — which is why one is a border and the other a
- * ring rather than two things competing for the same edge.
+ * Panels are identical until the clock runs; then whichever clip's frames are
+ * on screen wears the red. "Which clip did I open" needs no mark at all — it
+ * is the one in the middle, with the rename field and the close button — and
+ * the heavy white border that used to say it was both the loudest thing on the
+ * screen and a pixel of stolen geometry.
  */
-export const TheOpenedClipAndTheLiveClipAreMarkedSeparately: Story = {
+export const OnlyTheLiveClipIsMarked: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     const track = await waitFor(() => {
@@ -725,19 +726,20 @@ export const TheOpenedClipAndTheLiveClipAreMarkedSeparately: Story = {
     const neighbour = () =>
       document.querySelector<HTMLElement>('[data-item-details-panel="neighbour"]')!;
 
-    // The opened clip is bordered white whether or not anything is playing —
-    // it answers a question about the modal, not about the clock. Asserted
-    // AGAINST A NEIGHBOUR rather than against a colour string: Tailwind emits
-    // `oklab(...)` here, and a test that pins the notation breaks the next
-    // time the toolchain changes how it spells the same white.
-    expect(getComputedStyle(centre()).borderTopWidth).toBe("2px");
-    expect(getComputedStyle(neighbour()).borderTopWidth).toBe("1px");
-    expect(getComputedStyle(centre()).borderTopColor).not.toBe(
-      getComputedStyle(neighbour()).borderTopColor,
+    // EVERY PANEL LOOKS THE SAME UNTIL SOMETHING IS TRUE OF IT. The opened
+    // clip wore a heavy white border for a while; it was the loudest mark on
+    // the screen, spent on the one fact the layout already tells you — the
+    // centre panel is in the centre — and it cost a pixel of geometry to say
+    // it. Identical borders AND identical shadows, until the clock runs.
+    expect(getComputedStyle(centre()).borderTopWidth).toBe(
+      getComputedStyle(neighbour()).borderTopWidth,
+    );
+    expect(getComputedStyle(centre()).boxShadow).toBe(
+      getComputedStyle(neighbour()).boxShadow,
     );
 
     // Nothing engaged: no red anywhere.
-    expect(ringOf(centre())).not.toMatch(/239, 68, 68/);
+    expect(ringOf(centre())).not.toMatch(/56, 189, 248/);
 
     const box = track.getBoundingClientRect();
     const args = { clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 };
@@ -747,10 +749,12 @@ export const TheOpenedClipAndTheLiveClipAreMarkedSeparately: Story = {
 
     // Scrubbed into the centre clip: red joins the white, rather than
     // replacing it.
-    await waitFor(() => expect(ringOf(centre())).toMatch(/239, 68, 68/));
+    await waitFor(() => expect(ringOf(centre())).toMatch(/56, 189, 248/));
+    // Scrubbed into the centre clip: the red mark appears, and the geometry
+    // is untouched by it — a box-shadow is painted outside the box.
     const both = getComputedStyle(centre());
-    expect(both.borderTopWidth).toBe("2px");
-    expect(both.borderTopColor).not.toBe(getComputedStyle(neighbour()).borderTopColor);
+    expect(both.borderTopWidth).toBe(getComputedStyle(neighbour()).borderTopWidth);
+    expect(both.boxShadow).toMatch(/56, 189, 248/);
   },
 };
 
@@ -979,5 +983,108 @@ export const TagsAreAddedFromAnIcon: Story = {
     fireEvent.keyDown(field, { key: "Escape" });
     await waitFor(() => expect(editor.querySelector("[data-tag-popover]")).toBeNull());
     expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull();
+  },
+};
+
+/**
+ * THE PICTURES LINE UP, AND NARROW PANELS SHED THEIR CONTROLS.
+ *
+ * Two claims, and the first one is the reason the second exists. This view is
+ * for comparing frames across panels, so the frames have to occupy the same
+ * box in every one of them — and they did not: the opened clip carried a 2px
+ * border against its neighbours' 1px, which pushed its picture down a pixel
+ * and shortened it by two. The mark is a RING now, painted outside the box,
+ * so it costs no layout at all.
+ *
+ * The second is a container query, not a count. Five panels on a large monitor
+ * have more room each than three on an iPad, so the rule is the panel's own
+ * width: below 30rem the trim strip, the tags and the header's extras go, and
+ * the panel fits its picture instead of holding two thirds of the screen with
+ * most of it black.
+ */
+export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    await waitFor(() => expect(panels().length).toBe(3));
+
+    const geometry = () =>
+      panels().map((panel) => {
+        const frame = panel.querySelector<HTMLElement>("[data-item-details-frame]")!;
+        const box = frame.getBoundingClientRect();
+        return `${Math.round(box.top * 10) / 10}/${Math.round(box.height * 10) / 10}`;
+      });
+    const borders = () =>
+      panels().map((panel) => getComputedStyle(panel).borderTopWidth);
+    const visible = (selector: string) =>
+      panels().some(
+        (panel) => (panel.querySelector(selector)?.getBoundingClientRect().height ?? 0) > 0,
+      );
+    const press = async (label: string) => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>("[data-details-view-count] button"),
+      ).find((b) => b.textContent?.trim() === label)!;
+      fireEvent.click(button);
+      await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
+    };
+
+    // EVERY panel has the same border, so none of them is a pixel out.
+    expect(new Set(borders()).size).toBe(1);
+    // And every frame occupies exactly the same box.
+    await waitFor(() => expect(new Set(geometry()).size).toBe(1));
+
+    // Nine up is narrow on any viewport this runs at: the controls go.
+    await press("9");
+    await waitFor(() => expect(visible("[data-trim-overview]")).toBe(false));
+    expect(visible("[data-tag-editor]")).toBe(false);
+    expect(visible("[data-item-details-undo]")).toBe(false);
+    // Still aligned, and still identically bordered.
+    expect(new Set(geometry()).size).toBe(1);
+    expect(new Set(borders()).size).toBe(1);
+
+    // The name survives everything — it is what says which clip this is.
+    expect(
+      panels().every((panel) => (panel.textContent ?? "").trim().length > 0),
+    ).toBe(true);
+  },
+};
+
+/**
+ * EACH SECTION OF THE BAR CARRIES ITS OWN FRAME.
+ *
+ * The bar divides into one span per clip, and a hairline was all that told
+ * them apart — you could see THAT the run of time was three clips without
+ * seeing WHICH. A still says it at a glance.
+ *
+ * At the section's right-hand end, because that is where it meets its cut: the
+ * frame sits against the seam it is about to hand over at, which is the thing
+ * the bar exists to let you judge.
+ */
+export const TheBarLabelsItsSectionsWithFrames: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    const track = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-seam-track]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const thumbs = () =>
+      Array.from(track.querySelectorAll<HTMLImageElement>("[data-seam-thumb]"));
+
+    await waitFor(() => expect(thumbs().length).toBeGreaterThan(0));
+
+    const trackBox = track.getBoundingClientRect();
+    for (const thumb of thumbs()) {
+      const box = thumb.getBoundingClientRect();
+      // Inside the bar, and each one showing something.
+      expect(box.left).toBeGreaterThanOrEqual(trackBox.left - 1);
+      expect(box.right).toBeLessThanOrEqual(trackBox.right + 1);
+      expect(thumb.getAttribute("src")).toBeTruthy();
+      // Decorative: the bar is already labelled, and a frame is not a caption.
+      expect(thumb.getAttribute("aria-hidden")).toBe("true");
+      // A native image drag inside a scrub bar would eat the gesture.
+      expect(thumb.draggable).toBe(false);
+    }
   },
 };
