@@ -495,8 +495,22 @@ function DetailsPanel({
         // centre panel of a modal nobody has touched would read as a selection
         // rather than as a position.
         className={[
-          "relative flex shrink-0 flex-col gap-3 rounded-lg border bg-zinc-950 p-4 focus-visible:outline-none",
+          "relative flex shrink-0 flex-col gap-3 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
           "transition-[box-shadow,border-color] duration-150",
+          // THE OPENED CLIP WEARS A WHITE BORDER, twice the weight of a
+          // neighbour's. Two different questions get two different marks here
+          // and they are often true at once: WHICH CLIP DID I OPEN is the
+          // white border, and WHOSE FRAMES ARE ON SCREEN is the red ring
+          // below. The centre is usually both, so they have to be legible
+          // together rather than one overwriting the other — hence a border
+          // for one and a ring for the other, the ring sitting outside the
+          // border where it cannot hide it.
+          //
+          // Thicker on the border-box, so it eats padding rather than growing
+          // the panel: the row's geometry is what the slide animates against,
+          // and a centre panel two pixels wider than its neighbours would put
+          // every landing off by one.
+          centre ? "border-2 border-white/90" : "border border-zinc-700",
           // ONE shadow utility per state, both spelled out. Layering a glow on
           // top of `shadow-2xl` would mean two classes setting `box-shadow`,
           // and which one wins is a question about stylesheet order rather
@@ -504,8 +518,8 @@ function DetailsPanel({
           // shadow is written into both branches and the glow is simply a
           // second layer of the live one.
           onScreen
-            ? "border-red-500/50 ring-1 ring-red-500/40 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_30px_4px_rgba(239,68,68,0.22)]"
-            : "border-zinc-700 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
+            ? "ring-2 ring-red-500/70 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_1px_rgba(239,68,68,0.7),0_0_44px_10px_rgba(239,68,68,0.45)]"
+            : "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
           DETAILS_PANEL_HEIGHT_CLASS,
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}

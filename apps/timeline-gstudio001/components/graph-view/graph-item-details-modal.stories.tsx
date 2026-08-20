@@ -674,3 +674,54 @@ export const TheNeighboursSayWhichFrameTheyShow: Story = {
     );
   },
 };
+
+/**
+ * TWO MARKS, TWO QUESTIONS, AND THEY OVERLAP.
+ *
+ * "Which clip did I open" is the white border; "whose frames are on screen" is
+ * the red ring. The centre panel is usually both at once, so the pair has to
+ * survive being true together — which is why one is a border and the other a
+ * ring rather than two things competing for the same edge.
+ */
+export const TheOpenedClipAndTheLiveClipAreMarkedSeparately: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    const track = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-seam-track]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
+    const ringOf = (panel: HTMLElement) => getComputedStyle(panel).boxShadow;
+
+    const neighbour = () =>
+      document.querySelector<HTMLElement>('[data-item-details-panel="neighbour"]')!;
+
+    // The opened clip is bordered white whether or not anything is playing —
+    // it answers a question about the modal, not about the clock. Asserted
+    // AGAINST A NEIGHBOUR rather than against a colour string: Tailwind emits
+    // `oklab(...)` here, and a test that pins the notation breaks the next
+    // time the toolchain changes how it spells the same white.
+    expect(getComputedStyle(centre()).borderTopWidth).toBe("2px");
+    expect(getComputedStyle(neighbour()).borderTopWidth).toBe("1px");
+    expect(getComputedStyle(centre()).borderTopColor).not.toBe(
+      getComputedStyle(neighbour()).borderTopColor,
+    );
+
+    // Nothing engaged: no red anywhere.
+    expect(ringOf(centre())).not.toMatch(/239, 68, 68/);
+
+    const box = track.getBoundingClientRect();
+    const args = { clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 };
+    const x = box.left + box.width * 0.5;
+    fireEvent.pointerDown(track, { ...args, clientX: x });
+    fireEvent.pointerUp(track, { ...args, clientX: x });
+
+    // Scrubbed into the centre clip: red joins the white, rather than
+    // replacing it.
+    await waitFor(() => expect(ringOf(centre())).toMatch(/239, 68, 68/));
+    const both = getComputedStyle(centre());
+    expect(both.borderTopWidth).toBe("2px");
+    expect(both.borderTopColor).not.toBe(getComputedStyle(neighbour()).borderTopColor);
+  },
+};
