@@ -3156,6 +3156,82 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 15000 });
   });
 
+  test("a grid card's play starts THAT card, and its cue only seeks", async ({ page }) => {
+    // The bug this exists for: play wrote the seek and the play flag in one
+    // React batch, and the pane — a controlled player — ignores an incoming
+    // time while it is playing. The seek was dropped, so pressing any card
+    // played from wherever the pane already was; and because the pause state
+    // is derived from "is the playhead inside this clip", the button never
+    // flipped either. One dropped write, two broken controls, and no suite
+    // noticed.
+    await installGraphApi(page);
+    await page.goto(`${GRAPH_URL}?surface=grid`);
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toHaveCount(1);
+    await previewToggle(page).click();
+    // The buttons wait for the pane to stop moving, like the rails do.
+    await page.locator("[data-preview-settled]").waitFor({ state: "attached" });
+
+    // Seconds off the transport's readout. It renders the value twice (a
+    // visible span and a screen-reader one), so the FIRST match is the clock.
+    const clock = async () => {
+      const text = (await page.getByTestId("workbench-preview-time").textContent()) ?? "";
+      const match = text.match(/([\d.]+)\s*s/);
+      return match === null ? Number.NaN : Number(match[1]);
+    };
+
+    // BRAVO, not the first card: a clip whose start is not zero is the only
+    // one that can tell "went to this clip" apart from "did nothing".
+    const cue = page.locator('[data-grid-cue="bravo"]');
+    const play = page.locator('[data-grid-play="bravo"]');
+    await expect(cue).toBeVisible();
+    await expect(play).toBeVisible();
+
+    // CUE: lands on bravo's start and STAYS there.
+    await cue.click();
+    await expect.poll(clock).toBeGreaterThan(0);
+    const start = await clock();
+    await page.waitForTimeout(600);
+    expect(await clock()).toBe(start);
+    // And having arrived, the cue has nothing left to do — disabled rather
+    // than hidden, so it does not take its own explanation away with it or
+    // shift the button beside it.
+    await expect(cue).toBeDisabled();
+
+    // MOVE THE PLAYHEAD AWAY FIRST, and this is the step that gives the test
+    // its teeth. Written the obvious way — cue bravo, then play bravo — the
+    // clock is ALREADY at bravo's start when play is pressed, so a play that
+    // drops its seek entirely still plays from the right place and the test
+    // passes against the very bug it exists for. Confirmed: it did.
+    await page.locator('[data-grid-cue="alpha"]').click();
+    await expect.poll(clock).toBeLessThan(start);
+    // Moved away, so bravo's cue is live again.
+    await expect(cue).toBeEnabled();
+
+    // PLAY: jumps back to bravo's own start — the two controls have to agree
+    // about where a clip begins — and then actually advances.
+    await play.click();
+    await expect.poll(clock).toBeGreaterThanOrEqual(start);
+    // Near it, not somewhere else entirely: a dropped seek leaves the clock
+    // back at alpha's start, and a generous window still catches that while
+    // tolerating the frames spent getting here.
+    expect(await clock()).toBeLessThan(start + 2);
+
+    // While it plays this card offers PAUSE and no cue — the playhead is
+    // already inside it, so "go to its start" would be a rewind nobody asked
+    // for.
+    // THIS card's button, not any button reading "Pause" — the transport has
+    // one too, and matching by role alone finds both.
+    await expect(play).toHaveAttribute("aria-label", /^Pause /);
+    await expect(cue).toHaveCount(0);
+
+    // Pressing again holds where it is rather than rewinding.
+    await play.click();
+    const held = await clock();
+    await page.waitForTimeout(500);
+    expect(await clock()).toBe(held);
+    await expect(cue).toBeVisible();
+  });
+
   test("a trashed item restores into the timeline you are looking at", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);

@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Pause, Play, SkipBack } from "lucide-react";
+import { Pause, Play, SkipForward } from "lucide-react";
 
 import {
   getChildren,
@@ -41,6 +41,10 @@ import type { PreviewTimeChannel } from "./preview-time-channel";
  * exactly how this was first found.
  */
 type CardStart = Readonly<{ start: number; end: number; disabled: boolean }>;
+
+/** Near enough to a clip's start to call it there. A frame at 25fps is 0.04s,
+ *  so this is "within a frame" without pretending the clock is exact. */
+const AT_START_SECONDS = 0.05;
 
 const ClipStartsContext = createContext<ReadonlyMap<string, CardStart> | null>(null);
 
@@ -116,7 +120,11 @@ export function GraphGridPlayButton({
   // timeline re-renders exactly two buttons per crossing rather than the whole
   // grid on every tick. That was the objection to a toggle; a boolean snapshot
   // answers it.
-  const playingHere = useSyncExternalStore(
+  // ONE STRING, not two booleans. Both facts come from the same two values and
+  // are mutually exclusive, so a single snapshot means one subscription and one
+  // bail-out check — and, more usefully, makes it impossible to render a card
+  // that claims to be playing AND parked at its own start.
+  const cardState = useSyncExternalStore(
     (onChange) => {
       const stopTime = channel.subscribe(onChange);
       const stopPlaying = channel.subscribePlaying(onChange);
@@ -126,12 +134,18 @@ export function GraphGridPlayButton({
       };
     },
     () => {
-      if (card === undefined || !channel.isPlaying()) return false;
+      if (card === undefined) return "idle";
       const now = channel.get();
-      return now >= card.start && now < card.end;
+      if (channel.isPlaying() && now >= card.start && now < card.end) return "playing";
+      return Math.abs(now - card.start) < AT_START_SECONDS ? "at-start" : "idle";
     },
-    () => false,
+    () => "idle",
   );
+  const playingHere = cardState === "playing";
+  // ALREADY THERE, so the cue has nothing to do. Disabled rather than hidden:
+  // a control that vanishes when you have just used it takes its own
+  // explanation with it, and the gap left behind moves the button beside it.
+  const alreadyAtStart = cardState === "at-start";
   const node = useCollectionsSelector((snapshot) => snapshot.graph.nodesById.get(nodeId) ?? null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -260,9 +274,17 @@ export function GraphGridPlayButton({
       </button>
 
       {/* CUE, not play: the playhead moves to this clip's start and stops
-          there. The transport's own "go to start" glyph, reused deliberately —
-          it means the same thing here, and inventing a second symbol for one
-          action is how two controls end up disagreeing about what they do.
+          there. The transport's own skip glyph, reused rather than invented —
+          a second symbol for one action is how two controls end up disagreeing
+          about what they do.
+
+          POINTING FORWARD. The back-facing twin was the literal reading — "go
+          to the start of this" — but from the board the gesture is a jump
+          ACROSS the timeline to a card you can see, and most of the cards you
+          reach for are ahead of where the playhead is sitting. Facing it
+          backwards made a forward jump look like a rewind. It is the same
+          glyph rotated; the direction it points is the only thing being said
+          here, and it should agree with the direction you are travelling.
 
           Hidden while THIS clip is playing: the playhead is already inside it,
           so "go to its start" during playback would be a rewind nobody asked
@@ -272,16 +294,21 @@ export function GraphGridPlayButton({
         <button
           type="button"
           data-grid-cue={nodeId as string}
+          disabled={alreadyAtStart}
           aria-label={`Move the playhead to the start of ${node.name}`}
-          title={`Go to the start of ${node.name}`}
+          title={
+            alreadyAtStart
+              ? `The playhead is already at the start of ${node.name}`
+              : `Go to the start of ${node.name}`
+          }
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             channel.set(card.start);
           }}
-          className={discClass}
+          className={`${discClass} disabled:pointer-events-none disabled:opacity-40`}
         >
-          <SkipBack aria-hidden="true" className="size-3.5" fill="currentColor" />
+          <SkipForward aria-hidden="true" className="size-3.5" fill="currentColor" />
         </button>
       )}
       </div>
