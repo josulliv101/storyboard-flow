@@ -31,6 +31,7 @@ import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
+import { DetailsFilmstrip } from "./graph-details-filmstrip";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -258,7 +259,18 @@ function CollectionDetails({
   );
 }
 
-function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () => void }>) {
+function ModalBody({
+  node,
+  onClose,
+  onOpenNeighbour,
+}: Readonly<{
+  node: MediaNode;
+  onClose: () => void;
+  /** Re-centre on a flanking clip. Not `setOpenId` directly: the modal also
+   *  tracks which id is MOUNTED, and letting those two drift is what hands the
+   *  hero back to the wrong card when the modal finally closes. */
+  onOpenNeighbour: (id: string) => void;
+}>) {
   const live = useLiveTrim(node.id);
   // For the inset picker: the clip's shape decides the inset's height, and
   // therefore which preset a stored rectangle came from.
@@ -424,7 +436,12 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
           </div>
         </div>
 
-        {/* The hero: this is what the card morphs INTO. */}
+        {/* The hero, now the middle frame of a three-up strip: the clips either
+            side are the ones that play either side, and both run off the panel
+            edges. The `view-transition-name` stays HERE, on the subject — it is
+            what the card morphs into, and a neighbour carrying it would land
+            the open animation on the wrong picture. */}
+        <DetailsFilmstrip nodeId={node.id as string} onOpen={onOpenNeighbour}>
         <div
           data-item-details-frame
           style={{ viewTransitionName: HERO }}
@@ -463,6 +480,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
             </span>
           )}
         </div>
+        </DetailsFilmstrip>
 
         {/* The whole source, with the showing window and its grips — the trim
             handles, at a width the board could never give them. */}
@@ -638,5 +656,21 @@ export function GraphItemDetailsModal() {
     return <CollectionDetails node={node} onClose={() => setOpenId(null)} />;
   }
   if (!node.src) return null;
-  return <ModalBody node={node} onClose={() => setOpenId(null)} />;
+  return (
+    <ModalBody
+      node={node}
+      onClose={() => setOpenId(null)}
+      onOpenNeighbour={(id) => {
+        // BOTH, in one go. `openId` is what the modal renders; `mountedId` is
+        // what it hands the hero name back to when it closes. The open/close
+        // effect only fires when those two disagree about whether anything is
+        // open at all, so swapping between two clips never runs a transition —
+        // it is a plain re-render, which is exactly the slide this wants. But
+        // leaving `mountedId` on the clip you arrived from means the closing
+        // animation morphs into THAT card rather than the one on screen.
+        setMountedId(id);
+        setOpenId(id);
+      }}
+    />
+  );
 }
