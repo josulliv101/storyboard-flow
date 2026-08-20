@@ -170,7 +170,19 @@ export const GraphClipContent = memo(function GraphClipContent({
   // The row does NOT collapse when this is null: the kind icon still holds the
   // line, so an unnamed card's caption stays on the same grid as a named one's
   // and as a collection's.
-  const captionName = detail?.title ?? null;
+  //
+  // AND GATED ON THE SETTING, same as the overlay on the strip. "Show name
+  // over item" is one question — do I want to read names right now — and it
+  // was only answering it on one of the two surfaces, so switching to the grid
+  // brought every name back. The rest of the caption is unaffected: the kind
+  // icon, the duration and the tags are facts about the clip you cannot read
+  // off the artwork, while the name is the one thing this setting is about.
+  //
+  // Nothing else has to change for the row to survive it, because the row was
+  // already built to lose this: the icon holds the height and the left edge,
+  // the metadata's `ml-auto` holds the right, and an unnamed card has always
+  // sat on the same grid as a named one.
+  const captionName = clipNamesShown ? (detail?.title ?? null) : null;
   const captionSeconds = Number(mediaDurationSeconds(node)) || 0;
   return (
     <span
@@ -190,7 +202,15 @@ export const GraphClipContent = memo(function GraphClipContent({
         // caption row there is fixed overhead on every clip, and clip width is
         // duration, so a narrow clip has no room for one anyway.
         "[[data-virtual-grid]_&]:flex-col",
-        selected ? "ring-2 ring-inset ring-blue-500" : "ring-1 ring-white/15",
+        // SELECTED is a full blue ring. NOT-selected-but-selectable is the
+        // faintest blue this ring can carry and still read as blue — the point
+        // is to say "you can pick these now", not "this one is picked", and
+        // anything stronger starts to look like the latter on a card you have
+        // not touched. It replaces the neutral hairline rather than adding to
+        // it, so nothing moves and nothing thickens; only the colour changes.
+        selected
+          ? "ring-2 ring-inset ring-blue-500"
+          : "ring-1 ring-white/15 [[data-select-mode]_&]:ring-sky-400/30",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
         // Disabled reads as MUTED, never as missing: the card keeps its slot
         // and its full width (its duration still shapes the board), it just
@@ -386,7 +406,10 @@ export const GraphClipContent = memo(function GraphClipContent({
               the metadata's `ml-auto` holds its right edge, so the row keeps
               its shape whether or not there is a name between them. */}
           {captionName === null ? null : (
-            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100">
+            <span
+              data-clip-caption-name
+              className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100"
+            >
               {captionName}
             </span>
           )}

@@ -457,6 +457,25 @@ async function gridOrder(page: Page, collectionId: string): Promise<string[]> {
     .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
 }
 
+/**
+ * The opened clip's own panel inside the details view.
+ *
+ * THE DETAILS VIEW IS A STRIP: three panels by default, and up to nine, each
+ * one fully live and each carrying the same hooks — a trim map, an in/out
+ * pair, a disable toggle, an undo. So a page-wide `[data-item-details-*]`
+ * locator now matches once per panel. Playwright's strict mode refuses that
+ * rather than silently taking the first, which is exactly how this suite
+ * caught the change: six tests failed with "resolved to 3 elements" the first
+ * time the strip landed.
+ *
+ * Scoping to the centre is the right answer rather than `.first()`: these
+ * tests are about the clip that was OPENED, and `.first()` would keep passing
+ * if the strip's ordering ever changed under them.
+ */
+function detailsPanel(page: Page): Locator {
+  return page.locator('[data-item-details-panel="centre"]');
+}
+
 async function openGraph(page: Page): Promise<void> {
   // GRID is the bare-URL load default; this suite's tests are written
   // against strips, so land directly in strip layout via the deep-link
@@ -1258,7 +1277,7 @@ test.describe("graph view E2E", () => {
     await openItemDetails(page, "alpha");
     await settleViewTransition(page);
 
-    const toggle = page.locator("[data-item-details-disable]");
+    const toggle = detailsPanel(page).locator("[data-item-details-disable]");
     await expect(toggle).toHaveText("Disable");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
@@ -1274,7 +1293,7 @@ test.describe("graph view E2E", () => {
     // The modal's SCOPED undo covers it: `useScopedHistory` already accepted
     // `set-node-disabled` naming a single node, so this needed no new wiring —
     // which is the reason the command is dispatched that way.
-    await page.locator("[data-item-details-undo]").click();
+    await detailsPanel(page).locator("[data-item-details-undo]").click();
     await expect(toggle).toHaveText("Disable");
     await expect(alphaCard.locator('[data-disabled="true"]')).toHaveCount(0);
   });
@@ -2243,21 +2262,32 @@ test.describe("graph view E2E", () => {
     await expect(redoButton(page)).toBeDisabled();
   });
 
-  test("the preview OPENS at its height instead of animating into it", async ({ page }) => {
+  test("the preview is UNCOVERED, and its contents do not grow inside the reveal", async ({
+    page,
+  }) => {
     await installGraphApi(page);
     await openGraph(page);
 
-    // Listen before the toggle: the mount-time sizing pass measures the real
-    // height a frame or two after the placeholder one paints, so a height
-    // transition armed at mount plays as a visible shrink — every first open,
-    // and only the first (a reopen restores the remembered height).
+    // This test used to assert that NO height transition ran on open — the
+    // pane appeared at its size. It slides now: the board moves down off a
+    // pane that stays still, so a height transition is exactly what should
+    // run. What has NOT changed is the reason the old assertion existed.
+    //
+    // The mount-time sizing pass measures the real height a frame or two after
+    // a placeholder one paints, so a transition armed on the INNER pane plays
+    // as a visible shrink on every first open. With the reveal on top of that,
+    // two nested height animations run over the same pixels on different
+    // curves — the pane growing inside the thing uncovering it. So the claim
+    // is now about WHICH element animates, not whether any does.
     await page.evaluate(() => {
       const runs: string[] = [];
       (window as unknown as { __heightRuns: string[] }).__heightRuns = runs;
       document.addEventListener(
         "transitionrun",
         (event) => {
-          if ((event as TransitionEvent).propertyName === "height") runs.push("height");
+          if ((event as TransitionEvent).propertyName !== "height") return;
+          const target = event.target as HTMLElement;
+          runs.push(target.dataset?.testid ?? "other");
         },
         true,
       );
@@ -2265,16 +2295,22 @@ test.describe("graph view E2E", () => {
 
     await previewToggle(page).click();
     await expect(page.locator('[data-testid="workbench-display-canvas"]')).toBeVisible();
-    await page.waitForTimeout(500);
+    // Long enough to cover the settle wait plus the slide itself.
+    await page.waitForTimeout(1200);
 
     const runs = await page.evaluate(
       () => (window as unknown as { __heightRuns: string[] }).__heightRuns,
     );
-    expect(runs).toEqual([]);
+    // The REGION slides…
+    expect(runs).toContain("workbench-preview-region");
+    // …and nothing else does. An entry of "other" here is the inner pane
+    // animating its own height inside the reveal, which is the failure this
+    // test has always been about.
+    expect(runs.filter((run) => run !== "workbench-preview-region")).toEqual([]);
 
-    // The transition is still armed afterwards, for a viewport clamp.
-    const pane = page.locator('[data-testid="workbench-preview-region"] > div').first();
-    await expect(pane).toHaveClass(/transition-\[height\]/);
+    // And it settles: the pane reports itself open and still, which is the
+    // signal the rails and their padding wait for.
+    await expect(page.locator("[data-preview-settled]")).toHaveCount(1);
   });
 
   test("a dropped card animates out of the ghost, not back to where it started", async ({
@@ -2467,6 +2503,12 @@ test.describe("graph view E2E", () => {
     await installGraphApi(page);
     await openGraph(page);
     await previewToggle(page).click();
+    // The pane SLIDES open and its chrome fades in once it lands, so every
+    // measurement below has to be taken against a pane that has stopped
+    // moving — otherwise "the transport does not move on hover" is measured
+    // across a transport that was still arriving. `data-preview-settled` is
+    // the pane saying it is open and still.
+    await page.locator("[data-preview-settled]").waitFor({ state: "attached" });
 
     const surface = page.getByTestId("workbench-display-surface");
     const canvas = page.getByTestId("workbench-display-canvas");
@@ -2891,12 +2933,42 @@ test.describe("graph view E2E", () => {
     // into the top band and the drag stopped resolving at all (6 in 6). Both
     // edges auto-scroll, so a two-row drag in a short viewport has no safe
     // scroll offset — it needs the room.
-    await page.setViewportSize({ width: 420, height: 1040 });
+    // RAISED AGAIN, 1040 -> 1440, for the same reason and by the same
+    // reasoning as the note above.
+    //
+    // At 420 wide this grid is ONE column, so the four clips stack: measured,
+    // alpha at y=615, bravo at 851, the child at 1087. `holdDrag` releases at
+    // 0.9 of the target, which puts the drop point at y≈1049 — BELOW a 1040
+    // viewport. A release off the bottom edge sits in dnd-kit's auto-scroll
+    // band, the grid scrolls under the pointer, and the card lands a slot too
+    // far. That is exactly the failure this test saw before, and exactly the
+    // remedy: the drag needs the room, and scrolling the cards away from the
+    // edge was already tried and was worse.
+    //
+    // Height buys more than it costs here. The preview pane opens at a THIRD
+    // of the available height, so raising by 400 moves the grid down by ~133
+    // and the drop point down with it, netting ~267 of clearance.
+    await page.setViewportSize({ width: 420, height: 1440 });
     await installGraphApi(page);
     await openGraph(page);
     // Switch the surface to grid, then turn Preview on.
     await surfaceButton(page, "grid").click();
     await previewToggle(page).click();
+
+    // WAIT FOR THE PREVIEW TO FINISH ARRIVING, not just to start.
+    //
+    // The pane reveals over ~380ms and its rails — and the 16px of top padding
+    // that makes room for them — land when it settles, deliberately: painting
+    // them mid-slide put a repaint over a board that was still moving. The
+    // consequence for a test is that the grid's geometry changes about half a
+    // second after this click, and a hold-drag straddling that moment resolves
+    // against cards that shifted under the pointer. It reordered one slot too
+    // far, which is the same failure this test's own comment records from an
+    // earlier 40px of chrome appearing above the grid.
+    //
+    // `data-preview-settled` is the pane saying it has stopped moving, so this
+    // waits for the state the test is actually about.
+    await page.locator("[data-preview-settled]").waitFor({ state: "attached" });
 
     const playhead = page.locator("[data-graph-grid-playhead]");
     await expect(playhead).toBeVisible();
@@ -4719,7 +4791,7 @@ test.describe("graph view E2E", () => {
     // it up in the same frame.
     expect(await heroCount()).toBe(1);
     expect(
-      await page.locator("[data-item-details-frame]").evaluate((el) =>
+      await detailsPanel(page).locator("[data-item-details-frame]").evaluate((el) =>
         el instanceof HTMLElement ? el.style.viewTransitionName : "",
       ),
     ).toBe("trim-subject");
@@ -4745,7 +4817,7 @@ test.describe("graph view E2E", () => {
     await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
     await page.mouse.down();
     await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
-    await expect(page.locator("[data-item-details-edge]")).toHaveCount(1);
+    await expect(detailsPanel(page).locator("[data-item-details-edge]")).toHaveCount(1);
     await page.mouse.up();
     await expect
       .poll(async () => (await page.locator("[data-trim-overview-window]").boundingBox())!.width)
@@ -4888,9 +4960,15 @@ test.describe("graph view E2E", () => {
     await expect(details).toHaveCount(1);
     await expect(details).toContainText("bravo");
     // A still: its own image, no source map, and the duration it holds.
-    await expect(page.locator("[data-trim-overview]")).toHaveCount(0);
+    //
+    // SCOPED TO THE OPENED PANEL, because the strip shows this clip's
+    // NEIGHBOURS beside it and those are videos — page-wide, "no source map"
+    // is a claim about the whole strip rather than about the still, and it
+    // reads 2 rather than 0. The claim being made here has always been about
+    // bravo.
+    await expect(detailsPanel(page).locator("[data-trim-overview]")).toHaveCount(0);
     await expect(details).toContainText("still");
-    await expect(details.locator("img")).toHaveCount(1);
+    await expect(detailsPanel(page).locator("img")).toHaveCount(1);
 
     // The name is editable here as well — the point of the view generalizing.
     // One click, like the breadcrumb crumb (PL14-010).
@@ -4994,8 +5072,8 @@ test.describe("graph view E2E", () => {
     await selectCard(alpha);
     await openItemDetails(page, "alpha");
 
-    const inField = page.locator('[data-trim-field="in"]');
-    const outField = page.locator('[data-trim-field="out"]');
+    const inField = detailsPanel(page).locator('[data-trim-field="in"]');
+    const outField = detailsPanel(page).locator('[data-trim-field="out"]');
     await expect(inField).toHaveValue("0.00");
     await expect(outField).toHaveValue("6.00");
 
@@ -5075,11 +5153,11 @@ test.describe("graph view E2E", () => {
     await openItemDetails(page, "alpha");
 
     // A typed trim is the cleanest edit to assert on: exact, and one commit.
-    const inField = page.locator('[data-trim-field="in"]');
+    const inField = detailsPanel(page).locator('[data-trim-field="in"]');
     await inField.fill("2.00");
     await inField.press("Enter");
     await expect
-      .poll(() => page.locator('[data-trim-field="in"]').inputValue(), { timeout: 5000 })
+      .poll(() => detailsPanel(page).locator('[data-trim-field="in"]').inputValue(), { timeout: 5000 })
       .toBe("2.00");
     await page.keyboard.press("Escape");
 
@@ -5098,7 +5176,7 @@ test.describe("graph view E2E", () => {
         .toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
     await openItemDetails(page, "alpha");
-    await expect.poll(() => page.locator('[data-trim-field="in"]').inputValue(), {
+    await expect.poll(() => detailsPanel(page).locator('[data-trim-field="in"]').inputValue(), {
       timeout: 5000,
     }).toBe("0.00");
   });
@@ -5158,7 +5236,7 @@ test.describe("graph view E2E", () => {
     await expect(details).toHaveAttribute("data-item-details-kind", "collection");
     await expect(details).toContainText("Scene A");
     // Its facts, not a clip's: no trim fields anywhere in here.
-    await expect(page.locator("[data-trim-field]")).toHaveCount(0);
+    await expect(detailsPanel(page).locator("[data-trim-field]")).toHaveCount(0);
     await expect(details).toContainText("items");
 
     // Rename lands the same way it does from the card — through the child
@@ -5295,8 +5373,8 @@ test.describe("graph view E2E", () => {
     await selectCard(alpha);
     await openItemDetails(page, "alpha");
 
-    const undo = page.locator("[data-item-details-undo]");
-    const redo = page.locator("[data-item-details-redo]");
+    const undo = detailsPanel(page).locator("[data-item-details-undo]");
+    const redo = detailsPanel(page).locator("[data-item-details-redo]");
     // The newest entry is bravo's trim, not this clip's — so undo is offered
     // for nothing, even though the store itself can undo.
     await expect(undo).toBeDisabled();

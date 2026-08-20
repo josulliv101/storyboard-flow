@@ -72,6 +72,26 @@
 html {
   background: #09090b;
   scrollbar-color: #52525b #09090b;
+  /* THE GUTTER IS ALWAYS THERE, whether or not the scrollbar is.
+   *
+   * Opening the preview makes the page tall enough to need a scrollbar, and a
+   * scrollbar appearing narrows the viewport by its own width — so the whole
+   * board reflows sideways at the exact moment it is also sliding down. Two
+   * unrelated movements at once read as one janky one, and it is the
+   * horizontal half that makes it look broken rather than merely fast.
+   *
+   * MEASURED BOTH WAYS, because this was nearly removed on a wrong reading.
+   * The 16px shift that started the investigation turned out to be the rail
+   * padding, vertical, and for a while that looked like grounds to drop this.
+   * It was not: with the gutter off, opening the preview flips the document
+   * from unscrollable to scrollable, takes the viewport from 1920 to 1905, and
+   * lands two horizontal shifts of -7px. Both effects were real; only one of
+   * them was the one being chased.
+   *
+   * Costs those pixels permanently, and costs them when nothing is happening,
+   * which is the right trade: a fixed margin nobody notices beats a reflow
+   * everybody does. */
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -1421,4 +1441,29 @@ html {
     translate: none;
     scale: none;
   }
+}
+
+/* THE DETAILS MODAL'S TRIM WINDOW IS WHITE, not the board's blue.
+ *
+ * On the board the blue window is one accent shared with the card's ring and
+ * its handles — a selected clip and its trim widget reading as one thing. In
+ * the filmstrip modal that argument does not hold: nothing there is selected,
+ * three strips are on screen at once, and blue now belongs to the transport.
+ * White separates the window you can drag from the playhead crossing it.
+ *
+ * DONE AS A CSS OVERRIDE because the package owns this deliberately: the
+ * components registry lets a consumer replace the filmstrip BACKGROUND
+ * (`OverviewContent`) while "the dims/window/grips/move gesture stay
+ * package-owned" — there is no prop for the accent, and inventing one would
+ * push a styling choice into a package that has no opinion about which app is
+ * rendering it. Literal colours rather than tokens, because this modal renders
+ * in a PORTAL and theme tokens do not resolve there.
+ */
+[data-item-details-panel] [data-trim-overview-window] {
+  border-color: rgb(255 255 255 / 0.85);
+  background-color: rgb(255 255 255 / 0.08);
+}
+
+[data-item-details-panel] [data-trim-overview-handle] {
+  background-color: rgb(255 255 255 / 0.95);
 }

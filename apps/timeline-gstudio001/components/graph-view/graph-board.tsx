@@ -40,6 +40,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { flattenMediaOrder, type DetailsById } from "@storyboard/timeline-domain";
+import { usePreviewSettled } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 
 import { formatDuration } from "@/lib/format-duration";
 import { graphClipboard } from "@/lib/graph-clipboard";
@@ -416,6 +417,29 @@ function FocusedAggregate({
   // load. Measured before this: the root board claimed 23:21 against a true
   // 21:55.
   const vouched = useCollectionSubtreeHydrated(focusedId);
+  // WHILE SELECTING, THIS SLOT SAYS WHAT TO DO INSTEAD OF WHAT IS THERE.
+  //
+  // The centre of this row is the one place in it that is not a control, which
+  // is what makes it the right place for a sentence — and the total is the
+  // least useful thing on screen at the moment someone has just armed a mode
+  // and is deciding what to click. The mode's other two signals are ambient
+  // (the panel tint) and per-item (the cards' faint rings); this is the one
+  // that can use words, so it does.
+  //
+  // "item(s)" rather than a count-aware plural: nothing has been picked yet,
+  // so there is no number to agree with, and "Select items below" quietly
+  // suggests you need more than one.
+  const selecting = useCollectionsSelector((s) => s.interaction.multiSelectMode);
+  if (selecting) {
+    return (
+      <span
+        data-focused-aggregate="selecting"
+        className="shrink-0 font-mono text-[11px] text-sky-300/90"
+      >
+        Select item(s) below
+      </span>
+    );
+  }
   if (count === 0) return null;
   return (
     <span
@@ -1870,6 +1894,27 @@ function BoardAddTools({
   );
 }
 
+/**
+ * Renders its children only once the preview has finished opening.
+ *
+ * WHY THE RAILS WAIT. They are the last thing to appear when the preview comes
+ * up, and they were appearing DURING the slide — a fresh paint over the board
+ * while the board is still travelling, which is the flicker in the grey area
+ * under a pane that has not landed yet. A height animation runs on the main
+ * thread, so this is not two things happening at once so much as one thing
+ * interrupting the other.
+ *
+ * It has to be its own component because the signal is a context published
+ * INSIDE the split pane, and the board's rails are rendered from a scope above
+ * that provider. Reading it here puts the question where the answer is.
+ *
+ * Nothing is lost by waiting: these are controls for a pane you cannot use
+ * until it has opened anyway.
+ */
+function AfterPreviewOpens({ children }: Readonly<{ children: React.ReactNode }>) {
+  return usePreviewSettled() ? <>{children}</> : null;
+}
+
 export function GraphBoard({
   projectId,
   focusedId,
@@ -1951,6 +1996,7 @@ export function GraphBoard({
   // no prerender/Suspense implications.
   const devParam = useSearchParams().get("dev");
   const devPanelsOn = devParam !== null && !["", "0", "false"].includes(devParam);
+
   // Zoom splits urgency (round-4 polish item 8): the slider thumb must track
   // the pointer, so its value stays URGENT — while the expensive work a zoom
   // step triggers (strip relayout, ruler rebuild, per-card resize fan-out)
@@ -2316,7 +2362,25 @@ export function GraphBoard({
               the rail, the menus — and it is what the mockup shows. */}
           <div
             data-board-panel
-            className="overflow-hidden rounded-xl bg-zinc-900/60 ring-1 ring-white/10"
+            // TINTED WHILE SELECTING, panel and all — the toolbar row with the
+            // counts and the tools, and the surface under it, are one thing and
+            // the mode applies to both.
+            //
+            // Barely there on purpose: this is the ambient half of the signal,
+            // saying "you are in a different mode" from the corner of the eye
+            // while the cards' faint rings say which things the mode acts on.
+            // A tint you actually notice competes with the artwork, which is
+            // what the board is for, and a board that changes colour to tell
+            // you something about the pointer has its priorities backwards.
+            //
+            // Transitioned, so arming the mode reads as the surface shifting
+            // rather than repainting.
+            className={[
+              "overflow-hidden rounded-xl ring-1 transition-colors duration-200",
+              multiSelectMode
+                ? "bg-sky-950/25 ring-sky-400/20"
+                : "bg-zinc-900/60 ring-white/10",
+            ].join(" ")}
           >
           <DragChromeFade>
             {/* The marker sits here rather than on DragChromeFade, which takes
@@ -2570,7 +2634,16 @@ export function GraphBoard({
               had no frame of its own. The panel is that frame now, and cards
               flush against its ring read as overflowing it, so the content
               takes the same gutter the header row has. */}
-          <div data-board-panel-content className="p-3">
+          {/* SELECT MODE, published for the cards below.
+              A data attribute rather than a store read in every card: this is
+              a whole-surface state and subscribing dozens of cards to it would
+              re-render all of them on a toggle, for a border colour. One
+              attribute here and a CSS variant there costs nothing. */}
+          <div
+            data-board-panel-content
+            data-select-mode={multiSelectMode ? "" : undefined}
+            className="p-3"
+          >
           {skeletonCount > 0 ? (
             <div data-focused-surface-shell={surface}>
               <SurfaceSkeleton
@@ -2657,7 +2730,10 @@ export function GraphBoard({
                 className={[
                   "rounded-none border-0 p-0",
                   GRAPH_STRIP_TRACK_CLASS,
-                  previewOn || rulerOn || waveformOn ? "pt-4" : "",
+                  // Same 16px, same wait, same one-step landing as the grid's
+                  // — see the note there. Ruler and waveform have no reveal to
+                  // wait for, so they still spend it immediately.
+                  rulerOn || waveformOn ? "pt-4" : "[[data-preview-settled]_&]:pt-4",
                 ].join(" ")}
               />
               {/* The strip's scrub control — the same rail treatment as the
@@ -2666,6 +2742,7 @@ export function GraphBoard({
                   auto-pans to reveal more items mid-scrub. Replaces the old
                   invisible PlayheadScrubBand. */}
               {previewOn && (
+                <AfterPreviewOpens>
                 <GraphStripSeekRail
                   focusedId={focusedId}
                   channel={timeChannel}
@@ -2673,6 +2750,7 @@ export function GraphBoard({
                   cardHeight={dims.strip}
                   laneScope="picture"
                 />
+                </AfterPreviewOpens>
               )}
                 </NativeDropStrip>
               </VideoFrameLookAhead>
@@ -2703,7 +2781,22 @@ export function GraphBoard({
                   // drag. "body" (the default) drags instantly, which ate the
                   // drill click and made drags ambiguous.
                   itemDragActivation="hold"
-                  trailingSlot={<AddCollectionSlot collectionId={focusedId} />}
+                  // NO TRAILING ADD SLOT IN THE GRID.
+                  //
+                  // It costs a whole cell, and when it wraps it costs a whole
+                  // ROW — `VirtualGrid` sizes itself as
+                  // `ceil((children + slot) / cols)`, so a grid whose item
+                  // count divides evenly by its columns grows a row holding
+                  // nothing but the slot, and everything below is pushed down
+                  // for it.
+                  //
+                  // Nothing is lost. The same two actions live in the header
+                  // as tools — "Collection" and "Media", both of which append
+                  // to the end of this surface — so the slot was a second
+                  // control for an action that already had one, paid for in
+                  // grid height. The STRIP keeps its slot: a strip grows
+                  // sideways, so its slot costs a card's width at the end of a
+                  // row that already existed rather than a new row.
                   overlay={
                     previewOn ? (
                       <GraphGridPlayhead
@@ -2715,19 +2808,43 @@ export function GraphBoard({
                     ) : undefined
                   }
                   // pt-4 = GRID_GAP: row 0's rail band matches the row gaps.
+                  //
+                  // TRANSITIONED, because this 16px is spent the instant the
+                  // preview is switched on — while the pane itself is still
+                  // getting ready to slide. Measured, the board jolted down
+                  // 16 pixels about 65ms after the click and the slide began
+                  // 30-80ms after THAT: a bump, a pause, then the movement,
+                  // which is most of what "not smooth at the beginning" was.
+                  // On the pane's own clock it stops being a separate event.
                   className={[
                     "rounded-none border-0 bg-transparent p-0",
-                    previewOn ? "pt-4" : "",
+                    // WAITS FOR THE SLIDE, and then lands in ONE STEP.
+                    //
+                    // It waits because the 16px used to be spent at the click,
+                    // mid-reveal, as a jolt against a moving pane. It does NOT
+                    // animate, and that is the second half of the lesson: a
+                    // transition here means this grid's layout moves for 380ms,
+                    // and this grid is a drag surface. The e2e suite caught it
+                    // at once — a hold-drag reordered one slot too far, which
+                    // is the same failure that test's own comment records from
+                    // an earlier 40px of chrome appearing above the grid. Cards
+                    // that shift under a pointer resolve the wrong drop.
+                    //
+                    // One step, at a moment when nothing else is moving and the
+                    // user is watching the pane arrive, is both calmer and safe.
+                    "[[data-preview-settled]_&]:pt-4",
                   ].join(" ")}
                 />
               </NativeDropGrid>
               {previewOn && (
-                <GraphSeekRails
-                  focusedId={focusedId}
-                  channel={timeChannel}
-                  cellHeight={dims.gridHeight}
-                  pixelsPerSecond={deferredPixelsPerSecond}
-                />
+                <AfterPreviewOpens>
+                  <GraphSeekRails
+                    focusedId={focusedId}
+                    channel={timeChannel}
+                    cellHeight={dims.gridHeight}
+                    pixelsPerSecond={deferredPixelsPerSecond}
+                  />
+                </AfterPreviewOpens>
               )}
             </div>
           )}

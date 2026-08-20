@@ -904,3 +904,127 @@ export const ADisabledPictureDoesNotGrayItsInset: Story = {
     await waitFor(async () => expect(isBlue(await pixelAt(canvasElement, 0.8, 0.68))).toBe(true));
   },
 };
+
+// ── THE REVEAL ──────────────────────────────────────────────────────────────
+
+function TogglingPreviewFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <main className="min-h-[900px] bg-zinc-950 p-4 text-zinc-100">
+      <button type="button" data-testid="toggle-preview" onClick={() => setOpen((was) => !was)}>
+        {open ? "Hide preview" : "Show preview"}
+      </button>
+      {/* The pane itself stays mounted either way — only the SURFACE comes and
+          goes, which is how the real board drives it (the lower pane keeps its
+          DOM identity, and with it the strip's scroll position). */}
+      <WorkbenchSplitPane
+        surface={
+          open ? (
+            <WorkbenchDisplaySurface
+              clips={[]}
+              currentTime={currentTime}
+              onCurrentTimeChange={setCurrentTime}
+              className="h-full rounded-b-none border-b-0"
+            />
+          ) : null
+        }
+      >
+        <div className="min-h-24" data-testid="lower-pane" />
+      </WorkbenchSplitPane>
+    </main>
+  );
+}
+
+/**
+ * THE PREVEW IS UNCOVERED, NOT INSERTED — and covered again on the way out.
+ *
+ * Opening used to be a mount at full size: the pane appeared and the board
+ * jumped down by a few hundred pixels in one frame. What is pinned here is the
+ * two facts that make it a reveal instead.
+ *
+ * ON THE WAY IN it must exist at zero height BEFORE it has any, because a
+ * height animates only from a style the browser has already seen — an element
+ * mounted at its final size never had one and would simply appear, which is
+ * the behaviour being replaced.
+ *
+ * ON THE WAY OUT it must outlive the consumer's `surface`, which goes null the
+ * instant the toggle flips. Without that the close animates an empty box shut
+ * — a blank gap collapsing rather than the board sliding back over a picture —
+ * and it is invisible in a screenshot, because the end state is identical
+ * either way.
+ */
+export const ThePreviewIsUncoveredRatherThanInserted: Story = {
+  render: () => <TogglingPreviewFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const region = () => canvasElement.querySelector<HTMLElement>('[data-testid="workbench-preview-region"]');
+
+    expect(region()).toBeNull();
+
+    await user.click(canvas.getByTestId("toggle-preview"));
+    // Present, and not yet revealed: this is the frame that gives the
+    // transition something to start from.
+    const opening = region();
+    expect(opening).not.toBeNull();
+    expect(opening).not.toHaveAttribute("data-preview-revealed");
+
+    // Generous, because the slide deliberately waits for the surface to settle
+    // before it starts — and under a full suite there is nothing settled about
+    // the machine.
+    await waitFor(() => expect(region()).toHaveAttribute("data-preview-revealed"), {
+      timeout: 3000,
+    });
+    expect(region()!.querySelector('[data-testid="workbench-display-surface"]')).not.toBeNull();
+
+    await user.click(canvas.getByTestId("toggle-preview"));
+    // Still here, still showing the picture the board is sliding back over.
+    const closing = region();
+    expect(closing).not.toBeNull();
+    expect(closing).not.toHaveAttribute("data-preview-revealed");
+    expect(closing!.querySelector('[data-testid="workbench-display-surface"]')).not.toBeNull();
+
+    // And gone once the slide is done — never left mounted at zero height,
+    // invisible and still holding a video element.
+    await waitFor(() => expect(region()).toBeNull(), { timeout: 2000 });
+  },
+};
+
+/**
+ * THE CHROME ARRIVES AFTER THE PICTURE, and only on the way in.
+ *
+ * The divider and the transport are controls for something that is not there
+ * yet while the pane is opening — a play button on a two-inch sliver of video
+ * — so they wait for it. Coming back out they stay visible and ride the close
+ * down, which reads as the board covering them rather than as two separate
+ * departures, and a second open fades them in again.
+ */
+export const TheChromeFadesInOnceThePreviewIsOpen: Story = {
+  render: () => <TogglingPreviewFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const region = () => canvasElement.querySelector<HTMLElement>('[data-testid="workbench-preview-region"]');
+
+    await user.click(canvas.getByTestId("toggle-preview"));
+    // Opening: hidden, so nothing is drawn over a half-open pane.
+    expect(region()).toHaveAttribute("data-preview-chrome", "out");
+    await waitFor(() => expect(region()).toHaveAttribute("data-preview-chrome", "in"), {
+      timeout: 2000,
+    });
+
+    // Closing: still visible. It is going away with the pane, not before it.
+    await user.click(canvas.getByTestId("toggle-preview"));
+    expect(region()).toHaveAttribute("data-preview-chrome", "in");
+    await waitFor(() => expect(region()).toBeNull(), { timeout: 2000 });
+
+    // And hidden again on the next open, rather than only ever fading once.
+    await user.click(canvas.getByTestId("toggle-preview"));
+    expect(region()).toHaveAttribute("data-preview-chrome", "out");
+    await waitFor(() => expect(region()).toHaveAttribute("data-preview-chrome", "in"), {
+      timeout: 2000,
+    });
+  },
+};

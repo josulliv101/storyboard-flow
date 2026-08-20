@@ -13,7 +13,9 @@ import {
   X,
 } from "lucide-react";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -180,6 +182,8 @@ const MIN_TIMELINE_SPACE = 260;
  *  It is also the drag hit target, and a taller one is strictly easier to
  *  grab — there is no cost here to spend against. */
 const DIVIDER_HEIGHT_PX = 44;
+
+
 /** Where the visible band's mid-line falls inside that box. The band is
  *  CENTERED on this line at every breakpoint rather than sized from the top,
  *  which is what lets it be 8px on desktop and 12px on coarse-pointer widths
@@ -302,7 +306,7 @@ function WorkbenchDividerTransport({
     <div
       role="group"
       aria-label="Preview transport"
-      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0"
+      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0 transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none"
       data-testid="workbench-preview-controls"
       data-transport-layout="static"
     >
@@ -1835,7 +1839,90 @@ type WorkbenchSplitPaneProps = {
    *  across unmounts. Store it in a ref: this fires per pointer move during a
    *  divider drag. */
   onSurfaceHeightChange?: (height: number) => void;
+  /**
+   * How the preview is uncovered and covered again.
+   *
+   * The DURATION and the EASING travel together, and the duration is a number
+   * rather than CSS, because the close is also a timer: the pane has to stay
+   * mounted for exactly as long as the slide takes. Split across a prop and a
+   * stylesheet they would drift, and the failure is a pane that unmounts
+   * mid-animation — or lingers invisibly afterwards, still holding a video.
+   *
+   * The default is a whisper of overshoot. Curves that overshoot are read as
+   * physical rather than as animated, and the pane weighs nothing, so it takes
+   * very little; the point is to look released rather than driven.
+   */
+  reveal?: RevealMotion;
 };
+
+export type RevealMotion = Readonly<{ durationMs: number; easing: string }>;
+
+/**
+ * Whether the preview is open AND has finished opening.
+ *
+ * EXISTS SO CONSUMER CONTENT CAN GET OUT OF THE WAY OF THE SLIDE. A height
+ * animation is main-thread work, so anything that renders or repaints while it
+ * runs competes with it directly — and the things that want to appear when the
+ * preview opens are exactly the things that appear WHILE it is opening. Rails
+ * over the board, a scrub bar, anything keyed off "preview is on": each one is
+ * a paint landing in the middle of the movement, and it reads as the board
+ * flickering under a pane that is still travelling.
+ *
+ * Waiting costs nothing that matters. These are controls for a pane you cannot
+ * use yet.
+ */
+const PreviewSettledContext = createContext(false);
+
+/** True once the preview is open and no longer moving. False while it slides,
+ *  and false whenever it is shut. */
+export function usePreviewSettled(): boolean {
+  return useContext(PreviewSettledContext);
+}
+
+/** A frame at or under this arrived on time — the thread is keeping up. */
+const FRAME_BUDGET_MS = 22;
+/** How many on-time frames in a row count as settled. One is not enough: a
+ *  single good frame happens in the gap between two long tasks. */
+const CALM_FRAMES = 2;
+/**
+ * Slide anyway once this long has passed.
+ *
+ * A DEADLINE IN MILLISECONDS, not a frame count, and the difference is not
+ * academic: the whole reason this waits is that frames are running slow, so a
+ * cap counted in frames stretches exactly when it most needs to hold. Twenty
+ * frames is 330ms on an idle machine and several seconds on a busy one — which
+ * is a preview that appears to hang under load, and a test suite that fails
+ * only when run alongside everything else.
+ */
+const MAX_SETTLE_MS = 250;
+
+/**
+ * Away from rest, along, and gently to a stop.
+ *
+ * IT STARTS FROM STANDING, which was the first correction here. The obvious
+ * choice for a reveal is an "out" curve — fast then slow — and every one of
+ * them has its highest velocity at t=0. Measured, an earlier one moved the
+ * board 74 PIXELS IN ITS FIRST FRAME: seventeen percent of the distance in
+ * five percent of the time, from a dead stop. That is not an ease, it is a
+ * jump with a decelerating tail.
+ *
+ * AND IT STOPS WITHOUT OVERSHOOTING, which was the second. A control point
+ * above 1 sends the value past its target and lets it come back, and a little
+ * of that reads as weight — but only a little, and measured it was 5.7px past
+ * a 424px pane held for three frames. Small enough to be deniable, big enough
+ * to see, and on a pane whose whole job is to sit still and be looked at, the
+ * bounce is a distraction rather than a flourish. `0.55, 1` finishes with zero
+ * slope: it arrives and it is done.
+ *
+ * A damped-spring variant lived here for a while, behind `?reveal=elastic`, so
+ * the two could be compared in the hand. Overshoot lost, so it is gone rather
+ * than left as a setting nobody will choose.
+ */
+export const REVEAL_SETTLE: RevealMotion = {
+  durationMs: 380,
+  easing: "cubic-bezier(0.45, 0, 0.55, 1)",
+};
+
 
 export function WorkbenchSplitPane({
   surface,
@@ -1843,6 +1930,7 @@ export function WorkbenchSplitPane({
   children,
   getInitialSurfaceHeight,
   onSurfaceHeightChange,
+  reveal = REVEAL_SETTLE,
 }: WorkbenchSplitPaneProps) {
   const hasSurface = surface !== null;
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -1861,6 +1949,60 @@ export function WorkbenchSplitPane({
   // double-rAF below), so the pane appears at its size instead of animating
   // into it.
   const [heightAnimated, setHeightAnimated] = useState(false);
+  // THE REVEAL. Opening and closing the preview used to be a mount and an
+  // unmount: the pane appeared at full size and everything below it jumped
+  // down by that much in one frame. It reads as the page reflowing, which is
+  // what it was.
+  //
+  // The shape it has now is a LID, not a drawer. The pane does not move; the
+  // board slides down off it and the pane is uncovered from the top, which is
+  // the one arrangement that looks like it was already sitting there. Done by
+  // animating this region's height with its contents clipped and pinned to the
+  // top — the surface keeps its real height throughout, so nothing inside is
+  // ever squashed mid-reveal, which would give away that it is being built as
+  // it appears.
+  //
+  // THREE PIECES OF STATE, not one, because "should it be open" and "is it on
+  // screen" stop agreeing the moment closing takes time. `mounted` outlives
+  // `hasSurface` for the length of the close; `revealed` is what the height
+  // follows; `sliding` says a transition is in flight and is what turns on the
+  // clipping (the region is `overflow-visible` at rest ON PURPOSE — the seek
+  // thumb's overhang depends on it, so clipping is borrowed for the animation
+  // and given straight back).
+  const [mounted, setMounted] = useState(hasSurface);
+  const [revealed, setRevealed] = useState(hasSurface);
+  const [sliding, setSliding] = useState(false);
+  // THE CHROME ARRIVES AFTER THE PICTURE. The divider and the transport are
+  // controls for a thing that is not there yet while the pane is still opening
+  // — drawing them mid-slide puts a play button on a two-inch sliver of video
+  // — so they fade in once it has finished. Not a fade OUT on the way back:
+  // they ride the close down still visible, which reads as the board covering
+  // them rather than as two separate departures.
+  const [chromeIn, setChromeIn] = useState(hasSurface);
+  // Whether the pane was ALREADY open the last time this settled. A pane that
+  // is open at first paint has nothing to fade in from, and hiding its chrome
+  // in the mount effect only to bring it back is a flash.
+  const wasOpenRef = useRef(hasSurface);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Depended on as a NUMBER, not as the object: a consumer passing an inline
+  // `{durationMs, easing}` would otherwise restart the reveal on every render.
+  const revealMs = reveal.durationMs;
+  // WHAT THE CLOSE SLIDES OVER. The consumer drops `surface` to null the
+  // instant the preview is switched off, so without this the region would
+  // spend the close animating an EMPTY box shut — a blank gap collapsing,
+  // which is not the pane being covered by anything. The last one rendered is
+  // held for the length of the slide: frozen (it stops receiving props) and
+  // unmounted the moment the region reaches zero, which is also what finally
+  // stops its video.
+  const lastSurfaceRef = useRef<React.ReactNode>(null);
+  useEffect(() => {
+    if (surface !== null) lastSurfaceRef.current = surface;
+  }, [surface]);
+  const shownSurface = surface ?? (mounted ? lastSurfaceRef.current : null);
+  // Open, and no longer moving. `sliding` covers both directions, so this is
+  // false for the whole of a close as well — nothing should be painting itself
+  // into a pane on its way out either.
+  const settled = mounted && revealed && !sliding;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dividerRef = useRef<HTMLButtonElement | null>(null);
   const lowerPaneRef = useRef<HTMLDivElement | null>(null);
@@ -1971,7 +2113,26 @@ export function WorkbenchSplitPane({
     });
   }, [clampSurfaceHeight]);
 
+  // A REF, not the state, so `scheduleClamp` keeps its identity — it is the
+  // ResizeObserver's callback, and a new one every render would tear the
+  // observer down and rebuild it on every frame of the very animation this
+  // exists to stay out of.
+  const slidingRef = useRef(false);
+
   const scheduleClamp = useCallback(() => {
+    // NOT WHILE THE PANE IS SLIDING, because the pane is what is resizing the
+    // boundary. The observer watches `<main>`, the reveal grows `<main>`, and
+    // so the animation triggers this on nearly every one of its own frames —
+    // measured at ten times across a 366ms slide, each one a forced
+    // synchronous layout (`getBoundingClientRect` plus a read of a computed
+    // custom property) followed by a `setState`. A self-inflicted render loop
+    // running against the animation that caused it.
+    //
+    // Nothing is lost. This question is "has the VIEWPORT shrunk under us",
+    // and the height being animated toward was already clamped when it was
+    // chosen; a viewport that genuinely changes mid-slide is caught by the
+    // clamp fired when the slide ends.
+    if (slidingRef.current) return;
     if (clampFrameRef.current !== null || typeof window === "undefined") return;
 
     clampFrameRef.current = window.requestAnimationFrame(() => {
@@ -1979,6 +2140,18 @@ export function WorkbenchSplitPane({
       clampToViewport();
     });
   }, [clampToViewport]);
+
+  // Declared AFTER `scheduleClamp` so it can call it directly rather than
+  // through a ref — the flag it maintains is read by that callback, but only
+  // when the callback runs, so the order between them does not matter.
+  useEffect(() => {
+    const wasSliding = slidingRef.current;
+    slidingRef.current = sliding;
+    // ONE CLAMP ON THE WAY OUT. Skipping them during the slide means a window
+    // resized mid-animation would otherwise leave the pane at an illegal
+    // height until something else happened to ask.
+    if (wasSliding && !sliding) scheduleClamp();
+  }, [sliding, scheduleClamp]);
 
   // Arm the height transition only once the opening size has been painted.
   // The sizing pass below runs in a layout effect and its inputs (the
@@ -1998,6 +2171,120 @@ export function WorkbenchSplitPane({
       cancelAnimationFrame(second);
     };
   }, [hasSurface]);
+
+  /**
+   * Drive the reveal from `hasSurface`.
+   *
+   * OPENING TAKES TWO FRAMES, and it is the same reason the height transition
+   * above is armed on a double rAF: a height animates only if the browser had
+   * a BEFORE style to animate from, and an element mounted and sized in one
+   * commit never had one — it would simply appear at full height, which is the
+   * behaviour being replaced. So it mounts closed, gets painted closed, and
+   * only then is told to open.
+   *
+   * BOTH ENDS ARE TIMED RATHER THAN LISTENED FOR. `transitionend` does not
+   * fire for a transition that never runs, and this one does not run whenever
+   * the user has asked for reduced motion or the tab is in the background.
+   * Waiting on it would strand a close at zero height forever — mounted,
+   * invisible, still holding a video element — and strand an open with the
+   * borrowed clipping never given back, which would quietly cut off the seek
+   * thumb's overhang for the rest of the session. A timer always fires.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const clearCloseTimer = () => {
+      if (closeTimerRef.current !== null) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+
+    if (hasSurface) {
+      clearCloseTimer();
+      setMounted(true);
+      if (!wasOpenRef.current) setChromeIn(false);
+      wasOpenRef.current = true;
+
+      // WAIT FOR THE SURFACE TO SETTLE BEFORE SLIDING, because a height
+      // animation runs on the MAIN THREAD — every frame of it needs layout —
+      // so anything blocking that thread stalls the animation itself rather
+      // than merely running beside it.
+      //
+      // Measured, at true wall-clock speed, this is not a subtle effect. The
+      // click costs a 71ms long task (React mounting the surface), and the
+      // posters and audio start loading 72-95ms later; the slide's own frame
+      // gaps then came in at 6.6, 14.7, 82.6, 42.9, 44.5ms before settling to
+      // a clean 16.6 for the rest. Across those three blocked frames the pane
+      // leapt 85, 62 and 107 pixels — 253 of its 424 — which is precisely the
+      // "hesitant then stuttery at the beginning" being reported. The back
+      // half was always smooth, which is why it reads as a start-up problem.
+      //
+      // So: mount at zero height, let the expensive work happen where nothing
+      // is moving, and start the slide once frames are arriving on time. TWO
+      // consecutive good frames, not one — a single one lands in the gaps
+      // between long tasks and starts the animation straight into the next.
+      //
+      // CAPPED, or a page that never goes quiet would never open its preview.
+      // Past the cap it slides anyway and takes the jank, which is what it did
+      // before this existed.
+      let raf = 0;
+      const startedAt = performance.now();
+      let previous = startedAt;
+      let calm = 0;
+      let waited = 0;
+      const startWhenSettled = (now: number) => {
+        const delta = now - previous;
+        previous = now;
+        waited += 1;
+        calm = delta <= FRAME_BUDGET_MS ? calm + 1 : 0;
+        // AND THE PICTURE HAS TO BE DECODED. Calm frames alone left one hitch
+        // roughly 60ms into the slide, every time, which is the video handing
+        // its first frame to the compositor — work that happens off-thread and
+        // then commits, so no amount of watching frame timings anticipates it.
+        // Waiting for `HAVE_CURRENT_DATA` waits for the actual event.
+        //
+        // Reaching into the subtree for `video` is a liberty for a component
+        // this generic, and it is taken deliberately: this pane exists to show
+        // video, the cost is one querySelectorAll per frame for a handful of
+        // frames, and the alternative is a readiness protocol threaded through
+        // a `surface` prop that every consumer would have to implement.
+        const undecoded = Array.from(
+          rootRef.current?.querySelectorAll("video") ?? [],
+        ).some((video) => video.readyState < 2 && video.currentSrc !== "");
+        if (undecoded) calm = 0;
+        // `waited > 1` so there is always at least one painted frame at zero
+        // height for the transition to animate FROM.
+        if (waited > 1 && (calm >= CALM_FRAMES || now - startedAt >= MAX_SETTLE_MS)) {
+          setSliding(true);
+          setRevealed(true);
+          closeTimerRef.current = setTimeout(() => {
+            closeTimerRef.current = null;
+            setSliding(false);
+            setChromeIn(true);
+          }, revealMs);
+          return;
+        }
+        raf = requestAnimationFrame(startWhenSettled);
+      };
+      raf = requestAnimationFrame(startWhenSettled);
+
+      return () => {
+        cancelAnimationFrame(raf);
+        clearCloseTimer();
+      };
+    }
+
+    setSliding(true);
+    setRevealed(false);
+    wasOpenRef.current = false;
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      setMounted(false);
+      setSliding(false);
+    }, revealMs);
+    return clearCloseTimer;
+  }, [hasSurface, revealMs]);
 
   useLayoutEffect(() => {
     // Size ONCE, when the surface first opens. The split pane itself may have
@@ -2085,6 +2372,10 @@ export function WorkbenchSplitPane({
       // panes at the container's width; children overflow-scroll inside it.
       className="grid min-h-0 w-full grid-cols-[minmax(0,1fr)] gap-0"
       data-testid="workbench-split-pane"
+      // The same fact as the context, for consumers that only need CSS — a
+      // padding that should appear with the rails rather than with the click,
+      // say, which is a class name and not a render.
+      data-preview-settled={settled ? "" : undefined}
       // How far down the WHOLE sticky stack reaches — header, surface and
       // divider — published so a descendant wanting to pin below all of it has
       // a live offset as the divider resizes. The split pane remains mounted
@@ -2096,6 +2387,12 @@ export function WorkbenchSplitPane({
           "--workbench-preview-offset": `${
             headerHeight + (hasSurface ? surfaceHeight + DIVIDER_HEIGHT_PX : 0)
           }px`,
+          // PUBLISHED ON THE ROOT, not on the region, so that consumer content
+          // can move with the reveal instead of beside it. Anything inside the
+          // pane can now spend the same duration and the same curve, which is
+          // the difference between one motion and two that happen to overlap.
+          "--workbench-reveal-ms": `${revealMs}ms`,
+          "--workbench-reveal-ease": reveal.easing,
         } as React.CSSProperties
       }
     >
@@ -2112,7 +2409,7 @@ export function WorkbenchSplitPane({
           {header}
         </div>
       )}
-      {hasSurface ? (
+      {mounted ? (
         <div
         // z-40 (above the strip's z-30 consumer overlay) so a playhead marker
         // in a timeline scrolling underneath is occluded by the sticky
@@ -2122,8 +2419,60 @@ export function WorkbenchSplitPane({
         // Pinned BENEATH the header rather than at 0 — the two are one stack,
         // and the offset is measured because the header's height is the
         // consumer's business, not a constant this file can know.
-        className="sticky z-40 min-w-0 overflow-visible bg-zinc-950"
-        style={{ top: headerHeight }}
+        data-preview-revealed={revealed ? "" : undefined}
+        // Read by the divider below and by the transport inside `surface`,
+        // which this cannot reach with a prop — it is a node the consumer
+        // passed in. A data attribute on their common ancestor is the seam
+        // that does reach both.
+        data-preview-chrome={chromeIn ? "in" : "out"}
+        className={cn(
+          "sticky z-40 min-w-0 bg-zinc-950",
+          // CLIPPED UNTIL IT IS ACTUALLY OPEN — not merely while sliding.
+          //
+          // The distinction is a bug that was live: the region mounts at zero
+          // height and then WAITS, for the surface to render and its video to
+          // decode, before the slide begins. Gated on `sliding`, it spent that
+          // whole wait at `overflow-visible` with a full-height surface inside
+          // it — which does not vanish because its parent is zero tall, it
+          // SPILLS. Measured at 380 pixels of preview painted straight over the
+          // board, before any of it had started moving. It reads as the image
+          // flashing through the content it is supposed to be behind, and it
+          // lasts exactly as long as the settle takes, so a slower machine
+          // shows more of it.
+          //
+          // `overflow-visible` at rest is still load-bearing — the seek thumb
+          // deliberately hangs outside the pane and the side masks depend on it
+          // — so it is given back the moment the pane is open and still.
+          settled ? "overflow-visible" : "overflow-hidden",
+          // Transitioned while SLIDING (the reveal) and for later height
+          // changes (a shrinking viewport clamping the pane) — but never
+          // during a divider drag, which must track the pointer exactly. The
+          // condition mirrors the inner height's below on purpose: if only one
+          // of the two animated, the pane and the board beneath it would
+          // disagree about where the bottom edge is for the length of it.
+          (sliding || (heightAnimated && !isDividerDragging)) &&
+            // Duration and easing arrive as CUSTOM PROPERTIES rather than as
+            // inline transition styles so `motion-reduce:transition-none`
+            // still wins — an inline `transition` would outrank the class and
+            // quietly animate for someone who asked for no animation.
+            "transition-[height] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
+        )}
+        style={{
+          top: headerHeight,
+          // ZERO TO FULL. The contents keep their real size inside this and
+          // are pinned to its top, so what changes is how much of them shows
+          // — the pane is uncovered rather than grown, and everything below
+          // slides down off it.
+          // ROUNDED. `surfaceHeight` is a float — a third of a measured
+          // viewport — and this box is `sticky`, so a fractional height makes
+          // the browser re-resolve the stuck position against a subpixel edge
+          // on every frame of the slide while the content below it moves. That
+          // is the judder: not the animation stuttering, the sticky element
+          // disagreeing with itself about where its own bottom is.
+          height: revealed
+            ? `${Math.round(Math.max(surfaceHeight, MIN_SURFACE_HEIGHT)) + DIVIDER_HEIGHT_PX}px`
+            : "0px",
+        }}
         data-testid="workbench-preview-region"
       >
         {/* A seek thumb is intentionally centered on the timeline edge, so
@@ -2150,8 +2499,19 @@ export function WorkbenchSplitPane({
             // and measures the real one — that played as a visible shrink
             // every first open, and only the first, since a reopen restores
             // the remembered height and never re-measures.
+            // AND NOT WHILE THE REVEAL IS RUNNING. The outer region is
+            // already animating between zero and this pane's full height; if
+            // this one animates too, two nested height transitions run at once
+            // over the same pixels — the outer uncovering the pane while the
+            // pane itself grows inside it, each on its own curve. On the first
+            // open the inner one has somewhere to go, because the opening size
+            // is measured in those same frames, and the result is the pane
+            // appearing to fight its own reveal. It has no business moving
+            // here: the reveal's whole premise is that what is inside stays
+            // still and gets uncovered.
             heightAnimated &&
               !isDividerDragging &&
+              !sliding &&
               "transition-[height] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
           )}
           style={{
@@ -2159,7 +2519,7 @@ export function WorkbenchSplitPane({
             minHeight: `${MIN_SURFACE_HEIGHT}px`,
           }}
           >
-            {surface}
+            {shownSurface}
           </div>
         <button
           ref={dividerRef}
@@ -2174,7 +2534,7 @@ export function WorkbenchSplitPane({
           // smaller and centered, so the space either side of it reads as the
           // gap between the preview and the timeline without being separate
           // padding on each.
-          className="group relative block h-11 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          className="group relative block h-11 w-full cursor-row-resize bg-transparent transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           data-workbench-divider
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
@@ -2230,7 +2590,7 @@ export function WorkbenchSplitPane({
         className="relative z-0 min-h-0 isolate"
         data-testid="workbench-lower-pane"
       >
-        {children}
+        <PreviewSettledContext.Provider value={settled}>{children}</PreviewSettledContext.Provider>
       </div>
     </div>
   );
