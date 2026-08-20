@@ -3646,19 +3646,28 @@ test.describe("graph view E2E", () => {
     // part that is about gesture arbitration rather than about meaning.
     await installGraphApi(page);
     await openGraph(page);
-    // bravo is an IMAGE: selected images grow exactly ONE handle (the end
-    // edge) — a video would grow two.
+    // bravo is an IMAGE: images carry exactly ONE handle (the end edge) — a
+    // video would carry two.
+    //
+    // HANDLE COUNT USED TO STAND IN FOR "IS IT SELECTED" throughout this test,
+    // and it cannot any more: with a fine pointer the handles are on every
+    // clip whether or not it is picked. Selection is asserted directly on
+    // `data-selected` below, and the count is asserted ONCE, as the thing it
+    // now means — that handles do NOT track selection.
     const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
     const bravoWrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="bravo"]');
 
-    // Unselected media: no trim handles — the edges are plain card body.
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
-
-    // Ctrl/Cmd+click selects, and the handle grows in. (Retried inside
-    // `selectCard`: under load a press can outlast the 250ms hold threshold,
-    // becoming a hold-grab whose click is — correctly — suppressed.)
-    await selectCard(bravo);
+    // Unselected media still carries its handle: the edge advertises what it
+    // does before you pick anything. This is the assertion that would fail if
+    // trims went back to being selection-gated with a mouse.
+    await expect(bravo).not.toHaveAttribute("data-selected", "true");
     await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
+
+    // Ctrl/Cmd+click selects. (Retried inside `selectCard`: under load a press
+    // can outlast the 250ms hold threshold, becoming a hold-grab whose click
+    // is — correctly — suppressed.)
+    await selectCard(bravo);
+    await expect(bravo).toHaveAttribute("data-selected", "true");
 
     // Press-and-hold released IN PLACE is a grab, not a click: the trailing
     // click is suppressed, so the selection (and handles) stay put.
@@ -3668,7 +3677,6 @@ test.describe("graph view E2E", () => {
     await page.waitForTimeout(400); // past the 250ms hold activation
     await page.mouse.up();
     await expect(bravo).toHaveAttribute("data-selected", "true");
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
 
     // A PLAIN click does not deselect it — it opens this clip's edit overlay
     // and leaves the selection exactly where it was. The overlay is dismissed
@@ -3679,15 +3687,15 @@ test.describe("graph view E2E", () => {
     await page.keyboard.press("Escape");
     await expect(overlay).toHaveCount(0);
     await expect(bravo).toHaveAttribute("data-selected", "true");
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
 
-    // Ctrl/Cmd+click is what toggles it OFF, handles with it. (Same
-    // accidental-hold retry.)
+    // Ctrl/Cmd+click is what toggles it OFF. (Same accidental-hold retry.)
     await expect(async () => {
       await bravo.click({ modifiers: ["ControlOrMeta"] });
       await expect(bravo).not.toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
+    // Deselected, and the handle is STILL there — the pair that says these two
+    // are now independent.
+    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
 
     // A collection card's BODY now DRILLS IN — one click, no second click and
     // no folder button needed. This reverses what this test used to pin (body
