@@ -701,7 +701,19 @@ function DetailsPanel({
             <img
               src={shown.src}
               alt={shown.name}
-              className="h-full w-full bg-black object-contain"
+              // NOT DRAGGABLE, which is what made the swipe work on video
+              // panels and not on stills. An `<img>` is draggable by DEFAULT
+              // and a `<video>` is not, so on a still the browser took the
+              // gesture as a native image drag the moment the pointer moved:
+              // it swallowed the rest of the sequence, no pointermove ever
+              // arrived, and the strip sat there. The gesture was never
+              // reaching the code that decides whether it is a swipe.
+              //
+              // `select-none` for the same reason at the other end — a drag
+              // across a picture that starts selecting whatever is behind it
+              // reads as the page misbehaving even when the swipe does work.
+              draggable={false}
+              className="h-full w-full bg-black object-contain select-none"
             />
           )}
           {/* THE OUTGOING FRAME, held over the picture while the incoming one

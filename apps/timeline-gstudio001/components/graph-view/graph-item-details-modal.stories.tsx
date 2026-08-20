@@ -543,6 +543,22 @@ export const SwipingThePictureAdvancesTheStrip: Story = {
     const picture = document
       .querySelector('[data-item-details-panel="centre"]')!
       .querySelector<HTMLElement>("[data-item-details-frame]")!;
+
+    // A STILL MUST NOT BE DRAGGABLE, or there is no swipe on it at all: an
+    // `<img>` is draggable by default and a `<video>` is not, so the gesture
+    // worked on video panels and died on stills — the browser took it as a
+    // native image drag on the first move and swallowed the rest of the
+    // sequence before any of this code saw it.
+    //
+    // ASSERTED AS AN ATTRIBUTE, not as behaviour, and the distinction is the
+    // reason the bug survived this file: `fireEvent` pointers never start a
+    // native drag, so the swipe story below passes on an image fixture whether
+    // or not the guard is there. Only a real pointer reproduces it. This at
+    // least fails if the attribute is removed.
+    const still = picture.querySelector<HTMLImageElement>("img");
+    expect(still).not.toBeNull();
+    expect(still!.draggable).toBe(false);
+
     const box = picture.getBoundingClientRect();
     const y = box.top + box.height / 2;
 
