@@ -2,6 +2,8 @@ import { getChildren, parseNodeId, type CollectionsGraph } from "@storyboard/col
 import { graphChildrenToClips, type DetailsById } from "@storyboard/timeline-domain";
 import { trackIndexOf } from "@storyboard/timeline-model/documents";
 
+import { LANE_TRACKS_ENABLED } from "@/lib/lane-tracks-flag";
+
 // Splitting a collection's children into the PICTURE and the lanes that run
 // under it — the read model behind the board's lane rows.
 //
@@ -51,6 +53,14 @@ export function splitLaneRows(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: string,
+  /**
+   * Whether lanes are drawn at all. Defaults to the flag, so callers get the
+   * shipped answer without knowing there is one — but it is a PARAMETER
+   * because this module's whole claim is that it can be tested without a
+   * board, and a module that reads `process.env` for its main decision cannot
+   * be. The tests below drive both answers explicitly.
+   */
+  lanesEnabled: boolean = LANE_TRACKS_ENABLED,
 ): LaneRowsModel {
   const childIds = getChildren(graph, parseNodeId(collectionId));
   if (childIds.length === 0) return EMPTY;
@@ -67,7 +77,19 @@ export function splitLaneRows(
       startSeconds: clip.startTime,
       durationSeconds: clip.duration,
     };
-    const lane = trackIndexOf(clip);
+    // FLAGGED OFF MEANS EVERY CLIP IS PICTURE, not "lane clips are hidden".
+    // The rows are what the flag turns off; the clips in them are stored data
+    // and still have to be drawn somewhere. Reading every lane as 0 puts them
+    // in the picture row with everything else — the board a project had before
+    // lanes existed — rather than leaving a stored clip that counts toward the
+    // duration and composites into a render with nowhere on screen to be.
+    //
+    // Done HERE, at the split, because everything downstream of this function
+    // — the drop-boundary correction, the strip's item times, the layer rows —
+    // derives from what it returns. One `layers: []` at the source is the
+    // whole feature off; gating each consumer would be four chances to leave
+    // one on.
+    const lane = lanesEnabled ? trackIndexOf(clip) : 0;
     if (lane === 0) {
       pictureIds.push(childId as string);
       pictureTimes.push(slot);

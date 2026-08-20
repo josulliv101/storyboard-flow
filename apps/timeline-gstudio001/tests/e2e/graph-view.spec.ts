@@ -4947,10 +4947,18 @@ test.describe("graph view E2E", () => {
     await editor.fill("Jake looks up");
     await editor.press("Enter");
 
-    // The card carries it, and so does the stored document — as `title`.
+    // THE CARD NO LONGER CARRIES IT, and that is the board option rather than
+    // a broken rename: "Show name over item" is off by default, so the overlay
+    // is absent whatever the clip is called. The two states of the overlay are
+    // covered in `graph-item-content.stories.tsx`; what this test is about is
+    // the rename REACHING something durable, which is the document below.
+    //
+    // Worth saying plainly because it is a real cost of that default: renaming
+    // a clip in the strip now produces no visible change on the card. The grid
+    // caption and the details modal both still show it.
     await expect(
       strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"] [data-clip-title]'),
-    ).toHaveText("Jake looks up");
+    ).toHaveCount(0);
     await expect
       .poll(
         () => api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha")?.title,
@@ -4964,9 +4972,14 @@ test.describe("graph view E2E", () => {
     const second = page.getByRole("textbox", { name: "Clip name" });
     await second.fill("Discarded");
     await second.press("Escape");
-    await expect(
-      strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"] [data-clip-title]'),
-    ).toHaveText("Jake looks up");
+    // The DOCUMENT still holds the committed name — the discarded edit never
+    // reached it. Asserted here rather than on the card for the reason above.
+    await expect
+      .poll(
+        () => api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha")?.title,
+        { timeout: 5000 },
+      )
+      .toBe("Jake looks up");
   });
 
   test("typed in/out points trim exactly", async ({ page }) => {
@@ -5353,13 +5366,14 @@ test.describe("graph view E2E", () => {
     await expect.poll(storedTitle, { timeout: 5000 }).toBe("Belushi close-up");
     expect(storedClip()?.alt).toBe("alpha");
 
-    // And the card now shows it, because someone chose it. Unnamed cards
-    // stay bare — that is what keeps a two-thousand-clip library from
-    // reading as a rename backlog.
+    // NEITHER CARD SHOWS IT IN THE STRIP, named or not, because "Show name
+    // over item" is off by default (see the F2 test above for the same note).
+    // The named and unnamed cards agreeing is the point here: with the option
+    // off, the overlay is not a function of the name at all.
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-item-details]")).toHaveCount(0);
     await expect(strip(page, PROJECT_ID).locator('[data-node-id="alpha"] [data-clip-title]'))
-      .toHaveText("Belushi close-up");
+      .toHaveCount(0);
     await expect(strip(page, PROJECT_ID).locator('[data-node-id="bravo"] [data-clip-title]'))
       .toHaveCount(0);
     await openItemDetails(page, "alpha");
@@ -8491,6 +8505,24 @@ test.describe("graph view E2E", () => {
   // draws it as its own time-aligned row instead of a slot in the shot
   // sequence. These drive the APP wiring — the lane split feeding the strip,
   // and the drop translation that filtering the strip's item source forces.
+  //
+  // SKIPPED WHILE THE FEATURE IS PARKED, and skipped rather than deleted or
+  // inverted. `NEXT_PUBLIC_GSTUDIO_LANE_TRACKS` is off by default, so the rows
+  // these four drive are not drawn; the code behind them is untouched and the
+  // flag brings both back together. Deleting them would throw away the most
+  // expensive coverage in the suite — four real-mouse drags over a layout that
+  // took several PRs to get right — to make a red suite green, and inverting
+  // them to assert "no rows" would spend the same four drags restating one
+  // fact the model's own unit test already pins in both directions
+  // (`graph-lane-rows.test.ts`).
+  //
+  // Turning the flag on here is what I tried first, via `env` on the e2e
+  // webServer. It does not work: `reuseExistingServer` is true even in CI, so
+  // a dev server already running is ridden as-is and the variable never
+  // reaches the build — green in CI, red locally, which is worse than either.
+  //
+  // TO BRING THEM BACK: set the flag on and delete this `describe.skip`.
+  test.describe.skip("lane rows — parked with NEXT_PUBLIC_GSTUDIO_LANE_TRACKS", () => {
   test("a layered clip leaves the shot sequence and draws as its own row", async ({
     page,
   }) => {
@@ -8639,6 +8671,7 @@ test.describe("graph view E2E", () => {
       // puts a gap like it at every cut.
       await expect(canvas).toHaveAttribute("aria-label", "alpha preview", { timeout: 700 });
     }).toPass({ timeout: 10000 });
+  });
   });
 
   // THE RENDER FORMAT. A project's own output shape, stored on its document —

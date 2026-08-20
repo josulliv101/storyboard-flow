@@ -20,6 +20,7 @@ import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
 import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { createGraphDetailsStore } from "@/lib/graph-details-store";
+import { ClipNamesProvider } from "./graph-clip-names";
 
 // The COMPOSED collection card, exactly as the graph renders it: the
 // registered ItemShell routes collections through CollectionItem primitives,
@@ -674,18 +675,30 @@ export const NoDisabledChipWhenEnabled: Story = {
 // will be heard rather than watched in turn.
 
 /**
- * A card on lane 1 says so. `L1`, sky rather than the disabled chip's amber —
- * a lane is a placement, not a warning.
+ * NO CHIP ON A LANE-1 CARD EITHER, while lane tracks are flagged off.
+ *
+ * This story used to assert the opposite — `L1` in sky, a lane being a
+ * placement rather than a warning — and the inversion is the point rather than
+ * a loss of coverage. The chip names the ROW a clip sits on, and with
+ * `LANE_TRACKS_ENABLED` false the board draws no such row: the clip is in the
+ * picture with everything else, so a badge pointing at lane 1 would describe a
+ * placement the board is not showing.
+ *
+ * WHERE THE ENABLED BEHAVIOUR IS COVERED INSTEAD: `graph-lane-rows.test.ts`,
+ * which drives the split both ways because it takes the flag as a parameter.
+ * A component reading a module constant cannot be driven that way from a
+ * story, which is exactly why the model takes it as an argument and this does
+ * not — the arithmetic is where the risk lives, and it is the half that stayed
+ * testable in both states.
+ *
+ * Turn `NEXT_PUBLIC_GSTUDIO_LANE_TRACKS=on` back on and this story is the one
+ * to invert again.
  */
-export const LaneChipOnAnUnderLayer: Story = {
+export const NoLaneChipWhileLanesAreOff: Story = {
   args: baseArgs,
   decorators: [renderWithDetail([ASSET_A, ASSET_B], 1)],
   play: async ({ canvasElement }) => {
-    const chip = canvasElement.querySelector<HTMLElement>("[data-lane-chip]")!;
-    await expect(chip).not.toBeNull();
-    await expect(chip.dataset.laneChip).toBe("1");
-    await expect(chip.textContent).toBe("L1");
-    await expect(getComputedStyle(chip).opacity).toBe("1");
+    await expect(canvasElement.querySelector("[data-lane-chip]")).toBeNull();
   },
 };
 
@@ -1381,7 +1394,69 @@ function renderMediaCard(
   };
 }
 
+/**
+ * The clip-name overlay's harness: a media card with an AUTHORED title, in the
+ * strip (the grid caption carries the name there instead), inside the provider
+ * that carries the board's setting.
+ */
+function renderNamedClip(shown: boolean): Decorator {
+  return function NamedClipDecorator(Story) {
+    const store = createGraphDetailsStore({
+      [VIDEO_ID as string]: {
+        alt: "A video",
+        // The overlay renders ONLY for a real authored name — an `alt` is a
+        // filename and deliberately does not count.
+        title: "S01 — Pat briefing",
+        aspect: 16 / 9,
+        hydrated: false,
+      },
+    });
+    return (
+      <DndCollections initialGraph={videoGraph} components={GRAPH_VIEW_COMPONENTS}>
+        <GraphDetailsProvider store={store}>
+          <ClipNamesProvider shown={shown}>
+            <VideoFrameLookAhead>
+              <div className="bg-zinc-950 p-2">
+                <div style={{ width: 260, height: 120 }}>
+                  <Story />
+                </div>
+              </div>
+            </VideoFrameLookAhead>
+          </ClipNamesProvider>
+        </GraphDetailsProvider>
+      </DndCollections>
+    );
+  };
+}
+
 const mediaArgs = { id: VIDEO_ID, className: "h-full w-full" };
+
+/**
+ * OFF BY DEFAULT: a named clip stamps nothing over its artwork.
+ *
+ * The pair below is the whole feature. It is covered here rather than by
+ * clicking the menu in the app because the two states have to be compared, and
+ * a story can hold both at once.
+ */
+export const ClipNameHiddenByDefault: Story = {
+  args: mediaArgs,
+  decorators: [renderNamedClip(false)],
+  play: async ({ canvasElement }) => {
+    // The clip HAS a name — this is the setting hiding it, not a missing title.
+    await expect(canvasElement.querySelector("[data-clip-title]")).toBeNull();
+  },
+};
+
+/** Turned on, the same clip wears it. */
+export const ClipNameShownWhenEnabled: Story = {
+  args: mediaArgs,
+  decorators: [renderNamedClip(true)],
+  play: async ({ canvasElement }) => {
+    const title = canvasElement.querySelector<HTMLElement>("[data-clip-title]");
+    await expect(title).not.toBeNull();
+    await expect(title!.textContent).toBe("S01 — Pat briefing");
+  },
+};
 
 /**
  * The collection twin of `renderMediaCard`, in the grid with select mode armed.

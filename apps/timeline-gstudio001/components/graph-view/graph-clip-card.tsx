@@ -37,6 +37,8 @@ import { cardVideoFrameCount, laneOf } from "./graph-card-model";
 import { useElementSize, useSettledFrameCount } from "./graph-card-measure";
 import { useVideoFrameLoading } from "./graph-card-frame-loading";
 import { useCardProvenance, useDisabledByAncestor } from "./graph-card-derivations";
+import { useClipNamesShown } from "./graph-clip-names";
+import { LANE_TRACKS_ENABLED } from "@/lib/lane-tracks-flag";
 
 /** Never sample more than this many frames for one card, however wide. */
 const VIDEO_FRAME_CAP = 16;
@@ -107,6 +109,15 @@ export const GraphClipContent = memo(function GraphClipContent({
 
   // MEDIA pixels only. This guard is defensive: nothing in the graph view
   // reaches it with a collection node.
+  // ABOVE THE EARLY RETURN. A collection card bails on the next line, so a
+  // hook read after it would run on some renders and not others — the
+  // rules-of-hooks error, and a real one: the hook order would change the
+  // first time a node's kind differed.
+  //
+  // OFF BY DEFAULT, from the board's options menu. A name over the artwork
+  // covers the artwork, and on a strip — where a clip's width IS its duration
+  // — a short clip is mostly name. See `graph-clip-names.tsx`.
+  const clipNamesShown = useClipNamesShown();
   if (node.kind === "collection") return null;
 
   const isVideo = node.mediaKind === "video";
@@ -289,7 +300,7 @@ export const GraphClipContent = memo(function GraphClipContent({
           rendered "the name" would render something on all of them, and a
           library of two thousand machine-named clips reads as a rename
           backlog. Decorative for AT: the card's own aria-label already names it. */}
-      {detail?.title && !muted && (
+      {detail?.title && !muted && clipNamesShown && (
         <span
           aria-hidden="true"
           data-clip-title
@@ -305,7 +316,10 @@ export const GraphClipContent = memo(function GraphClipContent({
       {muted && <DisabledChip inherited={node.disabled !== true} />}
       {/* Lane 0 is the picture and says nothing; anything above it is a
           placement worth announcing on the card. */}
-      {lane > 0 && <LaneChip lane={lane} />}
+      {/* The chip names the ROW a clip sits on, so it says nothing once the
+          rows are off — and worse than nothing, since the number would point
+          at a lane the board no longer draws. */}
+      {LANE_TRACKS_ENABLED && lane > 0 && <LaneChip lane={lane} />}
       {provenance && (
         <ProvenanceLabel
           parentId={provenance.parentId}

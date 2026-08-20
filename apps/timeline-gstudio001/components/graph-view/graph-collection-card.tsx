@@ -46,6 +46,7 @@ import {
   useCollectionSubtreeHydrated,
   useHydratedCollectionSeconds,
 } from "./graph-card-derivations";
+import { LANE_TRACKS_ENABLED } from "@/lib/lane-tracks-flag";
 
 /**
  * The composed collection ITEM, rendered through the package's item-shell
@@ -164,7 +165,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         {/* A whole collection can sit under the picture too — every leaf
             inside it then plays underneath, however its own children are
             arranged. */}
-        {laneOf(node) > 0 && <LaneChip lane={laneOf(node)} />}
+        {/* The chip names the ROW a clip sits on, so it says nothing once the
+            rows are off — and worse than nothing, since the number would point
+            at a lane the board no longer draws. */}
+        {LANE_TRACKS_ENABLED && laneOf(node) > 0 && <LaneChip lane={laneOf(node)} />}
         {/* Collections are taggable too — `tags` sits on TimelineItemBase, not
             on the media members — and they route through THIS component rather
             than GraphClipContent (which returns null for them at its guard).
