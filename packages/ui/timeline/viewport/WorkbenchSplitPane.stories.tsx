@@ -986,3 +986,40 @@ export const ThePreviewIsUncoveredRatherThanInserted: Story = {
     await waitFor(() => expect(region()).toBeNull(), { timeout: 2000 });
   },
 };
+
+/**
+ * THE CHROME ARRIVES AFTER THE PICTURE, and only on the way in.
+ *
+ * The divider and the transport are controls for something that is not there
+ * yet while the pane is opening — a play button on a two-inch sliver of video
+ * — so they wait for it. Coming back out they stay visible and ride the close
+ * down, which reads as the board covering them rather than as two separate
+ * departures, and a second open fades them in again.
+ */
+export const TheChromeFadesInOnceThePreviewIsOpen: Story = {
+  render: () => <TogglingPreviewFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const region = () => canvasElement.querySelector<HTMLElement>('[data-testid="workbench-preview-region"]');
+
+    await user.click(canvas.getByTestId("toggle-preview"));
+    // Opening: hidden, so nothing is drawn over a half-open pane.
+    expect(region()).toHaveAttribute("data-preview-chrome", "out");
+    await waitFor(() => expect(region()).toHaveAttribute("data-preview-chrome", "in"), {
+      timeout: 2000,
+    });
+
+    // Closing: still visible. It is going away with the pane, not before it.
+    await user.click(canvas.getByTestId("toggle-preview"));
+    expect(region()).toHaveAttribute("data-preview-chrome", "in");
+    await waitFor(() => expect(region()).toBeNull(), { timeout: 2000 });
+
+    // And hidden again on the next open, rather than only ever fading once.
+    await user.click(canvas.getByTestId("toggle-preview"));
+    expect(region()).toHaveAttribute("data-preview-chrome", "out");
+    await waitFor(() => expect(region()).toHaveAttribute("data-preview-chrome", "in"), {
+      timeout: 2000,
+    });
+  },
+};

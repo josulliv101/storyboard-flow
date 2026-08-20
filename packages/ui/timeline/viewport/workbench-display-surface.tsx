@@ -304,7 +304,7 @@ function WorkbenchDividerTransport({
     <div
       role="group"
       aria-label="Preview transport"
-      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0"
+      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0 transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none"
       data-testid="workbench-preview-controls"
       data-transport-layout="static"
     >
@@ -1930,6 +1930,17 @@ export function WorkbenchSplitPane({
   const [mounted, setMounted] = useState(hasSurface);
   const [revealed, setRevealed] = useState(hasSurface);
   const [sliding, setSliding] = useState(false);
+  // THE CHROME ARRIVES AFTER THE PICTURE. The divider and the transport are
+  // controls for a thing that is not there yet while the pane is still opening
+  // — drawing them mid-slide puts a play button on a two-inch sliver of video
+  // — so they fade in once it has finished. Not a fade OUT on the way back:
+  // they ride the close down still visible, which reads as the board covering
+  // them rather than as two separate departures.
+  const [chromeIn, setChromeIn] = useState(hasSurface);
+  // Whether the pane was ALREADY open the last time this settled. A pane that
+  // is open at first paint has nothing to fade in from, and hiding its chrome
+  // in the mount effect only to bring it back is a flash.
+  const wasOpenRef = useRef(hasSurface);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Depended on as a NUMBER, not as the object: a consumer passing an inline
   // `{durationMs, easing}` would otherwise restart the reveal on every render.
@@ -2114,6 +2125,8 @@ export function WorkbenchSplitPane({
     if (hasSurface) {
       clearCloseTimer();
       setMounted(true);
+      if (!wasOpenRef.current) setChromeIn(false);
+      wasOpenRef.current = true;
       let second = 0;
       const first = requestAnimationFrame(() => {
         second = requestAnimationFrame(() => {
@@ -2122,6 +2135,7 @@ export function WorkbenchSplitPane({
           closeTimerRef.current = setTimeout(() => {
             closeTimerRef.current = null;
             setSliding(false);
+            setChromeIn(true);
           }, revealMs);
         });
       });
@@ -2134,6 +2148,7 @@ export function WorkbenchSplitPane({
 
     setSliding(true);
     setRevealed(false);
+    wasOpenRef.current = false;
     clearCloseTimer();
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null;
@@ -2267,6 +2282,11 @@ export function WorkbenchSplitPane({
         // and the offset is measured because the header's height is the
         // consumer's business, not a constant this file can know.
         data-preview-revealed={revealed ? "" : undefined}
+        // Read by the divider below and by the transport inside `surface`,
+        // which this cannot reach with a prop — it is a node the consumer
+        // passed in. A data attribute on their common ancestor is the seam
+        // that does reach both.
+        data-preview-chrome={chromeIn ? "in" : "out"}
         className={cn(
           "sticky z-40 min-w-0 bg-zinc-950",
           // CLIPPED ONLY WHILE SLIDING. At rest this must be
@@ -2348,7 +2368,7 @@ export function WorkbenchSplitPane({
           // smaller and centered, so the space either side of it reads as the
           // gap between the preview and the timeline without being separate
           // padding on each.
-          className="group relative block h-11 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          className="group relative block h-11 w-full cursor-row-resize bg-transparent transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           data-workbench-divider
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
