@@ -27,8 +27,16 @@ export const RAIL_WIDTH_PX = 72;
  * Collection names are the other tenant here and they are user-authored, so no
  * width could ever be "enough" for them; they truncate, which degrades to an
  * ellipsis rather than shoving the rail's rhythm out of line.
+ *
+ * 240 -> 260, asked for directly. The wordmark is not what needed the room
+ * this time — at Grandstander 700/21px its ink measures 208px against the 218
+ * available, so it already fit. The extra 20px is breathing room around it and
+ * for the collection names beside it, and it takes the wordmark's own slack
+ * from 10px to 30px, which is the margin the note above wanted when it warned
+ * that three pixels was "not enough to survive a font fallback rendering a
+ * fraction wider".
  */
-export const RAIL_OPEN_WIDTH_PX = 240;
+export const RAIL_OPEN_WIDTH_PX = 260;
 
 /**
  * On the rail ALWAYS, open or closed — and the hook every tile style below
@@ -80,7 +88,7 @@ export const RAIL_OPEN_CLASS = "rail-open";
  */
 export const RAIL_WIDTH_CLASS = {
   collapsed: "w-[72px]",
-  open: "w-[240px]",
+  open: "w-[260px]",
 } as const;
 
 /**
