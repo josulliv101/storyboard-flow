@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, X } from "lucide-react";
 
 import { useCollectionsStore, type NodeId } from "@storyboard/ui/dnd-collections";
 import { graphChildrenToClips } from "@storyboard/timeline-domain";
@@ -96,10 +96,46 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
     setDraft("");
   };
 
+  // THE ADD FIELD IS BEHIND AN ICON, not a row of its own.
+  //
+  // A permanently open text field costs a full row on every panel whether or
+  // not anyone is tagging anything, and on a strip of nine panels that is nine
+  // rows of empty input. Adding a tag is occasional; the tags themselves are
+  // what you want to see. So the chips and the add control share one row, and
+  // the field appears when it is asked for.
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Dismiss on a press ANYWHERE else. Captured, so it still fires for presses
+  // the panel below stops from bubbling — this modal deliberately swallows
+  // pointerdown on its panels so a stray click cannot close it.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (popoverRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [open]);
+
+  // Focus follows the opening, or the icon would only have revealed a field
+  // you then have to click.
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  const commit = () => {
+    add();
+    inputRef.current?.focus();
+  };
+
   return (
-    <div className="flex flex-col gap-2" data-tag-editor>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {/* NO EMPTY-STATE SENTENCE. The field below it says "Add a tag…" in
+    <div className="relative flex flex-wrap items-center gap-1.5" data-tag-editor>
+      {/* NO EMPTY-STATE SENTENCE. The field below it says "Add a tag…" in
             its own placeholder, so the line was telling you what the control
             already tells you — and in the details strip it appeared once per
             panel, up to nine times on one screen, which is how a helpful
@@ -123,33 +159,72 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
             </button>
           </span>
         ))}
-      </div>
-      <input
-        type="text"
-        value={draft}
-        disabled={full}
-        maxLength={MAX_TAG_LENGTH}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          // Enter commits; comma too, because typing a list is the natural
-          // gesture and a comma inside a single tag has no meaning here.
-          if (event.key === "Enter" || event.key === ",") {
-            event.preventDefault();
-            add();
-            return;
-          }
-          // Backspace on an empty field removes the last chip — the standard
-          // token-field gesture, and the only keyboard route to removal that
-          // does not require tabbing through every chip.
-          if (event.key === "Backspace" && draft.length === 0 && tags.length > 0) {
-            event.preventDefault();
-            setTags(tags.slice(0, -1));
-          }
-        }}
-        aria-label="Add a tag"
-        placeholder={full ? `Limit of ${MAX_TAGS_PER_CLIP} tags reached` : "Add a tag…"}
-        className="w-full rounded-sm bg-zinc-900 px-2 py-1 text-[11px] text-zinc-100 ring-1 ring-white/10 outline-none placeholder:text-zinc-600 focus:ring-sky-500/70 disabled:cursor-not-allowed disabled:text-zinc-500"
-      />
+
+        {/* AT THE END OF THE TAGS, which is where the next one would go. A
+            control that adds to a list belongs at the end of that list; parked
+            on its own row underneath it reads as a separate thing that happens
+            to be nearby. */}
+        <button
+          ref={triggerRef}
+          type="button"
+          disabled={full}
+          aria-label={full ? `Limit of ${MAX_TAGS_PER_CLIP} tags reached` : "Add a tag"}
+          aria-expanded={open}
+          title={full ? `Limit of ${MAX_TAGS_PER_CLIP} tags reached` : "Add a tag"}
+          data-tag-add
+          onClick={() => setOpen((was) => !was)}
+          className="flex size-5 items-center justify-center rounded text-zinc-500 ring-1 ring-white/10 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Plus aria-hidden="true" className="size-3" />
+        </button>
+
+        {open && (
+          <div
+            ref={popoverRef}
+            data-tag-popover
+            className="absolute top-full left-0 z-20 mt-1 w-44 rounded-md border border-zinc-700 bg-zinc-900 p-1.5 shadow-xl shadow-black/60"
+          >
+            <input
+              ref={inputRef}
+              type="text"
+              value={draft}
+              maxLength={MAX_TAG_LENGTH}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                // STOPPED HERE, ALL OF IT. This field lives inside a dialog
+                // that reads keys for its own shortcuts; letting them through
+                // means typing a tag drives the modal.
+                event.stopPropagation();
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                  return;
+                }
+                // Enter commits; comma too, because typing a list is the
+                // natural gesture and a comma inside a single tag has no
+                // meaning here. The popover STAYS OPEN either way — tags
+                // arrive in threes more often than singly, and reopening
+                // between them is the annoying part.
+                if (event.key === "Enter" || event.key === ",") {
+                  event.preventDefault();
+                  commit();
+                  return;
+                }
+                // Backspace on an empty field removes the last chip — the
+                // standard token-field gesture, and the only keyboard route to
+                // removal that does not require tabbing through every chip.
+                if (event.key === "Backspace" && draft.length === 0 && tags.length > 0) {
+                  event.preventDefault();
+                  setTags(tags.slice(0, -1));
+                }
+              }}
+              aria-label="Add a tag"
+              placeholder="Add a tag…"
+              className="w-full rounded-sm bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 ring-1 ring-white/10 outline-none placeholder:text-zinc-600 focus:ring-sky-500/70"
+            />
+          </div>
+        )}
     </div>
   );
 }

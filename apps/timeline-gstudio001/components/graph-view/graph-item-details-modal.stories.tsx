@@ -929,3 +929,55 @@ export const WiderViewsScrubEveryWholeClip: Story = {
     await waitFor(() => expect(barMax()).toBe(atThree));
   },
 };
+
+/**
+ * ADDING A TAG IS AN ICON AT THE END OF THE TAGS, NOT A ROW.
+ *
+ * A permanently open text field costs a full row on every panel whether or not
+ * anyone is tagging anything — nine rows of empty input on a nine-up strip.
+ * The chips and the add control share one row now, and the field appears when
+ * it is asked for.
+ *
+ * The popover STAYS OPEN after a commit on purpose: tags arrive in threes more
+ * often than singly, and reopening between them is the annoying part.
+ */
+export const TagsAreAddedFromAnIcon: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    const centre = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-item-details-panel="centre"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const editor = centre.querySelector<HTMLElement>("[data-tag-editor]")!;
+    expect(editor).not.toBeNull();
+
+    // Closed: no field taking a row of its own.
+    expect(editor.querySelector("[data-tag-popover]")).toBeNull();
+    expect(editor.querySelector("input")).toBeNull();
+
+    const add = editor.querySelector<HTMLButtonElement>("[data-tag-add]")!;
+    expect(add).not.toBeNull();
+    // It sits AFTER the chips, which is where the next tag would go.
+    expect(add.previousElementSibling?.hasAttribute("data-tag-chip") ?? true).toBe(true);
+
+    fireEvent.click(add);
+    const field = await waitFor(() => {
+      const found = editor.querySelector<HTMLInputElement>("[data-tag-popover] input");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+
+    fireEvent.change(field, { target: { value: "night" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    // The chip lands, and the field is still there to take the next one.
+    await waitFor(() => expect(editor.querySelector('[data-tag-chip="night"]')).not.toBeNull());
+    expect(editor.querySelector("[data-tag-popover]")).not.toBeNull();
+
+    // Escape puts it away without touching the modal behind it.
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() => expect(editor.querySelector("[data-tag-popover]")).toBeNull());
+    expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull();
+  },
+};
