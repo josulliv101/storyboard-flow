@@ -1152,3 +1152,199 @@ export const TheMonitorGrowsWhileScrubbing: Story = {
     fireEvent.pointerUp(track, args);
   },
 };
+
+/**
+ * EVERY PANEL OFFERS "PLAY THIS ONE", AT EVERY WIDTH.
+ *
+ * The bar's play button starts wherever the playhead happens to be — the right
+ * default for judging the cut in front of you, and no answer at all to "let me
+ * see that shot". So the question is asked a second time, at the clip: one
+ * button per panel, over the picture, which moves the clock to that clip's
+ * first frame.
+ *
+ * THE WIDTH CLAIM IS THE ONE WORTH PINNING. Below 30rem a panel sheds its trim
+ * strip, its tags and its history pair — and at nine up every panel is below
+ * 30rem. A play button that went with them would leave the wide views, which
+ * are exactly the views you scan a sequence in, with nothing to play anything
+ * from. So it is asserted at nine specifically, alongside the controls that
+ * are gone, rather than only in the roomy three-up case.
+ *
+ * The bar's own button is asserted still present: this adds a second way to
+ * start playback, it does not replace the first.
+ */
+export const EveryPanelOffersPlayFromItsOwnStart: Story = {
+  render: () => <SeamHarness scene={LONG_SCENE} />,
+  play: async () => {
+    const onScreenPanels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]")).filter(
+        (panel) => {
+          const box = panel.getBoundingClientRect();
+          return box.right > 1 && box.left < window.innerWidth - 1 && box.width > 0;
+        },
+      );
+    const press = async (label: string) => {
+      const button = await waitFor(() => {
+        const found = Array.from(
+          document.querySelectorAll<HTMLButtonElement>("[data-details-view-count] button"),
+        ).find((b) => b.textContent?.trim() === label);
+        expect(found).not.toBeUndefined();
+        return found!;
+      });
+      fireEvent.click(button);
+      await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
+    };
+
+    // STATED, NOT ASSUMED. The chosen count is remembered at MODULE scope — a
+    // working posture for a session rather than a per-modal setting — so it
+    // leaks between stories in file order, and a story that starts by counting
+    // panels is really reading whatever the last one left behind.
+    await press("3");
+    await waitFor(() => expect(onScreenPanels().length).toBe(3));
+
+    // Every visible panel, and the button lives INSIDE the picture — which is
+    // what makes it read as belonging to this clip rather than to the view.
+    for (const panel of onScreenPanels()) {
+      const play = panel.querySelector<HTMLButtonElement>("[data-item-details-play]");
+      expect(play).not.toBeNull();
+      expect(panel.querySelector("[data-item-details-frame]")!.contains(play)).toBe(true);
+      // Nothing is running, so every one of them offers PLAY.
+      expect(play!.getAttribute("data-item-details-play")).toBe("paused");
+      // Named after its own clip, so nine of these are nine distinct controls
+      // to anything reading the page rather than nine buttons called "Play".
+      expect(play!.getAttribute("aria-label")).toMatch(/^Play .+ from the start$/);
+    }
+
+    // The bar's own transport is untouched: two ways in, not a replacement.
+    expect(
+      document
+        .querySelector("[data-seam-bar]")!
+        .querySelector("button[aria-label='Play across the cut']"),
+    ).not.toBeNull();
+
+    // NINE UP: the narrowest the strip goes, and where the panel's other
+    // controls are gone.
+    await press("9");
+    await waitFor(() => expect(onScreenPanels().length).toBe(9));
+    const narrow = onScreenPanels();
+    const showing = (panel: HTMLElement, selector: string) =>
+      (panel.querySelector(selector)?.getBoundingClientRect().height ?? 0) > 0;
+    expect(narrow.some((panel) => showing(panel, "[data-trim-overview]"))).toBe(false);
+    expect(narrow.some((panel) => showing(panel, "[data-item-details-undo]"))).toBe(false);
+    for (const panel of narrow) {
+      const play = panel.querySelector<HTMLButtonElement>("[data-item-details-play]");
+      expect(play).not.toBeNull();
+      // Present AND hittable — a control collapsed to nothing is not a control.
+      const box = play!.getBoundingClientRect();
+      expect(box.height).toBeGreaterThan(16);
+      expect(box.width).toBeGreaterThan(16);
+    }
+  },
+};
+
+/**
+ * PRESSING PLAY ON A PANEL RUNS THAT CLIP ON THE MONITOR, FROM ITS HEAD.
+ *
+ * Three separate claims, and each of them is a way the obvious implementation
+ * gets it wrong:
+ *
+ *  - It JUMPS. The clock is dragged somewhere else first, so "started playing"
+ *    and "started playing THIS clip" cannot be confused: the playhead has to
+ *    land on that clip's own first frame in bar time.
+ *  - It plays on the MONITOR. The panel pressed does not start a picture of
+ *    its own — the middle one changes to that clip, which is where a cut is
+ *    watched and the only place there is one "now".
+ *  - It does NOT advance the strip. A neighbour's picture already means "bring
+ *    this one to the middle", so a play button that failed to stop its own
+ *    click would move the film every time it was pressed.
+ *
+ * Then pressing it again pauses, and leaves the playhead where it stopped.
+ */
+export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3),
+    );
+    // THREE UP, STATED. The count is remembered at module scope, so it arrives
+    // here as whatever the previous story left — and the bar's arithmetic below
+    // is written for the three-up shape (two leads around one whole clip).
+    const three = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("[data-details-view-count] button"),
+    ).find((b) => b.textContent?.trim() === "3")!;
+    fireEvent.click(three);
+    await waitFor(() => expect(three.getAttribute("aria-pressed")).toBe("true"));
+
+    const track = document.querySelector<HTMLElement>("[data-seam-track]")!;
+    const at = () => Number(track.getAttribute("aria-valuenow"));
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    const centreName = () =>
+      document
+        .querySelector('[data-item-details-panel="centre"]')
+        ?.querySelector("button[aria-label^='Rename ']")
+        ?.getAttribute("aria-label") ?? null;
+    const monitorSrc = () =>
+      document
+        .querySelector('[data-item-details-panel="centre"]')!
+        .querySelector<HTMLImageElement>("[data-item-details-frame] img")!.src;
+    const playOf = (panel: HTMLElement) =>
+      panel.querySelector<HTMLButtonElement>("[data-item-details-play]")!;
+
+    expect(centreName()).toBe("Rename Subject");
+
+    // Park the clock inside the SUBJECT first. Without this the assertion
+    // below cannot tell "jumped to this clip" from "happened to already be
+    // there" — and zero, where the bar rests, is inside the run-up.
+    const box = track.getBoundingClientRect();
+    const scrubArgs = {
+      clientX: box.left + box.width * 0.5,
+      clientY: box.top + box.height / 2,
+      isPrimary: true,
+      pointerId: 1,
+      button: 0,
+    };
+    fireEvent.pointerDown(track, scrubArgs);
+    fireEvent.pointerUp(track, scrubArgs);
+    await waitFor(() => expect(at()).toBeGreaterThan(3));
+
+    // The RIGHT-hand panel: "After". Its stretch of the bar starts at 6s — a
+    // two-second run-up into "Before" (3s long), then "Subject" whole (4s).
+    fireEvent.click(playOf(panels()[2]!));
+
+    // Landed on that clip's first frame in bar time, rather than staying where
+    // the drag left the playhead.
+    //
+    // READ ONCE INTO A VARIABLE. The transport is running from here on, so two
+    // reads of the same attribute are two different moments — a lower and an
+    // upper bound taken separately would be bounding a moving number.
+    const jumped = at();
+    // Captured in the same breath, and asserted FIRST: a play button that let
+    // its click through re-centres the strip, which rebuilds the bar and resets
+    // the clock — so the jump assertion below would fail too, on a number that
+    // says nothing about why.
+    const stayedCentred = centreName();
+    expect(stayedCentred).toBe("Rename Subject");
+    expect(jumped).toBeGreaterThanOrEqual(6);
+    expect(jumped).toBeLessThan(6.5);
+
+    // One clip is playing, and it is the one whose button was pressed.
+    const playing = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-item-details-play="playing"]'),
+    );
+    expect(playing.length).toBe(1);
+    expect(panels()[2]!.contains(playing[0]!)).toBe(true);
+
+    // THE MONITOR IS SHOWING IT — the middle picture, not the panel that was
+    // pressed. This is the whole shape of the feature: one clock, one screen.
+    expect(decodeURIComponent(monitorSrc())).toContain("AFTER");
+
+    // PRESSED AGAIN, IT PAUSES — and does not rewind. Pausing is the same
+    // contract as the bar's button, so the two controls cannot disagree.
+    fireEvent.click(playOf(panels()[2]!));
+    await waitFor(() =>
+      expect(document.querySelectorAll('[data-item-details-play="playing"]').length).toBe(0),
+    );
+    expect(at()).toBeGreaterThanOrEqual(6);
+    expect(playOf(panels()[2]!).getAttribute("aria-label")).toMatch(/^Play /);
+  },
+};

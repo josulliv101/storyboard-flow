@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AudioLines, Redo2, Undo2, X } from "lucide-react";
+import { AudioLines, Pause, Play, Redo2, Undo2, X } from "lucide-react";
 
 import {
   TrimOverviewStrip,
@@ -34,7 +34,13 @@ import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { SeamBar, useSeamTransport } from "./graph-seam-bar";
-import { buildSeamTimeline, seamAt, seamStripProgress, type SeamClip } from "./graph-seam-scrub";
+import {
+  buildSeamTimeline,
+  seamAt,
+  seamSpanFor,
+  seamStripProgress,
+  type SeamClip,
+} from "./graph-seam-scrub";
 import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
 
 /** How much of each neighbour the bar reaches into. Long enough to hear a cut
@@ -360,6 +366,8 @@ function DetailsPanel({
   monitor,
   playhead,
   playing = false,
+  playingHere = false,
+  onPlayFromStart = null,
   live: onScreen = false,
   magnified = false,
   swipe,
@@ -406,6 +414,31 @@ function DetailsPanel({
    * neighbours are showing stills of a moment, not playing one.
    */
   playing?: boolean;
+  /**
+   * Whether the transport is running AND this clip is the one on screen — so
+   * the panel's own play button should be offering PAUSE.
+   *
+   * A third playing-ish flag, and the three are genuinely different questions:
+   * `playing` is "are you the one making the sound" (the monitor, always the
+   * centre), `live` is "are your frames up" (any panel the playhead is inside),
+   * and this is the two together. Collapsing them would put a pause icon on
+   * nine panels at once, or on the centre panel while a neighbour's frames are
+   * the ones actually running.
+   */
+  playingHere?: boolean;
+  /**
+   * Play this clip FROM ITS FIRST FRAME on the monitor, or pause when it is
+   * already the one running. Null when this clip has no stretch of bar at all,
+   * which is every panel mounted past the visible edge — offering to play a
+   * clip the clock cannot reach would be a button that does nothing.
+   *
+   * The panel does not play IN PLACE, and that is the point rather than a
+   * limitation: the monitor is where a cut is judged, and nine panels each able
+   * to run their own clip would be nine clocks with no shared "now". Pressing
+   * play here moves the ONE clock to this clip's head; the picture appears in
+   * the middle, where it always does.
+   */
+  onPlayFromStart?: (() => void) | null;
   /**
    * Whether THIS clip is the one currently on screen — the clip the playhead
    * is inside, which during a run-up or a run-out is a neighbour rather than
@@ -931,6 +964,69 @@ function DetailsPanel({
               style={{ opacity: 0 }}
               className="pointer-events-none absolute inset-0 h-full w-full object-contain"
             />
+          )}
+          {/* PLAY THIS ONE, from every panel.
+              The bar's own play button starts wherever the playhead happens to
+              be, which is the right default for judging the cut in front of
+              you and useless for "let me see that shot". This is the second
+              question, asked at the clip rather than at the clock: it moves the
+              playhead to this clip's first frame and runs.
+
+              BOTTOM-LEFT, NOT CENTRED. A centred disc is the film convention
+              and it was the first thing tried, but this view exists to compare
+              frames ACROSS panels — a circle parked over the middle of nine
+              pictures covers exactly the part being compared, and at nine up it
+              covers most of the subject. The corner is out of the way of the
+              frame while still being on it; bottom-RIGHT is spoken for by the
+              time readout on video panels.
+
+              SMALL ENOUGH FOR THE NARROWEST PANEL, and sized in absolute units
+              rather than by container query on purpose: at 218px the picture is
+              about 122px tall, so 28px is a comfortable target that still
+              leaves the frame readable, and one size at every width means the
+              control does not move or resize as the count changes. It is
+              deliberately NOT behind the 30rem breakpoint that hides the trim
+              strip and the tags — those are editing controls you can leave the
+              panel to reach, and this is the reason the wide views exist.
+
+              It dims with the picture on a neighbour while the clock runs,
+              because it is inside the frame that dims. Accepted rather than
+              worked around: undoing a parent's opacity is impossible from a
+              child, and hoisting the dim onto the media alone would put the
+              grayscale on a different element from the one the view's own
+              fade is written against. A 25% button is still legible and still
+              clickable, and the state it is in — something else is playing —
+              is exactly when reaching for it is the less common move. */}
+          {onPlayFromStart !== null && (
+            <button
+              type="button"
+              data-item-details-play={playingHere ? "playing" : "paused"}
+              aria-label={playingHere ? `Pause ${node.name}` : `Play ${node.name} from the start`}
+              title={playingHere ? "Pause" : "Play from the start of this clip"}
+              // BOTH STOPPED, and for two different handlers. The click would
+              // otherwise reach the picture's own click, which on a neighbour
+              // means "bring this one to the middle" — pressing play would
+              // silently advance the strip as well. The pointerdown would arm
+              // the swipe, so a press that wobbles a few pixels would fling the
+              // film to the next clip instead of starting this one.
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onPlayFromStart();
+              }}
+              className={[
+                "absolute bottom-2 left-2 grid h-7 w-7 place-items-center rounded-full",
+                "bg-black/70 text-zinc-100 ring-1 ring-white/25 backdrop-blur-sm",
+                "transition-colors hover:bg-black/90 hover:text-white",
+                "focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none",
+              ].join(" ")}
+            >
+              {playingHere ? (
+                <Pause aria-hidden="true" className="h-3.5 w-3.5" />
+              ) : (
+                <Play aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+            </button>
           )}
           {live !== null && (
             <span
@@ -1503,11 +1599,41 @@ function DetailsFilmstripModal({
               <div key={id} aria-hidden="true" style={{ width: panelWidth }} className="shrink-0" />
             );
           }
+          // THIS CLIP'S OWN STRETCH OF THE BAR, which is what "play this one"
+          // resolves to: `span.from` IS its first frame in clock time. Null for
+          // the pair mounted just past the visible edge — they hold geometry so
+          // the slide has something to move, and the clock has never heard of
+          // them.
+          //
+          // For the two HALF-VISIBLE edge panels `from` is the head of their
+          // lead-in rather than the head of the clip: the bar simply does not
+          // contain the earlier part of them. Which is the honest answer —
+          // playing from the start of the bar's copy of a clip is the most the
+          // clock can offer, and it is also what the panel is showing.
+          const span = seamSpanFor(timeline, id);
+          const playingHere = playing && position?.clipId === id;
           return (
             <DetailsPanel
               key={id}
               node={media}
               centre={index === centre}
+              playingHere={playingHere}
+              onPlayFromStart={
+                span === null
+                  ? null
+                  : () => {
+                      // A second press on the one that is running is a pause,
+                      // and it leaves the playhead where it stopped — the same
+                      // contract as the bar's button, so the two controls never
+                      // disagree about what pausing means.
+                      if (playingHere) {
+                        setPlaying(false);
+                        return;
+                      }
+                      setBarSeconds(span.from);
+                      setPlaying(true);
+                    }
+              }
               monitor={
                 index === centre && monitorNode && position
                   ? { node: monitorNode, seconds: position.clipSeconds }

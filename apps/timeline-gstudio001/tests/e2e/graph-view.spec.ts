@@ -2933,7 +2933,22 @@ test.describe("graph view E2E", () => {
     // into the top band and the drag stopped resolving at all (6 in 6). Both
     // edges auto-scroll, so a two-row drag in a short viewport has no safe
     // scroll offset — it needs the room.
-    await page.setViewportSize({ width: 420, height: 1040 });
+    // RAISED AGAIN, 1040 -> 1440, for the same reason and by the same
+    // reasoning as the note above.
+    //
+    // At 420 wide this grid is ONE column, so the four clips stack: measured,
+    // alpha at y=615, bravo at 851, the child at 1087. `holdDrag` releases at
+    // 0.9 of the target, which puts the drop point at y≈1049 — BELOW a 1040
+    // viewport. A release off the bottom edge sits in dnd-kit's auto-scroll
+    // band, the grid scrolls under the pointer, and the card lands a slot too
+    // far. That is exactly the failure this test saw before, and exactly the
+    // remedy: the drag needs the room, and scrolling the cards away from the
+    // edge was already tried and was worse.
+    //
+    // Height buys more than it costs here. The preview pane opens at a THIRD
+    // of the available height, so raising by 400 moves the grid down by ~133
+    // and the drop point down with it, netting ~267 of clearance.
+    await page.setViewportSize({ width: 420, height: 1440 });
     await installGraphApi(page);
     await openGraph(page);
     // Switch the surface to grid, then turn Preview on.

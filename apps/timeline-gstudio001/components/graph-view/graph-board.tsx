@@ -2731,7 +2731,22 @@ export function GraphBoard({
                   // drag. "body" (the default) drags instantly, which ate the
                   // drill click and made drags ambiguous.
                   itemDragActivation="hold"
-                  trailingSlot={<AddCollectionSlot collectionId={focusedId} />}
+                  // NO TRAILING ADD SLOT IN THE GRID.
+                  //
+                  // It costs a whole cell, and when it wraps it costs a whole
+                  // ROW — `VirtualGrid` sizes itself as
+                  // `ceil((children + slot) / cols)`, so a grid whose item
+                  // count divides evenly by its columns grows a row holding
+                  // nothing but the slot, and everything below is pushed down
+                  // for it.
+                  //
+                  // Nothing is lost. The same two actions live in the header
+                  // as tools — "Collection" and "Media", both of which append
+                  // to the end of this surface — so the slot was a second
+                  // control for an action that already had one, paid for in
+                  // grid height. The STRIP keeps its slot: a strip grows
+                  // sideways, so its slot costs a card's width at the end of a
+                  // row that already existed rather than a new row.
                   overlay={
                     previewOn ? (
                       <GraphGridPlayhead
