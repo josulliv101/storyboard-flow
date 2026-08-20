@@ -2125,7 +2125,26 @@ export function WorkbenchSplitPane({
     });
   }, [clampSurfaceHeight]);
 
+  // A REF, not the state, so `scheduleClamp` keeps its identity — it is the
+  // ResizeObserver's callback, and a new one every render would tear the
+  // observer down and rebuild it on every frame of the very animation this
+  // exists to stay out of.
+  const slidingRef = useRef(false);
+
   const scheduleClamp = useCallback(() => {
+    // NOT WHILE THE PANE IS SLIDING, because the pane is what is resizing the
+    // boundary. The observer watches `<main>`, the reveal grows `<main>`, and
+    // so the animation triggers this on nearly every one of its own frames —
+    // measured at ten times across a 366ms slide, each one a forced
+    // synchronous layout (`getBoundingClientRect` plus a read of a computed
+    // custom property) followed by a `setState`. A self-inflicted render loop
+    // running against the animation that caused it.
+    //
+    // Nothing is lost. This question is "has the VIEWPORT shrunk under us",
+    // and the height being animated toward was already clamped when it was
+    // chosen; a viewport that genuinely changes mid-slide is caught by the
+    // clamp fired when the slide ends.
+    if (slidingRef.current) return;
     if (clampFrameRef.current !== null || typeof window === "undefined") return;
 
     clampFrameRef.current = window.requestAnimationFrame(() => {
@@ -2133,6 +2152,18 @@ export function WorkbenchSplitPane({
       clampToViewport();
     });
   }, [clampToViewport]);
+
+  // Declared AFTER `scheduleClamp` so it can call it directly rather than
+  // through a ref — the flag it maintains is read by that callback, but only
+  // when the callback runs, so the order between them does not matter.
+  useEffect(() => {
+    const wasSliding = slidingRef.current;
+    slidingRef.current = sliding;
+    // ONE CLAMP ON THE WAY OUT. Skipping them during the slide means a window
+    // resized mid-animation would otherwise leave the pane at an illegal
+    // height until something else happened to ask.
+    if (wasSliding && !sliding) scheduleClamp();
+  }, [sliding, scheduleClamp]);
 
   // Arm the height transition only once the opening size has been painted.
   // The sizing pass below runs in a layout effect and its inputs (the
