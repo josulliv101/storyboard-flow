@@ -44,6 +44,7 @@ import {
   SIDEBAR_GLYPH,
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
+  SIDEBAR_ICON_PRESSED,
 } from "./sidebar-icon-styles";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { toast } from "@/components/core/sonner";
@@ -621,35 +622,6 @@ function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
 // SIDEBAR_ICON_BASE / SIDEBAR_GLYPH / SIDEBAR_ICON_IDLE now live in
 // ./sidebar-icon-styles, so the graph's portalled board-options trigger can
 // wear the rail's treatment without importing this module (PL14-005).
-/**
- * The active tile: an INDICATOR BAR at the rail's edge, over a quietly lifted
- * pill.
- *
- * This is the nav treatment. The rail answers "where am I", and a bar riding
- * the edge reads as a POSITION in a list — the same signal a browser tab or an
- * IDE gutter uses — where a filled tile only reads as a button someone pressed.
- *
- * It replaces a full inversion (near-white pill, near-black glyph). That was
- * legible, but it made the active tile the brightest object on the screen,
- * competing with the board it was only labelling; with several toggles lit at
- * once the rail became the loudest thing in the app. The bar is louder in the
- * only way that matters — position — while the tile itself stays quiet.
- *
- * The bar is anchored to the TILE edge, not the pill: it belongs to the rail's
- * left boundary, so it stays put while the pill floats inset from it.
- *
- * No `translate-y-px`: a pressed tile nudging down by a pixel opened a hairline
- * seam above it and read as misalignment rather than as a press.
- *
- * `h-9` (36px) against the 56px pill: long enough to read as a bar rather than
- * a tick, short enough that it still marks a position instead of drawing a
- * second edge down the rail.
- */
-const SIDEBAR_ICON_PRESSED = [
-  "text-zinc-50 before:bg-zinc-800",
-  "after:absolute after:left-0 after:top-1/2 after:h-9 after:w-[3px]",
-  "after:-translate-y-1/2 after:rounded-r-full after:bg-sky-300 after:content-['']",
-].join(" ");
 
 /**
  * The active state for a rail tile that is a TOGGLE rather than a place.
@@ -1138,6 +1110,7 @@ export function TimelineSidebar() {
         {activeProjectId && onGraphRoute && (
           <SidebarCollectionShortcuts projectId={activeProjectId} />
         )}
+
 
         <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
           {UTILITY_ITEMS.map((item) => {

@@ -1,7 +1,9 @@
 "use client";
 
 import { useContext, useSyncExternalStore } from "react";
-import { Layers } from "lucide-react";
+import { Home, Layers } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import {
   collectionShortcuts,
@@ -13,8 +15,10 @@ import { cn } from "@/lib/utils";
 
 import {
   SIDEBAR_AVATAR_INSET,
+  SIDEBAR_GLYPH,
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
+  SIDEBAR_ICON_PRESSED,
 } from "./sidebar-icon-styles";
 import {
   SidebarLabelsInlineContext,
@@ -172,20 +176,67 @@ function ShortcutsHeading({
   );
 }
 
+/**
+ * Back to the top of the project — the first entry in this group.
+ *
+ * IT BELONGS HERE rather than beside the surface toggles above, because it
+ * answers the same question the shortcuts do: not "where am I" but "where
+ * else", and it is the answer they all fall back to. First, because the root
+ * is what contains them — a list of a project's collections that does not
+ * start with the project reads as a list of unrelated places.
+ *
+ * A LINK, not the graph event the shortcuts use. They open a node inside the
+ * board that is already loaded; the root is a route in its own right — the URL
+ * a project starts at — and going there by link means the back button
+ * understands it.
+ */
+function ProjectHomeShortcut({ projectId }: Readonly<{ projectId: string }>) {
+  const pathname = usePathname();
+  const href = `/timeline/${projectId}/graph`;
+  // ALREADY HOME is worth showing: every other control in this rail marks
+  // where you are, and a home button that looks identical at the root and six
+  // collections deep is the one that makes you check the breadcrumb instead.
+  const isHome = pathname === href;
+  const tooltipId = "sidebar-tooltip-project-home";
+  return (
+    <Link
+      href={href}
+      data-sidebar-project-home={isHome ? "current" : ""}
+      aria-label="Project home"
+      aria-current={isHome ? "page" : undefined}
+      aria-describedby={tooltipId}
+      className={cn(SIDEBAR_ICON_BASE, isHome ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE)}
+    >
+      <Home className={SIDEBAR_GLYPH} />
+      <SidebarTooltipLabel id={tooltipId} label="Home" description="The top of this project" />
+    </Link>
+  );
+}
+
 export function CollectionShortcutsGroup({
   shortcuts,
   onOpen,
+  projectId,
 }: Readonly<{
   shortcuts: readonly CollectionShortcut[];
   onOpen: (nodeId: string) => void;
+  /** Present on a graph route, which is the only place a root exists to go to.
+   *  Its absence is what makes the group disappear entirely on a new project. */
+  projectId?: string;
 }>) {
   // The same signal the labels use — "is the rail wide enough for words".
   const inline = useContext(SidebarLabelsInlineContext);
   const headingId = "sidebar-section-collections";
-  // NOTHING AT ALL when there are no top-level collections — not an empty group,
-  // and the caller draws no separator either. A new project has none, and a
-  // rule with nothing under it reads as something that failed to load.
-  if (shortcuts.length === 0) return null;
+  // NOTHING AT ALL when there is nothing to show — not an empty group, and the
+  // caller draws no separator either: a rule with nothing under it reads as
+  // something that failed to load.
+  //
+  // "Nothing" now means no collections AND no home, because Home is an entry
+  // in this group rather than a neighbour of it. A project with no top-level
+  // collections still has a root to go back to, so the group survives on that
+  // alone — which is right, and is why the old test for emptiness was the
+  // shortcut count by itself.
+  if (shortcuts.length === 0 && projectId === undefined) return null;
 
   return (
     <>
@@ -196,6 +247,7 @@ export function CollectionShortcutsGroup({
         data-sidebar-collection-shortcuts={shortcuts.length}
         className="flex w-full flex-col items-stretch gap-0"
       >
+        {projectId === undefined ? null : <ProjectHomeShortcut projectId={projectId} />}
         {shortcuts.map((shortcut) => {
           const tooltipId = `sidebar-tooltip-collection-${shortcut.nodeId}`;
           return (
@@ -293,6 +345,7 @@ export function SidebarCollectionShortcuts({
     <CollectionShortcutsGroup
       shortcuts={collectionShortcuts(documents[projectId])}
       onOpen={requestGraphOpenItem}
+      projectId={projectId}
     />
   );
 }
