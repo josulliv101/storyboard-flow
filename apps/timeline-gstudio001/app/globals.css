@@ -72,6 +72,19 @@
 html {
   background: #09090b;
   scrollbar-color: #52525b #09090b;
+  /* THE GUTTER IS ALWAYS THERE, whether or not the scrollbar is.
+   *
+   * Opening the preview makes the page tall enough to need a scrollbar, and a
+   * scrollbar appearing narrows the viewport by its own width — so the whole
+   * board reflows a few pixels sideways at the exact moment it is also sliding
+   * down. Two unrelated movements at once read as one janky one, and it is the
+   * horizontal half that makes it look broken rather than merely fast.
+   *
+   * Measured at 16px on this machine, arriving as its own layout shift ahead
+   * of the slide's first frame. Reserving the space costs those pixels
+   * permanently and costs them when nothing is happening, which is the right
+   * trade: a fixed margin nobody notices beats a reflow everybody does. */
+  scrollbar-gutter: stable;
 }
 
 body {

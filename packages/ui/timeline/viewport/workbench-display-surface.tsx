@@ -1856,16 +1856,42 @@ type WorkbenchSplitPaneProps = {
 export type RevealMotion = Readonly<{ durationMs: number; easing: string }>;
 
 /**
- * A small settle past the mark, then done.
+ * Away from rest, along, and a small settle past the mark.
  *
- * `cubic-bezier` can overshoot — a control point above 1 sends the value past
- * its target and lets it come back — which is the entire trick. Roughly 6%
- * over, which on a pane a few hundred pixels tall is a dozen pixels: enough
- * that the eye reads a weight arriving, not enough to look like a bounce.
+ * IT STARTS FROM STANDING, which is the whole correction here. The obvious
+ * choice for a reveal is an "out" curve — fast then slow — and every one of
+ * them has its highest velocity at t=0. Measured, the old one moved the board
+ * 74 PIXELS IN ITS FIRST FRAME: seventeen percent of the distance in five
+ * percent of the time, from a dead stop. That is not an ease, it is a jump
+ * with a decelerating tail, and it read as exactly the lurch it was.
+ *
+ * A zero-slope first control point (`0.45, 0`) means the first frame moves a
+ * pixel or two and the speed builds, so the eye catches the movement starting
+ * instead of finding it already underway. The second (`0.55, 1.15`) carries
+ * the overshoot: past the mark and back, about 15% over at the peak, which on
+ * a pane a few hundred pixels tall is enough to read as weight arriving
+ * without looking like a bounce.
  */
+/** A frame at or under this arrived on time — the thread is keeping up. */
+const FRAME_BUDGET_MS = 22;
+/** How many on-time frames in a row count as settled. One is not enough: a
+ *  single good frame happens in the gap between two long tasks. */
+const CALM_FRAMES = 2;
+/**
+ * Slide anyway once this long has passed.
+ *
+ * A DEADLINE IN MILLISECONDS, not a frame count, and the difference is not
+ * academic: the whole reason this waits is that frames are running slow, so a
+ * cap counted in frames stretches exactly when it most needs to hold. Twenty
+ * frames is 330ms on an idle machine and several seconds on a busy one — which
+ * is a preview that appears to hang under load, and a test suite that fails
+ * only when run alongside everything else.
+ */
+const MAX_SETTLE_MS = 250;
+
 export const REVEAL_SETTLE: RevealMotion = {
-  durationMs: 340,
-  easing: "cubic-bezier(0.34, 1.28, 0.64, 1)",
+  durationMs: 380,
+  easing: "cubic-bezier(0.45, 0, 0.55, 1.15)",
 };
 
 /**
@@ -1878,8 +1904,12 @@ export const REVEAL_SETTLE: RevealMotion = {
  */
 export const REVEAL_ELASTIC: RevealMotion = {
   durationMs: 620,
+  // Re-shaped for the same reason as the settle: the first version put 13% of
+  // the travel into the opening 3%, which is a spring that has already been
+  // released before you see it. A real one accelerates out of rest, so the
+  // opening tenth barely moves and the oscillation comes after.
   easing:
-    "linear(0, 0.13 3%, 0.45 8%, 0.79 13%, 1.02 18%, 1.09 22%, 1.06 27%, 1.0 33%, 0.97 39%, 0.98 47%, 1.01 56%, 1.01 69%, 1)",
+    "linear(0, 0.01 4%, 0.07 10%, 0.28 18%, 0.58 26%, 0.86 34%, 1.05 42%, 1.09 48%, 1.04 56%, 0.99 64%, 0.98 74%, 1.0 88%, 1)",
 };
 
 export function WorkbenchSplitPane({
@@ -2127,9 +2157,57 @@ export function WorkbenchSplitPane({
       setMounted(true);
       if (!wasOpenRef.current) setChromeIn(false);
       wasOpenRef.current = true;
-      let second = 0;
-      const first = requestAnimationFrame(() => {
-        second = requestAnimationFrame(() => {
+
+      // WAIT FOR THE SURFACE TO SETTLE BEFORE SLIDING, because a height
+      // animation runs on the MAIN THREAD — every frame of it needs layout —
+      // so anything blocking that thread stalls the animation itself rather
+      // than merely running beside it.
+      //
+      // Measured, at true wall-clock speed, this is not a subtle effect. The
+      // click costs a 71ms long task (React mounting the surface), and the
+      // posters and audio start loading 72-95ms later; the slide's own frame
+      // gaps then came in at 6.6, 14.7, 82.6, 42.9, 44.5ms before settling to
+      // a clean 16.6 for the rest. Across those three blocked frames the pane
+      // leapt 85, 62 and 107 pixels — 253 of its 424 — which is precisely the
+      // "hesitant then stuttery at the beginning" being reported. The back
+      // half was always smooth, which is why it reads as a start-up problem.
+      //
+      // So: mount at zero height, let the expensive work happen where nothing
+      // is moving, and start the slide once frames are arriving on time. TWO
+      // consecutive good frames, not one — a single one lands in the gaps
+      // between long tasks and starts the animation straight into the next.
+      //
+      // CAPPED, or a page that never goes quiet would never open its preview.
+      // Past the cap it slides anyway and takes the jank, which is what it did
+      // before this existed.
+      let raf = 0;
+      const startedAt = performance.now();
+      let previous = startedAt;
+      let calm = 0;
+      let waited = 0;
+      const startWhenSettled = (now: number) => {
+        const delta = now - previous;
+        previous = now;
+        waited += 1;
+        calm = delta <= FRAME_BUDGET_MS ? calm + 1 : 0;
+        // AND THE PICTURE HAS TO BE DECODED. Calm frames alone left one hitch
+        // roughly 60ms into the slide, every time, which is the video handing
+        // its first frame to the compositor — work that happens off-thread and
+        // then commits, so no amount of watching frame timings anticipates it.
+        // Waiting for `HAVE_CURRENT_DATA` waits for the actual event.
+        //
+        // Reaching into the subtree for `video` is a liberty for a component
+        // this generic, and it is taken deliberately: this pane exists to show
+        // video, the cost is one querySelectorAll per frame for a handful of
+        // frames, and the alternative is a readiness protocol threaded through
+        // a `surface` prop that every consumer would have to implement.
+        const undecoded = Array.from(
+          rootRef.current?.querySelectorAll("video") ?? [],
+        ).some((video) => video.readyState < 2 && video.currentSrc !== "");
+        if (undecoded) calm = 0;
+        // `waited > 1` so there is always at least one painted frame at zero
+        // height for the transition to animate FROM.
+        if (waited > 1 && (calm >= CALM_FRAMES || now - startedAt >= MAX_SETTLE_MS)) {
           setSliding(true);
           setRevealed(true);
           closeTimerRef.current = setTimeout(() => {
@@ -2137,11 +2215,14 @@ export function WorkbenchSplitPane({
             setSliding(false);
             setChromeIn(true);
           }, revealMs);
-        });
-      });
+          return;
+        }
+        raf = requestAnimationFrame(startWhenSettled);
+      };
+      raf = requestAnimationFrame(startWhenSettled);
+
       return () => {
-        cancelAnimationFrame(first);
-        cancelAnimationFrame(second);
+        cancelAnimationFrame(raf);
         clearCloseTimer();
       };
     }
@@ -2255,6 +2336,12 @@ export function WorkbenchSplitPane({
           "--workbench-preview-offset": `${
             headerHeight + (hasSurface ? surfaceHeight + DIVIDER_HEIGHT_PX : 0)
           }px`,
+          // PUBLISHED ON THE ROOT, not on the region, so that consumer content
+          // can move with the reveal instead of beside it. Anything inside the
+          // pane can now spend the same duration and the same curve, which is
+          // the difference between one motion and two that happen to overlap.
+          "--workbench-reveal-ms": `${revealMs}ms`,
+          "--workbench-reveal-ease": reveal.easing,
         } as React.CSSProperties
       }
     >
@@ -2309,8 +2396,6 @@ export function WorkbenchSplitPane({
             "transition-[height] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
         )}
         style={{
-          ["--workbench-reveal-ms" as string]: `${revealMs}ms`,
-          ["--workbench-reveal-ease" as string]: reveal.easing,
           top: headerHeight,
           // ZERO TO FULL. The contents keep their real size inside this and
           // are pinned to its top, so what changes is how much of them shows

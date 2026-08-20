@@ -1951,6 +1951,18 @@ export function GraphBoard({
   // no prerender/Suspense implications.
   const devParam = useSearchParams().get("dev");
   const devPanelsOn = devParam !== null && !["", "0", "false"].includes(devParam);
+  // `?rails=off` — AN EXPERIMENT, not a setting.
+  //
+  // Switching the preview on also spends 16px of padding above the surface to
+  // make room for the seek rails, and that 16px lands as its own instant jolt
+  // a moment before the pane starts to slide. This takes the rails and their
+  // padding out entirely, so the reveal can be judged with NO height change
+  // but its own — the only way to tell a jolt apart from a stutter is to
+  // remove the jolt and look again.
+  //
+  // Rails only. The playhead is an absolute overlay and costs no layout, so
+  // hiding it would change what is being compared.
+  const railsShown = useSearchParams().get("rails") !== "off";
   // Zoom splits urgency (round-4 polish item 8): the slider thumb must track
   // the pointer, so its value stays URGENT — while the expensive work a zoom
   // step triggers (strip relayout, ruler rebuild, per-card resize fan-out)
@@ -2657,7 +2669,9 @@ export function GraphBoard({
                 className={[
                   "rounded-none border-0 p-0",
                   GRAPH_STRIP_TRACK_CLASS,
-                  previewOn || rulerOn || waveformOn ? "pt-4" : "",
+                  // Same 16px, same jolt, same fix as the grid's — see there.
+                  "transition-[padding-top] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
+                  (previewOn && railsShown) || rulerOn || waveformOn ? "pt-4" : "",
                 ].join(" ")}
               />
               {/* The strip's scrub control — the same rail treatment as the
@@ -2665,7 +2679,7 @@ export function GraphBoard({
                   with the content; a drag held at the scroller's edge
                   auto-pans to reveal more items mid-scrub. Replaces the old
                   invisible PlayheadScrubBand. */}
-              {previewOn && (
+              {previewOn && railsShown && (
                 <GraphStripSeekRail
                   focusedId={focusedId}
                   channel={timeChannel}
@@ -2715,13 +2729,22 @@ export function GraphBoard({
                     ) : undefined
                   }
                   // pt-4 = GRID_GAP: row 0's rail band matches the row gaps.
+                  //
+                  // TRANSITIONED, because this 16px is spent the instant the
+                  // preview is switched on — while the pane itself is still
+                  // getting ready to slide. Measured, the board jolted down
+                  // 16 pixels about 65ms after the click and the slide began
+                  // 30-80ms after THAT: a bump, a pause, then the movement,
+                  // which is most of what "not smooth at the beginning" was.
+                  // On the pane's own clock it stops being a separate event.
                   className={[
                     "rounded-none border-0 bg-transparent p-0",
-                    previewOn ? "pt-4" : "",
+                    "transition-[padding-top] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
+                    previewOn && railsShown ? "pt-4" : "",
                   ].join(" ")}
                 />
               </NativeDropGrid>
-              {previewOn && (
+              {previewOn && railsShown && (
                 <GraphSeekRails
                   focusedId={focusedId}
                   channel={timeChannel}

@@ -971,7 +971,12 @@ export const ThePreviewIsUncoveredRatherThanInserted: Story = {
     expect(opening).not.toBeNull();
     expect(opening).not.toHaveAttribute("data-preview-revealed");
 
-    await waitFor(() => expect(region()).toHaveAttribute("data-preview-revealed"));
+    // Generous, because the slide deliberately waits for the surface to settle
+    // before it starts — and under a full suite there is nothing settled about
+    // the machine.
+    await waitFor(() => expect(region()).toHaveAttribute("data-preview-revealed"), {
+      timeout: 3000,
+    });
     expect(region()!.querySelector('[data-testid="workbench-display-surface"]')).not.toBeNull();
 
     await user.click(canvas.getByTestId("toggle-preview"));
