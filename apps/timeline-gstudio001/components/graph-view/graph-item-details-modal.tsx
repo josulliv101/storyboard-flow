@@ -32,6 +32,12 @@ import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
+import { SeamBar, useSeamTransport } from "./graph-seam-bar";
+import { buildSeamTimeline, seamAt, seamProgressWithin } from "./graph-seam-scrub";
+
+/** How much of each neighbour the bar reaches into. Long enough to hear a cut
+ *  land, short enough that the centre clip keeps most of the bar's scale. */
+const SEAM_LEAD_SECONDS = 2;
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -282,6 +288,9 @@ const PANEL_GAP = "1rem";
 function DetailsPanel({
   node,
   centre,
+  monitor,
+  playhead,
+  restingFrame,
   onClose,
   onAdvance,
 }: Readonly<{
@@ -297,6 +306,40 @@ function DetailsPanel({
    * picture.
    */
   centre: boolean;
+  /**
+   * What the CENTRE panel's picture should be showing, when the seam clock is
+   * driving it: a clip and a time inside it. Null means "show your own clip",
+   * which is every panel that is not the centre and the centre itself before
+   * anything has been scrubbed.
+   *
+   * THE CENTRE IS A MONITOR, not a window onto its own clip. Playing across a
+   * cut means the frame changes clip halfway through, and it has to change in
+   * ONE place or there is nothing to watch — an eye that has to move from panel
+   * to panel at the moment of the cut is an eye that misses the cut.
+   */
+  monitor: Readonly<{ node: MediaNode; seconds: number }> | null;
+  /**
+   * How far through this clip's own trimmed range the playhead is, 0-1, or null
+   * when the playhead is not inside this clip at all. Drawn as a line on the
+   * trim strip below.
+   */
+  playhead: number | null;
+  /**
+   * Which end of this clip its picture rests on when nothing is playing.
+   *
+   * THE CLIP BEFORE THE CUT SHOWS ITS LAST FRAME, not its first. Those two
+   * frames — the last of the outgoing clip and the first of the incoming one —
+   * are the cut. A panel resting on its own first frame shows the moment its
+   * shot BEGAN, which for the clip on the left is several seconds before
+   * anything being judged here, and puts a picture next to the seam that has
+   * nothing to do with it.
+   *
+   * The clip after the cut keeps its first frame for the same reason: that IS
+   * its edge of the seam. So the two frames either side of the centre panel are
+   * the two frames either side of a cut, which is the comparison the whole
+   * layout exists to make.
+   */
+  restingFrame: "first" | "last";
   onClose: () => void;
   /** Pull the strip one position, so this clip becomes the centre. */
   onAdvance: (id: string) => void;
@@ -317,11 +360,29 @@ function DetailsPanel({
   const trimOut = live ? live.trimOutSeconds : (windowed?.trimOutSeconds ?? 0);
   const fullDuration = windowed ? windowed.fullDurationSeconds : mediaDurationSeconds(node);
   const showing = Math.max(0, fullDuration - trimIn - trimOut);
-  const rawTime = video ? previewTime(video, trimIn, trimOut, live?.side ?? null) : 0;
+  // WHAT THIS PANEL IS PAINTING. Normally its own clip; while the seam clock
+  // is running, the centre panel paints whatever that clock says is on screen,
+  // which may belong to a neighbour.
+  const shown = monitor ? monitor.node : node;
+  const shownVideo = shown.mediaKind === "video" ? shown : null;
+  const rawTime = monitor
+    ? // The clock's time is measured inside the clip's SHOWING range, and a
+      // video element seeks in SOURCE time — so the trim-in has to be added
+      // back or every frame is early by however much was trimmed off the head.
+      (hasSourceWindow(shown) ? shown.trimInSeconds : 0) + monitor.seconds
+    : video
+      ? restingFrame === "last"
+        ? // ONE FRAME BACK from the trim-out, not the trim-out itself: a video
+          // element seeked exactly to its end has no frame to show and paints
+          // black, which would read as a missing clip rather than as the last
+          // thing before the cut.
+          Math.max(trimIn, trimIn + showing - 1 / 25)
+        : previewTime(video, trimIn, trimOut, live?.side ?? null)
+      : 0;
   // Gated on `video`: an image has no source window and no element to seek, so
   // the settle loop had nothing to do but spin for as long as the modal stayed
   // open.
-  const videoRef = useSeekedVideo(Math.round(rawTime * 25) / 25, video !== null);
+  const videoRef = useSeekedVideo(Math.round(rawTime * 25) / 25, shownVideo !== null);
 
   const [stripWidth, setStripWidth] = useState(0);
   const stripSlot = useCallback((element: HTMLElement | null) => {
@@ -483,11 +544,17 @@ function DetailsPanel({
             centre ? "" : "cursor-pointer",
           ].join(" ")}
         >
-          {video ? (
+          {shownVideo ? (
             <video
+              // KEYED BY SOURCE. Swapping `src` on one element at a cut leaves
+              // the outgoing frame on screen until the incoming file has
+              // decoded — the cut would land late, and late is the one thing
+              // this view exists to measure. A key gives each clip its own
+              // element, so the change is a swap rather than a reload.
+              key={shownVideo.src}
               ref={videoRef}
-              src={video.src}
-              poster={video.posterSrcs?.[0]}
+              src={shownVideo.src}
+              poster={shownVideo.posterSrcs?.[0]}
               muted
               playsInline
               preload="auto"
@@ -496,8 +563,8 @@ function DetailsPanel({
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={node.src}
-              alt={node.name}
+              src={shown.src}
+              alt={shown.name}
               className="h-full w-full bg-black object-contain"
             />
           )}
@@ -526,12 +593,29 @@ function DetailsPanel({
             {video && (
               <div ref={stripSlot} className="w-full">
                 {stripWidth > 0 ? (
-                  <TrimOverviewStrip
-                    node={video}
-                    width={stripWidth}
-                    trimInSeconds={trimIn}
-                    trimOutSeconds={trimOut}
-                  />
+                  <div className="relative">
+                    <TrimOverviewStrip
+                      node={video}
+                      width={stripWidth}
+                      trimInSeconds={trimIn}
+                      trimOutSeconds={trimOut}
+                    />
+                    {/* WHERE PLAY IS, in this clip. Absent — not parked at an
+                        edge — when the playhead is in another clip: a line at
+                        0% reads as "playing here, from the very start", which
+                        is a different and wrong claim from "not playing here".
+                        Its position is measured against the whole trimmed
+                        clip, so the run-up into the previous clip puts the
+                        line near this strip's right-hand END. */}
+                    {playhead !== null && (
+                      <span
+                        data-seam-playhead-line
+                        aria-hidden="true"
+                        style={{ left: `${playhead * 100}%` }}
+                        className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-blue-400"
+                      />
+                    )}
+                  </div>
                 ) : null}
               </div>
             )}
@@ -682,6 +766,92 @@ function DetailsFilmstripModal({
   // no transform at all. What has to be corrected is the distance from there to
   // the subject, and advancing changes it by exactly one step, which is the
   // single value the transition animates.
+  // ── THE SEAM CLOCK ────────────────────────────────────────────────────────
+  // One number for the whole view: where playback is, in bar seconds. The
+  // monitor frame, the three playhead lines and the bar all read it, so they
+  // cannot disagree about "now" — which is the whole point of there being one.
+  // NULL UNTIL SOMETHING MOVES IT, and the distinction is not pedantic: zero is
+  // a real position on this bar and it is the start of the RUN-UP, which means
+  // the previous clip. Initialising to zero made a freshly opened modal monitor
+  // its neighbour before anyone had touched anything — the middle picture
+  // showing the wrong clip, or nothing at all while a source it had never
+  // needed loaded. Null says "not scrubbed", which is a different state from
+  // "scrubbed to the beginning" and the one an untouched view is in.
+  const [barSeconds, setBarSeconds] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+
+  const clipAt = useCallback(
+    (index: number): MediaNode | null => {
+      const id = ids[index];
+      if (id === undefined) return null;
+      const found = graph.nodesById.get(parseNodeId(id));
+      return found && found.kind === "media" && (found as MediaNode).src
+        ? (found as MediaNode)
+        : null;
+    },
+    [ids, graph],
+  );
+
+  const showingOf = (media: MediaNode | null) =>
+    media === null ? null : { id: media.id as string, showingSeconds: mediaDurationSeconds(media) };
+
+  const previousClip = clipAt(centre - 1);
+  const nextClip = clipAt(centre + 1);
+  const centreClip = clipAt(centre);
+
+  const timeline = useMemo(
+    () =>
+      buildSeamTimeline(
+        showingOf(previousClip),
+        showingOf(centreClip),
+        showingOf(nextClip),
+        SEAM_LEAD_SECONDS,
+      ),
+    [previousClip, centreClip, nextClip],
+  );
+
+  // ADVANCING RESETS THE CLOCK TO THIS CLIP'S START, because the bar is rebuilt
+  // around a different cut — the old seconds would name a moment in a run of
+  // time that no longer exists.
+  //
+  // ADJUSTED DURING RENDER rather than in an effect, which is React's own
+  // answer for "this state derives from a prop that changed". An effect would
+  // paint one frame with the new bar and the old playhead first — a visible
+  // flash of the wrong position at exactly the moment the strip moves — and
+  // then re-render to correct it. Setting state during render of the SAME
+  // component is not a side effect: React discards the in-progress render and
+  // starts again before anything reaches the screen.
+  const [clockFor, setClockFor] = useState(node.id as string);
+  if (clockFor !== (node.id as string)) {
+    setClockFor(node.id as string);
+    setPlaying(false);
+    setBarSeconds(null);
+  }
+
+  // Where the BAR draws its playhead when nothing has moved it: the cut at the
+  // head of the centre clip, which is the moment this view is about.
+  const shownSeconds = barSeconds ?? timeline.centreStart;
+  const scrubbed = barSeconds !== null;
+
+  useSeamTransport({
+    playing,
+    totalSeconds: timeline.totalSeconds,
+    seconds: shownSeconds,
+    onTick: setBarSeconds,
+    onEnded: () => setPlaying(false),
+  });
+
+  // Where the clock says the picture is — only once the clock has been moved.
+  // Until then every panel rests on its own frame, which is what makes opening
+  // the view show the cut rather than a playback state nobody asked for.
+  const position = scrubbed ? seamAt(timeline, shownSeconds) : null;
+  const monitorNode =
+    position === null
+      ? null
+      : [previousClip, centreClip, nextClip].find(
+          (candidate) => candidate !== null && (candidate.id as string) === position.clipId,
+        ) ?? null;
+
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
   const rowTransform =
     `translateX(calc(-1 * ${offset} * (${PANEL_WIDTH} + ${PANEL_GAP})))`;
@@ -703,6 +873,29 @@ function DetailsFilmstripModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
+      {/* THE BAR, above everything and spanning it: the cut's clock. Outside
+          the strip because it must not travel with it — the row slides, and a
+          bar that slid with it would be measuring from a moving origin. */}
+      {timeline.totalSeconds > 0 && (
+        <div
+          className="pointer-events-auto absolute inset-x-0 top-0 z-10 px-6 pt-4"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="mx-auto w-full max-w-5xl">
+            <SeamBar
+              timeline={timeline}
+              seconds={shownSeconds}
+              playing={playing}
+              onScrub={(next) => {
+                setPlaying(false);
+                setBarSeconds(next);
+              }}
+              onTogglePlay={() => setPlaying((was) => !was)}
+            />
+          </div>
+        </div>
+      )}
+
       {/* The STRIP: one row, translated. Centred by the scrim, then offset by
           the subject's index so the clip being worked on lands mid-screen. */}
       <div
@@ -731,6 +924,21 @@ function DetailsFilmstripModal({
               key={id}
               node={media}
               centre={index === centre}
+              monitor={
+                index === centre && monitorNode && position
+                  ? { node: monitorNode, seconds: position.clipSeconds }
+                  : null
+              }
+              restingFrame={index < centre ? "last" : "first"}
+              playhead={
+                scrubbed
+                  ? seamProgressWithin(
+                      timeline,
+                      { id, showingSeconds: mediaDurationSeconds(media) },
+                      shownSeconds,
+                    )
+                  : null
+              }
               onClose={onClose}
               onAdvance={onOpenNeighbour}
             />

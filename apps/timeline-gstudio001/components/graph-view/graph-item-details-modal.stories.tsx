@@ -336,3 +336,32 @@ export const ClickingANeighbourAdvancesTheStrip: Story = {
     void canvas;
   },
 };
+
+/**
+ * ON OPEN, THE MIDDLE PANEL SHOWS ITS OWN CLIP.
+ *
+ * The regression this pins: the seam clock starts at bar-second zero, and zero
+ * on that bar is the start of the RUN-UP — which belongs to the PREVIOUS clip.
+ * So a freshly opened modal monitored its neighbour before anyone had touched
+ * anything, and the middle picture showed the wrong clip or, while a source it
+ * had never needed loaded, nothing at all.
+ *
+ * The fix is that "not scrubbed" is a different state from "scrubbed to zero",
+ * and this is the assertion that keeps it that way.
+ */
+export const OpensShowingItsOwnPicture: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
+    );
+    const centre = document.querySelector('[data-item-details-panel="centre"]')!;
+    const picture = centre.querySelector<HTMLImageElement>("[data-item-details-frame] img");
+    expect(picture).not.toBeNull();
+    // The SUBJECT's plate, not the one before it.
+    expect(picture!.src).toContain("SUBJECT");
+    // And no playhead line anywhere yet: nothing is playing, so nothing claims
+    // to be.
+    expect(document.querySelectorAll("[data-seam-playhead-line]").length).toBe(0);
+  },
+};
