@@ -289,6 +289,18 @@ const PANEL_GAP = "1rem";
  * no middle, so the clip being worked on would sit off to one side and the two
  * seams around it would be at different distances from the eye.
  */
+/**
+ * How wide the monitor should be while someone is scrubbing.
+ *
+ * Enough to judge a cut on, which is the whole reason for dragging the bar,
+ * and short of "fills the screen" — the neighbours either side are still the
+ * context that makes the frame mean something.
+ */
+const MONITOR_TARGET_PX = 620;
+/** Beyond this a magnified panel is soft rather than large: everything in it
+ *  is scaled type and scaled borders. */
+const MAX_MAGNIFICATION = 2.2;
+
 const VIEW_COUNTS = [3, 5, 9] as const;
 type ViewCount = (typeof VIEW_COUNTS)[number];
 
@@ -349,6 +361,7 @@ function DetailsPanel({
   playhead,
   playing = false,
   live: onScreen = false,
+  magnified = false,
   swipe,
   seamLabel = null,
   width,
@@ -399,6 +412,16 @@ function DetailsPanel({
    * the centre. Distinct from `playing`, which says who is making the sound.
    */
   live?: boolean;
+  /**
+   * Grow, because someone is scrubbing and this panel is the monitor.
+   *
+   * At three panels the middle one is already most of the screen and this does
+   * nothing. At five and nine it is a few hundred pixels wide — fine as a
+   * frame beside its neighbours, useless as the thing you are watching while
+   * you drag a playhead through a cut. Scrubbing is exactly when the monitor
+   * stops being one of three pictures and becomes the only one that matters.
+   */
+  magnified?: boolean;
   /**
    * Pointer handlers for dragging the whole strip, spread onto the PICTURE.
    *
@@ -509,6 +532,28 @@ function DetailsPanel({
   // playhead, where a cut IS the answer and a fade would be a smear.
   const { videoRef: crossfadeVideoRef, canvasRef } = useFrameCrossfade(restingFrame);
 
+  // HOW BIG THIS PANEL ACTUALLY IS, so magnifying it can aim at a size rather
+  // than multiply by a guess. A fixed factor is wrong at both ends: 1.5x is
+  // nothing at nine panels on a laptop and far too much at three on a
+  // monitor.
+  const [panelWidthPx, setPanelWidthPx] = useState(0);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const element = panelRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const measure = () => setPanelWidthPx(element.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  // Capped, because a panel blown up more than this is soft rather than big —
+  // everything in it is scaled type and scaled borders.
+  const magnification =
+    magnified && panelWidthPx > 0
+      ? Math.min(MAX_MAGNIFICATION, Math.max(1, MONITOR_TARGET_PX / panelWidthPx))
+      : 1;
+
   const [stripWidth, setStripWidth] = useState(0);
   const stripSlot = useCallback((element: HTMLElement | null) => {
     if (!element) return;
@@ -549,7 +594,7 @@ function DetailsPanel({
   // when it gets narrow, not merely what it puts inside itself. The wrapper
   // carries the width and nothing else.
   return (
-      <div className="@container shrink-0" style={{ width }}>
+      <div ref={panelRef} className="@container shrink-0" style={{ width }}>
       <div
         // FOCUS WIRING ON THE CENTRE ONLY. Every panel is fully live — the
         // grips trim, the title renames, the video seeks — but "which dialog
@@ -558,6 +603,16 @@ function DetailsPanel({
         // that was opened. The neighbours are working panels, not focus traps.
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
+        data-item-details-magnified={magnification > 1 ? "" : undefined}
+        style={{
+          // A TRANSFORM, not a width. The strip's slide is computed from a
+          // uniform panel width, so a centre panel that actually got wider
+          // would move every landing off by the difference. Scaling paints
+          // bigger and leaves the geometry alone — the row still knows exactly
+          // where everything is.
+          transform: magnification > 1 ? `scale(${magnification})` : undefined,
+          zIndex: magnification > 1 ? 20 : undefined,
+        }}
         data-item-details-live={onScreen ? "" : undefined}
         // WHICH CLIP IS ON SCREEN, marked on the whole panel. The monitor is
         // always the middle picture, so during a run-up the frames on show
@@ -580,7 +635,7 @@ function DetailsPanel({
           // large monitor have more room each than three on an iPad, and a
           // rule counting panels gets that backwards.
           "relative flex w-full flex-col gap-2 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
-          "transition-[box-shadow,border-color] duration-150",
+          "transition-[box-shadow,border-color,transform] duration-200 ease-out motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //
           // It carried a heavier white one for a while, on the reasoning that
@@ -1082,6 +1137,10 @@ function DetailsFilmstripModal({
   // "scrubbed to the beginning" and the one an untouched view is in.
   const [barSeconds, setBarSeconds] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  // A DRAG IS IN PROGRESS ON THE BAR. Distinct from `scrubbed`, which stays
+  // true once the clock has been touched: this is the gesture itself, and it
+  // is what the monitor grows for.
+  const [scrubbing, setScrubbing] = useState(false);
   // HOW MANY CLIPS ARE ON SCREEN. Remembered for the session rather than the
   // page: it is a way of working — reading one cut closely, or scanning a
   // sequence — and having it snap back to three every time you open a clip
@@ -1364,6 +1423,7 @@ function DetailsFilmstripModal({
                 setBarSeconds(next);
               }}
               onTogglePlay={() => setPlaying((was) => !was)}
+              onScrubbingChange={setScrubbing}
             />
           </div>
         </div>
@@ -1450,6 +1510,10 @@ function DetailsFilmstripModal({
               // could be in sync with anything.
               playing={index === centre && playing}
               live={position?.clipId === id}
+              // Only the monitor grows, and only while the bar is being
+              // dragged: the neighbours are context, and enlarging them would
+              // be enlarging the thing you are trying to look past.
+              magnified={index === centre && scrubbing}
               swipe={swipe}
               width={panelWidth}
               // Engaged, and not the one being watched. Uses the same gate as

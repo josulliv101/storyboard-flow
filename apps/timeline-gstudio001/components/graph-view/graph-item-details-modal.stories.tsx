@@ -1088,3 +1088,67 @@ export const TheBarLabelsItsSectionsWithFrames: Story = {
     }
   },
 };
+
+/**
+ * THE MONITOR GROWS WHILE YOU DRAG THE BAR.
+ *
+ * At three panels the middle one is already most of the screen and nothing
+ * happens. At nine it is a couple of hundred pixels — fine as a frame beside
+ * its neighbours, useless as the thing you are watching while you drag a
+ * playhead through a cut. Scrubbing is exactly when the monitor stops being
+ * one of several pictures and becomes the only one that matters.
+ *
+ * It grows by TRANSFORM rather than by width: the strip's slide is computed
+ * from a uniform panel width, so a centre panel that actually got wider would
+ * put every landing off by the difference.
+ */
+export const TheMonitorGrowsWhileScrubbing: Story = {
+  render: () => <SeamHarness scene={LONG_SCENE} />,
+  play: async () => {
+    const picker = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-details-view-count]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const nine = Array.from(picker.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "9",
+    )!;
+    fireEvent.click(nine);
+    await waitFor(() => expect(nine.getAttribute("aria-pressed")).toBe("true"));
+
+    const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
+    const track = document.querySelector<HTMLElement>("[data-seam-track]")!;
+    const width = () => Math.round(centre().getBoundingClientRect().width);
+
+    const resting = width();
+    expect(centre().hasAttribute("data-item-details-magnified")).toBe(false);
+
+    const box = track.getBoundingClientRect();
+    const args = {
+      clientX: box.left + box.width * 0.5,
+      clientY: box.top + box.height / 2,
+      isPrimary: true,
+      pointerId: 1,
+      button: 0,
+    };
+    fireEvent.pointerDown(track, args);
+
+    // Bigger, and marked as such.
+    await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
+    await waitFor(() => expect(width()).toBeGreaterThan(resting + 10));
+
+    // And back down when the drag ends — this is the gesture, not a mode.
+    fireEvent.pointerUp(track, args);
+    await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(false));
+    await waitFor(() => expect(width()).toBe(resting));
+
+    // The neighbours never grow: they are the context you are looking PAST.
+    const neighbours = Array.from(
+      document.querySelectorAll('[data-item-details-panel="neighbour"]'),
+    );
+    fireEvent.pointerDown(track, args);
+    await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
+    expect(neighbours.some((n) => n.hasAttribute("data-item-details-magnified"))).toBe(false);
+    fireEvent.pointerUp(track, args);
+  },
+};

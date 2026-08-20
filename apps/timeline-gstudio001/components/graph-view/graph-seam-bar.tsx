@@ -15,9 +15,17 @@ import type { SeamTimeline } from "./graph-seam-scrub";
  * the playhead; the seams are marked, so the boundary you are trying to judge
  * is a place you can aim at rather than a value you have to find.
  */
-/** Wide enough to read a frame from, narrow enough that a short clip's
- *  section can still hold one. 16:9 at this width is 40px tall, inside h-12. */
-const THUMB_WIDTH_PX = 71;
+/**
+ * A square chip, not a filmstrip frame.
+ *
+ * It went in at 71x40 — a 16:9 still filling the bar's height — and that made
+ * the bar a row of pictures with a scrubber behind it. The job here is to say
+ * WHICH clip a section belongs to, which a 26px square does; anything larger
+ * is competing with the monitor for the same glance. Square rather than
+ * widescreen because it is a marker, and `object-cover` means it still shows
+ * the middle of the frame.
+ */
+const THUMB_WIDTH_PX = 26;
 
 export function SeamBar({
   timeline,
@@ -25,12 +33,16 @@ export function SeamBar({
   playing,
   onScrub,
   onTogglePlay,
+  onScrubbingChange,
 }: Readonly<{
   timeline: SeamTimeline;
   seconds: number;
   playing: boolean;
   onScrub: (seconds: number) => void;
   onTogglePlay: () => void;
+  /** Fires true while a drag is in progress on the bar, false when it ends.
+   *  The view uses it to make the monitor worth looking at. */
+  onScrubbingChange?: (active: boolean) => void;
 }>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const total = timeline.totalSeconds;
@@ -90,9 +102,10 @@ export function SeamBar({
         /* untrusted or already-released pointer — moves over the bar suffice */
       }
       draggingRef.current = true;
+      onScrubbingChange?.(true);
       scrubTo(event.clientX);
     },
-    [scrubTo],
+    [scrubTo, onScrubbingChange],
   );
 
   const onPointerMove = useCallback(
@@ -104,8 +117,10 @@ export function SeamBar({
   );
 
   const endDrag = useCallback(() => {
+    if (!draggingRef.current) return;
     draggingRef.current = false;
-  }, []);
+    onScrubbingChange?.(false);
+  }, [onScrubbingChange]);
 
   // Arrow keys step a frame at 25fps, shift steps a second — the bar is
   // focusable because judging a cut frame by frame with a pointer is a fight.
@@ -158,9 +173,10 @@ export function SeamBar({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onKeyDown={onKeyDown}
-        // h-12 rather than h-8: a bar carrying a frame per section needs the
-        // height for one, and at 32px a 16:9 still is a smudge.
-        className="relative h-12 flex-1 cursor-ew-resize overflow-hidden rounded bg-zinc-800/80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+        // h-9: enough to hold a 26px chip with air around it, and no more. It
+        // briefly ran at h-12 to fit a full-height still, which turned the bar
+        // into a row of pictures with a scrubber behind it.
+        className="relative h-9 flex-1 cursor-ew-resize overflow-hidden rounded bg-zinc-800/80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
       >
         {/* THE SEAMS, marked. The cut is the thing being judged, so it gets a
             position on the bar you can aim a pointer at — otherwise finding it
@@ -203,8 +219,8 @@ export function SeamBar({
                 alt=""
                 aria-hidden="true"
                 draggable={false}
-                style={{ left: pct(span.to), width: THUMB_WIDTH_PX }}
-                className="pointer-events-none absolute bottom-0.5 -translate-x-[calc(100%+3px)] rounded-xs object-cover opacity-80 ring-1 ring-black/60 select-none"
+                style={{ left: pct(span.to), width: THUMB_WIDTH_PX, height: THUMB_WIDTH_PX }}
+                className="pointer-events-none absolute top-1/2 -translate-x-[calc(100%+4px)] -translate-y-1/2 rounded-sm object-cover opacity-90 ring-1 ring-black/60 select-none"
               />
             );
           })}
