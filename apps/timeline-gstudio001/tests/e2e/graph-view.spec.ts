@@ -3414,8 +3414,12 @@ test.describe("graph view E2E", () => {
     await previewToggle(page).click();
     const rail = page.locator("[data-graph-seek-rail]").first();
     await expect(rail).toBeVisible();
-    // The skip is visible in the scrubber before anything is played.
-    await expect(page.locator("[data-rail-skip]").first()).toBeVisible();
+    // The skip used to be marked on the rail itself. The rail is invisible
+    // now — the track went and the marks went with it — so the disabled span
+    // is read where it was always clearer: on the card, which dims and wears
+    // a chip. What this test is actually about is below, and unchanged:
+    // scrubbing INTO a disabled clip is allowed and the frame reads as
+    // excluded.
 
     // SCRUB into the disabled clip: allowed, and the frame reads as excluded.
     // Its span is the second card's, so a press around 40% of the rail lands
@@ -6529,9 +6533,7 @@ test.describe("graph view E2E", () => {
   // the cost the strip's card virtualizer exists to avoid. It matters most for
   // a flattened all-items strip, where the count is a whole project's rather
   // than one collection's.
-  test("seek rail marks are windowed to the visible strip, not the whole timeline", async ({
-    page,
-  }) => {
+  test("the seek rail's DOM does not grow with the timeline", async ({ page }) => {
     const api = await installGraphApi(page);
     const project = api.documents.get(PROJECT_ID)!;
     project.clips = [
@@ -6544,22 +6546,25 @@ test.describe("graph view E2E", () => {
 
     const rail = page.locator("[data-graph-seek-rail][data-strip-rail]");
     await expect(rail).toHaveCount(1);
-    // The rail's content layer holds the boundary ticks; each is absolutely
-    // positioned at a content x.
-    const markCount = () => rail.locator("span[aria-hidden='true']").count();
 
-    // 300 cards would be 299 boundary ticks unwindowed. Windowed, the count
-    // follows the viewport — generously bounded so this pins the ORDER of
-    // magnitude rather than an exact layout.
-    await expect.poll(markCount).toBeLessThan(120);
-    await expect.poll(markCount).toBeGreaterThan(0);
+    // THIS USED TO COUNT BOUNDARY TICKS, one per card, and pinned that they
+    // were WINDOWED to the visible scroll range — 300 cards would otherwise
+    // have meant 299 absolutely-positioned marks in the rail.
+    //
+    // The rail has no marks at all now: it is invisible, and only its thumb
+    // shows. That makes the old assertion unfalsifiable — zero marks passes a
+    // "fewer than 120" test for the wrong reason — so it is replaced by the
+    // stronger claim the windowing was always a means to. The rail's DOM is
+    // CONSTANT: whatever the timeline's length, and wherever it is scrolled,
+    // the node count does not move.
+    const nodeCount = () => rail.locator("*").count();
+    const atRest = await nodeCount();
+    expect(atRest).toBeLessThan(12);
 
-    // Scrolling deep into the timeline keeps it bounded — the window moves,
-    // it does not accumulate.
     await strip(page, PROJECT_ID).evaluate((el) => {
       el.scrollLeft = 30_000;
     });
-    await expect.poll(markCount).toBeLessThan(120);
+    await expect.poll(nodeCount).toBe(atRest);
   });
 
   // ── Selection actions on the card ─────────────────────────────────────────

@@ -59,7 +59,25 @@ const SEEK_RAIL_STEP_SECONDS = 1;
  *  visible (the old design filled the band edge-to-edge and sat flush on
  *  the card tops). */
 const SEEK_RAIL_TRACK_PX = 8;
-export const SEEK_RAIL_BAND_INSET_PX = (GRID_GAP - SEEK_RAIL_TRACK_PX) / 2;
+/**
+ * Where the rail sits relative to the row it scrubs — ZERO now, meaning it
+ * rides the top of the cards rather than a band reserved above them.
+ *
+ * It used to centre the rail in a 16px gap, and that gap had to be BOUGHT: the
+ * grid and the strip both spent `pt-4` above row zero to make room, and the
+ * whole surface moved down for it whenever the preview came on. For a control
+ * that is now a single 12px dot, that was an expensive frame.
+ *
+ * A card already carries ~6px of padding above its artwork, so a rail sitting
+ * at the row's top edge lands on padding rather than on picture. Nothing has
+ * to move to make room for it.
+ *
+ * It is also the offset the playhead LINE uses to reach up to the rail's
+ * underside (see GraphGridPlayhead). At zero the line simply starts at the
+ * row's top edge, which is where the dot now is — so the dot caps the line
+ * instead of floating above it with a gap between them.
+ */
+export const SEEK_RAIL_BAND_INSET_PX = 0;
 /** The UNPLAYED groove is a slim centred line; the PLAYED fill grows to the
  *  full track height as the scrub sweeps through it, so the rail visibly
  *  thickens behind the thumb. The HIT TARGET is unchanged — the whole
@@ -286,49 +304,30 @@ function SeekRailRow({
         height: SEEK_RAIL_TRACK_PX,
       }}
     >
-      {/* UNPLAYED groove: a slim centred line. Solid, not translucent — a
-          see-through track melted into the grid's dark backdrop (R7). */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-sky-900 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-sky-400/40 transition-shadow group-hover:ring-sky-300/60"
-        style={{ height: SEEK_RAIL_GROOVE_PX }}
-      />
-      {/* PLAYED fill (full track height), then boundary ticks, then thumb. */}
-      <div
-        ref={fillRef}
-        data-rail-fill
-        aria-hidden="true"
-        className="absolute inset-y-0 left-0 rounded-full bg-sky-300/80"
-      />
-      {/* SKIP marks: the cells playback will jump over. One per disabled card
-          in THIS row, laid on the row's own cell pitch — a grid cell is a
-          fixed width, so the mark is the cell, not a time range. */}
-      {rowCards.map((card, index) =>
-        card.disabled === true ? (
-          <span
-            key={`skip-${index}`}
-            data-rail-skip
-            aria-hidden="true"
-            className="absolute inset-y-0 bg-zinc-600/70"
-            style={{
-              left: `${((index * pitch) / extent) * 100}%`,
-              width: `${(cellWidth / extent) * 100}%`,
-            }}
-          />
-        ) : null,
-      )}
-      {rowCards.slice(1).map((_, index) => (
-        <span
-          key={index}
-          aria-hidden="true"
-          className="absolute inset-y-0 w-px bg-white/30"
-          style={{ left: `${(((index + 1) * pitch - GRID_GAP / 2) / extent) * 100}%` }}
-        />
-      ))}
-      {/* h-3: the head is visibly bigger than the slim track (2px past it
-          each side), and the band's inset keeps even that overhang clear of
-          the cards — thumb and items never touch. The whole rail is the hit
-          target anyway. */}
+      {/* NO GROOVE, NO FILL, NO TICKS — the rail is invisible and only its
+          thumb shows.
+          A track drawn across every row was a lot of furniture for a control
+          that is used occasionally, and it duplicated what the playhead line
+          already says: where you are. The dot is the part that carries
+          information you cannot get elsewhere, so the dot is what is left. The
+          box itself stays exactly as grabbable as it was. */}
+      {/* THE FILL STAYS IN THE DOM AND PAINTS NOTHING.
+          It carries no background any more, but it cannot simply go: the paint
+          loop above bails on `if (!rail || !fill || !thumb) return`, so
+          deleting it would take the THUMB down with it — the one part being
+          kept. Invisible, same element, same ref, loop intact.
+
+          The skip marks and the cell-boundary ticks are gone with the track
+          they lived on. Both described the rail rather than the timeline, and
+          floating them over the tops of cards with no groove behind them would
+          read as damage rather than as information. Skips are still visible on
+          the cards themselves, which is where they were always clearer. */}
+      <div ref={fillRef} data-rail-fill aria-hidden="true" className="absolute inset-y-0 left-0" />
+      {/* THE WHOLE CONTROL, now. It rides the top edge of the cards, capping
+          the playhead line that runs down from it — the dot and the line read
+          as one object, which is what they always were. `ring-2 ring-zinc-950`
+          is what keeps it legible against artwork rather than against a track:
+          a dark halo, so it holds its shape over a bright frame. */}
       <div
         ref={thumbRef}
         data-rail-thumb
@@ -507,7 +506,13 @@ export function GraphSeekRails({
           offsetX={row * geometry.columns * (geometry.cellWidth + GRID_GAP)}
           cellWidth={geometry.cellWidth}
           x={geometry.left}
-          y={geometry.top + row * (cellHeight + GRID_GAP) - GRID_GAP}
+          // NO `- GRID_GAP`. That subtraction put the rail in the gap ABOVE
+          // its row, which is where it lived when a band was reserved for it.
+          // The rail rides the row's own top edge now — over the ~6px of
+          // padding a card already carries above its artwork — so its row
+          // offset is simply the row's offset, and the dot ends up capping the
+          // playhead line that runs down from the same point.
+          y={geometry.top + row * (cellHeight + GRID_GAP)}
           channel={channel}
           rowIndex={row}
           columns={geometry.columns}
@@ -625,7 +630,7 @@ export function GraphStripSeekRail({
   // one tick per card boundary plus one mark per disabled card is a DOM node
   // PER ITEM, which is exactly what the strip's virtualizer exists to avoid.
   // `extent` stays the full width — it sizes the layer the marks live in.
-  const { extent, boundaryTicks: ticks, skips } = useMemo(
+  const { extent } = useMemo(
     () => buildStripOverlay(cards, tickWindow),
     [cards, tickWindow],
   );
@@ -905,52 +910,17 @@ export function GraphStripSeekRail({
           : { left: 9, top: 1 + SEEK_RAIL_BAND_INSET_PX, right: 9, height: SEEK_RAIL_TRACK_PX }
       }
     >
-      {/* UNPLAYED groove: a slim centred line across the visible rail (static
-          — the track itself is uniform, only the fill scrolls). */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-sky-900 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-sky-400/40 transition-shadow group-hover:ring-sky-300/60"
-        style={{ height: SEEK_RAIL_GROOVE_PX }}
-      />
-      {/* PLAYED fill + ticks clip to the pill (full track height); transparent
-          so the slim groove behind shows through the unplayed stretch. */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 overflow-hidden rounded-full"
-      >
-        {/* Content-space layer: as wide as the timeline, translated against
-            the scroller so fill and ticks stay glued to their cards. */}
+      {/* NO TRACK HERE EITHER — see the grid rail above for why the fill
+          element survives while its background does not: the paint loop bails
+          if the fill is missing and would take the thumb with it.
+
+          The clip layer and the content-space inner div stay too. `innerRef`
+          is translated against the scroller every frame to keep the fill glued
+          to its cards, and while the fill paints nothing, the machinery that
+          positions it is the same machinery the thumb's own maths reads. */}
+      <div aria-hidden="true" className="absolute inset-0 overflow-hidden rounded-full">
         <div ref={innerRef} className="relative h-full" style={{ width: extent }}>
-          <div
-            ref={fillRef}
-            data-rail-fill
-            aria-hidden="true"
-            className="absolute inset-y-0 left-0 rounded-full bg-sky-300/80"
-          />
-          {/* SKIP marks, over the fill: the stretches playback will jump. A
-              neutral scrim rather than a colour of its own — the point is
-              that this part of the rail is dead, and a dead stretch should
-              look drained next to the live fill, not decorated. */}
-          {/* Keyed by POSITION, not index: the list is windowed, so indices
-              shift as the strip scrolls and index keys would remount every
-              mark on each chunk crossing. */}
-          {skips.map((segment) => (
-            <span
-              key={`skip-${segment.x}`}
-              data-rail-skip
-              aria-hidden="true"
-              className="absolute inset-y-0 bg-zinc-600/70"
-              style={{ left: segment.x, width: segment.width }}
-            />
-          ))}
-          {ticks.map((x) => (
-            <span
-              key={x}
-              aria-hidden="true"
-              className="absolute inset-y-0 w-px bg-white/30"
-              style={{ left: x }}
-            />
-          ))}
+          <div ref={fillRef} data-rail-fill aria-hidden="true" className="absolute inset-y-0 left-0" />
         </div>
       </div>
       {/* h-3 like the grid rails: the head is visibly bigger than the slim

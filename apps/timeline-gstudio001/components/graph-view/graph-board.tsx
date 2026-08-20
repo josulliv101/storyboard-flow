@@ -2733,7 +2733,11 @@ export function GraphBoard({
                   // Same 16px, same wait, same one-step landing as the grid's
                   // — see the note there. Ruler and waveform have no reveal to
                   // wait for, so they still spend it immediately.
-                  rulerOn || waveformOn ? "pt-4" : "[[data-preview-settled]_&]:pt-4",
+                  // The RULER and the WAVEFORM still need their band — they
+                  // ARE bands, drawn above the cards. The preview's rail no
+                  // longer does: it rides the cards' own top padding. See the
+                  // grid's note below.
+                  rulerOn || waveformOn ? "pt-4" : "",
                 ].join(" ")}
               />
               {/* The strip's scrub control — the same rail treatment as the
@@ -2832,7 +2836,18 @@ export function GraphBoard({
                     //
                     // One step, at a moment when nothing else is moving and the
                     // user is watching the pane arrive, is both calmer and safe.
-                    "[[data-preview-settled]_&]:pt-4",
+                    // NO BAND FOR THE RAIL ANY MORE. It rides the top edge of
+                    // the cards now, over the ~6px of padding they already
+                    // carry above their artwork, so there is nothing to make
+                    // room for. This 16px used to be spent whenever the
+                    // preview came on, and the whole surface moved down for it
+                    // — for a control that is a single dot.
+                    //
+                    // Which also retires the timing problem the 16px created:
+                    // spent at the click it was a jolt against a moving pane;
+                    // deferred to the settle it moved a drag surface's layout
+                    // half a second after the click. Space you never take
+                    // needs no schedule.
                   ].join(" ")}
                 />
               </NativeDropGrid>
