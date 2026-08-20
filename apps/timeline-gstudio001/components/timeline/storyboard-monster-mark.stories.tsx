@@ -95,6 +95,47 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** The two sizes the rail renders, side by side, at the rail's 19px type size. */
+/**
+ * THE MARK MUST NOT NAME ITSELF FOR A VIEW TRANSITION.
+ *
+ * It used to, inline and for its whole life, and the consequence was not local
+ * to the rail: a `view-transition-name` opts an element into EVERY view
+ * transition the document runs, and the app runs others (the item details
+ * modal, the trash drawer). Each one lifted the creature out of the root
+ * snapshot and played its 680ms jump under an opaque hole-filler, then dropped
+ * it when that unrelated transition ended.
+ *
+ * The name now lives in `globals.css` behind `[data-hopping]`, which the rail
+ * toggle sets for the length of its own transition. This story cannot see that
+ * stylesheet — Storybook loads its own Tailwind entry — so it pins the half
+ * that belongs to the component: an inline value would beat the stylesheet
+ * rule and put the bug straight back, silently and everywhere.
+ */
+export const NotNamedForViewTransitions: Story = {
+  args: { scale: 1.6 },
+  render: () => (
+    <Plate label="no inline view-transition-name">
+      <StoryboardMonsterMark scale={1.6} gaze="breadcrumb" />
+    </Plate>
+  ),
+  play: async ({ canvasElement }) => {
+    const mark = canvasElement.querySelector<HTMLElement>(
+      "[data-storyboard-monster]",
+    );
+    expect(mark).not.toBeNull();
+    if (!mark) return;
+    // The INLINE value specifically: that is the one that cannot be overridden
+    // and therefore the one that made this global.
+    expect(mark.style.viewTransitionName).toBe("");
+    // And nothing inside the drawing names itself either — a part lifted out on
+    // its own would be worse, since it would leave a hole in the creature.
+    const named = Array.from(mark.querySelectorAll<HTMLElement>("*")).filter(
+      (el) => el.style.viewTransitionName !== "",
+    );
+    expect(named).toHaveLength(0);
+  },
+};
+
 export const RailSizes: Story = {
   args: { scale: 1.1 },
   render: () => (

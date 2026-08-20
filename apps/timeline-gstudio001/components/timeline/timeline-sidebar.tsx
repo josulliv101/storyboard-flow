@@ -278,6 +278,21 @@ function writeRailExpanded(next: boolean): void {
   const mark = document.querySelector("[data-storyboard-monster]");
   mark?.setAttribute("data-aiming", "");
 
+  // OPT INTO THE TRANSITION, and only this one. The `view-transition-name` that
+  // makes the creature a snapshot lives in `globals.css` behind these two
+  // attributes rather than inline on the element, because a name is not scoped
+  // to the transition you meant — it applies to every one the document runs,
+  // and this app runs others (the details modal, the trash drawer). Named for
+  // its whole life, the creature played its entire jump whenever a modal
+  // opened, under an opaque hole-filler, and then vanished when that unrelated
+  // transition finished.
+  //
+  // Set BEFORE `startViewTransition`, because the old state is captured the
+  // moment it is called, and held until `finished`, which covers the new
+  // capture too. Cleared on every exit below, next to the aim.
+  mark?.setAttribute("data-hopping", "");
+  document.documentElement.dataset.swHop = "";
+
   const transition = doc.startViewTransition(() => {
     flushSync(() => commitRailExpanded(next));
     // THE SECOND POSE, and the reason there is one at all. The browser captures
@@ -301,6 +316,16 @@ function writeRailExpanded(next: boolean): void {
   //
   // Attribute rather than React state on purpose: this is a 500ms flourish, and
   // routing it through the store would re-render the sidebar twice more for it.
+  // LEAVING THE TRANSITION, on every path out. Dropping these late is not a
+  // cosmetic slip: while `data-hopping` is on, the creature is still a named
+  // participant, so the NEXT transition anyone starts — a modal, the trash
+  // drawer — snapshots it and replays the jump. That is the bug this pair
+  // exists to prevent, so it must not survive the flight that set it.
+  const leaveTransition = () => {
+    mark?.removeAttribute("data-hopping");
+    delete document.documentElement.dataset.swHop;
+  };
+
   const finished = transition.finished;
   if (!finished) {
     // Nothing to hang the settle off. Drop the aim on a timer regardless — a
@@ -308,6 +333,7 @@ function writeRailExpanded(next: boolean): void {
     window.setTimeout(() => {
       mark?.removeAttribute("data-aiming");
       mark?.removeAttribute("data-landing");
+      leaveTransition();
     }, 620);
     return;
   }
@@ -319,6 +345,7 @@ function writeRailExpanded(next: boolean): void {
       // captured image to live element is invisible.
       mark.removeAttribute("data-aiming");
       mark.removeAttribute("data-landing");
+      leaveTransition();
       mark.setAttribute("data-settling", "");
       // Outlasts the longest part, which is the PUPIL: it now waits for the eye
       // to finish moving (460ms) and then constricts over 800ms, so it is still
@@ -334,6 +361,7 @@ function writeRailExpanded(next: boolean): void {
       // the eye is left pointing at a jump that never happened.
       mark?.removeAttribute("data-aiming");
       mark?.removeAttribute("data-landing");
+      leaveTransition();
     });
 }
 
