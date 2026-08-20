@@ -1973,18 +1973,7 @@ export function GraphBoard({
   // no prerender/Suspense implications.
   const devParam = useSearchParams().get("dev");
   const devPanelsOn = devParam !== null && !["", "0", "false"].includes(devParam);
-  // `?rails=off` — AN EXPERIMENT, not a setting.
-  //
-  // Switching the preview on also spends 16px of padding above the surface to
-  // make room for the seek rails, and that 16px lands as its own instant jolt
-  // a moment before the pane starts to slide. This takes the rails and their
-  // padding out entirely, so the reveal can be judged with NO height change
-  // but its own — the only way to tell a jolt apart from a stutter is to
-  // remove the jolt and look again.
-  //
-  // Rails only. The playhead is an absolute overlay and costs no layout, so
-  // hiding it would change what is being compared.
-  const railsShown = useSearchParams().get("rails") !== "off";
+
   // Zoom splits urgency (round-4 polish item 8): the slider thumb must track
   // the pointer, so its value stays URGENT — while the expensive work a zoom
   // step triggers (strip relayout, ruler rebuild, per-card resize fan-out)
@@ -2695,11 +2684,7 @@ export function GraphBoard({
                   "transition-[padding-top] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
                   // Ruler and waveform have no reveal to wait for, so they
                   // still spend it immediately; the preview's share waits.
-                  rulerOn || waveformOn
-                    ? "pt-4"
-                    : railsShown
-                      ? "[[data-preview-settled]_&]:pt-4"
-                      : "",
+                  rulerOn || waveformOn ? "pt-4" : "[[data-preview-settled]_&]:pt-4",
                 ].join(" ")}
               />
               {/* The strip's scrub control — the same rail treatment as the
@@ -2707,7 +2692,7 @@ export function GraphBoard({
                   with the content; a drag held at the scroller's edge
                   auto-pans to reveal more items mid-scrub. Replaces the old
                   invisible PlayheadScrubBand. */}
-              {previewOn && railsShown && (
+              {previewOn && (
                 <AfterPreviewOpens>
                 <GraphStripSeekRail
                   focusedId={focusedId}
@@ -2774,11 +2759,11 @@ export function GraphBoard({
                     // Driven off the pane's own `data-preview-settled` rather
                     // than off `previewOn`, so the 16px is spent when the rails
                     // actually arrive instead of at the click.
-                    railsShown ? "[[data-preview-settled]_&]:pt-4" : "",
+                    "[[data-preview-settled]_&]:pt-4",
                   ].join(" ")}
                 />
               </NativeDropGrid>
-              {previewOn && railsShown && (
+              {previewOn && (
                 <AfterPreviewOpens>
                   <GraphSeekRails
                     focusedId={focusedId}
