@@ -275,8 +275,44 @@ function CollectionDetails({
  * subpixel that accumulates over a few clicks. The row's transform is written
  * in `calc()` against these, so the panel width IS the step by construction.
  */
-const PANEL_WIDTH = "min(48rem, 78vw)";
 const PANEL_GAP = "1rem";
+
+/**
+ * How many clips the strip shows at once, centre included.
+ *
+ * ODD ONLY, and not as a style choice: the strip exists to put ONE clip in the
+ * middle with the same amount of timeline either side of it. An even count has
+ * no middle, so the clip being worked on would sit off to one side and the two
+ * seams around it would be at different distances from the eye.
+ */
+const VIEW_COUNTS = [3, 5, 15] as const;
+type ViewCount = (typeof VIEW_COUNTS)[number];
+
+/**
+ * A panel's width for a given count.
+ *
+ * ANCHORED ON THE THREE-UP LAYOUT rather than derived from the viewport, so
+ * that showing three is pixel-for-pixel what it always was and the option is
+ * purely additive. More panels divide the same span: five are three-fifths the
+ * width, fifteen a fifth of it.
+ *
+ * The trade is honest and worth stating — at fifteen a panel is a narrow
+ * column, and while everything in it still works, "fully functional" and
+ * "comfortable" part company somewhere above five. That is what asking for
+ * fifteen buys: reach, at the cost of room.
+ */
+/**
+ * The last count chosen, kept at module scope.
+ *
+ * Deliberately NOT persisted to storage: it is a working posture for a
+ * session, not a preference, and a board reopened tomorrow should start at the
+ * close reading rather than at whatever the last question happened to need.
+ */
+let rememberedViewCount: ViewCount = 3;
+
+function panelWidthFor(count: ViewCount): string {
+  return count === 3 ? "min(48rem, 78vw)" : `calc(min(48rem, 78vw) * 3 / ${count})`;
+}
 
 /**
  * ONE panel — the whole details view for one clip.
@@ -296,6 +332,7 @@ function DetailsPanel({
   live: onScreen = false,
   swipe,
   seamLabel = null,
+  width,
   restingFrame,
   onClose,
   onAdvance,
@@ -364,6 +401,8 @@ function DetailsPanel({
    * the entire reason they are on screen.
    */
   seamLabel?: { text: string; side: "left" | "right" } | null;
+  /** Set by the strip, which owns how many panels are on screen. */
+  width: string;
   /**
    * Which end of this clip its picture rests on when nothing is playing.
    *
@@ -482,7 +521,7 @@ function DetailsPanel({
         // that was opened. The neighbours are working panels, not focus traps.
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
-        style={{ width: PANEL_WIDTH }}
+        style={{ width }}
         data-item-details-live={onScreen ? "" : undefined}
         // WHICH CLIP IS ON SCREEN, marked on the whole panel. The monitor is
         // always the middle picture, so during a run-up the frames on show
@@ -918,23 +957,6 @@ function DetailsFilmstripModal({
     [graph, node.id],
   );
 
-  // ONE PANEL FURTHER THAN CAN BE SEEN, on each side.
-  //
-  // Three are visible, so mounting three would mean the arriving panel is
-  // CREATED at the moment the strip starts moving — a video element and a trim
-  // strip being built while the row animates, which lands as a blank frame
-  // sliding in and filling itself. Mounting five keeps the next one either way
-  // already rendered and waiting off screen, so a click moves a panel that
-  // already exists and the only work is one new panel at the far edge, out of
-  // sight and with a whole slide's worth of time to do it.
-  //
-  // It stops there rather than growing: beyond this the panels are neither seen
-  // nor about to be, and a full panel is a video element, a trim strip and a
-  // tag editor. A sixty-clip timeline is five of those and fifty-five empty
-  // boxes, which is all the row needs from the rest — the geometry that keeps
-  // the step honest.
-  const MOUNTED_RADIUS = 2;
-
   // OFFSET FROM THE ROW'S MIDDLE, because the scrim centres the row and not its
   // first panel. With every clip holding a position, the row's own middle is
   // clip (N-1)/2 — so a fifty-clip timeline would sit on clip twenty-five with
@@ -954,6 +976,12 @@ function DetailsFilmstripModal({
   // "scrubbed to the beginning" and the one an untouched view is in.
   const [barSeconds, setBarSeconds] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  // HOW MANY CLIPS ARE ON SCREEN. Remembered for the session rather than the
+  // page: it is a way of working — reading one cut closely, or scanning a
+  // sequence — and having it snap back to three every time you open a clip
+  // would make the wider views something you re-choose rather than something
+  // you use.
+  const [viewCount, setViewCount] = useState<ViewCount>(rememberedViewCount);
 
   const clipAt = useCallback(
     (index: number): MediaNode | null => {
@@ -1040,6 +1068,29 @@ function DetailsFilmstripModal({
           (candidate) => candidate !== null && (candidate.id as string) === position.clipId,
         ) ?? null;
 
+  const panelWidth = panelWidthFor(viewCount);
+
+  // ONE PANEL FURTHER THAN CAN BE SEEN, on each side.
+  //
+  // Mounting only what is visible would mean the arriving panel is CREATED at
+  // the moment the strip starts moving — a video element and a trim strip being
+  // built while the row animates, which lands as a blank frame sliding in and
+  // filling itself. The spare pair keeps the next one either way already
+  // rendered and waiting off screen, so a click moves a panel that already
+  // exists and the only work is one new panel at the far edge, out of sight and
+  // with a whole slide's worth of time to do it.
+  //
+  // It stops there rather than growing: beyond this the panels are neither seen
+  // nor about to be, and a full panel is a video element, a trim strip and a
+  // tag editor. Everything else in the row is an empty box of the right width,
+  // which is all the row needs from it — the geometry that keeps the step
+  // honest.
+  const MOUNTED_RADIUS = Math.floor(viewCount / 2) + 1;
+
+  const chooseViewCount = useCallback((next: ViewCount) => {
+    rememberedViewCount = next;
+    setViewCount(next);
+  }, []);
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
   // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
@@ -1138,7 +1189,7 @@ function DetailsFilmstripModal({
   );
 
   const rowTransform =
-    `translateX(calc(-1 * ${offset} * (${PANEL_WIDTH} + ${PANEL_GAP}) + ${dragPx}px))`;
+    `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + ${dragPx}px))`;
 
   return createPortal(
     <div
@@ -1180,6 +1231,37 @@ function DetailsFilmstripModal({
         </div>
       )}
 
+      {/* HOW MANY CLIPS TO SHOW, bottom right and out of the way.
+          Deliberately down here rather than up with the transport: that bar is
+          about the cut you are looking at, and this is about how much of the
+          timeline is on screen — a question you answer once and then work,
+          not a control you reach for while judging a seam. */}
+      <div
+        data-details-view-count
+        role="group"
+        aria-label="Clips on screen"
+        className="pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {VIEW_COUNTS.map((count) => (
+          <button
+            key={count}
+            type="button"
+            aria-pressed={count === viewCount}
+            onClick={() => chooseViewCount(count)}
+            title={`Show ${count} clips`}
+            className={[
+              "min-w-8 rounded px-2 py-1 font-mono text-[11px] tabular-nums transition-colors",
+              count === viewCount
+                ? "bg-zinc-100 text-zinc-900"
+                : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+            ].join(" ")}
+          >
+            {count}
+          </button>
+        ))}
+      </div>
+
       {/* The STRIP: one row, translated. Centred by the scrim, then offset by
           the subject's index so the clip being worked on lands mid-screen. */}
       <div
@@ -1211,7 +1293,7 @@ function DetailsFilmstripModal({
           if (media === null) {
             // A placeholder holds the position — and only the position.
             return (
-              <div key={id} aria-hidden="true" style={{ width: PANEL_WIDTH }} className="shrink-0" />
+              <div key={id} aria-hidden="true" style={{ width: panelWidth }} className="shrink-0" />
             );
           }
           return (
@@ -1231,6 +1313,7 @@ function DetailsFilmstripModal({
               playing={index === centre && playing}
               live={position?.clipId === id}
               swipe={swipe}
+              width={panelWidth}
               seamLabel={
                 index === centre - 1
                   ? { text: "Last frame", side: "right" }

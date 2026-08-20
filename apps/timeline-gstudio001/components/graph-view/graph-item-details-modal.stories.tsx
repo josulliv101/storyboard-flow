@@ -725,3 +725,64 @@ export const TheOpenedClipAndTheLiveClipAreMarkedSeparately: Story = {
     expect(both.borderTopColor).not.toBe(getComputedStyle(neighbour()).borderTopColor);
   },
 };
+
+/**
+ * FIVE AND FIFTEEN KEEP THE SUBJECT IN THE MIDDLE.
+ *
+ * The counts are odd for a reason worth pinning rather than commenting: the
+ * strip exists to put one clip in the centre with the same amount of timeline
+ * either side. An even count has no centre, so the clip being worked on would
+ * sit off to one side and its two seams would be at different distances from
+ * the eye.
+ *
+ * Asserted by MEASURING where the centre panel lands against the viewport's
+ * middle, at each count, because that is the actual claim — not that a class
+ * changed, but that the thing stayed centred while everything around it got
+ * narrower.
+ */
+export const TheCountChangesHowManyClipsAreOnScreen: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
+    );
+    const picker = document.querySelector('[data-details-view-count]')!;
+    expect(picker).not.toBeNull();
+
+    const centreOffset = () => {
+      const box = document.querySelector('[data-item-details-panel="centre"]')!.getBoundingClientRect();
+      return Math.abs(box.left + box.width / 2 - window.innerWidth / 2);
+    };
+    const centreWidth = () =>
+      document.querySelector('[data-item-details-panel="centre"]')!.getBoundingClientRect().width;
+    const press = async (label: string) => {
+      const button = Array.from(picker.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === label,
+      )!;
+      expect(button).not.toBeNull();
+      fireEvent.click(button);
+      // The strip animates; wait for the width to settle at its new value.
+      await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
+    };
+
+    const widthAtThree = centreWidth();
+    expect(centreOffset()).toBeLessThan(2);
+
+    await press("5");
+    await waitFor(() => expect(centreWidth()).toBeLessThan(widthAtThree));
+    const widthAtFive = centreWidth();
+    // Narrower, and STILL centred — that is what makes the extra panels usable
+    // rather than merely present.
+    expect(centreOffset()).toBeLessThan(2);
+
+    await press("15");
+    await waitFor(() => expect(centreWidth()).toBeLessThan(widthAtFive));
+    expect(centreOffset()).toBeLessThan(2);
+
+    // And back, to exactly where it started: three is the untouched layout, not
+    // a re-derived approximation of it.
+    await press("3");
+    await waitFor(() => expect(centreWidth()).toBe(widthAtThree));
+    expect(centreOffset()).toBeLessThan(2);
+  },
+};
