@@ -181,18 +181,7 @@ const MIN_TIMELINE_SPACE = 260;
  *  grab — there is no cost here to spend against. */
 const DIVIDER_HEIGHT_PX = 44;
 
-/**
- * How long the preview takes to be uncovered, and to be covered again.
- *
- * Longer than the 260ms the divider's height uses, because these are not the
- * same gesture: a divider drag is the user moving something themselves and
- * wants to feel immediate, while this is the board getting out of the way to
- * show what was behind it — and it is only legible if the eye can follow the
- * edge that is moving. Short enough that a toggle never feels like waiting.
- *
- * Also the close's unmount delay, so it must stay in step with the CSS below.
- */
-const REVEAL_MS = 320;
+
 /** Where the visible band's mid-line falls inside that box. The band is
  *  CENTERED on this line at every breakpoint rather than sized from the top,
  *  which is what lets it be 8px on desktop and 12px on coarse-pointer widths
@@ -1848,6 +1837,49 @@ type WorkbenchSplitPaneProps = {
    *  across unmounts. Store it in a ref: this fires per pointer move during a
    *  divider drag. */
   onSurfaceHeightChange?: (height: number) => void;
+  /**
+   * How the preview is uncovered and covered again.
+   *
+   * The DURATION and the EASING travel together, and the duration is a number
+   * rather than CSS, because the close is also a timer: the pane has to stay
+   * mounted for exactly as long as the slide takes. Split across a prop and a
+   * stylesheet they would drift, and the failure is a pane that unmounts
+   * mid-animation — or lingers invisibly afterwards, still holding a video.
+   *
+   * The default is a whisper of overshoot. Curves that overshoot are read as
+   * physical rather than as animated, and the pane weighs nothing, so it takes
+   * very little; the point is to look released rather than driven.
+   */
+  reveal?: RevealMotion;
+};
+
+export type RevealMotion = Readonly<{ durationMs: number; easing: string }>;
+
+/**
+ * A small settle past the mark, then done.
+ *
+ * `cubic-bezier` can overshoot — a control point above 1 sends the value past
+ * its target and lets it come back — which is the entire trick. Roughly 6%
+ * over, which on a pane a few hundred pixels tall is a dozen pixels: enough
+ * that the eye reads a weight arriving, not enough to look like a bounce.
+ */
+export const REVEAL_SETTLE: RevealMotion = {
+  durationMs: 340,
+  easing: "cubic-bezier(0.34, 1.28, 0.64, 1)",
+};
+
+/**
+ * A damped spring: over, back, over, settle.
+ *
+ * Needs `linear()` rather than a bezier, which has exactly one hump — an
+ * oscillation is several, so it is spelled out as points along the curve.
+ * Longer than the settle, because a spring that resolves in a third of a
+ * second reads as a glitch rather than as elasticity.
+ */
+export const REVEAL_ELASTIC: RevealMotion = {
+  durationMs: 620,
+  easing:
+    "linear(0, 0.13 3%, 0.45 8%, 0.79 13%, 1.02 18%, 1.09 22%, 1.06 27%, 1.0 33%, 0.97 39%, 0.98 47%, 1.01 56%, 1.01 69%, 1)",
 };
 
 export function WorkbenchSplitPane({
@@ -1856,6 +1888,7 @@ export function WorkbenchSplitPane({
   children,
   getInitialSurfaceHeight,
   onSurfaceHeightChange,
+  reveal = REVEAL_SETTLE,
 }: WorkbenchSplitPaneProps) {
   const hasSurface = surface !== null;
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -1898,6 +1931,9 @@ export function WorkbenchSplitPane({
   const [revealed, setRevealed] = useState(hasSurface);
   const [sliding, setSliding] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Depended on as a NUMBER, not as the object: a consumer passing an inline
+  // `{durationMs, easing}` would otherwise restart the reveal on every render.
+  const revealMs = reveal.durationMs;
   // WHAT THE CLOSE SLIDES OVER. The consumer drops `surface` to null the
   // instant the preview is switched off, so without this the region would
   // spend the close animating an EMPTY box shut — a blank gap collapsing,
@@ -2086,7 +2122,7 @@ export function WorkbenchSplitPane({
           closeTimerRef.current = setTimeout(() => {
             closeTimerRef.current = null;
             setSliding(false);
-          }, REVEAL_MS);
+          }, revealMs);
         });
       });
       return () => {
@@ -2103,9 +2139,9 @@ export function WorkbenchSplitPane({
       closeTimerRef.current = null;
       setMounted(false);
       setSliding(false);
-    }, REVEAL_MS);
+    }, revealMs);
     return clearCloseTimer;
-  }, [hasSurface]);
+  }, [hasSurface, revealMs]);
 
   useLayoutEffect(() => {
     // Size ONCE, when the surface first opens. The split pane itself may have
@@ -2246,9 +2282,15 @@ export function WorkbenchSplitPane({
           // of the two animated, the pane and the board beneath it would
           // disagree about where the bottom edge is for the length of it.
           (sliding || (heightAnimated && !isDividerDragging)) &&
-            "transition-[height] duration-[320ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+            // Duration and easing arrive as CUSTOM PROPERTIES rather than as
+            // inline transition styles so `motion-reduce:transition-none`
+            // still wins — an inline `transition` would outrank the class and
+            // quietly animate for someone who asked for no animation.
+            "transition-[height] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
         )}
         style={{
+          ["--workbench-reveal-ms" as string]: `${revealMs}ms`,
+          ["--workbench-reveal-ease" as string]: reveal.easing,
           top: headerHeight,
           // ZERO TO FULL. The contents keep their real size inside this and
           // are pinned to its top, so what changes is how much of them shows

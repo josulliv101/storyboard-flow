@@ -89,6 +89,8 @@ import {
 import { cardsFor, clipWidthAt, collectionCardWidth } from "./preview-card-geometry";
 import type { PreviewScrubPosition, PreviewTimeChannel } from "./preview-time-channel";
 import {
+  REVEAL_ELASTIC,
+  REVEAL_SETTLE,
   WorkbenchDisplaySurface,
   WorkbenchSplitPane,
 } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
@@ -1119,6 +1121,35 @@ export function useSelectionCount(): number {
   }, [graph, selectedIds]);
 }
 
+/**
+ * Which reveal curve the preview uses, switchable with `?reveal=elastic`.
+ *
+ * Two curves exist because "bouncy" and "elastic" are different animals and
+ * the only way to choose between them is to feel both: a settle goes past the
+ * mark once and stops, a spring goes past it, comes back, and goes past it
+ * again more gently. A query parameter rather than a setting — this is a
+ * comparison, and whichever wins becomes the only one.
+ *
+ * READ AS AN EXTERNAL SOURCE, which is what the URL is. The server has none,
+ * so deriving this during render would hand the client different markup than
+ * the server sent and trip hydration — and pulling it in an effect just moves
+ * the same read somewhere React has a rule against. `useSyncExternalStore`
+ * exists for exactly this shape: a server snapshot and a client snapshot that
+ * are allowed to differ.
+ *
+ * It never changes within a session, so the subscription is a no-op — a URL
+ * this app rewrites would need a real one.
+ */
+const subscribeToNothing = () => () => {};
+const readRevealParam = () =>
+  new URLSearchParams(window.location.search).get("reveal");
+const noRevealParam = () => null;
+
+function useRevealMotion() {
+  const wanted = useSyncExternalStore(subscribeToNothing, readRevealParam, noRevealParam);
+  return wanted === "elastic" ? REVEAL_ELASTIC : REVEAL_SETTLE;
+}
+
 export function PreviewShell({
   enabled,
   focusedId,
@@ -1221,6 +1252,7 @@ export function PreviewShell({
   // the provider below) and the pane reads it as a prop (PL14-006).
   const trimStore = useTrimPreviewStore();
   const trimFrame = useTrimPreviewFrame(trimStore);
+  const reveal = useRevealMotion();
 
   return (
     <TimelineDocumentsProvider initialState={initialDocumentsState}>
@@ -1231,6 +1263,7 @@ export function PreviewShell({
       ) : null}
       <WorkbenchSplitPane
         header={header}
+        reveal={reveal}
         // The shell and lower pane stay mounted whether the surface is open or
         // closed. That keeps the virtual strip DOM node—and therefore its
         // horizontal scroll position—alive through the preview toggle.
