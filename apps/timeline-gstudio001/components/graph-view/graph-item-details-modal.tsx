@@ -34,6 +34,7 @@ import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { SeamBar, useSeamTransport } from "./graph-seam-bar";
 import { buildSeamTimeline, seamAt, seamStripProgress, type SeamClip } from "./graph-seam-scrub";
+import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
 
 /** How much of each neighbour the bar reaches into. Long enough to hear a cut
  *  land, short enough that the centre clip keeps most of the bar's scale. */
@@ -292,6 +293,7 @@ function DetailsPanel({
   playhead,
   playing = false,
   live: onScreen = false,
+  swipe,
   restingFrame,
   onClose,
   onAdvance,
@@ -338,6 +340,18 @@ function DetailsPanel({
    * the centre. Distinct from `playing`, which says who is making the sound.
    */
   live?: boolean;
+  /**
+   * Pointer handlers for dragging the whole strip, spread onto the PICTURE.
+   *
+   * The picture and nothing else: every other large surface in a panel is
+   * already a gesture. The filmstrip drags the source window, the grips trim,
+   * the bar scrubs, the title is a text field — a swipe layered over any of
+   * them would be two meanings competing for one drag, and the loser would be
+   * whichever the user actually meant. The picture is the one big area with
+   * only a tap on it, which is why the tap is already "bring this one to the
+   * middle"; the swipe is the same instruction, held.
+   */
+  swipe?: React.ComponentProps<"div">;
   /**
    * Which end of this clip its picture rests on when nothing is playing.
    *
@@ -582,7 +596,15 @@ function DetailsPanel({
             transition, so the two never contend for the same element. */}
         <div
           data-item-details-frame
-          style={centre ? { viewTransitionName: HERO } : undefined}
+          {...swipe}
+          style={{
+            ...(centre ? { viewTransitionName: HERO } : {}),
+            // `pan-y`, not `none`: the browser keeps vertical panning (so a
+            // page or panel that scrolls still can) while horizontal drags
+            // reach us as pointer events instead of being eaten as a scroll.
+            // Without this a swipe on a touchscreen is silently the browser's.
+            touchAction: "pan-y",
+          }}
           onClick={centre ? undefined : () => onAdvance(node.id as string)}
           className={[
             "relative overflow-hidden rounded-md bg-black",
@@ -937,8 +959,104 @@ function DetailsFilmstripModal({
         ) ?? null;
 
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
+
+  // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
+  // drag the film and it follows the hand, let go past a threshold and it
+  // lands on the next clip. Pointer events rather than touch events, so one
+  // implementation serves a finger, a trackpad and a mouse — the gesture is
+  // the same shape on all three and only ever felt on the first.
+  const hasPrevious = centre > 0;
+  const hasNext = centre >= 0 && centre < ids.length - 1;
+  const [dragPx, setDragPx] = useState(0);
+  // Not state: this changes on nearly every pointer move and only the ROW's
+  // transform cares. A re-render per move to store a start coordinate would
+  // re-render three live panels — video elements included — sixty times a
+  // second for the duration of a swipe.
+  const dragRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    at: number;
+    width: number;
+    committed: boolean;
+  } | null>(null);
+  // Set once a drag has been recognised, and read by the click guard below.
+  const swipedRef = useRef(false);
+
+  const swipe = useMemo<React.ComponentProps<"div">>(
+    () => ({
+      onPointerDown: (event) => {
+        if (!event.isPrimary || event.button !== 0) return;
+        swipedRef.current = false;
+        dragRef.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          at: performance.now(),
+          // The picture's own width stands in for the panel's, so the
+          // distance rule scales with the layout without measuring anything
+          // else.
+          width: event.currentTarget.getBoundingClientRect().width,
+          committed: false,
+        };
+      },
+      onPointerMove: (event) => {
+        const drag = dragRef.current;
+        if (drag === null || event.pointerId !== drag.pointerId) return;
+        const dx = event.clientX - drag.x;
+        const dy = event.clientY - drag.y;
+        if (!drag.committed) {
+          // NOT A SWIPE UNTIL IT IS MOSTLY SIDEWAYS AND HAS TRAVELLED. Taking
+          // the gesture on the first pixel would steal every tap that wobbles
+          // and every vertical scroll that starts on a picture.
+          if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(dy)) return;
+          drag.committed = true;
+          swipedRef.current = true;
+          try {
+            event.currentTarget.setPointerCapture(drag.pointerId);
+          } catch {
+            /* untrusted pointer — moves over the picture still arrive */
+          }
+        }
+        setDragPx(swipeOffset(dx, hasPrevious, hasNext));
+      },
+      onPointerUp: (event) => {
+        const drag = dragRef.current;
+        dragRef.current = null;
+        setDragPx(0);
+        if (drag === null || event.pointerId !== drag.pointerId || !drag.committed) return;
+        const intent = swipeIntent({
+          dx: event.clientX - drag.x,
+          dy: event.clientY - drag.y,
+          elapsedMs: performance.now() - drag.at,
+          panelWidth: drag.width,
+          hasPrevious,
+          hasNext,
+        });
+        if (intent === "next") onOpenNeighbour(ids[centre + 1]!);
+        else if (intent === "previous") onOpenNeighbour(ids[centre - 1]!);
+      },
+      onPointerCancel: () => {
+        dragRef.current = null;
+        setDragPx(0);
+      },
+      // A SWIPE MUST NOT ALSO COUNT AS A TAP. The picture's click brings a
+      // neighbour to the middle, and a swipe that ended on a neighbour would
+      // otherwise advance twice — once for the gesture, once for the click
+      // the browser sends afterwards. Capture, so it is stopped before the
+      // element's own handler sees it.
+      onClickCapture: (event) => {
+        if (!swipedRef.current) return;
+        swipedRef.current = false;
+        event.stopPropagation();
+        event.preventDefault();
+      },
+    }),
+    [centre, hasNext, hasPrevious, ids, onOpenNeighbour],
+  );
+
   const rowTransform =
-    `translateX(calc(-1 * ${offset} * (${PANEL_WIDTH} + ${PANEL_GAP})))`;
+    `translateX(calc(-1 * ${offset} * (${PANEL_WIDTH} + ${PANEL_GAP}) + ${dragPx}px))`;
 
   return createPortal(
     <div
@@ -984,7 +1102,18 @@ function DetailsFilmstripModal({
           the subject's index so the clip being worked on lands mid-screen. */}
       <div
         data-details-strip
-        className="flex items-center transition-transform duration-300 ease-out motion-reduce:transition-none"
+        className={[
+          "flex items-center",
+          // NO TRANSITION WHILE A FINGER IS ON IT. A drag has to track the
+          // hand exactly; easing it would put the film a fixed distance
+          // behind wherever the pointer actually is, which reads as lag
+          // rather than as smoothing. It comes back for the release, so
+          // landing on the next clip is animated and letting go short of the
+          // threshold springs back.
+          dragPx === 0
+            ? "transition-transform duration-300 ease-out motion-reduce:transition-none"
+            : "",
+        ].join(" ")}
         style={{
           gap: PANEL_GAP,
           transform: rowTransform,
@@ -1019,6 +1148,7 @@ function DetailsFilmstripModal({
               // could be in sync with anything.
               playing={index === centre && playing}
               live={position?.clipId === id}
+              swipe={swipe}
               playhead={
                 scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
               }

@@ -514,3 +514,104 @@ export const TheRingMarksWhoseFramesAreUp: Story = {
     await waitFor(() => expect(liveLabel()).toBe("centre"));
   },
 };
+
+/**
+ * SWIPING THE PICTURE MOVES THE STRIP.
+ *
+ * The same instruction as clicking a neighbour, held — and the one that has to
+ * work on a touchscreen, where there is no hover to discover a click target
+ * with. Driven with pointer events because that is what the gesture listens
+ * for: one implementation covers a finger, a trackpad and a mouse.
+ *
+ * `isPrimary` is not decoration here — dnd-kit's sensor ignores a whole
+ * sequence without it, and so does this.
+ */
+export const SwipingThePictureAdvancesTheStrip: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
+    );
+    const titleOfCentre = () =>
+      document
+        .querySelector('[data-item-details-panel="centre"]')
+        ?.querySelector("button[aria-label^='Rename']")
+        ?.getAttribute("aria-label") ?? null;
+
+    expect(titleOfCentre()).toBe("Rename Subject");
+
+    const picture = document
+      .querySelector('[data-item-details-panel="centre"]')!
+      .querySelector<HTMLElement>("[data-item-details-frame]")!;
+    const box = picture.getBoundingClientRect();
+    const y = box.top + box.height / 2;
+
+    const swipe = (from: number, to: number) => {
+      const args = { isPrimary: true, pointerId: 1, button: 0, clientY: y };
+      fireEvent.pointerDown(picture, { ...args, clientX: from });
+      // Two moves: the first crosses the "is this sideways" threshold, the
+      // second carries it past the distance rule.
+      fireEvent.pointerMove(picture, { ...args, clientX: from + (to - from) / 2 });
+      fireEvent.pointerMove(picture, { ...args, clientX: to });
+      fireEvent.pointerUp(picture, { ...args, clientX: to });
+    };
+
+    // Dragged LEFT: the film moves the way the hand moves, so the clip after
+    // this one arrives from the right.
+    swipe(box.left + box.width * 0.8, box.left + box.width * 0.1);
+    await waitFor(() => expect(titleOfCentre()).toBe("Rename After"));
+
+    // And back.
+    const back = document
+      .querySelector('[data-item-details-panel="centre"]')!
+      .querySelector<HTMLElement>("[data-item-details-frame]")!;
+    const backBox = back.getBoundingClientRect();
+    const backY = backBox.top + backBox.height / 2;
+    const args = { isPrimary: true, pointerId: 1, button: 0, clientY: backY };
+    fireEvent.pointerDown(back, { ...args, clientX: backBox.left + backBox.width * 0.1 });
+    fireEvent.pointerMove(back, { ...args, clientX: backBox.left + backBox.width * 0.4 });
+    fireEvent.pointerMove(back, { ...args, clientX: backBox.left + backBox.width * 0.9 });
+    fireEvent.pointerUp(back, { ...args, clientX: backBox.left + backBox.width * 0.9 });
+    await waitFor(() => expect(titleOfCentre()).toBe("Rename Subject"));
+  },
+};
+
+/**
+ * A MOSTLY-VERTICAL DRAG IS NOT A SWIPE, asserted through the real component
+ * rather than only against the rule.
+ *
+ * On a phone this is the difference between a usable modal and one that flings
+ * itself to another clip every time a thumb travels down the screen — and a
+ * thumb travelling down a screen covers plenty of horizontal distance on the
+ * way, which is why the rule compares the two rather than just measuring dx.
+ */
+export const ADragDownTheScreenIsNotASwipe: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
+    );
+    const titleOfCentre = () =>
+      document
+        .querySelector('[data-item-details-panel="centre"]')
+        ?.querySelector("button[aria-label^='Rename']")
+        ?.getAttribute("aria-label") ?? null;
+
+    const picture = document
+      .querySelector('[data-item-details-panel="centre"]')!
+      .querySelector<HTMLElement>("[data-item-details-frame]")!;
+    const box = picture.getBoundingClientRect();
+    const args = { isPrimary: true, pointerId: 1, button: 0 };
+    const x0 = box.left + box.width * 0.7;
+    const y0 = box.top + box.height * 0.2;
+
+    fireEvent.pointerDown(picture, { ...args, clientX: x0, clientY: y0 });
+    fireEvent.pointerMove(picture, { ...args, clientX: x0 - 60, clientY: y0 + 140 });
+    fireEvent.pointerMove(picture, { ...args, clientX: x0 - 120, clientY: y0 + 300 });
+    fireEvent.pointerUp(picture, { ...args, clientX: x0 - 120, clientY: y0 + 300 });
+
+    // Unmoved, and still unmoved after anything queued has run.
+    await waitFor(() => expect(titleOfCentre()).toBe("Rename Subject"));
+    expect(titleOfCentre()).toBe("Rename Subject");
+  },
+};
