@@ -138,6 +138,28 @@ const TRIMMED_SCENE: GraphNodeSpec = {
   ],
 };
 
+/**
+ * A timeline long enough to actually show fifteen.
+ *
+ * The three-clip scene above cannot answer the question the count control
+ * asks: with only three clips in the timeline, "show fifteen" and "show five"
+ * both put three on screen and the assertion passes for the wrong reason.
+ * Twenty-one gives every count room, with the subject far enough from either
+ * end that nine is not clipped by the timeline itself.
+ */
+const LONG_SCENE: GraphNodeSpec = {
+  kind: "collection",
+  id: "root",
+  name: "Root",
+  children: Array.from({ length: 21 }, (_, index) => ({
+    kind: "media" as const,
+    id: index === 10 ? "subject" : `clip-${index}`,
+    name: index === 10 ? "Subject" : `Clip ${index}`,
+    src: plate(String(index), `hsl(${index * 17}, 60%, 70%)`),
+    durationSeconds: 2 + (index % 3),
+  })),
+};
+
 function graphOfRoot(root: GraphNodeSpec): CollectionsGraph {
   const result = buildGraph([root]);
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -161,11 +183,17 @@ function EndHarness() {
 }
 
 function SeamHarness({ scene = SEAM_SCENE }: { scene?: GraphNodeSpec }) {
-  const store = createGraphDetailsStore({
-    before: DETAIL,
-    subject: DETAIL,
-    after: DETAIL,
-  });
+  // Built FROM the scene, so a fixture can grow without the harness having to
+  // be told about every clip in it by name.
+  const store = createGraphDetailsStore(
+    Object.fromEntries(
+      (function ids(node: GraphNodeSpec): string[] {
+        return node.kind === "collection"
+          ? (node.children ?? []).flatMap(ids)
+          : [node.id as string];
+      })(scene).map((id) => [id, DETAIL]),
+    ),
+  );
   return (
     <div className="graph-view-theme min-h-[600px] bg-zinc-950">
       <DndCollections initialGraph={graphOfRoot(scene)}>
@@ -741,48 +769,113 @@ export const TheOpenedClipAndTheLiveClipAreMarkedSeparately: Story = {
  * narrower.
  */
 export const TheCountChangesHowManyClipsAreOnScreen: Story = {
-  render: () => <SeamHarness />,
+  render: () => <SeamHarness scene={LONG_SCENE} />,
   play: async () => {
     await waitFor(() =>
       expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
     );
-    const picker = document.querySelector('[data-details-view-count]')!;
+    const picker = document.querySelector("[data-details-view-count]")!;
     expect(picker).not.toBeNull();
 
+    // HOW MANY PANELS ARE ACTUALLY ON SCREEN — the claim the count makes, and
+    // the one the first attempt failed: it scaled the panels narrower without
+    // fitting more of them, so five showed the same three as three did. A
+    // width assertion cannot tell those apart; counting what intersects the
+    // viewport can.
+    const onScreen = () =>
+      Array.from(document.querySelectorAll("[data-item-details-panel]")).filter((panel) => {
+        const box = panel.getBoundingClientRect();
+        return box.right > 1 && box.left < window.innerWidth - 1 && box.width > 0;
+      }).length;
     const centreOffset = () => {
-      const box = document.querySelector('[data-item-details-panel="centre"]')!.getBoundingClientRect();
+      const box = document
+        .querySelector('[data-item-details-panel="centre"]')!
+        .getBoundingClientRect();
       return Math.abs(box.left + box.width / 2 - window.innerWidth / 2);
     };
-    const centreWidth = () =>
-      document.querySelector('[data-item-details-panel="centre"]')!.getBoundingClientRect().width;
     const press = async (label: string) => {
       const button = Array.from(picker.querySelectorAll("button")).find(
         (b) => b.textContent?.trim() === label,
       )!;
       expect(button).not.toBeNull();
       fireEvent.click(button);
-      // The strip animates; wait for the width to settle at its new value.
       await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
     };
 
-    const widthAtThree = centreWidth();
+    // Three: the middle one whole, one truncated either side.
+    await waitFor(() => expect(onScreen()).toBe(3));
     expect(centreOffset()).toBeLessThan(2);
 
+    // Five means FIVE — three whole and two halves, not three narrower ones.
     await press("5");
-    await waitFor(() => expect(centreWidth()).toBeLessThan(widthAtThree));
-    const widthAtFive = centreWidth();
-    // Narrower, and STILL centred — that is what makes the extra panels usable
-    // rather than merely present.
+    await waitFor(() => expect(onScreen()).toBe(5));
     expect(centreOffset()).toBeLessThan(2);
 
-    await press("15");
-    await waitFor(() => expect(centreWidth()).toBeLessThan(widthAtFive));
+    await press("9");
+    await waitFor(() => expect(onScreen()).toBe(9));
+    // Still centred at every count, which is what the odd numbers buy.
     expect(centreOffset()).toBeLessThan(2);
 
-    // And back, to exactly where it started: three is the untouched layout, not
-    // a re-derived approximation of it.
     await press("3");
-    await waitFor(() => expect(centreWidth()).toBe(widthAtThree));
+    await waitFor(() => expect(onScreen()).toBe(3));
     expect(centreOffset()).toBeLessThan(2);
+  },
+};
+
+/**
+ * THE NEIGHBOURS FADE BACK WHILE THE CLOCK RUNS.
+ *
+ * Once playback is engaged the middle picture is a monitor — it shows whatever
+ * is on screen at that instant, including a neighbour's own frames — so two
+ * bright stills either side of it compete with the one thing the view exists
+ * for. They lose opacity AND colour: opacity alone leaves a picture that still
+ * reads, while draining the colour puts them in the past tense.
+ *
+ * Both transition, so engaging the clock reads as attention moving rather than
+ * as two panels blinking off.
+ */
+export const TheNeighboursFadeBackDuringPlayback: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    const track = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-seam-track]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const frameOf = (which: string) =>
+      document
+        .querySelector(`[data-item-details-panel="${which}"]`)!
+        .querySelector<HTMLElement>("[data-item-details-frame]")!;
+
+    // Untouched: nothing is dimmed, because nothing is being watched yet.
+    expect(getComputedStyle(frameOf("neighbour")).opacity).toBe("1");
+    expect(getComputedStyle(frameOf("centre")).opacity).toBe("1");
+
+    const box = track.getBoundingClientRect();
+    const args = { clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 };
+    const x = box.left + box.width * 0.5;
+    fireEvent.pointerDown(track, { ...args, clientX: x });
+    fireEvent.pointerUp(track, { ...args, clientX: x });
+
+    // Scrubbed: the neighbours pull back, in both opacity and colour…
+    // Scrubbed: the neighbours pull back, in both opacity and colour.
+    //
+    // ASSERTED AS "MOVING TOWARD" RATHER THAN "ARRIVED AT". This runner does
+    // not carry a CSS transition to completion — the computed opacity sits at
+    // whatever midpoint it froze on — so pinning the exact end value would be
+    // testing the environment rather than the component. What is checked is
+    // that the target is set and that it is genuinely taking effect: the class
+    // carries the destination, and the painted value has left 1 behind.
+    await waitFor(() => {
+      const el = frameOf("neighbour");
+      const style = getComputedStyle(el);
+      expect(el.className).toContain("opacity-25");
+      expect(Number(style.opacity)).toBeLessThan(1);
+      expect(style.filter).toContain("grayscale");
+    });
+    // …and the monitor keeps both, because it is the one being read.
+    const centre = getComputedStyle(frameOf("centre"));
+    expect(Number(centre.opacity)).toBe(1);
+    expect(centre.filter === "none" || centre.filter.includes("grayscale(0")).toBe(true);
   },
 };

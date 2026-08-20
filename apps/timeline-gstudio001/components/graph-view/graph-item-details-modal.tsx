@@ -285,22 +285,9 @@ const PANEL_GAP = "1rem";
  * no middle, so the clip being worked on would sit off to one side and the two
  * seams around it would be at different distances from the eye.
  */
-const VIEW_COUNTS = [3, 5, 15] as const;
+const VIEW_COUNTS = [3, 5, 9] as const;
 type ViewCount = (typeof VIEW_COUNTS)[number];
 
-/**
- * A panel's width for a given count.
- *
- * ANCHORED ON THE THREE-UP LAYOUT rather than derived from the viewport, so
- * that showing three is pixel-for-pixel what it always was and the option is
- * purely additive. More panels divide the same span: five are three-fifths the
- * width, fifteen a fifth of it.
- *
- * The trade is honest and worth stating — at fifteen a panel is a narrow
- * column, and while everything in it still works, "fully functional" and
- * "comfortable" part company somewhere above five. That is what asking for
- * fifteen buys: reach, at the cost of room.
- */
 /**
  * The last count chosen, kept at module scope.
  *
@@ -310,8 +297,36 @@ type ViewCount = (typeof VIEW_COUNTS)[number];
  */
 let rememberedViewCount: ViewCount = 3;
 
+/**
+ * A panel's width for a given count, chosen so that exactly `count` panels are
+ * ON SCREEN with the middle one centred.
+ *
+ * THE TWO OUTER PANELS ARE HALF VISIBLE, which is both what makes the
+ * arithmetic close and what makes the count mean what it says: `count - 2`
+ * panels sit fully in view, the two at the edges show half of themselves, and
+ * the widths add up to exactly one viewport.
+ *
+ *   (count - 2) x W  +  2 x W/2  =  (count - 1) x W  =  viewport - padding - gaps
+ *
+ * The first attempt scaled the width BY the count — three-fifths for five, a
+ * fifth for fifteen — which made the panels narrower without making more of
+ * them fit, so five showed the same three it always had. Fitting N panels is a
+ * different question from making N panels thinner, and only one of them is
+ * what "show five" means.
+ *
+ * The 48rem cap survives so a very wide monitor does not hand the middle panel
+ * half a metre of screen; below that the count drives the layout.
+ *
+ * The trade at the top end is worth stating: nine panels on a 1600px screen is
+ * about 185px each — narrow, but still a picture you can read a cut from and
+ * controls you can hit. Fifteen was tried first and came out at 95px, which is
+ * a column rather than a panel; nine is where reach across the timeline and a
+ * usable panel still overlap.
+ */
 function panelWidthFor(count: ViewCount): string {
-  return count === 3 ? "min(48rem, 78vw)" : `calc(min(48rem, 78vw) * 3 / ${count})`;
+  // 3rem is the modal's own padding (p-6 either side); the gaps are one rem
+  // apiece, and there are `count - 1` of them between `count` panels.
+  return `min(48rem, (100vw - 3rem - ${count - 1}rem) / ${count - 1})`;
 }
 
 /**
@@ -333,6 +348,7 @@ function DetailsPanel({
   swipe,
   seamLabel = null,
   width,
+  dimmed = false,
   restingFrame,
   onClose,
   onAdvance,
@@ -403,6 +419,18 @@ function DetailsPanel({
   seamLabel?: { text: string; side: "left" | "right" } | null;
   /** Set by the strip, which owns how many panels are on screen. */
   width: string;
+  /**
+   * Pull this panel's picture back, because the clock is running and it is not
+   * the one being watched.
+   *
+   * Only ever set on the NEIGHBOURS. Once playback is engaged the middle
+   * picture is the monitor — it is showing whatever is on screen at that
+   * instant, including a neighbour's frames — so two bright pictures either
+   * side of it are competing with the one thing the view is for. Dimming them
+   * is not decoration: it is the difference between watching a cut and reading
+   * three stills at once.
+   */
+  dimmed?: boolean;
   /**
    * Which end of this clip its picture rests on when nothing is playing.
    *
@@ -703,6 +731,13 @@ function DetailsPanel({
             "relative overflow-hidden rounded-md bg-black",
             DETAILS_HERO_FILL_CLASS,
             centre ? "" : "cursor-pointer",
+            // FADED, AND THE COLOUR GOES WITH IT. Opacity alone still leaves a
+            // recognisable picture competing for the eye; draining the colour
+            // as well puts the neighbours firmly in the past tense while the
+            // monitor keeps its own. Both transition, so engaging the clock
+            // reads as attention moving rather than as two panels blinking.
+            "transition-[opacity,filter] duration-300 ease-out motion-reduce:transition-none",
+            dimmed ? "opacity-25 grayscale" : "opacity-100 grayscale-0",
           ].join(" ")}
         >
           {shownVideo ? (
@@ -1314,6 +1349,10 @@ function DetailsFilmstripModal({
               live={position?.clipId === id}
               swipe={swipe}
               width={panelWidth}
+              // Engaged, and not the one being watched. Uses the same gate as
+              // the playhead lines and the ring, so the whole view agrees on
+              // when the clock is running.
+              dimmed={scrubbed && index !== centre}
               seamLabel={
                 index === centre - 1
                   ? { text: "Last frame", side: "right" }

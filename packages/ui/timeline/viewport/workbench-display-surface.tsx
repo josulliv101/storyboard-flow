@@ -2439,12 +2439,23 @@ export function WorkbenchSplitPane({
         data-preview-chrome={chromeIn ? "in" : "out"}
         className={cn(
           "sticky z-40 min-w-0 bg-zinc-950",
-          // CLIPPED ONLY WHILE SLIDING. At rest this must be
-          // `overflow-visible` — the seek thumb deliberately hangs outside the
-          // pane and the masks below depend on it — but a reveal IS a clip, so
-          // it is borrowed for the length of the slide and handed straight
-          // back on `transitionend`.
-          sliding ? "overflow-hidden" : "overflow-visible",
+          // CLIPPED UNTIL IT IS ACTUALLY OPEN — not merely while sliding.
+          //
+          // The distinction is a bug that was live: the region mounts at zero
+          // height and then WAITS, for the surface to render and its video to
+          // decode, before the slide begins. Gated on `sliding`, it spent that
+          // whole wait at `overflow-visible` with a full-height surface inside
+          // it — which does not vanish because its parent is zero tall, it
+          // SPILLS. Measured at 380 pixels of preview painted straight over the
+          // board, before any of it had started moving. It reads as the image
+          // flashing through the content it is supposed to be behind, and it
+          // lasts exactly as long as the settle takes, so a slower machine
+          // shows more of it.
+          //
+          // `overflow-visible` at rest is still load-bearing — the seek thumb
+          // deliberately hangs outside the pane and the side masks depend on it
+          // — so it is given back the moment the pane is open and still.
+          settled ? "overflow-visible" : "overflow-hidden",
           // Transitioned while SLIDING (the reveal) and for later height
           // changes (a shrinking viewport clamping the pane) — but never
           // during a divider drag, which must track the pointer exactly. The
