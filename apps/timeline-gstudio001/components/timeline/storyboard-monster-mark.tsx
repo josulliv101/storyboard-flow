@@ -475,12 +475,18 @@ export function StoryboardMonsterMark({
         // explicit offset at all.
         //
         // THE NUMBER IS WHERE THE FEET MEET THE BASELINE. Measured on the
-        // rendered lockup: with the old offset the feet's top edge sat 4.45px
-        // BELOW the baseline, so the creature read as standing in a hole
-        // beside letters it was supposed to share a line with. Lifting it by
-        // that much puts the top of the feet exactly on the baseline and
-        // leaves the feet hanging under it like a descender, with the body
-        // overshooting the line a little the way a round letter should.
+        // rendered lockup rather than derived: the feet's top edge has to land
+        // on the baseline, so the feet hang under it like a descender and the
+        // body overshoots it a little the way a round letter should.
+        //
+        // IT IS TIED TO `scale`, which is the thing to know before changing
+        // either. The offset is a constant em of the MARK, and the baseline
+        // belongs to the TEXT — so they do not move together, and every change
+        // to the in-word scale lands the feet somewhere new. This value goes
+        // with 0.97: at 1.1 it was -0.1136em, and shrinking the creature lifted
+        // its feet 0.55px clear of the line until this followed. Re-measure
+        // rather than re-derive; the probe is a zero-size inline-block, because
+        // a Range rect returns the line box and not the glyph.
         //
         // NO `* scale`, and removing it is a fix rather than a simplification.
         // `em` here resolves against this element's OWN font-size — set
@@ -489,7 +495,7 @@ export function StoryboardMonsterMark({
         // that is 1.45x larger in the collapsed rail was dropped 2.1x further.
         // A constant em is what keeps one optical relationship at every size.
         position: "relative",
-        top: "-0.1136em",
+        top: "-0.0758em",
       }}
     >
       {/* MARKED SO IT CAN FOLLOW THE BODY'S SQUASH, which is not decoration.

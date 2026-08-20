@@ -1015,9 +1015,21 @@ export function TimelineSidebar() {
                   there is no word left to belong to, so it grows into the mark
                   the rail needs — and past the 19px floor the design document
                   measured, below which "the fur spikes and the glint start to
-                  merge". */}
+                  merge".
+
+                  1.1 -> 0.97 IN THE WORD, and the number comes from the letters
+                  rather than from taste. Measured against Grandstander at 21px,
+                  the x-height is 13px and at 1.1 the creature's body drew
+                  16.3 — 1.254x the letter it is standing in for, which is why
+                  it read as parked beside the word rather than set into it.
+                  0.97 puts the body at about 1.1x the x-height: still the
+                  largest thing in the lockup, because it is a face and it has
+                  to hold the eye, but close enough to the "o" to belong to the
+                  same alphabet. The antennae above and the feet below stay
+                  outside that band on purpose — an ascender and a descender are
+                  what a letter is allowed to have. */}
               <StoryboardMonsterMark
-                scale={railExpanded ? 1.1 : 1.6}
+                scale={railExpanded ? 0.97 : 1.6}
                 gaze={railExpanded ? "ahead" : "breadcrumb"}
               />
               <RevealedLetters show={railExpanded}>nster</RevealedLetters>
