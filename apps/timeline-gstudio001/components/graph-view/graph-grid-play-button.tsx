@@ -240,7 +240,23 @@ export function GraphGridPlayButton({
   ].join(" ");
 
   return (
-    <div ref={anchorRef} className="pointer-events-none absolute inset-0">
+    // GONE WHILE SELECTING. In that mode a card is a thing you are picking,
+    // not a thing you are watching, and two transport controls sitting on it
+    // are two places a press does something other than select — on a surface
+    // where every press is supposed to mean the same thing.
+    //
+    // `hidden` rather than an opacity or a pointer-events trick, so they leave
+    // the tab order too: a control you cannot see should not be one you can
+    // still reach by keyboard.
+    //
+    // Driven off the panel's `data-select-mode` rather than a store read here,
+    // for the same reason the cards' rings are: this is a whole-surface state,
+    // and subscribing every card to it would re-render all of them on a toggle
+    // to hide two buttons.
+    <div
+      ref={anchorRef}
+      className="pointer-events-none absolute inset-0 [[data-select-mode]_&]:hidden"
+    >
       {/* A ROW, so the two controls share one corner and one baseline rather
           than each finding its own. */}
       <div

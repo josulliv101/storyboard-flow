@@ -3222,6 +3222,18 @@ test.describe("graph view E2E", () => {
     // turned.
     await expect(glyph(page.locator('[data-grid-cue="alpha"]'))).toHaveClass(/rotate-180/);
 
+    // SELECT MODE TAKES THEM AWAY. Picking things and playing things are
+    // different jobs, and a card being picked should not carry two controls
+    // that do something else. Hidden outright, so they leave the tab order
+    // rather than lurking behind an opacity.
+    await page.locator("[data-select-mode-toggle]").click();
+    await expect(play).toBeHidden();
+    await expect(page.locator('[data-grid-cue="alpha"]')).toBeHidden();
+
+    // And they come back when it is switched off.
+    await page.locator("[data-select-mode-toggle]").click();
+    await expect(play).toBeVisible();
+
     // PLAY: jumps back to bravo's own start — the two controls have to agree
     // about where a clip begins — and then actually advances.
     await page.locator('[data-grid-cue="alpha"]').click();
