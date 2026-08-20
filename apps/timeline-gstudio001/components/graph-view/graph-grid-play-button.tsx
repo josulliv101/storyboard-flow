@@ -1,0 +1,260 @@
+"use client";
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { Pause, Play } from "lucide-react";
+
+import {
+  getChildren,
+  parseNodeId,
+  useCollectionsSelector,
+  type NodeId,
+} from "@storyboard/ui/dnd-collections";
+
+import { usePreviewSettled } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
+
+import { useGraphDetailsStore } from "./graph-details-context";
+import { childSpans } from "./graph-playhead-model";
+import { clipWidthAt } from "./preview-card-geometry";
+import { PreviewCardSpansContext } from "./preview-contexts";
+import type { PreviewTimeChannel } from "./preview-time-channel";
+
+/**
+ * When each card starts, on the clock the pane is actually playing.
+ *
+ * COMPUTED ONCE FOR THE SURFACE, not once per card: `childSpans` walks the
+ * focused collection's children, so a card doing it for itself would do the
+ * whole walk N times to read one number out of it.
+ *
+ * It goes through `childSpans` rather than the spans context directly because
+ * that context is NULL until the manifest lands — the pane plays a live
+ * projection first, and for a couple of seconds after every edit. Reading the
+ * context alone meant no buttons at all on a freshly opened board, which is
+ * exactly how this was first found.
+ */
+type CardStart = Readonly<{ start: number; end: number; disabled: boolean }>;
+
+const ClipStartsContext = createContext<ReadonlyMap<string, CardStart> | null>(null);
+
+export function GridPlayStarts({
+  focusedId,
+  pixelsPerSecond,
+  children,
+}: Readonly<{ focusedId: string; pixelsPerSecond: number; children: ReactNode }>) {
+  const graph = useCollectionsSelector((snapshot) => snapshot.graph);
+  const detailsStore = useGraphDetailsStore();
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    detailsStore.read,
+    detailsStore.read,
+  );
+  const spans = useContext(PreviewCardSpansContext);
+
+  const starts = useMemo(() => {
+    const ids = getChildren(graph, parseNodeId(focusedId));
+    // `laneScope` left at its default: one card per child, which is the
+    // pairing this index alignment depends on.
+    const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, 0));
+    const map = new Map<string, CardStart>();
+    ids.forEach((id, index) => {
+      const card = cards[index];
+      if (card === undefined) return;
+      // `disabled` here already folds in a disabled ANCESTOR — the rails draw
+      // no distinction either, because in both cases nothing reaches the
+      // viewer.
+      map.set(id as string, {
+        start: card.startTime,
+        end: card.endTime,
+        disabled: card.disabled === true,
+      });
+    });
+    return map;
+  }, [graph, details, spans, focusedId, pixelsPerSecond]);
+
+  return <ClipStartsContext.Provider value={starts}>{children}</ClipStartsContext.Provider>;
+}
+
+/**
+ * Start this clip playing IN THE PREVIEW PANE, from its own beginning.
+ *
+ * A SIBLING OF THE CARD, not a child of it. A card's shell is a `<button>` and
+ * nested interactive content is invalid — the tag editor lives in the details
+ * modal for the same reason — so this rides the grid's per-cell slot, which is
+ * the nearest place that is both valid markup and card-shaped. Nothing has to
+ * measure where a card is; the cell already knows.
+ *
+ * PLAY, NOT PLAY/PAUSE. Making each button a toggle means every card has to
+ * know whether IT is the clip currently playing, which means subscribing every
+ * card to the clock and re-rendering the grid as the playhead moves — a real
+ * cost for a second pause button, when the transport sitting in the preview
+ * pane above is already the obvious place to stop.
+ */
+export function GraphGridPlayButton({
+  nodeId,
+  channel,
+}: Readonly<{ nodeId: NodeId; channel: PreviewTimeChannel }>) {
+  const starts = useContext(ClipStartsContext);
+  // NOT UNTIL THE PANE HAS LANDED. These buttons appear when the preview does,
+  // which means their first paint would otherwise fall in the middle of the
+  // reveal — one per card, all at once, over a board that is still moving. The
+  // rails wait for the same signal and for the same reason.
+  const settled = usePreviewSettled();
+  const card = starts?.get(nodeId as string);
+
+  // IS THIS THE CARD PLAYING RIGHT NOW.
+  //
+  // Subscribed per card, but the snapshot is a BOOLEAN — so React bails out
+  // unless this particular card's answer flips, and a playhead sweeping the
+  // timeline re-renders exactly two buttons per crossing rather than the whole
+  // grid on every tick. That was the objection to a toggle; a boolean snapshot
+  // answers it.
+  const playingHere = useSyncExternalStore(
+    (onChange) => {
+      const stopTime = channel.subscribe(onChange);
+      const stopPlaying = channel.subscribePlaying(onChange);
+      return () => {
+        stopTime();
+        stopPlaying();
+      };
+    },
+    () => {
+      if (card === undefined || !channel.isPlaying()) return false;
+      const now = channel.get();
+      return now >= card.start && now < card.end;
+    },
+    () => false,
+  );
+  const node = useCollectionsSelector((snapshot) => snapshot.graph.nodesById.get(nodeId) ?? null);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+
+  // WHERE THE PICTURE ENDS INSIDE THE CELL.
+  //
+  // The button belongs at the bottom-left of the THUMBNAIL, and a grid cell is
+  // thumbnail plus caption — so the cell's own bottom is the wrong edge by
+  // however tall the caption is. That height is real layout, not a number this
+  // file should own a copy of: the caption carries a name row and a tag row
+  // that is present even when empty, and any constant here would be a second
+  // opinion about it that silently rots.
+  //
+  // So it is measured, once per card and again on resize, from the artwork
+  // marker the card publishes. Local to one cell, not a sweep of the grid.
+  const [artworkBottom, setArtworkBottom] = useState<number | null>(null);
+  useEffect(() => {
+    const anchor = anchorRef.current;
+    const cell = anchor?.parentElement;
+    if (!cell || typeof ResizeObserver === "undefined") return;
+    // RETRIED UNTIL THE PICTURE IS THERE. A collection card fills its frames
+    // from child previews that arrive after mount, so the first measurement
+    // finds nothing and a ResizeObserver on the CELL never fires — the cell's
+    // own size did not change. The button then sat at its fallback, which on a
+    // collection is below the name-and-count row: a play control under the
+    // card it belongs to. Measured at 53px out, every time.
+    let frame = 0;
+    let tries = 0;
+    const measure = () => {
+      const artwork = cell.querySelector("[data-clip-artwork]");
+      const box = artwork?.getBoundingClientRect();
+      if (box === undefined || box.height === 0) {
+        if (tries++ < 40) frame = requestAnimationFrame(measure);
+        return;
+      }
+      setArtworkBottom(box.bottom - cell.getBoundingClientRect().bottom);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(cell);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+    // DEPENDS ON `settled`, and that is not incidental. This component returns
+    // null until the preview has finished opening, so on first render there is
+    // no element for the ref — an effect with an empty dependency list runs
+    // once, against that null, and never again. The button then kept its
+    // fallback position forever, which put it under the card instead of on the
+    // picture. Re-running when the button actually mounts is the whole fix.
+  }, [settled]);
+
+  // COLLECTIONS GET ONE TOO. Its window is the union of every leaf beneath it,
+  // so its start IS its first clip's start — pressing play on a collection
+  // plays the collection, which is the only thing it could sensibly mean.
+  //
+  // DISABLED CARDS DO NOT. Playback jumps them, so the button would be a
+  // control that visibly does nothing — the playhead would land past it and
+  // the card it was pressed on would never appear.
+  if (!settled || node === null) return null;
+  if (card === undefined || card.disabled) return null;
+
+  return (
+    <div ref={anchorRef} className="pointer-events-none absolute inset-0">
+      <button
+        type="button"
+        data-grid-play={nodeId as string}
+        aria-label={
+          playingHere ? `Pause ${node.name}` : `Play ${node.name} in the preview`
+        }
+        title={playingHere ? `Pause ${node.name}` : `Play ${node.name} in the preview`}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          // Stopped, or the press also reaches the card underneath and selects
+          // it — or, held a moment, starts a reorder drag.
+          event.stopPropagation();
+          if (playingHere) {
+            // Pause where it is, rather than rewinding: stopping to look at a
+            // frame and being thrown back to the clip's start would make the
+            // button useless for the thing you stop for.
+            channel.setPlaying(false);
+            return;
+          }
+          // ALWAYS FROM THIS CARD'S OWN START, even if the clock is already
+          // inside it — "play this" means this clip from its beginning, not
+          // "resume wherever the playhead happens to be sitting".
+          channel.set(card.start);
+          channel.setPlaying(true);
+        }}
+        style={artworkBottom === null ? undefined : { bottom: `${8 - artworkBottom}px` }}
+        className={[
+          // left-3.5 = the card's own 6px padding plus 8px, so the button sits
+          // inside the PICTURE's corner rather than on its edge.
+          "pointer-events-auto absolute left-3.5 z-20 flex size-7 items-center justify-center",
+          "rounded-full bg-zinc-950/70 text-zinc-100 ring-1 ring-white/25 backdrop-blur-sm",
+          "transition-colors hover:bg-zinc-950/90 hover:text-white",
+          "focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none",
+          // Until the measurement lands it sits at the cell's bottom, which is
+          // close enough for one frame and never off-screen.
+          artworkBottom === null ? "bottom-2" : "",
+        ].join(" ")}
+      >
+        {playingHere ? (
+          <Pause aria-hidden="true" className="size-3.5" fill="currentColor" />
+        ) : (
+          // Nudged right: a triangle's optical centre is left of its box.
+          <Play aria-hidden="true" className="size-3.5 translate-x-px" fill="currentColor" />
+        )}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Convenience for the board's `cellOverlay`, which hands over a raw id.
+ *
+ * NAMED, because eslint reads any arrow returning JSX as a component and
+ * `react/display-name` is an ERROR in this repo — one that fails the Vercel
+ * build while tsc and vitest stay green, so it has to be caught here.
+ */
+export function gridPlayButtonFor(channel: PreviewTimeChannel) {
+  const CellPlayButton = (id: NodeId) => (
+    <GraphGridPlayButton nodeId={parseNodeId(id as string)} channel={channel} />
+  );
+  CellPlayButton.displayName = "GridCellPlayButton";
+  return CellPlayButton;
+}

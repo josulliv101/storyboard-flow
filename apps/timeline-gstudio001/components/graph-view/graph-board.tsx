@@ -116,6 +116,7 @@ import {
 import { useCollectionSubtreeHydrated } from "./graph-card-derivations";
 import { splitLaneRows } from "./graph-lane-rows";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
+import { GridPlayStarts, gridPlayButtonFor } from "./graph-grid-play-button";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { TagFilterProvider } from "./graph-tag-filter";
 import { ActiveTagFilters, TagFilterControl } from "./graph-tag-filter-control";
@@ -1994,6 +1995,12 @@ export function GraphBoard({
   // (R7 #1). Read here, not threaded from the page: the graph tree mounts
   // client-only (`ssr: false` in client-graph-view), so useSearchParams has
   // no prerender/Suspense implications.
+  // MEMOISED: a fresh function each render would be a new prop on every
+  // VirtualGrid render, for a value that only depends on the channel.
+  const playButtonCell = useMemo(
+    () => (previewOn ? gridPlayButtonFor(timeChannel) : undefined),
+    [previewOn, timeChannel],
+  );
   const devParam = useSearchParams().get("dev");
   const devPanelsOn = devParam !== null && !["", "0", "false"].includes(devParam);
 
@@ -2773,6 +2780,10 @@ export function GraphBoard({
               data-focused-surface-shell="grid"
               className="relative"
             >
+              {/* The starts are computed once for the surface and read by each
+                  card's play button — see the note in that file for why they
+                  come from `childSpans` rather than the spans context. */}
+              <GridPlayStarts focusedId={focusedId} pixelsPerSecond={deferredPixelsPerSecond}>
               <NativeDropGrid collectionId={focusedId} projectId={projectId}>
                 <VirtualGrid
                   collectionId={parseNodeId(focusedId)}
@@ -2785,6 +2796,11 @@ export function GraphBoard({
                   // drag. "body" (the default) drags instantly, which ate the
                   // drill click and made drags ambiguous.
                   itemDragActivation="hold"
+                  // A PLAY BUTTON ON EVERY CARD WHILE THE PREVIEW IS OPEN.
+                  // Only while it is open: the button starts playback in the
+                  // pane, so without a pane there is nowhere for it to play
+                  // and it would be a control that does nothing.
+                  cellOverlay={playButtonCell}
                   // NO TRAILING ADD SLOT IN THE GRID.
                   //
                   // It costs a whole cell, and when it wraps it costs a whole
@@ -2851,6 +2867,7 @@ export function GraphBoard({
                   ].join(" ")}
                 />
               </NativeDropGrid>
+              </GridPlayStarts>
               {previewOn && (
                 <AfterPreviewOpens>
                   <GraphSeekRails
