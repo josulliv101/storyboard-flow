@@ -134,18 +134,43 @@ export function GraphGridPlayButton({
       };
     },
     () => {
-      if (card === undefined) return "idle";
+      if (card === undefined) return "at-start";
       const now = channel.get();
       if (channel.isPlaying() && now >= card.start && now < card.end) return "playing";
-      return Math.abs(now - card.start) < AT_START_SECONDS ? "at-start" : "idle";
+      if (Math.abs(now - card.start) < AT_START_SECONDS) return "at-start";
+      // WHICH WAY THE JUMP GOES. Note that a playhead sitting INSIDE this clip
+      // but past its start counts as "back" — pressing cue would rewind to the
+      // clip's opening, and that is what the arrow should say.
+      return card.start < now ? "back" : "forward";
     },
-    () => "idle",
+    () => "at-start",
   );
   const playingHere = cardState === "playing";
   // ALREADY THERE, so the cue has nothing to do. Disabled rather than hidden:
   // a control that vanishes when you have just used it takes its own
   // explanation with it, and the gap left behind moves the button beside it.
   const alreadyAtStart = cardState === "at-start";
+
+  // WHICH WAY THE ARROW POINTS, remembered across the moment it arrives.
+  //
+  // Rotating is the whole signal: forward for a card ahead of the playhead,
+  // turned around for one behind it — the same glyph, saying "fetch the
+  // playhead back" instead of "run on to there".
+  //
+  // The ref exists for the instant the jump COMPLETES. At that point the card
+  // is at-start with no direction of its own, and recomputing would snap a
+  // backward arrow forward at the exact moment it went quiet — the control
+  // contradicting the trip you just watched it make. Holding the last real
+  // direction lets it arrive pointing the way it went.
+  // STATE ADJUSTED DURING RENDER, which React sanctions for exactly this —
+  // deriving from a prop or a store value that has changed — and which a ref
+  // cannot do here, since reading one during render is neither allowed nor
+  // reliable.
+  const [lastDirection, setLastDirection] = useState<"back" | "forward">("forward");
+  if ((cardState === "back" || cardState === "forward") && cardState !== lastDirection) {
+    setLastDirection(cardState);
+  }
+  const pointsBack = (cardState === "at-start" ? lastDirection : cardState) === "back";
   const node = useCollectionsSelector((snapshot) => snapshot.graph.nodesById.get(nodeId) ?? null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -295,7 +320,11 @@ export function GraphGridPlayButton({
           type="button"
           data-grid-cue={nodeId as string}
           disabled={alreadyAtStart}
-          aria-label={`Move the playhead to the start of ${node.name}`}
+          aria-label={
+            pointsBack
+              ? `Move the playhead back to the start of ${node.name}`
+              : `Move the playhead forward to the start of ${node.name}`
+          }
           title={
             alreadyAtStart
               ? `The playhead is already at the start of ${node.name}`
@@ -308,7 +337,18 @@ export function GraphGridPlayButton({
           }}
           className={`${discClass} disabled:pointer-events-none disabled:opacity-40`}
         >
-          <SkipForward aria-hidden="true" className="size-3.5" fill="currentColor" />
+          {/* TRANSITIONED, because the turn is the message. A glyph that
+              simply appears facing the other way says the same thing without
+              anyone noticing it changed; watching it swing is what teaches the
+              rule. */}
+          <SkipForward
+            aria-hidden="true"
+            fill="currentColor"
+            className={[
+              "size-3.5 transition-transform duration-200 ease-out motion-reduce:transition-none",
+              pointsBack ? "rotate-180" : "rotate-0",
+            ].join(" ")}
+          />
         </button>
       )}
       </div>

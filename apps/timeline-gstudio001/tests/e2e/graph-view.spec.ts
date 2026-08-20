@@ -3207,8 +3207,24 @@ test.describe("graph view E2E", () => {
     // Moved away, so bravo's cue is live again.
     await expect(cue).toBeEnabled();
 
+    // AND ITS ARROW SAYS WHICH WAY THE JUMP GOES. The playhead is at alpha
+    // now, so bravo is ahead of it and the glyph faces forward; alpha's own
+    // cue is the one that would fetch the playhead back, and it is turned
+    // around. Same icon, rotated — which is the whole signal, so it is worth
+    // asserting rather than trusting.
+    const glyph = (locator: Locator) => locator.locator("svg");
+    await expect(glyph(cue)).not.toHaveClass(/rotate-180/);
+
+    await play.click();
+    await expect.poll(clock).toBeGreaterThanOrEqual(start);
+    await play.click();
+    // Parked inside bravo, so alpha is behind the playhead and its arrow has
+    // turned.
+    await expect(glyph(page.locator('[data-grid-cue="alpha"]'))).toHaveClass(/rotate-180/);
+
     // PLAY: jumps back to bravo's own start — the two controls have to agree
     // about where a clip begins — and then actually advances.
+    await page.locator('[data-grid-cue="alpha"]').click();
     await play.click();
     await expect.poll(clock).toBeGreaterThanOrEqual(start);
     // Near it, not somewhere else entirely: a dropped seek leaves the clock
