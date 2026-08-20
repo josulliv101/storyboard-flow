@@ -2262,21 +2262,32 @@ test.describe("graph view E2E", () => {
     await expect(redoButton(page)).toBeDisabled();
   });
 
-  test("the preview OPENS at its height instead of animating into it", async ({ page }) => {
+  test("the preview is UNCOVERED, and its contents do not grow inside the reveal", async ({
+    page,
+  }) => {
     await installGraphApi(page);
     await openGraph(page);
 
-    // Listen before the toggle: the mount-time sizing pass measures the real
-    // height a frame or two after the placeholder one paints, so a height
-    // transition armed at mount plays as a visible shrink — every first open,
-    // and only the first (a reopen restores the remembered height).
+    // This test used to assert that NO height transition ran on open — the
+    // pane appeared at its size. It slides now: the board moves down off a
+    // pane that stays still, so a height transition is exactly what should
+    // run. What has NOT changed is the reason the old assertion existed.
+    //
+    // The mount-time sizing pass measures the real height a frame or two after
+    // a placeholder one paints, so a transition armed on the INNER pane plays
+    // as a visible shrink on every first open. With the reveal on top of that,
+    // two nested height animations run over the same pixels on different
+    // curves — the pane growing inside the thing uncovering it. So the claim
+    // is now about WHICH element animates, not whether any does.
     await page.evaluate(() => {
       const runs: string[] = [];
       (window as unknown as { __heightRuns: string[] }).__heightRuns = runs;
       document.addEventListener(
         "transitionrun",
         (event) => {
-          if ((event as TransitionEvent).propertyName === "height") runs.push("height");
+          if ((event as TransitionEvent).propertyName !== "height") return;
+          const target = event.target as HTMLElement;
+          runs.push(target.dataset?.testid ?? "other");
         },
         true,
       );
@@ -2284,16 +2295,22 @@ test.describe("graph view E2E", () => {
 
     await previewToggle(page).click();
     await expect(page.locator('[data-testid="workbench-display-canvas"]')).toBeVisible();
-    await page.waitForTimeout(500);
+    // Long enough to cover the settle wait plus the slide itself.
+    await page.waitForTimeout(1200);
 
     const runs = await page.evaluate(
       () => (window as unknown as { __heightRuns: string[] }).__heightRuns,
     );
-    expect(runs).toEqual([]);
+    // The REGION slides…
+    expect(runs).toContain("workbench-preview-region");
+    // …and nothing else does. An entry of "other" here is the inner pane
+    // animating its own height inside the reveal, which is the failure this
+    // test has always been about.
+    expect(runs.filter((run) => run !== "workbench-preview-region")).toEqual([]);
 
-    // The transition is still armed afterwards, for a viewport clamp.
-    const pane = page.locator('[data-testid="workbench-preview-region"] > div').first();
-    await expect(pane).toHaveClass(/transition-\[height\]/);
+    // And it settles: the pane reports itself open and still, which is the
+    // signal the rails and their padding wait for.
+    await expect(page.locator("[data-preview-settled]")).toHaveCount(1);
   });
 
   test("a dropped card animates out of the ghost, not back to where it started", async ({
@@ -2486,6 +2503,12 @@ test.describe("graph view E2E", () => {
     await installGraphApi(page);
     await openGraph(page);
     await previewToggle(page).click();
+    // The pane SLIDES open and its chrome fades in once it lands, so every
+    // measurement below has to be taken against a pane that has stopped
+    // moving — otherwise "the transport does not move on hover" is measured
+    // across a transport that was still arriving. `data-preview-settled` is
+    // the pane saying it is open and still.
+    await page.locator("[data-preview-settled]").waitFor({ state: "attached" });
 
     const surface = page.getByTestId("workbench-display-surface");
     const canvas = page.getByTestId("workbench-display-canvas");
