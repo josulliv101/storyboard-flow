@@ -266,15 +266,73 @@ export const NoPanelPastTheEnd: Story = {
   render: () => <EndHarness />,
   play: async () => {
     await waitFor(() =>
-      expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(2),
+      expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
     );
     const panels = Array.from(
       document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
     );
-    // The previous clip, then the subject — and nothing to its right.
-    expect(panels.map((panel) => panel.dataset.itemDetailsPanel)).toEqual([
-      "neighbour",
-      "centre",
-    ]);
+    // THE CENTRE IS THE LAST PANEL IN THE ROW — nothing is rendered past the
+    // end of the timeline, so the strip simply runs out rather than wrapping
+    // back to the start and claiming a seam the cut does not have.
+    //
+    // Asserted as a POSITION rather than a count: the row deliberately holds
+    // more panels than are visible, so a number here would be pinning the
+    // window's radius, which is an implementation detail of how the slide is
+    // made smooth.
+    expect(panels.at(-1)?.dataset.itemDetailsPanel).toBe("centre");
+  },
+};
+
+/**
+ * CLICKING A NEIGHBOUR'S PICTURE PULLS THE STRIP ALONG BY ONE.
+ *
+ * The clip you clicked becomes the centre and everything shifts one position,
+ * the way film moves through a gate — so you can walk a scene by clicking
+ * forward, or back, without ever closing the view.
+ *
+ * The picture is the target because every panel is fully live: the grips, the
+ * title and the tag field all have jobs already, and the hero is the one large
+ * surface in a neighbour with nothing else to do.
+ */
+export const ClickingANeighbourAdvancesTheStrip: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    const canvas = within(document.body);
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3),
+    );
+
+    const centreName = () =>
+      document
+        .querySelector('[data-item-details-panel="centre"]')
+        ?.querySelector("button[aria-label^='Rename ']")
+        ?.getAttribute("aria-label");
+    expect(centreName()).toBe("Rename Subject");
+
+    // The RIGHT-hand panel's picture: one step forward.
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
+    );
+    const rightHero = panels[2]!.querySelector<HTMLElement>("[data-item-details-frame]")!;
+    rightHero.click();
+
+    await waitFor(() => expect(centreName()).toBe("Rename After"));
+
+    // THE ROW MOVED, rather than the panels swapping content where they stood.
+    // The clip that was centred is now immediately to the LEFT of the centre,
+    // which is only true if the strip travelled one position.
+    const after = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
+    );
+    const centreIndex = after.findIndex(
+      (panel) => panel.dataset.itemDetailsPanel === "centre",
+    );
+    const leftOfCentre = after[centreIndex - 1]
+      ?.querySelector("button[aria-label^='Rename ']")
+      ?.getAttribute("aria-label");
+    expect(leftOfCentre).toBe("Rename Subject");
+    // And it is the last one: nothing plays after `after`.
+    expect(centreIndex).toBe(after.length - 1);
+    void canvas;
   },
 };

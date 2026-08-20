@@ -90,3 +90,49 @@ export function detailsNeighbours(
 export function flatOrderRootId(graph: CollectionsGraph): string | null {
   return (graph.rootIds[0] as string | undefined) ?? null;
 }
+
+/** The whole media order, and where the subject sits in it. */
+export type DetailsWindow = Readonly<{
+  /** Every clip id in playback order — one row position each. */
+  ids: readonly string[];
+  /** The subject's index. -1 when it is not in the order. */
+  centre: number;
+}>;
+
+const EMPTY_WINDOW: DetailsWindow = { ids: [], centre: -1 };
+
+/**
+ * The whole playback order, with the subject's place in it.
+ *
+ * EVERY CLIP GETS A ROW POSITION, not just the visible three, and that is what
+ * makes the strip slide rigidly. The row is one element translated by the
+ * subject's index, so advancing changes that index and the transform animates
+ * one step — every panel travelling the same distance because they are all
+ * children of the thing being moved.
+ *
+ * The obvious economy — render a window of five and re-centre it on each
+ * advance — does not work, and the way it fails is worth recording: with the
+ * window re-anchored every time, the subject is always the middle of it, so the
+ * offset is always the same and the transform never changes. The row stays
+ * still and the CONTENT shifts underneath, which is exactly the "not moving as
+ * one piece" this replaced. Its geometry is right and its motion is wrong,
+ * which is the hardest kind of wrong to see in a screenshot.
+ *
+ * The cost is bounded elsewhere: the caller mounts a full panel only for the
+ * positions that can be seen and a sized placeholder for the rest, so a long
+ * timeline costs empty boxes rather than video elements.
+ */
+export function detailsWindow(
+  graph: CollectionsGraph,
+  rootId: string | null,
+  nodeId: string | null,
+): DetailsWindow {
+  if (rootId === null || nodeId === null) return EMPTY_WINDOW;
+  const items = flattenMediaOrder(graph, parseNodeId(rootId));
+  if (items.length === 0) return EMPTY_WINDOW;
+
+  const subject = parseNodeId(nodeId) as NodeId;
+  const centre = items.findIndex((item) => item.nodeId === subject);
+  if (centre === -1) return EMPTY_WINDOW;
+  return { ids: items.map((item) => item.nodeId as string), centre };
+}

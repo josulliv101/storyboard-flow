@@ -31,7 +31,7 @@ import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
-import { detailsNeighbours, flatOrderRootId } from "./graph-details-neighbours";
+import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -260,6 +260,17 @@ function CollectionDetails({
 }
 
 /**
+ * How wide one panel is, and therefore how far the strip travels per click.
+ *
+ * A CSS VARIABLE rather than a measured pixel count, because the step and the
+ * width have to be the same number and measuring invites them to disagree by a
+ * subpixel that accumulates over a few clicks. The row's transform is written
+ * in `calc()` against these, so the panel width IS the step by construction.
+ */
+const PANEL_WIDTH = "min(48rem, 78vw)";
+const PANEL_GAP = "1rem";
+
+/**
  * ONE panel — the whole details view for one clip.
  *
  * Rendered three times side by side (see `ModalBody`): the clip you opened in
@@ -272,7 +283,7 @@ function DetailsPanel({
   node,
   centre,
   onClose,
-  onOpenNeighbour,
+  onAdvance,
 }: Readonly<{
   node: MediaNode;
   /**
@@ -287,10 +298,8 @@ function DetailsPanel({
    */
   centre: boolean;
   onClose: () => void;
-  /** Re-centre on a flanking clip. Not `setOpenId` directly: the modal also
-   *  tracks which id is MOUNTED, and letting those two drift is what hands the
-   *  hero back to the wrong card when the modal finally closes. */
-  onOpenNeighbour: (id: string) => void;
+  /** Pull the strip one position, so this clip becomes the centre. */
+  onAdvance: (id: string) => void;
 }>) {
   const live = useLiveTrim(node.id);
   // For the inset picker: the clip's shape decides the inset's height, and
@@ -358,7 +367,8 @@ function DetailsPanel({
         // that was opened. The neighbours are working panels, not focus traps.
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
-        className={`flex w-full max-w-3xl shrink-0 flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none ${DETAILS_PANEL_HEIGHT_CLASS}`}
+        style={{ width: PANEL_WIDTH }}
+        className={`flex shrink-0 flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none ${DETAILS_PANEL_HEIGHT_CLASS}`}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -451,11 +461,27 @@ function DetailsPanel({
           </div>
         </div>
 
-        {/* The hero: this is what the card morphs INTO. */}
+        {/* The hero: this is what the card morphs INTO — and, on a neighbour,
+            the thing you click to pull the strip along by one.
+
+            THE PICTURE IS THE TARGET, deliberately. Every panel is fully live
+            now, so a click anywhere else has a job already: the grips trim, the
+            title renames, the tag field types. The picture is the one large
+            surface in a neighbour with nothing else to do, which is what makes
+            it safe to spend on advancing.
+
+            `HERO` stays on the opened panel only: it is the card's morph
+            target, and the slide below is a plain transform rather than a view
+            transition, so the two never contend for the same element. */}
         <div
           data-item-details-frame
           style={centre ? { viewTransitionName: HERO } : undefined}
-          className={`relative overflow-hidden rounded-md bg-black ${DETAILS_HERO_FILL_CLASS}`}
+          onClick={centre ? undefined : () => onAdvance(node.id as string)}
+          className={[
+            "relative overflow-hidden rounded-md bg-black",
+            DETAILS_HERO_FILL_CLASS,
+            centre ? "" : "cursor-pointer",
+          ].join(" ")}
         >
           {video ? (
             <video
@@ -623,30 +649,42 @@ function DetailsFilmstripModal({
   onOpenNeighbour: (id: string) => void;
 }>) {
   const graph = useCollectionsSelector((state) => state.graph);
-  const { previous, next } = useMemo(() => {
-    const { previousId, nextId } = detailsNeighbours(
-      graph,
-      flatOrderRootId(graph),
-      node.id as string,
-    );
-    const mediaAt = (id: string | null): MediaNode | null => {
-      if (id === null) return null;
-      const found = graph.nodesById.get(parseNodeId(id));
-      return found && found.kind === "media" && found.src ? (found as MediaNode) : null;
-    };
-    return { previous: mediaAt(previousId), next: mediaAt(nextId) };
-  }, [graph, node.id]);
 
-  const panelFor = (neighbour: MediaNode | null) =>
-    neighbour === null ? null : (
-      <DetailsPanel
-        key={neighbour.id as string}
-        node={neighbour}
-        centre={false}
-        onClose={onClose}
-        onOpenNeighbour={onOpenNeighbour}
-      />
-    );
+  // EVERY CLIP GETS A POSITION IN THE ROW. Only three can be seen, but the row
+  // is one element translated by the subject's index — so advancing moves the
+  // whole thing by one step and every panel travels the same distance because
+  // they are all inside the thing that moved.
+  const { ids, centre } = useMemo(
+    () => detailsWindow(graph, flatOrderRootId(graph), node.id as string),
+    [graph, node.id],
+  );
+
+  // ONE PANEL FURTHER THAN CAN BE SEEN, on each side.
+  //
+  // Three are visible, so mounting three would mean the arriving panel is
+  // CREATED at the moment the strip starts moving — a video element and a trim
+  // strip being built while the row animates, which lands as a blank frame
+  // sliding in and filling itself. Mounting five keeps the next one either way
+  // already rendered and waiting off screen, so a click moves a panel that
+  // already exists and the only work is one new panel at the far edge, out of
+  // sight and with a whole slide's worth of time to do it.
+  //
+  // It stops there rather than growing: beyond this the panels are neither seen
+  // nor about to be, and a full panel is a video element, a trim strip and a
+  // tag editor. A sixty-clip timeline is five of those and fifty-five empty
+  // boxes, which is all the row needs from the rest — the geometry that keeps
+  // the step honest.
+  const MOUNTED_RADIUS = 2;
+
+  // OFFSET FROM THE ROW'S MIDDLE, because the scrim centres the row and not its
+  // first panel. With every clip holding a position, the row's own middle is
+  // clip (N-1)/2 — so a fifty-clip timeline would sit on clip twenty-five with
+  // no transform at all. What has to be corrected is the distance from there to
+  // the subject, and advancing changes it by exactly one step, which is the
+  // single value the transition animates.
+  const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
+  const rowTransform =
+    `translateX(calc(-1 * ${offset} * (${PANEL_WIDTH} + ${PANEL_GAP})))`;
 
   return createPortal(
     <div
@@ -658,21 +696,47 @@ function DetailsFilmstripModal({
       // panels overflow, so the centre lands in the middle and the other two
       // are clipped symmetrically. `overflow-hidden` is what makes that a crop
       // instead of a scrollbar.
-      className="fixed inset-0 z-[80] flex items-center justify-center gap-4 overflow-hidden bg-black/80 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/80 p-6 backdrop-blur-sm"
       onPointerDown={(event) => {
         // Scrim only: a press that starts on a panel must never close it,
         // including one that ends outside after a trim drag.
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      {panelFor(previous)}
-      <DetailsPanel
-        node={node}
-        centre
-        onClose={onClose}
-        onOpenNeighbour={onOpenNeighbour}
-      />
-      {panelFor(next)}
+      {/* The STRIP: one row, translated. Centred by the scrim, then offset by
+          the subject's index so the clip being worked on lands mid-screen. */}
+      <div
+        data-details-strip
+        className="flex items-center transition-transform duration-300 ease-out motion-reduce:transition-none"
+        style={{
+          gap: PANEL_GAP,
+          transform: rowTransform,
+        }}
+      >
+        {ids.map((id, index) => {
+          const mounted = Math.abs(index - centre) <= MOUNTED_RADIUS;
+          const panel = mounted ? graph.nodesById.get(parseNodeId(id)) : null;
+          const media =
+            panel && panel.kind === "media" && (panel as MediaNode).src
+              ? (panel as MediaNode)
+              : null;
+          if (media === null) {
+            // A placeholder holds the position — and only the position.
+            return (
+              <div key={id} aria-hidden="true" style={{ width: PANEL_WIDTH }} className="shrink-0" />
+            );
+          }
+          return (
+            <DetailsPanel
+              key={id}
+              node={media}
+              centre={index === centre}
+              onClose={onClose}
+              onAdvance={onOpenNeighbour}
+            />
+          );
+        })}
+      </div>
     </div>,
     document.body,
   );
