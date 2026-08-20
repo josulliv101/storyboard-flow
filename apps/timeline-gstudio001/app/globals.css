@@ -1422,3 +1422,28 @@ html {
     scale: none;
   }
 }
+
+/* THE DETAILS MODAL'S TRIM WINDOW IS WHITE, not the board's blue.
+ *
+ * On the board the blue window is one accent shared with the card's ring and
+ * its handles — a selected clip and its trim widget reading as one thing. In
+ * the filmstrip modal that argument does not hold: nothing there is selected,
+ * three strips are on screen at once, and blue now belongs to the transport.
+ * White separates the window you can drag from the playhead crossing it.
+ *
+ * DONE AS A CSS OVERRIDE because the package owns this deliberately: the
+ * components registry lets a consumer replace the filmstrip BACKGROUND
+ * (`OverviewContent`) while "the dims/window/grips/move gesture stay
+ * package-owned" — there is no prop for the accent, and inventing one would
+ * push a styling choice into a package that has no opinion about which app is
+ * rendering it. Literal colours rather than tokens, because this modal renders
+ * in a PORTAL and theme tokens do not resolve there.
+ */
+[data-item-details-panel] [data-trim-overview-window] {
+  border-color: rgb(255 255 255 / 0.85);
+  background-color: rgb(255 255 255 / 0.08);
+}
+
+[data-item-details-panel] [data-trim-overview-handle] {
+  background-color: rgb(255 255 255 / 0.95);
+}

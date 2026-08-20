@@ -469,3 +469,48 @@ export const PlayheadStaysInsideTheTrim: Story = {
     }
   },
 };
+
+/**
+ * THE RING FOLLOWS THE PLAYHEAD ACROSS THE SEAM.
+ *
+ * The middle picture is a monitor, so during the run-up it is showing frames
+ * that belong to the clip on the LEFT — and until this, nothing on screen said
+ * so. The ring marks whose frames are up, which is why it has to be able to sit
+ * on a panel that is not the centre one; a marker pinned to the middle would be
+ * decoration, since the middle is where the picture always is.
+ */
+export const TheRingMarksWhoseFramesAreUp: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    const track = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-seam-track]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const box = track.getBoundingClientRect();
+    const scrub = (ratio: number) => {
+      const x = box.left + box.width * ratio;
+      const args = { clientX: x, clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 };
+      fireEvent.pointerDown(track, args);
+      fireEvent.pointerUp(track, args);
+    };
+    const liveLabel = () => {
+      const live = document.querySelector("[data-item-details-live]");
+      return live?.getAttribute("data-item-details-panel") ?? null;
+    };
+
+    // Nothing engaged yet: no ring anywhere, so it cannot be mistaken for a
+    // selection.
+    expect(liveLabel()).toBeNull();
+
+    // The very start of the bar is the RUN-UP — the previous clip's last
+    // seconds — so the ring belongs to a neighbour even though the picture
+    // being watched is the middle one.
+    scrub(0.01);
+    await waitFor(() => expect(liveLabel()).toBe("neighbour"));
+
+    // Halfway is inside the centre clip.
+    scrub(0.5);
+    await waitFor(() => expect(liveLabel()).toBe("centre"));
+  },
+};

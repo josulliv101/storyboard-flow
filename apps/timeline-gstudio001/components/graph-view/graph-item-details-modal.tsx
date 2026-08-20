@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Redo2, Undo2, X } from "lucide-react";
+import { AudioLines, Redo2, Undo2, X } from "lucide-react";
 
 import {
   TrimOverviewStrip,
@@ -290,6 +290,8 @@ function DetailsPanel({
   centre,
   monitor,
   playhead,
+  playing = false,
+  live: onScreen = false,
   restingFrame,
   onClose,
   onAdvance,
@@ -324,6 +326,18 @@ function DetailsPanel({
    * trim strip below.
    */
   playhead: number | null;
+  /**
+   * Whether the transport is running. Only the monitoring panel is ever told
+   * yes: two elements playing the same seconds is two soundtracks, and the
+   * neighbours are showing stills of a moment, not playing one.
+   */
+  playing?: boolean;
+  /**
+   * Whether THIS clip is the one currently on screen — the clip the playhead
+   * is inside, which during a run-up or a run-out is a neighbour rather than
+   * the centre. Distinct from `playing`, which says who is making the sound.
+   */
+  live?: boolean;
   /**
    * Which end of this clip its picture rests on when nothing is playing.
    *
@@ -365,6 +379,10 @@ function DetailsPanel({
   // which may belong to a neighbour.
   const shown = monitor ? monitor.node : node;
   const shownVideo = shown.mediaKind === "video" ? shown : null;
+  const shownAudio = shown.mediaKind === "audio" ? shown : null;
+  // Sound belongs to the panel that is MONITORING, and only while the clock
+  // runs. A resting neighbour is a still frame; a paused monitor is too.
+  const audible = playing;
   const rawTime = monitor
     ? // The clock's time is measured inside the clip's SHOWING range, and a
       // video element seeks in SOURCE time — so the trim-in has to be added
@@ -382,7 +400,11 @@ function DetailsPanel({
   // Gated on `video`: an image has no source window and no element to seek, so
   // the settle loop had nothing to do but spin for as long as the modal stayed
   // open.
-  const videoRef = useSeekedVideo(Math.round(rawTime * 25) / 25, shownVideo !== null);
+  const videoRef = useSeekedVideo(
+    Math.round(rawTime * 25) / 25,
+    shownVideo !== null || shownAudio !== null,
+    audible,
+  );
 
   const [stripWidth, setStripWidth] = useState(0);
   const stripSlot = useCallback((element: HTMLElement | null) => {
@@ -429,7 +451,25 @@ function DetailsPanel({
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
         style={{ width: PANEL_WIDTH }}
-        className={`flex shrink-0 flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none ${DETAILS_PANEL_HEIGHT_CLASS}`}
+        data-item-details-live={onScreen ? "" : undefined}
+        // WHICH CLIP IS ON SCREEN, marked on the whole panel. The monitor is
+        // always the middle picture, so during a run-up the frames on show
+        // belong to a clip whose own panel is off to one side — and nothing
+        // said which. A ring in the playhead's own red ties the two together:
+        // the line moving through a strip and the ring around that strip are
+        // one statement about where playback is.
+        //
+        // Only ever drawn while the clock is engaged. A ring sitting on the
+        // centre panel of a modal nobody has touched would read as a selection
+        // rather than as a position.
+        className={[
+          "flex shrink-0 flex-col gap-3 rounded-lg border bg-zinc-950 p-4 shadow-2xl focus-visible:outline-none",
+          "transition-[box-shadow,border-color] duration-150",
+          onScreen
+            ? "border-red-500/50 shadow-black/60 ring-1 ring-red-500/40"
+            : "border-zinc-700 shadow-black/60",
+          DETAILS_PANEL_HEIGHT_CLASS,
+        ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -555,11 +595,36 @@ function DetailsPanel({
               ref={videoRef}
               src={shownVideo.src}
               poster={shownVideo.posterSrcs?.[0]}
-              muted
+              // UNMUTED WHILE PLAYING. Judging a cut is not only a picture
+              // problem — a line landing across the join, or music that
+              // stops dead on it, is the thing being looked for as often as
+              // the frame is.
+              muted={!audible}
               playsInline
               preload="auto"
               className="h-full w-full bg-black object-contain"
             />
+          ) : shownAudio ? (
+            // AUDIO HAS NO PICTURE, and pointing an <img> at a .wav paints a
+            // broken-image icon — which is what this did, because the flat
+            // order contains every media node and a bed is one of them. It
+            // gets a card that says what it is, and an element that can
+            // actually play it.
+            <div className="flex h-full w-full items-center justify-center bg-black text-zinc-400">
+              {/* NO LABEL. The panel's title is this clip's name, directly
+                  above, and the row beneath already says "sound · 8.0s" — a
+                  third copy in the middle of the card says nothing new and
+                  makes the name ambiguous to anything looking for it. */}
+              <AudioLines aria-hidden="true" className="h-8 w-8 text-blue-300/80" />
+              <audio
+                key={shownAudio.src}
+                ref={videoRef}
+                src={shownAudio.src}
+                muted={!audible}
+                preload="auto"
+                className="sr-only"
+              />
+            </div>
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -612,7 +677,7 @@ function DetailsPanel({
                         data-seam-playhead-line
                         aria-hidden="true"
                         style={{ left: `${playhead * 100}%` }}
-                        className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-blue-400"
+                        className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-red-500"
                       />
                     )}
                   </div>
@@ -943,6 +1008,11 @@ function DetailsFilmstripModal({
                   : null
               }
               restingFrame={index < centre ? "last" : "first"}
+              // Only the monitor makes sound: it is the panel showing what the
+              // clock says is on screen, so it is the only one whose audio
+              // could be in sync with anything.
+              playing={index === centre && playing}
+              live={position?.clipId === id}
               playhead={
                 scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
               }
