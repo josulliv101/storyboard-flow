@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
-// EXPLORATION: what a strip looks like when trim handles are on EVERY media
+// EXPLORATION, AND A RECORD OF WHAT WAS REJECTED. What a strip looks like
+// when trim handles are on EVERY media
 // clip instead of only the selected one. Three treatments in the same strip,
 // stacked so the difference is a vertical comparison rather than a memory test.
 // Story-local until one is chosen and promoted, same as TrimReadouts.
@@ -82,8 +83,13 @@ function handlesFit(seconds: number, sides: number): boolean {
 }
 
 /**
- * The proposed ink: a QUIET RULE at rest that becomes a solid amber grip when
- * the pointer is over the clip.
+ * TRIED AND DROPPED — kept because the reason it lost is the useful part.
+ *
+ * A quiet rule at rest that became a solid amber grip under the pointer. It
+ * read well on a desktop and did not survive "what about iPad": a hover reveal
+ * has no trigger on a touch screen, so the affordance would simply never
+ * arrive there. What shipped instead is one always-visible treatment that is
+ * the same on both — see `GraphTrimHandle`.
  *
  * THE HIT ZONE DOES NOT CHANGE, and that is the whole idea. What made the naive
  * version loud was not the target size, it was the ink filling it — eight

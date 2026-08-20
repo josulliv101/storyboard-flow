@@ -112,6 +112,18 @@ export type CollectionTrimHandleContentProps = Readonly<{
   side: "left" | "right";
   node: MediaNode;
   selected: boolean;
+  /**
+   * The timeline scale the card is drawn at, so content can work out how wide
+   * its own clip is — `node`'s seconds times this.
+   *
+   * Present for the same reason `CollectionTrimOverviewContentProps` carries
+   * it, and added when a consumer needed to answer "is this clip wide enough
+   * to be worth a handle?". The hit zone is a fixed pixel width, so what a
+   * handle COSTS is entirely a function of the clip it sits on: the same 8px
+   * is 2% of a long clip and a quarter of a short one. Content that wants to
+   * step aside on narrow clips cannot ask that question without this.
+   */
+  pixelsPerSecond: number;
 }>;
 
 /**

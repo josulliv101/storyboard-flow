@@ -86,6 +86,7 @@ import {
   MAX_SUBTREE_DEPTH,
 } from "./graph-view-config";
 import { GraphBreadcrumb } from "./graph-view-chrome";
+import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 
 type BootState =
   | Readonly<{ status: "loading" }>
@@ -261,6 +262,9 @@ export function GraphTimelineView({
   );
   const [itemSize, setItemSize] = useState<ItemSize>(DEFAULT_ITEM_SIZE);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
+  // Decides whether trim handles are drawn on every clip or only the
+  // selected one — see the prop below.
+  const coarsePointer = useCoarsePointer();
   // Children timelines are OFF by default (the focused timeline is the
   // page's subject; the tree is opt-in) — the sidebar's children icon
   // mounts them.
@@ -795,7 +799,21 @@ export function GraphTimelineView({
         // press-and-hold drags — the package's arbitration keeps the four
         // from ever colliding.
         clickSelection="toggle"
-        trimRequiresSelection
+        // ALWAYS ON WITH A POINTER, SELECTION-GATED WITH A THUMB.
+        //
+        // With a mouse the handles are worth having on every clip: the edge is
+        // where you already are, and the ink is quiet until you approach it
+        // (see `GraphTrimHandle`), so six of them across a strip cost nothing
+        // to look at.
+        //
+        // Touch cannot have both. The reachable target there is 44px — this
+        // app's own `[@media(pointer:coarse)]` size everywhere else — which is
+        // a quarter of a 3s clip and more than half of a 1.2s one, so
+        // always-on would turn a strip into adjacent trim zones with the clips
+        // squeezed between them. Selection is already an explicit tap, so
+        // gating on it means exactly one clip at a time carries thumb-sized
+        // targets and nothing collides with its neighbour.
+        trimRequiresSelection={coarsePointer}
         // The drag ghost is a fixed 16:9 thumbnail of the item (see
         // GraphGhost): width AND height pinned so it shows the clip's own
         // frame at a stable landscape ratio, centred on the grabbed pixel,
