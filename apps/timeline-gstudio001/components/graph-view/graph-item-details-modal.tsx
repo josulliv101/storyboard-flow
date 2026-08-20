@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Redo2, Undo2, X } from "lucide-react";
 
@@ -31,7 +31,7 @@ import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
-import { DetailsFilmstrip } from "./graph-details-filmstrip";
+import { detailsNeighbours, flatOrderRootId } from "./graph-details-neighbours";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -259,12 +259,33 @@ function CollectionDetails({
   );
 }
 
-function ModalBody({
+/**
+ * ONE panel — the whole details view for one clip.
+ *
+ * Rendered three times side by side (see `ModalBody`): the clip you opened in
+ * the middle and its playback neighbours either side, each a complete copy of
+ * this rather than a thumbnail of it. Everything per-clip lives here, which is
+ * what lets the flanking copies be the same component instead of a second,
+ * drifting rendition of the same chrome.
+ */
+function DetailsPanel({
   node,
+  centre,
   onClose,
   onOpenNeighbour,
 }: Readonly<{
   node: MediaNode;
+  /**
+   * Whether this is the panel the modal was OPENED on.
+   *
+   * It does NOT mean "the working one" — all three panels work, which is the
+   * point of them being copies rather than previews. It marks the two things
+   * that are singular no matter how many panels there are: the focus wiring,
+   * and the `view-transition-name` the card morphs into. A neighbour carrying
+   * either would steal the keyboard, or land the open animation on the wrong
+   * picture.
+   */
+  centre: boolean;
   onClose: () => void;
   /** Re-centre on a flanking clip. Not `setOpenId` directly: the modal also
    *  tracks which id is MOUNTED, and letting those two drift is what hands the
@@ -328,22 +349,16 @@ function ModalBody({
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [onClose, beginRename]);
 
-  return createPortal(
-    <div
-      data-item-details={node.id}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Details for ${node.name}`}
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
-      onPointerDown={(event) => {
-        // Scrim only: a press that starts on the panel must never close it,
-        // including one that ends outside after a trim drag.
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
+  return (
       <div
-        {...dialogProps}
-        className={`flex w-full max-w-3xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none ${DETAILS_PANEL_HEIGHT_CLASS}`}
+        // FOCUS WIRING ON THE CENTRE ONLY. Every panel is fully live — the
+        // grips trim, the title renames, the video seeks — but "which dialog
+        // has the keyboard" is singular by definition, so the roving focus,
+        // the Escape handling and the initial focus target stay with the clip
+        // that was opened. The neighbours are working panels, not focus traps.
+        {...(centre ? dialogProps : {})}
+        data-item-details-panel={centre ? "centre" : "neighbour"}
+        className={`flex w-full max-w-3xl shrink-0 flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none ${DETAILS_PANEL_HEIGHT_CLASS}`}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -436,15 +451,10 @@ function ModalBody({
           </div>
         </div>
 
-        {/* The hero, now the middle frame of a three-up strip: the clips either
-            side are the ones that play either side, and both run off the panel
-            edges. The `view-transition-name` stays HERE, on the subject — it is
-            what the card morphs into, and a neighbour carrying it would land
-            the open animation on the wrong picture. */}
-        <DetailsFilmstrip nodeId={node.id as string} onOpen={onOpenNeighbour}>
+        {/* The hero: this is what the card morphs INTO. */}
         <div
           data-item-details-frame
-          style={{ viewTransitionName: HERO }}
+          style={centre ? { viewTransitionName: HERO } : undefined}
           className={`relative overflow-hidden rounded-md bg-black ${DETAILS_HERO_FILL_CLASS}`}
         >
           {video ? (
@@ -480,7 +490,6 @@ function ModalBody({
             </span>
           )}
         </div>
-        </DetailsFilmstrip>
 
         {/* The whole source, with the showing window and its grips — the trim
             handles, at a width the board could never give them. */}
@@ -574,8 +583,6 @@ function ModalBody({
           <TagEditor nodeId={node.id} />
         </div>
       </div>
-    </div>,
-    document.body,
   );
 }
 
@@ -585,6 +592,92 @@ function ModalBody({
  * same transition in reverse, which is why the hero name is handed back to the
  * card INSIDE the closing callback rather than after it.
  */
+/**
+ * THE FILM STRIP: three whole panels side by side, not one panel with three
+ * pictures in it.
+ *
+ * The clip you opened is centred and the clips that PLAY either side of it get
+ * a complete copy of the same view — same header, same hero, same grips, same
+ * tags — laid out left and right with a gap between, running off the edges of
+ * the screen. Which is the shape of a strip: the frames do not shrink to fit,
+ * the film simply continues past what you can see.
+ *
+ * THEY ALL WORK. A neighbour is not a preview of a panel, it IS a panel: its
+ * grips trim, its title renames, its video seeks. That is why they are the same
+ * component rather than a lighter twin — a second rendition of this chrome
+ * would drift from it, and the first thing to drift is always the part nobody
+ * looks at twice.
+ *
+ * ONE SCRIM, THREE PANELS. The dialog, the backdrop and the
+ * click-outside-to-close belong to the view, not to each copy; three scrims
+ * would mean three backdrops stacked and three things listening for the same
+ * click.
+ */
+function DetailsFilmstripModal({
+  node,
+  onClose,
+  onOpenNeighbour,
+}: Readonly<{
+  node: MediaNode;
+  onClose: () => void;
+  onOpenNeighbour: (id: string) => void;
+}>) {
+  const graph = useCollectionsSelector((state) => state.graph);
+  const { previous, next } = useMemo(() => {
+    const { previousId, nextId } = detailsNeighbours(
+      graph,
+      flatOrderRootId(graph),
+      node.id as string,
+    );
+    const mediaAt = (id: string | null): MediaNode | null => {
+      if (id === null) return null;
+      const found = graph.nodesById.get(parseNodeId(id));
+      return found && found.kind === "media" && found.src ? (found as MediaNode) : null;
+    };
+    return { previous: mediaAt(previousId), next: mediaAt(nextId) };
+  }, [graph, node.id]);
+
+  const panelFor = (neighbour: MediaNode | null) =>
+    neighbour === null ? null : (
+      <DetailsPanel
+        key={neighbour.id as string}
+        node={neighbour}
+        centre={false}
+        onClose={onClose}
+        onOpenNeighbour={onOpenNeighbour}
+      />
+    );
+
+  return createPortal(
+    <div
+      data-item-details={node.id}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Details for ${node.name}`}
+      // `justify-center` centres the MIDDLE panel rather than the row: three
+      // panels overflow, so the centre lands in the middle and the other two
+      // are clipped symmetrically. `overflow-hidden` is what makes that a crop
+      // instead of a scrollbar.
+      className="fixed inset-0 z-[80] flex items-center justify-center gap-4 overflow-hidden bg-black/80 p-6 backdrop-blur-sm"
+      onPointerDown={(event) => {
+        // Scrim only: a press that starts on a panel must never close it,
+        // including one that ends outside after a trim drag.
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      {panelFor(previous)}
+      <DetailsPanel
+        node={node}
+        centre
+        onClose={onClose}
+        onOpenNeighbour={onOpenNeighbour}
+      />
+      {panelFor(next)}
+    </div>,
+    document.body,
+  );
+}
+
 export function GraphItemDetailsModal() {
   const { openId, setOpenId } = useItemDetails();
   // The item the TRIGGER named (PL11-002), not whatever happens to be
@@ -657,7 +750,7 @@ export function GraphItemDetailsModal() {
   }
   if (!node.src) return null;
   return (
-    <ModalBody
+    <DetailsFilmstripModal
       node={node}
       onClose={() => setOpenId(null)}
       onOpenNeighbour={(id) => {

@@ -94,6 +94,22 @@ function graphOfRoot(root: GraphNodeSpec): CollectionsGraph {
   return result.value;
 }
 
+function EndHarness() {
+  const store = createGraphDetailsStore({ before: DETAIL, subject: DETAIL, after: DETAIL });
+  return (
+    <div className="graph-view-theme min-h-[600px] bg-zinc-950">
+      <DndCollections initialGraph={graphOfRoot(SEAM_SCENE)}>
+        <GraphDetailsProvider store={store}>
+          <ItemDetailsProvider>
+            <OpenOnMount id="after" />
+            <GraphItemDetailsModal />
+          </ItemDetailsProvider>
+        </GraphDetailsProvider>
+      </DndCollections>
+    </div>
+  );
+}
+
 function SeamHarness() {
   const store = createGraphDetailsStore({
     before: DETAIL,
@@ -206,50 +222,59 @@ export const FlankedByItsNeighbours: Story = {
   play: async () => {
     const canvas = within(document.body);
     await waitFor(() =>
-      expect(document.querySelector("[data-details-filmstrip]")).not.toBeNull(),
+      expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3),
+    );
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
     );
 
-    const previous = document.querySelector('[data-details-neighbour="previous"]');
-    const next = document.querySelector('[data-details-neighbour="next"]');
-    // Named in the title, which is also how a reader tells which is which.
-    expect(previous?.getAttribute("title")).toBe("Previous: Before");
-    // `after` is NOT a sibling of the subject — reaching it means leaving the
-    // collection, which is the whole reason this is the playback order.
-    expect(next?.getAttribute("title")).toBe("Next: After");
+    // Three WHOLE panels — the middle one opened, its playback neighbours
+    // either side. `after` is not a sibling of the subject; reaching it means
+    // leaving the collection, which is why this uses the playback order.
+    expect(panels.map((panel) => panel.dataset.itemDetailsPanel)).toEqual([
+      "neighbour",
+      "centre",
+      "neighbour",
+    ]);
+    expect(canvas.getAllByText("Before").length).toBeGreaterThan(0);
+    expect(canvas.getAllByText("After").length).toBeGreaterThan(0);
 
-    // Same size as the subject, which is what makes it read as a strip rather
-    // than a card with two thumbnails bolted on.
-    const strip = document.querySelector("[data-details-filmstrip]")!;
-    const widths = Array.from(strip.children).map((child) =>
-      Math.round(child.getBoundingClientRect().width),
-    );
+    // Identical size — a neighbour is a copy of the view, not a preview of it.
+    const widths = panels.map((panel) => Math.round(panel.getBoundingClientRect().width));
     expect(new Set(widths).size).toBe(1);
-    // And wider than the strip itself: three of them cannot fit, which is the
-    // truncation that gives the film its edges.
+    // And three of them cannot fit, which is the crop that gives the strip its
+    // edges: the outer two run off the screen.
     const total = widths.reduce((sum, width) => sum + width, 0);
-    expect(total).toBeGreaterThan(strip.getBoundingClientRect().width);
+    expect(total).toBeGreaterThan(window.innerWidth);
 
-    void canvas;
+    // EVERY panel works, so every panel has its own controls — not just the
+    // centre. The rename button is the cheapest proof that the chrome is real.
+    expect(canvas.getAllByRole("button", { name: /^Rename / }).length).toBe(3);
   },
 };
 
 /** Clicking a neighbour re-centres on it, and the strip re-resolves around the
  *  new subject — the previous clip becomes the next one. */
-export const ClickingANeighbourRecentres: Story = {
-  render: () => <SeamHarness />,
+/**
+ * At the END of the timeline there is no third panel — the row is two.
+ *
+ * Nothing plays after the last clip, so nothing is drawn there: the strip runs
+ * out rather than wrapping back to the start, which would claim a seam the cut
+ * does not have.
+ */
+export const NoPanelPastTheEnd: Story = {
+  render: () => <EndHarness />,
   play: async () => {
     await waitFor(() =>
-      expect(document.querySelector('[data-details-neighbour="next"]')).not.toBeNull(),
+      expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(2),
     );
-    (document.querySelector('[data-details-neighbour="next"]') as HTMLElement).click();
-
-    await waitFor(() => {
-      // `after` is now the subject, so what WAS the subject is now behind it.
-      const previous = document.querySelector('[data-details-neighbour="previous"]');
-      expect(previous?.getAttribute("title")).toBe("Previous: Subject");
-    });
-    // Nothing plays after `after`, so that side is blank rather than wrapped
-    // back to the start.
-    expect(document.querySelector('[data-details-neighbour="next"]')).toBeNull();
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
+    );
+    // The previous clip, then the subject — and nothing to its right.
+    expect(panels.map((panel) => panel.dataset.itemDetailsPanel)).toEqual([
+      "neighbour",
+      "centre",
+    ]);
   },
 };
