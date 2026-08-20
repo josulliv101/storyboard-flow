@@ -37,6 +37,7 @@ import { cardVideoFrameCount, laneOf } from "./graph-card-model";
 import { useElementSize, useSettledFrameCount } from "./graph-card-measure";
 import { useVideoFrameLoading } from "./graph-card-frame-loading";
 import { useCardProvenance, useDisabledByAncestor } from "./graph-card-derivations";
+import { useClipNamesShown } from "./graph-clip-names";
 
 /** Never sample more than this many frames for one card, however wide. */
 const VIDEO_FRAME_CAP = 16;
@@ -160,6 +161,10 @@ export const GraphClipContent = memo(function GraphClipContent({
   // line, so an unnamed card's caption stays on the same grid as a named one's
   // and as a collection's.
   const captionName = detail?.title ?? null;
+  // OFF BY DEFAULT, from the board's options menu. A name over the artwork
+  // covers the artwork, and on a strip — where a clip's width IS its duration
+  // — a short clip is mostly name. See `graph-clip-names.tsx`.
+  const clipNamesShown = useClipNamesShown();
   const captionSeconds = Number(mediaDurationSeconds(node)) || 0;
   return (
     <span
@@ -289,7 +294,7 @@ export const GraphClipContent = memo(function GraphClipContent({
           rendered "the name" would render something on all of them, and a
           library of two thousand machine-named clips reads as a rename
           backlog. Decorative for AT: the card's own aria-label already names it. */}
-      {detail?.title && !muted && (
+      {detail?.title && !muted && clipNamesShown && (
         <span
           aria-hidden="true"
           data-clip-title

@@ -98,6 +98,38 @@ const DropdownMenuRadioItem = React.forwardRef<
 DropdownMenuRadioItem.displayName = DropdownMenuPrimitive.RadioItem.displayName;
 
 /**
+ * A row that toggles ONE independent setting on or off.
+ *
+ * The radio item above answers "which of these"; this answers "is this on".
+ * Same geometry deliberately — the same 7px left gutter holding the same
+ * check — so a menu mixing the two reads as one column of rows rather than
+ * two competing shapes, and the gutter alone tells you which question a row is
+ * asking: a check that can stand alone, versus one of a set.
+ */
+const DropdownMenuCheckboxItem = React.forwardRef<
+  React.ElementRef<typeof DropdownMenuPrimitive.CheckboxItem>,
+  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem>
+>(({ className, children, ...props }, ref) => (
+  <DropdownMenuPrimitive.CheckboxItem
+    ref={ref}
+    className={cn(
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-7 pr-2 text-xs outline-none transition-colors",
+      "focus:bg-zinc-800 focus:text-zinc-50 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      className,
+    )}
+    {...props}
+  >
+    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+      <DropdownMenuPrimitive.ItemIndicator>
+        <Check className="h-3.5 w-3.5 text-blue-500" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </span>
+    {children}
+  </DropdownMenuPrimitive.CheckboxItem>
+));
+DropdownMenuCheckboxItem.displayName = DropdownMenuPrimitive.CheckboxItem.displayName;
+
+/**
  * A radio item shaped like a BADGE instead of a row.
  *
  * For small enumerated values — sizes, densities — where a stack of five
@@ -139,6 +171,7 @@ const DropdownMenuRadioBadge = React.forwardRef<
 DropdownMenuRadioBadge.displayName = "DropdownMenuRadioBadge";
 
 export {
+  DropdownMenuCheckboxItem,
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,

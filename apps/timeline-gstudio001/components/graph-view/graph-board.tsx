@@ -61,9 +61,11 @@ import {
   SIDEBAR_ICON_IDLE,
 } from "@/components/timeline/sidebar-icon-styles";
 import { cn } from "@/lib/utils";
+import { ClipNamesProvider } from "./graph-clip-names";
 import { Button } from "@/components/core/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -153,10 +155,16 @@ export type { FocusSurface, ItemSize };
 function BoardMenu({
   itemSize,
   onItemSizeChange,
+  clipNamesShown,
+  onClipNamesChange,
   projectId,
 }: Readonly<{
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
+  /** Whether clip cards stamp their name over the artwork. Off by default —
+   *  see `graph-clip-names.tsx`. */
+  clipNamesShown: boolean;
+  onClipNamesChange: (shown: boolean) => void;
   /** Whose render format this menu edits. The section reads and writes the
    *  document itself, so the menu only has to say WHICH one. */
   projectId: string;
@@ -207,6 +215,23 @@ function BoardMenu({
               </DropdownMenuRadioBadge>
             ))}
           </DropdownMenuRadioGroup>
+          {/* WHAT A CARD SHOWS, under HOW BIG IT IS — the two questions the
+              eye asks about the same object, in that order. Off by default:
+              the board is for reading frames, and a name stamped on the
+              artwork covers the frame it names. On a strip that cost is not
+              even: a clip's width is its duration, so the shortest clips —
+              the ones with the least picture to spare — lose the most of it. */}
+          <DropdownMenuCheckboxItem
+            className="mt-2"
+            checked={clipNamesShown}
+            onCheckedChange={(next) => onClipNamesChange(next === true)}
+            // The menu stays open: this is a setting you judge by looking at
+            // the board behind it, and closing on select would make comparing
+            // the two states a matter of reopening the menu each time.
+            onSelect={(event) => event.preventDefault()}
+          >
+            Show name over item
+          </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
         {/* RENDER FORMAT, moved in from the header row.
             It read "16:9 · 720p" beside the breadcrumbs — a standing fact
@@ -1852,6 +1877,8 @@ export function GraphBoard({
   surface,
   itemSize,
   onItemSizeChange,
+  clipNamesShown,
+  onClipNamesChange,
   pixelsPerSecond,
   onPixelsPerSecondChange,
   previewOn,
@@ -1878,6 +1905,11 @@ export function GraphBoard({
   surface: FocusSurface;
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
+  /** Whether clip cards stamp their name over the artwork — the board menu's
+   *  toggle, off by default. Published to the cards as a context rather than
+   *  threaded down; see `graph-clip-names.tsx`. */
+  clipNamesShown: boolean;
+  onClipNamesChange: (shown: boolean) => void;
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   /** The preview pane above the board. The board renders it AND carries its
@@ -2049,6 +2081,10 @@ export function GraphBoard({
       {/* Spans the header AND the surfaces: the toolbar toggle sets the mode,
           the selected card's panel reads it. */}
       <ItemDetailsProvider>
+      {/* Spans the header AND the surfaces for the same reason: the toggle
+          that sets it lives in the header's menu, and every card that reads it
+          is below. */}
+      <ClipNamesProvider shown={clipNamesShown}>
       {/* Spans the surfaces AND the child rows below them, because the pairing
           it carries joins the two: a collection's card up here and its row
           down there light each other up on hover. Inert unless the children
@@ -2501,6 +2537,8 @@ export function GraphBoard({
                 <BoardMenu
                   itemSize={itemSize}
                   onItemSizeChange={onItemSizeChange}
+                  clipNamesShown={clipNamesShown}
+                  onClipNamesChange={onClipNamesChange}
                   projectId={projectId}
                 />
               </div>
@@ -2730,6 +2768,7 @@ export function GraphBoard({
       </FlatItemsProvider>
       </TagFilterProvider>
       </CollectionHoverProvider>
+      </ClipNamesProvider>
       </ItemDetailsProvider>
     </OpenKeyBoundary>
   );

@@ -261,6 +261,12 @@ export function GraphTimelineView({
     initialSurface === "strip" ? "strip" : "grid",
   );
   const [itemSize, setItemSize] = useState<ItemSize>(DEFAULT_ITEM_SIZE);
+  // OFF BY DEFAULT. A name stamped on the artwork covers the artwork, and on a
+  // strip — where a clip's width IS its duration — the shortest clips lose the
+  // most of themselves to it. Session state alongside `itemSize` rather than a
+  // stored preference: neither persists today, and one of the two quietly
+  // outliving the tab would be the surprise.
+  const [clipNamesShown, setClipNamesShown] = useState(false);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
   // Decides whether trim handles are drawn on every clip or only the
   // selected one — see the prop below.
@@ -909,6 +915,8 @@ export function GraphTimelineView({
                 surface={surface}
                 itemSize={itemSize}
                 onItemSizeChange={setItemSize}
+                clipNamesShown={clipNamesShown}
+                onClipNamesChange={setClipNamesShown}
                 pixelsPerSecond={pixelsPerSecond}
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
