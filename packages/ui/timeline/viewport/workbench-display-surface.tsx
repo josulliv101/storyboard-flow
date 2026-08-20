@@ -180,6 +180,19 @@ const MIN_TIMELINE_SPACE = 260;
  *  It is also the drag hit target, and a taller one is strictly easier to
  *  grab — there is no cost here to spend against. */
 const DIVIDER_HEIGHT_PX = 44;
+
+/**
+ * How long the preview takes to be uncovered, and to be covered again.
+ *
+ * Longer than the 260ms the divider's height uses, because these are not the
+ * same gesture: a divider drag is the user moving something themselves and
+ * wants to feel immediate, while this is the board getting out of the way to
+ * show what was behind it — and it is only legible if the eye can follow the
+ * edge that is moving. Short enough that a toggle never feels like waiting.
+ *
+ * Also the close's unmount delay, so it must stay in step with the CSS below.
+ */
+const REVEAL_MS = 320;
 /** Where the visible band's mid-line falls inside that box. The band is
  *  CENTERED on this line at every breakpoint rather than sized from the top,
  *  which is what lets it be 8px on desktop and 12px on coarse-pointer widths
@@ -1861,6 +1874,42 @@ export function WorkbenchSplitPane({
   // double-rAF below), so the pane appears at its size instead of animating
   // into it.
   const [heightAnimated, setHeightAnimated] = useState(false);
+  // THE REVEAL. Opening and closing the preview used to be a mount and an
+  // unmount: the pane appeared at full size and everything below it jumped
+  // down by that much in one frame. It reads as the page reflowing, which is
+  // what it was.
+  //
+  // The shape it has now is a LID, not a drawer. The pane does not move; the
+  // board slides down off it and the pane is uncovered from the top, which is
+  // the one arrangement that looks like it was already sitting there. Done by
+  // animating this region's height with its contents clipped and pinned to the
+  // top — the surface keeps its real height throughout, so nothing inside is
+  // ever squashed mid-reveal, which would give away that it is being built as
+  // it appears.
+  //
+  // THREE PIECES OF STATE, not one, because "should it be open" and "is it on
+  // screen" stop agreeing the moment closing takes time. `mounted` outlives
+  // `hasSurface` for the length of the close; `revealed` is what the height
+  // follows; `sliding` says a transition is in flight and is what turns on the
+  // clipping (the region is `overflow-visible` at rest ON PURPOSE — the seek
+  // thumb's overhang depends on it, so clipping is borrowed for the animation
+  // and given straight back).
+  const [mounted, setMounted] = useState(hasSurface);
+  const [revealed, setRevealed] = useState(hasSurface);
+  const [sliding, setSliding] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // WHAT THE CLOSE SLIDES OVER. The consumer drops `surface` to null the
+  // instant the preview is switched off, so without this the region would
+  // spend the close animating an EMPTY box shut — a blank gap collapsing,
+  // which is not the pane being covered by anything. The last one rendered is
+  // held for the length of the slide: frozen (it stops receiving props) and
+  // unmounted the moment the region reaches zero, which is also what finally
+  // stops its video.
+  const lastSurfaceRef = useRef<React.ReactNode>(null);
+  useEffect(() => {
+    if (surface !== null) lastSurfaceRef.current = surface;
+  }, [surface]);
+  const shownSurface = surface ?? (mounted ? lastSurfaceRef.current : null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dividerRef = useRef<HTMLButtonElement | null>(null);
   const lowerPaneRef = useRef<HTMLDivElement | null>(null);
@@ -1999,6 +2048,65 @@ export function WorkbenchSplitPane({
     };
   }, [hasSurface]);
 
+  /**
+   * Drive the reveal from `hasSurface`.
+   *
+   * OPENING TAKES TWO FRAMES, and it is the same reason the height transition
+   * above is armed on a double rAF: a height animates only if the browser had
+   * a BEFORE style to animate from, and an element mounted and sized in one
+   * commit never had one — it would simply appear at full height, which is the
+   * behaviour being replaced. So it mounts closed, gets painted closed, and
+   * only then is told to open.
+   *
+   * BOTH ENDS ARE TIMED RATHER THAN LISTENED FOR. `transitionend` does not
+   * fire for a transition that never runs, and this one does not run whenever
+   * the user has asked for reduced motion or the tab is in the background.
+   * Waiting on it would strand a close at zero height forever — mounted,
+   * invisible, still holding a video element — and strand an open with the
+   * borrowed clipping never given back, which would quietly cut off the seek
+   * thumb's overhang for the rest of the session. A timer always fires.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const clearCloseTimer = () => {
+      if (closeTimerRef.current !== null) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+
+    if (hasSurface) {
+      clearCloseTimer();
+      setMounted(true);
+      let second = 0;
+      const first = requestAnimationFrame(() => {
+        second = requestAnimationFrame(() => {
+          setSliding(true);
+          setRevealed(true);
+          closeTimerRef.current = setTimeout(() => {
+            closeTimerRef.current = null;
+            setSliding(false);
+          }, REVEAL_MS);
+        });
+      });
+      return () => {
+        cancelAnimationFrame(first);
+        cancelAnimationFrame(second);
+        clearCloseTimer();
+      };
+    }
+
+    setSliding(true);
+    setRevealed(false);
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      setMounted(false);
+      setSliding(false);
+    }, REVEAL_MS);
+    return clearCloseTimer;
+  }, [hasSurface]);
+
   useLayoutEffect(() => {
     // Size ONCE, when the surface first opens. The split pane itself may have
     // mounted earlier with only its lower pane so that the lower content keeps
@@ -2112,7 +2220,7 @@ export function WorkbenchSplitPane({
           {header}
         </div>
       )}
-      {hasSurface ? (
+      {mounted ? (
         <div
         // z-40 (above the strip's z-30 consumer overlay) so a playhead marker
         // in a timeline scrolling underneath is occluded by the sticky
@@ -2122,8 +2230,32 @@ export function WorkbenchSplitPane({
         // Pinned BENEATH the header rather than at 0 — the two are one stack,
         // and the offset is measured because the header's height is the
         // consumer's business, not a constant this file can know.
-        className="sticky z-40 min-w-0 overflow-visible bg-zinc-950"
-        style={{ top: headerHeight }}
+        data-preview-revealed={revealed ? "" : undefined}
+        className={cn(
+          "sticky z-40 min-w-0 bg-zinc-950",
+          // CLIPPED ONLY WHILE SLIDING. At rest this must be
+          // `overflow-visible` — the seek thumb deliberately hangs outside the
+          // pane and the masks below depend on it — but a reveal IS a clip, so
+          // it is borrowed for the length of the slide and handed straight
+          // back on `transitionend`.
+          sliding ? "overflow-hidden" : "overflow-visible",
+          // Transitioned while SLIDING (the reveal) and for later height
+          // changes (a shrinking viewport clamping the pane) — but never
+          // during a divider drag, which must track the pointer exactly. The
+          // condition mirrors the inner height's below on purpose: if only one
+          // of the two animated, the pane and the board beneath it would
+          // disagree about where the bottom edge is for the length of it.
+          (sliding || (heightAnimated && !isDividerDragging)) &&
+            "transition-[height] duration-[320ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+        )}
+        style={{
+          top: headerHeight,
+          // ZERO TO FULL. The contents keep their real size inside this and
+          // are pinned to its top, so what changes is how much of them shows
+          // — the pane is uncovered rather than grown, and everything below
+          // slides down off it.
+          height: revealed ? `${Math.max(surfaceHeight, MIN_SURFACE_HEIGHT) + DIVIDER_HEIGHT_PX}px` : "0px",
+        }}
         data-testid="workbench-preview-region"
       >
         {/* A seek thumb is intentionally centered on the timeline edge, so
@@ -2159,7 +2291,7 @@ export function WorkbenchSplitPane({
             minHeight: `${MIN_SURFACE_HEIGHT}px`,
           }}
           >
-            {surface}
+            {shownSurface}
           </div>
         <button
           ref={dividerRef}
