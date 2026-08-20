@@ -2316,7 +2316,15 @@ export function WorkbenchSplitPane({
           // are pinned to its top, so what changes is how much of them shows
           // — the pane is uncovered rather than grown, and everything below
           // slides down off it.
-          height: revealed ? `${Math.max(surfaceHeight, MIN_SURFACE_HEIGHT) + DIVIDER_HEIGHT_PX}px` : "0px",
+          // ROUNDED. `surfaceHeight` is a float — a third of a measured
+          // viewport — and this box is `sticky`, so a fractional height makes
+          // the browser re-resolve the stuck position against a subpixel edge
+          // on every frame of the slide while the content below it moves. That
+          // is the judder: not the animation stuttering, the sticky element
+          // disagreeing with itself about where its own bottom is.
+          height: revealed
+            ? `${Math.round(Math.max(surfaceHeight, MIN_SURFACE_HEIGHT)) + DIVIDER_HEIGHT_PX}px`
+            : "0px",
         }}
         data-testid="workbench-preview-region"
       >
@@ -2344,8 +2352,19 @@ export function WorkbenchSplitPane({
             // and measures the real one — that played as a visible shrink
             // every first open, and only the first, since a reopen restores
             // the remembered height and never re-measures.
+            // AND NOT WHILE THE REVEAL IS RUNNING. The outer region is
+            // already animating between zero and this pane's full height; if
+            // this one animates too, two nested height transitions run at once
+            // over the same pixels — the outer uncovering the pane while the
+            // pane itself grows inside it, each on its own curve. On the first
+            // open the inner one has somewhere to go, because the opening size
+            // is measured in those same frames, and the result is the pane
+            // appearing to fight its own reveal. It has no business moving
+            // here: the reveal's whole premise is that what is inside stays
+            // still and gets uncovered.
             heightAnimated &&
               !isDividerDragging &&
+              !sliding &&
               "transition-[height] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
           )}
           style={{

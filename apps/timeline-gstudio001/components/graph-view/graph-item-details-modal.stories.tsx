@@ -615,3 +615,46 @@ export const ADragDownTheScreenIsNotASwipe: Story = {
     expect(titleOfCentre()).toBe("Rename Subject");
   },
 };
+
+/**
+ * THE NEIGHBOURS SAY WHICH FRAME THEY ARE SHOWING, and the labels hug the cut.
+ *
+ * Each flanking panel is exactly one frame, and which frame is the whole
+ * reason it is on screen: the clip before the cut shows its LAST, the clip
+ * after shows its FIRST, and those two frames are the cut. The labels sit on
+ * the inside edges — right on the left-hand panel, left on the right-hand one
+ * — so they read as facts about the join rather than as titles for the panels.
+ *
+ * The centre gets none: it is not resting on an end.
+ */
+export const TheNeighboursSayWhichFrameTheyShow: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3),
+    );
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
+    );
+    const labelOf = (panel: HTMLElement) =>
+      panel.querySelector<HTMLElement>("[data-item-details-seam-label]");
+
+    const [before, centre, after] = panels;
+    expect(labelOf(before!)?.textContent).toBe("Last frame");
+    expect(labelOf(centre!)).toBeNull();
+    expect(labelOf(after!)?.textContent).toBe("First frame");
+
+    // Inside edges: each label is nearer the centre panel than its own panel's
+    // outer edge. Measured rather than asserted on a class, because the claim
+    // is about where they LAND.
+    const centreBox = centre!.getBoundingClientRect();
+    const beforeLabel = labelOf(before!)!.getBoundingClientRect();
+    const afterLabel = labelOf(after!)!.getBoundingClientRect();
+    expect(beforeLabel.left - before!.getBoundingClientRect().left).toBeGreaterThan(
+      centreBox.left - beforeLabel.right,
+    );
+    expect(after!.getBoundingClientRect().right - afterLabel.right).toBeGreaterThan(
+      afterLabel.left - centreBox.right,
+    );
+  },
+};

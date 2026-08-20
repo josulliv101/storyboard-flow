@@ -22,6 +22,7 @@ import {
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
+import { useFrameCrossfade } from "@/hooks/use-frame-crossfade";
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useClipDetail } from "./graph-details-context";
@@ -294,6 +295,7 @@ function DetailsPanel({
   playing = false,
   live: onScreen = false,
   swipe,
+  seamLabel = null,
   restingFrame,
   onClose,
   onAdvance,
@@ -352,6 +354,16 @@ function DetailsPanel({
    * middle"; the swipe is the same instruction, held.
    */
   swipe?: React.ComponentProps<"div">;
+  /**
+   * Which end of this clip is on show, labelled above the panel — set only on
+   * the two flanking it.
+   *
+   * The centre gets none: it is not resting on an end, it is the clip being
+   * worked on, and a label there would be answering a question nobody asked
+   * about it. The neighbours are exactly one frame each, and WHICH frame is
+   * the entire reason they are on screen.
+   */
+  seamLabel?: { text: string; side: "left" | "right" } | null;
   /**
    * Which end of this clip its picture rests on when nothing is playing.
    *
@@ -419,6 +431,12 @@ function DetailsPanel({
     shownVideo !== null || shownAudio !== null,
     audible,
   );
+  // A panel crossing the centre swaps which end of its clip it rests on, and
+  // the two frames are seconds of story apart — cut between them and the eye
+  // takes it as a glitch rather than as the same shot from its other end.
+  // Keyed on the resting end alone: every other seek here is a scrub or a
+  // playhead, where a cut IS the answer and a fade would be a smear.
+  const { videoRef: crossfadeVideoRef, canvasRef } = useFrameCrossfade(restingFrame);
 
   const [stripWidth, setStripWidth] = useState(0);
   const stripSlot = useCallback((element: HTMLElement | null) => {
@@ -477,7 +495,7 @@ function DetailsPanel({
         // centre panel of a modal nobody has touched would read as a selection
         // rather than as a position.
         className={[
-          "flex shrink-0 flex-col gap-3 rounded-lg border bg-zinc-950 p-4 focus-visible:outline-none",
+          "relative flex shrink-0 flex-col gap-3 rounded-lg border bg-zinc-950 p-4 focus-visible:outline-none",
           "transition-[box-shadow,border-color] duration-150",
           // ONE shadow utility per state, both spelled out. Layering a glow on
           // top of `shadow-2xl` would mean two classes setting `box-shadow`,
@@ -492,6 +510,28 @@ function DetailsPanel({
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
+        {seamLabel === null ? null : (
+          <span
+            data-item-details-seam-label
+            aria-hidden="true"
+            // HUGGING THE SEAM. The clip before the cut carries its label on
+            // its RIGHT and the clip after carries its on the LEFT, so both
+            // sit against the join they describe rather than at the far
+            // outside edges of the strip — where they would read as titles for
+            // the panels instead of as facts about the cut between them.
+            //
+            // Above the card, not inside it: the panel's own top row is the
+            // clip's name and its controls, and this is neither. Decorative
+            // for AT — the centre panel's dialog label already says what is
+            // open, and a neighbour resting on a frame is a visual aid.
+            className={[
+              "pointer-events-none absolute -top-6 font-mono text-[10px] tracking-wide text-zinc-500 uppercase",
+              seamLabel.side === "right" ? "right-1" : "left-1",
+            ].join(" ")}
+          >
+            {seamLabel.text}
+          </span>
+        )}
         <div className="flex items-center justify-between gap-3">
           {/* The clip's name, editable here (PL10-010) — the same hook the
               collection card, breadcrumb and sub-row rename through. Enter
@@ -620,7 +660,10 @@ function DetailsPanel({
               // this view exists to measure. A key gives each clip its own
               // element, so the change is a swap rather than a reload.
               key={shownVideo.src}
-              ref={videoRef}
+              ref={(element) => {
+                videoRef(element);
+                crossfadeVideoRef.current = element;
+              }}
               src={shownVideo.src}
               poster={shownVideo.posterSrcs?.[0]}
               // UNMUTED WHILE PLAYING. Judging a cut is not only a picture
@@ -659,6 +702,19 @@ function DetailsPanel({
               src={shown.src}
               alt={shown.name}
               className="h-full w-full bg-black object-contain"
+            />
+          )}
+          {/* THE OUTGOING FRAME, held over the picture while the incoming one
+              seeks, then faded out. Sized and fitted exactly like the video
+              under it so the two are the same picture in the same place —
+              anything else and the fade doubles as a nudge. Starts and ends at
+              zero opacity: it is only ever visible for the length of a swap. */}
+          {shownVideo && (
+            <canvas
+              ref={canvasRef}
+              aria-hidden="true"
+              style={{ opacity: 0 }}
+              className="pointer-events-none absolute inset-0 h-full w-full object-contain"
             />
           )}
           {live !== null && (
@@ -1149,6 +1205,13 @@ function DetailsFilmstripModal({
               playing={index === centre && playing}
               live={position?.clipId === id}
               swipe={swipe}
+              seamLabel={
+                index === centre - 1
+                  ? { text: "Last frame", side: "right" }
+                  : index === centre + 1
+                    ? { text: "First frame", side: "left" }
+                    : null
+              }
               playhead={
                 scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
               }

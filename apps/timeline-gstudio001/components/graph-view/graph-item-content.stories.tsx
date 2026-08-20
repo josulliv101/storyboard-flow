@@ -1459,6 +1459,82 @@ export const ClipNameShownWhenEnabled: Story = {
 };
 
 /**
+ * The same pair in the GRID, where the name is not stamped on the artwork at
+ * all — it heads the caption underneath, beside the kind icon.
+ *
+ * Covered separately because the two surfaces render the name in two different
+ * places, and the setting was only reaching one of them: switching to the grid
+ * brought every name back however the option was set. The strip pair above
+ * watches the overlay; this one watches the caption.
+ *
+ * `data-virtual-grid` is what puts a card in its grid shape — the caption is
+ * `hidden` without it — so the wrapper is not decoration, it is the condition
+ * being tested.
+ */
+function renderNamedClipInGrid(shown: boolean): Decorator {
+  return function NamedGridClipDecorator(Story) {
+    const store = createGraphDetailsStore({
+      [VIDEO_ID as string]: {
+        alt: "A video",
+        title: "S01 — Pat briefing",
+        tags: ["night"],
+        aspect: 16 / 9,
+        hydrated: false,
+      },
+    });
+    return (
+      <DndCollections initialGraph={videoGraph} components={GRAPH_VIEW_COMPONENTS}>
+        <GraphDetailsProvider store={store}>
+          <ClipNamesProvider shown={shown}>
+            <VideoFrameLookAhead>
+              <div data-virtual-grid className="bg-zinc-950 p-2">
+                <div style={{ width: 260, height: 180 }}>
+                  <Story />
+                </div>
+              </div>
+            </VideoFrameLookAhead>
+          </ClipNamesProvider>
+        </GraphDetailsProvider>
+      </DndCollections>
+    );
+  };
+}
+
+/**
+ * OFF: the caption keeps everything that is not the name.
+ *
+ * The kind icon, the duration and the tag row are facts you cannot read off
+ * the artwork, so they are not what the setting is about — and the row was
+ * already built to lose the name without moving, since an unnamed clip has
+ * always been a case it had to handle.
+ */
+export const GridCaptionNameHiddenByDefault: Story = {
+  args: mediaArgs,
+  decorators: [renderNamedClipInGrid(false)],
+  play: async ({ canvasElement }) => {
+    const caption = canvasElement.querySelector<HTMLElement>("[data-clip-caption]");
+    await expect(caption).not.toBeNull();
+    // The clip HAS a name — this is the setting, not a missing title.
+    await expect(caption!.querySelector("[data-clip-caption-name]")).toBeNull();
+    // Still says what it is, how long it is, and how it is filed.
+    await expect(caption!.querySelector("svg")).not.toBeNull();
+    await expect(caption!.textContent).toContain("0:08");
+    await expect(caption!.querySelector("[data-clip-caption-tag-row]")).not.toBeNull();
+  },
+};
+
+/** Turned on, the same clip's caption leads with its name. */
+export const GridCaptionNameShownWhenEnabled: Story = {
+  args: mediaArgs,
+  decorators: [renderNamedClipInGrid(true)],
+  play: async ({ canvasElement }) => {
+    const name = canvasElement.querySelector<HTMLElement>("[data-clip-caption-name]");
+    await expect(name).not.toBeNull();
+    await expect(name!.textContent).toBe("S01 — Pat briefing");
+  },
+};
+
+/**
  * The collection twin of `renderMediaCard`, in the grid with select mode armed.
  *
  * `keepMultiSelectModeWhenEmpty` for the same reason that one needs it: nothing
