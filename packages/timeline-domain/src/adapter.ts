@@ -118,6 +118,10 @@ export type ClipDetail = Readonly<{
   trashedAt?: string;
   trashedFrom?: TrashOrigin;
   itemCount?: number;
+  /** What a collection is FOR — see `CollectionTimelineClip["role"]`. Rides
+   *  the side-table for the same reason `tags` and `sourceAsset` do: the
+   *  engine never reads it, so no graph command is needed to carry it. */
+  role?: CollectionTimelineClip["role"];
   previewItems?: CollectionTimelineClip["previewItems"];
   /** The collection clip's own display duration in its parent timeline — its
    *  LAYOUT span, disabled descendants included. */
@@ -250,6 +254,7 @@ function collectionDetail(clip: CollectionTimelineClip, hydrated: boolean): Clip
     ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
     sourceClipId: clip.id,
     itemCount: clip.itemCount,
+    ...(clip.role === undefined ? {} : { role: clip.role }),
     ...(clip.previewItems === undefined ? {} : { previewItems: clip.previewItems }),
     duration: clip.duration,
     ...(clip.playableDuration === undefined
@@ -1154,6 +1159,7 @@ export function graphChildrenToClips(
       itemCount: detail?.hydrated
         ? getChildren(graph, node.id).length
         : (detail?.itemCount ?? getChildren(graph, node.id).length),
+      ...(detail?.role === undefined ? {} : { role: detail.role }),
       ...(previewItems === undefined ? {} : { previewItems }),
       ...(playableDuration === undefined ? {} : { playableDuration }),
       alt: detail?.alt ?? `${node.name} collection`,

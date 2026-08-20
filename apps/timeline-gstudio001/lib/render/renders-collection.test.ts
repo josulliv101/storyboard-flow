@@ -4,6 +4,8 @@ import type { TimelineClip } from "@storyboard/timeline-model/types";
 
 import {
   RENDERS_COLLECTION_NAME,
+  RENDERS_COLLECTION_ROLE,
+  findRendersCollection,
   findRendersCollectionId,
   renderClipName,
 } from "./renders-collection";
@@ -12,6 +14,7 @@ function collectionClip(
   title: string,
   childTimelineId: string,
   clipId = childTimelineId,
+  role?: "renders",
 ): TimelineClip {
   return {
     id: clipId,
@@ -19,6 +22,7 @@ function collectionClip(
     kind: "collection",
     childTimelineId,
     title,
+    ...(role === undefined ? {} : { role }),
     itemCount: 0,
     previewItems: [],
     alt: `${title} collection`,
@@ -98,6 +102,54 @@ describe("findRendersCollectionId", () => {
 
   it("uses the same name it looks for", () => {
     expect(findRendersCollectionId([collectionClip(RENDERS_COLLECTION_NAME, "t-r")])).toBe("t-r");
+  });
+});
+
+describe("findRendersCollection — the role marker", () => {
+  it("finds a marked collection whatever it is called", () => {
+    // THE BUG THIS CLOSES. Renaming the collection used to send the next
+    // render into a newly created "Renders" beside it, splitting the output.
+    const clips = [collectionClip("Final cuts", "timeline-renders", "timeline-renders", "renders")];
+    expect(findRendersCollection(clips)).toEqual({
+      id: "timeline-renders",
+      matchedBy: "role",
+    });
+  });
+
+  it("reports a title match as one, so the caller knows to stamp it", () => {
+    expect(findRendersCollection([collectionClip("Renders", "t-r")])).toEqual({
+      id: "t-r",
+      matchedBy: "title",
+    });
+  });
+
+  it("prefers the MARKED collection over one merely named Renders", () => {
+    // The other half of the bug: naming any top-level collection "Renders"
+    // used to capture the project's output. Order matters here — the impostor
+    // is first, so a single pass that took the first match would fail.
+    const clips = [
+      collectionClip("Renders", "timeline-impostor"),
+      collectionClip("Final cuts", "timeline-real", "timeline-real", "renders"),
+    ];
+    expect(findRendersCollection(clips)?.id).toBe("timeline-real");
+  });
+
+  it("ignores a marker on a duplicate REFERENCE, like the title pass does", () => {
+    // clip id != childTimelineId: writing here files renders under a timeline
+    // this project does not own. A role does not buy past that.
+    const clips = [
+      collectionClip("Renders", "timeline-elsewhere", "ref-clip-1", "renders"),
+    ];
+    expect(findRendersCollection(clips)).toBeNull();
+  });
+
+  it("falls back to the title for every project that predates the marker", () => {
+    expect(findRendersCollectionId([collectionClip("Renders", "t-r")])).toBe("t-r");
+  });
+
+  it("looks for the role the app stamps", () => {
+    const clips = [collectionClip("anything", "t-r", "t-r", RENDERS_COLLECTION_ROLE)];
+    expect(findRendersCollection(clips)?.matchedBy).toBe("role");
   });
 });
 
