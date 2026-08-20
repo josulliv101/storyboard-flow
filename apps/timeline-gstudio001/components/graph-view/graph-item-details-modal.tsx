@@ -463,11 +463,17 @@ function DetailsPanel({
         // centre panel of a modal nobody has touched would read as a selection
         // rather than as a position.
         className={[
-          "flex shrink-0 flex-col gap-3 rounded-lg border bg-zinc-950 p-4 shadow-2xl focus-visible:outline-none",
+          "flex shrink-0 flex-col gap-3 rounded-lg border bg-zinc-950 p-4 focus-visible:outline-none",
           "transition-[box-shadow,border-color] duration-150",
+          // ONE shadow utility per state, both spelled out. Layering a glow on
+          // top of `shadow-2xl` would mean two classes setting `box-shadow`,
+          // and which one wins is a question about stylesheet order rather
+          // than about the order they appear in this string — so the drop
+          // shadow is written into both branches and the glow is simply a
+          // second layer of the live one.
           onScreen
-            ? "border-red-500/50 shadow-black/60 ring-1 ring-red-500/40"
-            : "border-zinc-700 shadow-black/60",
+            ? "border-red-500/50 ring-1 ring-red-500/40 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_30px_4px_rgba(239,68,68,0.22)]"
+            : "border-zinc-700 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
           DETAILS_PANEL_HEIGHT_CLASS,
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
