@@ -99,11 +99,12 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
   return (
     <div className="flex flex-col gap-2" data-tag-editor>
       <div className="flex flex-wrap items-center gap-1.5">
-        {tags.length === 0 && (
-          <span className="text-[11px] text-zinc-500">
-            No tags yet — label this clip to find it again later.
-          </span>
-        )}
+        {/* NO EMPTY-STATE SENTENCE. The field below it says "Add a tag…" in
+            its own placeholder, so the line was telling you what the control
+            already tells you — and in the details strip it appeared once per
+            panel, up to nine times on one screen, which is how a helpful
+            sentence turns into noise. An empty row of chips reads as empty
+            without being told. */}
         {tags.map((tag) => (
           <span
             key={tag}

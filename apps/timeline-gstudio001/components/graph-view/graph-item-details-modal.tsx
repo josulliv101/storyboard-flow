@@ -200,7 +200,11 @@ function TrimNumbers({
         →
       </span>
       <SecondsField label="out" value={outPoint} disabled={disabled} onCommit={(raw) => commit("out", raw)} />
-      <span className="text-zinc-600">of {formatSeconds(full)}</span>
+      {/* "of 12.00s" used to trail this row. The panel's own header already
+          reads "4.00s of 12.00s", two inches above and in the same units, so
+          it was the same fact twice on one panel — and N times over on a strip
+          of them. The per-field "s" went for the same reason: the row is
+          seconds from end to end and nothing in it could be anything else. */}
     </div>
   );
 }
@@ -245,9 +249,9 @@ function SecondsField({
           }
         }}
         onBlur={(event) => onCommit(event.target.value)}
-        className="w-16 rounded-sm bg-zinc-900 px-1.5 py-0.5 text-right tabular-nums text-blue-300/90 outline-none ring-1 ring-zinc-700 focus:ring-blue-500/70 disabled:opacity-40"
+        className="w-14 rounded-sm bg-zinc-900 px-1.5 py-0.5 text-right tabular-nums text-blue-300/90 outline-none ring-1 ring-zinc-700 focus:ring-blue-500/70 disabled:opacity-40"
       />
-      <span className="text-zinc-600">s</span>
+
     </label>
   );
 }
@@ -562,7 +566,11 @@ function DetailsPanel({
         // centre panel of a modal nobody has touched would read as a selection
         // rather than as a position.
         className={[
-          "relative flex shrink-0 flex-col gap-3 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
+          // gap-2, not gap-3: with the prose and the headings gone the rows
+          // below the strip are short and closely related, and twelve pixels
+          // between each of them was reading as four separate regions rather
+          // than one foot to the panel.
+          "relative flex shrink-0 flex-col gap-2 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
           "transition-[box-shadow,border-color] duration-150",
           // THE OPENED CLIP WEARS A WHITE BORDER, twice the weight of a
           // neighbour's. Two different questions get two different marks here
@@ -880,35 +888,33 @@ function DetailsPanel({
               trimOut={trimOut}
               disabled={live !== null}
             />
-            {/* Audio moved into this WINDOWED branch when its trim shipped,
-                which took away the "sound · …" line the still branch gave it —
-                so a voiceover stopped saying it was one. It says so here, and
-                still leads with its length, because "what is this and how long
-                is it" is the question this row answers. */}
-            <div className="flex items-center justify-between font-mono text-[11px] text-zinc-500">
-              <span className="text-blue-300/90">
-                {video ? "" : `sound · ${formatSeconds(showing)} long`}
+            {/* THE INSTRUCTIONS ARE GONE, and they were the single biggest
+                thing making this end of the panel unreadable: a full sentence
+                of prose — "drag the amber edges to trim, the film to move the
+                window" — sitting under every panel. At three that is three
+                copies of it on screen; at nine it is nine, and none of them is
+                telling you anything the visible grips and the resize cursor
+                are not. A hint you have read once is furniture from then on.
+
+                What it also carried is kept: a voiceover has to say it is one,
+                since a waveformless black card and a still look alike. That is
+                two words now, on the row that was already there. */}
+            {!video && (
+              <span className="font-mono text-[11px] text-blue-300/90">
+                sound · {formatSeconds(showing)} long
               </span>
-              <span>
-                {video
-                  ? "drag the amber edges to trim, the film to move the window"
-                  : "drag the card's edges on the strip, or type an exact in and out"}
-              </span>
-            </div>
+            )}
           </>
         ) : (
-          <div className="flex items-center justify-between font-mono text-[11px] text-zinc-500">
-            {/* This branch is everything that is NOT video, which is images
-                AND audio — so it cannot say "still" for both. A voiceover is
-                not a still, and calling it one is the kind of wrong label
-                nobody reports and everybody notices. */}
-            <span className="text-blue-300/90">
-              {node.mediaKind === "audio"
-                ? `sound · ${formatSeconds(showing)} long`
-                : `still · ${formatSeconds(showing)} on screen`}
-            </span>
-            <span>drag the card&apos;s edge on the strip to change how long it holds</span>
-          </div>
+          // This branch is everything that is NOT video, which is images AND
+          // audio — so it cannot say "still" for both. A voiceover is not a
+          // still, and calling it one is the kind of wrong label nobody
+          // reports and everybody notices.
+          <span className="font-mono text-[11px] text-blue-300/90">
+            {node.mediaKind === "audio"
+              ? `sound · ${formatSeconds(showing)} long`
+              : `still · ${formatSeconds(showing)} on screen`}
+          </span>
         )}
 
         {/* WHERE IT DRAWS, for a clip that is under the picture. Only shown
@@ -923,9 +929,7 @@ function DetailsPanel({
             `set-node-placement`, so unlike the tag editor below it IS
             undoable. */}
         {(node.trackIndex ?? 0) > 0 && node.mediaKind !== "audio" && (
-          <div className="flex flex-col gap-1.5 border-t border-white/10 pt-3">
-            <LayerFramePicker node={node} aspect={detail?.aspect} disabled={live !== null} />
-          </div>
+          <LayerFramePicker node={node} aspect={detail?.aspect} disabled={live !== null} />
         )}
 
         {/* Tags. Here rather than on the card because the card's content
@@ -935,10 +939,12 @@ function DetailsPanel({
             No undo: a tag change writes the detail side-table directly and
             emits no patch, so `useScopedHistory` above never sees it. See
             graph-tag-editor.tsx for why that is the deliberate trade. */}
-        <div className="flex flex-col gap-1.5 border-t border-white/10 pt-3">
-          <span className="font-mono text-[11px] tracking-[0.08em] text-zinc-500 uppercase">
-            Tags
-          </span>
+        {/* NO "TAGS" HEADING. It cost a whole line to label a row of tag
+            chips and a field that says "add a tag" in its own placeholder —
+            the control describes itself, and at nine panels the heading was
+            nine lines of the word. One hairline stays, because the panel still
+            needs a foot to sit on. */}
+        <div className="border-t border-white/10 pt-2">
           <TagEditor nodeId={node.id} />
         </div>
       </div>
