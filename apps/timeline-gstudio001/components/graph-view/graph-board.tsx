@@ -417,6 +417,29 @@ function FocusedAggregate({
   // load. Measured before this: the root board claimed 23:21 against a true
   // 21:55.
   const vouched = useCollectionSubtreeHydrated(focusedId);
+  // WHILE SELECTING, THIS SLOT SAYS WHAT TO DO INSTEAD OF WHAT IS THERE.
+  //
+  // The centre of this row is the one place in it that is not a control, which
+  // is what makes it the right place for a sentence — and the total is the
+  // least useful thing on screen at the moment someone has just armed a mode
+  // and is deciding what to click. The mode's other two signals are ambient
+  // (the panel tint) and per-item (the cards' faint rings); this is the one
+  // that can use words, so it does.
+  //
+  // "item(s)" rather than a count-aware plural: nothing has been picked yet,
+  // so there is no number to agree with, and "Select items below" quietly
+  // suggests you need more than one.
+  const selecting = useCollectionsSelector((s) => s.interaction.multiSelectMode);
+  if (selecting) {
+    return (
+      <span
+        data-focused-aggregate="selecting"
+        className="shrink-0 font-mono text-[11px] text-sky-300/90"
+      >
+        Select item(s) below
+      </span>
+    );
+  }
   if (count === 0) return null;
   return (
     <span
@@ -2339,7 +2362,25 @@ export function GraphBoard({
               the rail, the menus — and it is what the mockup shows. */}
           <div
             data-board-panel
-            className="overflow-hidden rounded-xl bg-zinc-900/60 ring-1 ring-white/10"
+            // TINTED WHILE SELECTING, panel and all — the toolbar row with the
+            // counts and the tools, and the surface under it, are one thing and
+            // the mode applies to both.
+            //
+            // Barely there on purpose: this is the ambient half of the signal,
+            // saying "you are in a different mode" from the corner of the eye
+            // while the cards' faint rings say which things the mode acts on.
+            // A tint you actually notice competes with the artwork, which is
+            // what the board is for, and a board that changes colour to tell
+            // you something about the pointer has its priorities backwards.
+            //
+            // Transitioned, so arming the mode reads as the surface shifting
+            // rather than repainting.
+            className={[
+              "overflow-hidden rounded-xl ring-1 transition-colors duration-200",
+              multiSelectMode
+                ? "bg-sky-950/25 ring-sky-400/20"
+                : "bg-zinc-900/60 ring-white/10",
+            ].join(" ")}
           >
           <DragChromeFade>
             {/* The marker sits here rather than on DragChromeFade, which takes
@@ -2593,7 +2634,16 @@ export function GraphBoard({
               had no frame of its own. The panel is that frame now, and cards
               flush against its ring read as overflowing it, so the content
               takes the same gutter the header row has. */}
-          <div data-board-panel-content className="p-3">
+          {/* SELECT MODE, published for the cards below.
+              A data attribute rather than a store read in every card: this is
+              a whole-surface state and subscribing dozens of cards to it would
+              re-render all of them on a toggle, for a border colour. One
+              attribute here and a CSS variant there costs nothing. */}
+          <div
+            data-board-panel-content
+            data-select-mode={multiSelectMode ? "" : undefined}
+            className="p-3"
+          >
           {skeletonCount > 0 ? (
             <div data-focused-surface-shell={surface}>
               <SurfaceSkeleton

@@ -202,7 +202,15 @@ export const GraphClipContent = memo(function GraphClipContent({
         // caption row there is fixed overhead on every clip, and clip width is
         // duration, so a narrow clip has no room for one anyway.
         "[[data-virtual-grid]_&]:flex-col",
-        selected ? "ring-2 ring-inset ring-blue-500" : "ring-1 ring-white/15",
+        // SELECTED is a full blue ring. NOT-selected-but-selectable is the
+        // faintest blue this ring can carry and still read as blue — the point
+        // is to say "you can pick these now", not "this one is picked", and
+        // anything stronger starts to look like the latter on a card you have
+        // not touched. It replaces the neutral hairline rather than adding to
+        // it, so nothing moves and nothing thickens; only the colour changes.
+        selected
+          ? "ring-2 ring-inset ring-blue-500"
+          : "ring-1 ring-white/15 [[data-select-mode]_&]:ring-sky-400/30",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
         // Disabled reads as MUTED, never as missing: the card keeps its slot
         // and its full width (its duration still shapes the board), it just
