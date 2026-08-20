@@ -2680,10 +2680,9 @@ export function GraphBoard({
                 className={[
                   "rounded-none border-0 p-0",
                   GRAPH_STRIP_TRACK_CLASS,
-                  // Same 16px, same jolt, same fix as the grid's — see there.
-                  "transition-[padding-top] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
-                  // Ruler and waveform have no reveal to wait for, so they
-                  // still spend it immediately; the preview's share waits.
+                  // Same 16px, same wait, same one-step landing as the grid's
+                  // — see the note there. Ruler and waveform have no reveal to
+                  // wait for, so they still spend it immediately.
                   rulerOn || waveformOn ? "pt-4" : "[[data-preview-settled]_&]:pt-4",
                 ].join(" ")}
               />
@@ -2754,11 +2753,20 @@ export function GraphBoard({
                   // On the pane's own clock it stops being a separate event.
                   className={[
                     "rounded-none border-0 bg-transparent p-0",
-                    "transition-[padding-top] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
-                    // WAITS FOR THE SLIDE, like the rails it makes room for.
-                    // Driven off the pane's own `data-preview-settled` rather
-                    // than off `previewOn`, so the 16px is spent when the rails
-                    // actually arrive instead of at the click.
+                    // WAITS FOR THE SLIDE, and then lands in ONE STEP.
+                    //
+                    // It waits because the 16px used to be spent at the click,
+                    // mid-reveal, as a jolt against a moving pane. It does NOT
+                    // animate, and that is the second half of the lesson: a
+                    // transition here means this grid's layout moves for 380ms,
+                    // and this grid is a drag surface. The e2e suite caught it
+                    // at once — a hold-drag reordered one slot too far, which
+                    // is the same failure that test's own comment records from
+                    // an earlier 40px of chrome appearing above the grid. Cards
+                    // that shift under a pointer resolve the wrong drop.
+                    //
+                    // One step, at a moment when nothing else is moving and the
+                    // user is watching the pane arrive, is both calmer and safe.
                     "[[data-preview-settled]_&]:pt-4",
                   ].join(" ")}
                 />

@@ -61,6 +61,43 @@ import {
 const RAIL_EXPANDED_STORAGE_KEY = "sw:sidebar-expanded";
 
 /**
+ * The same preference, as a COOKIE, because the server has to know it.
+ *
+ * localStorage is invisible to the server, so every load rendered the rail
+ * collapsed and expanded it on hydration — a 187px shove of everything beside
+ * it, and 0.135 of a 0.16 CLS on its own (#471). No amount of client-side
+ * cleverness fixes that: the first paint has to be right, and only something
+ * that travels with the REQUEST can make it right.
+ *
+ * READ AS THE SOURCE OF TRUTH on both sides, rather than mirrored alongside
+ * localStorage. Two stores that can disagree are a hydration mismatch waiting
+ * for the first person whose copies drift — cleared site data, an old tab, a
+ * private window. One store cannot disagree with itself. localStorage is still
+ * WRITTEN, and still read as a fallback, purely so a rail already open before
+ * this change stays open on the load that introduces it.
+ *
+ * SEMANTICS ARE UNCHANGED. A cookie is per-browser and so is localStorage, and
+ * this is read at LOAD, never live — so the note below about two windows
+ * keeping their own widths still holds. What a cookie adds is only that the
+ * server can see it.
+ *
+ * `SameSite=Lax` and a year: a display preference, sent on top-level
+ * navigations, which is exactly when the server needs it.
+ */
+const RAIL_EXPANDED_COOKIE = "sw_rail_expanded";
+const RAIL_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
+/** Parse the rail cookie out of a `document.cookie` / request header string. */
+export function railExpandedFromCookies(header: string | undefined): boolean {
+  if (!header) return false;
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === RAIL_EXPANDED_COOKIE) return rest.join("=") === "true";
+  }
+  return false;
+}
+
+/**
  * Published to the document so surfaces BESIDE the rail can be offset by it.
  *
  * The trash drawer hardcoded `ml-[72px]`, which is correct exactly while the
@@ -76,11 +113,31 @@ const RAIL_WIDTH_VAR = "--sw-rail-width";
 const RAIL_EXPANDED_EVENT = "sw:sidebar-expanded-changed";
 
 function readRailExpanded(): boolean {
+  // The cookie first, because it is what the SERVER rendered from — reading
+  // anything else here would be reading a second opinion, and a first client
+  // render that disagreed with the markup is the hydration mismatch this whole
+  // change exists to remove.
+  if (typeof document !== "undefined" && document.cookie.includes(RAIL_EXPANDED_COOKIE)) {
+    return railExpandedFromCookies(document.cookie);
+  }
   try {
+    // MIGRATION ONLY: a rail left open before the cookie existed. One toggle,
+    // or the backfill on mount, writes the cookie and this stops being read.
     return window.localStorage.getItem(RAIL_EXPANDED_STORAGE_KEY) === "true";
   } catch {
     // Private mode or a blocked origin: the rail still works, it just forgets.
     return false;
+  }
+}
+
+/** Write the preference where the server can see it. */
+function writeRailCookie(next: boolean): void {
+  try {
+    document.cookie =
+      `${RAIL_EXPANDED_COOKIE}=${next}; path=/; max-age=${RAIL_COOKIE_MAX_AGE_SECONDS}; samesite=lax`;
+  } catch {
+    // Cookies blocked: the rail still works for this session, and the next
+    // load simply renders the server default again.
   }
 }
 
@@ -108,6 +165,9 @@ function subscribeRailExpanded(onChange: () => void): () => void {
 }
 
 function commitRailExpanded(next: boolean): void {
+  // The cookie is what the next load renders from; localStorage is kept in
+  // step so a downgrade does not lose the preference.
+  writeRailCookie(next);
   try {
     window.localStorage.setItem(RAIL_EXPANDED_STORAGE_KEY, String(next));
   } catch {

@@ -958,13 +958,22 @@ function DetailsPanel({
             collide — and at that width the panel is there to show you a frame
             beside its neighbours, which is the thing you came for. Trimming
             stays available on the board and in a wider view. */}
-        <div className="hidden flex-col gap-2 @min-[30rem]:flex">
+        <div className="flex flex-col gap-2">
         {windowed ? (
           <>
             {/* FRAMES, so video only — an audio clip has a source window but
                 nothing to paint in it. Its numbers below are the same. */}
+            {/* THE FILMSTRIP IS WHAT GOES, NOT TRIMMING ITSELF.
+                A source map with two grips and forty poster frames needs the
+                width; below 30rem the grips are a few pixels apart and it is
+                texture rather than a control. But dropping the whole block
+                took the ability to trim with it, and a panel you cannot trim
+                from is a panel you have to leave to do the work — the numbers
+                below stay at every width for exactly that reason. They are two
+                fields and an arrow, they fit, and typing an exact in and out
+                was always the more precise of the two routes anyway. */}
             {video && (
-              <div ref={stripSlot} className="w-full">
+              <div ref={stripSlot} className="hidden w-full @min-[30rem]:block">
                 {stripWidth > 0 ? (
                   <div className="relative">
                     <TrimOverviewStrip
