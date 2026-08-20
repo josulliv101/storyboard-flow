@@ -350,6 +350,30 @@ html {
    EXAGGERATION — the scales are past what a real body would do (0.72 / 1.24 at
    the extremes) because at ~20px anything subtler is invisible. */
 
+/* THE NAME IS THE PARTICIPATION, so it is only on the mark while the rail is
+   actually hopping.
+
+   It used to be an inline `viewTransitionName` on the element, set for the
+   creature's whole life. But a `view-transition-name` does not opt an element
+   into ONE transition — it opts it into EVERY transition the document runs,
+   and this app runs others: the item details modal and the trash drawer both
+   go through `withViewTransition`. Each of those lifted the creature out of
+   the root snapshot and ran every rule below on it, so opening a modal played
+   the full 680ms jump and covered it with the group's opaque hole-filler,
+   which falls back to a near-black rectangle because only the rail toggle sets
+   `--sw-group-fill`. Then it disappeared, because that transition ended on its
+   own clock rather than the jump's.
+
+   `writeRailExpanded` sets the attribute before it calls
+   `startViewTransition` and clears it on `finished` — both captures happen
+   inside that window, which is all the browser needs. Same lifecycle as
+   `data-aiming`, and deliberately its own attribute: one means "the eye is
+   pointed along the arc", this one means "this element is in a transition",
+   and a later change to either should not silently rewire the other. */
+[data-storyboard-monster][data-hopping] {
+  view-transition-name: sw-monster;
+}
+
 ::view-transition-group(sw-monster) {
   /* THE HORIZONTAL LIVES HERE, and it is the reason one direction skimmed.
 
@@ -396,9 +420,22 @@ html {
 /* STAGING, the other half. Everything else in the page is snapshotted as `root`
    and cross-faded by default, so the whole app would dip while the creature
    jumps — the eye would not know where to look. The rest of the UI cuts
-   instantly and the only thing animating is the thing worth watching. */
-::view-transition-old(root),
-::view-transition-new(root) {
+   instantly and the only thing animating is the thing worth watching.
+
+   SCOPED TO THE HOP, for the reason the name above is. `::view-transition-*`
+   pseudos belong to the document, not to whichever transition prompted them,
+   so an unqualified rule here suppressed the root cross-fade of EVERY
+   transition in the app — the details modal's and the trash drawer's included,
+   which is not a staging decision anyone made for those. Their own opening was
+   being cut by a rule written about a creature jumping across a rail.
+
+   Written on `:root` rather than as a descendant because these pseudos are
+   anchored to the document element: `::view-transition-old(root)` already
+   means `:root::view-transition-old(root)`, so the attribute goes on the same
+   compound. `writeRailExpanded` owns it, alongside the custom properties it
+   already sets there. */
+:root[data-sw-hop]::view-transition-old(root),
+:root[data-sw-hop]::view-transition-new(root) {
   animation: none;
 }
 

@@ -443,12 +443,29 @@ export function StoryboardMonsterMark({
         // whole drawing without touching the geometry below. See the 0.72 note
         // in the header: it converts `scale` into the source's 1em basis.
         fontSize: `${scale * 0.72}em`,
-        // NAMED FOR THE VIEW TRANSITION. Collapsing the rail does not move this
-        // element, it re-lays it out — inline in the word, then alone and
-        // larger — so there is nothing for a normal transition to animate
-        // between. A name lets the browser snapshot both and interpolate; the
-        // hop itself is styled in `globals.css`.
-        viewTransitionName: "sw-monster",
+        // NOT NAMED HERE, and the absence is the fix rather than an omission.
+        //
+        // Collapsing the rail does not move this element, it re-lays it out —
+        // inline in the word, then alone and larger — so there is nothing for
+        // an ordinary transition to animate between, and it needs a
+        // `view-transition-name` for the browser to snapshot both states and
+        // interpolate. It had one here, inline and unconditional.
+        //
+        // A NAME IS PARTICIPATION IN EVERY TRANSITION, NOT JUST THIS ONE. The
+        // app starts view transitions elsewhere — the item details modal and
+        // the trash drawer both go through `withViewTransition` — and a named
+        // element is lifted out of the root snapshot by ALL of them. So opening
+        // a modal ran the creature's whole 680ms jump, and painted the group's
+        // opaque hole-filler over it on the way, because `--sw-group-fill` is
+        // only set by the rail toggle and falls back to a near-black rectangle.
+        // The jump then vanished mid-flight when the transition it had
+        // hitched a ride on finished on its own schedule.
+        //
+        // So the name lives in `globals.css` behind `[data-hopping]`, which
+        // `writeRailExpanded` sets before it starts the transition and clears
+        // when that transition finishes — the same lifecycle `data-aiming`
+        // already has. Inline would beat that rule outright, which is why this
+        // is a comment and not a value.
         // NUDGED, NOT BASELINE-ALIGNED. The lockup is a flex row, and the
         // pieces around this are `RevealedLetters` — `display: grid`, so they
         // can only be flex items and the whole row is laid out by flex, not by
