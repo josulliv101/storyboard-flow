@@ -1879,23 +1879,6 @@ export function usePreviewSettled(): boolean {
   return useContext(PreviewSettledContext);
 }
 
-/**
- * Away from rest, along, and a small settle past the mark.
- *
- * IT STARTS FROM STANDING, which is the whole correction here. The obvious
- * choice for a reveal is an "out" curve — fast then slow — and every one of
- * them has its highest velocity at t=0. Measured, the old one moved the board
- * 74 PIXELS IN ITS FIRST FRAME: seventeen percent of the distance in five
- * percent of the time, from a dead stop. That is not an ease, it is a jump
- * with a decelerating tail, and it read as exactly the lurch it was.
- *
- * A zero-slope first control point (`0.45, 0`) means the first frame moves a
- * pixel or two and the speed builds, so the eye catches the movement starting
- * instead of finding it already underway. The second (`0.55, 1.15`) carries
- * the overshoot: past the mark and back, about 15% over at the peak, which on
- * a pane a few hundred pixels tall is enough to read as weight arriving
- * without looking like a bounce.
- */
 /** A frame at or under this arrived on time — the thread is keeping up. */
 const FRAME_BUDGET_MS = 22;
 /** How many on-time frames in a row count as settled. One is not enough: a
@@ -1913,28 +1896,33 @@ const CALM_FRAMES = 2;
  */
 const MAX_SETTLE_MS = 250;
 
+/**
+ * Away from rest, along, and gently to a stop.
+ *
+ * IT STARTS FROM STANDING, which was the first correction here. The obvious
+ * choice for a reveal is an "out" curve — fast then slow — and every one of
+ * them has its highest velocity at t=0. Measured, an earlier one moved the
+ * board 74 PIXELS IN ITS FIRST FRAME: seventeen percent of the distance in
+ * five percent of the time, from a dead stop. That is not an ease, it is a
+ * jump with a decelerating tail.
+ *
+ * AND IT STOPS WITHOUT OVERSHOOTING, which was the second. A control point
+ * above 1 sends the value past its target and lets it come back, and a little
+ * of that reads as weight — but only a little, and measured it was 5.7px past
+ * a 424px pane held for three frames. Small enough to be deniable, big enough
+ * to see, and on a pane whose whole job is to sit still and be looked at, the
+ * bounce is a distraction rather than a flourish. `0.55, 1` finishes with zero
+ * slope: it arrives and it is done.
+ *
+ * A damped-spring variant lived here for a while, behind `?reveal=elastic`, so
+ * the two could be compared in the hand. Overshoot lost, so it is gone rather
+ * than left as a setting nobody will choose.
+ */
 export const REVEAL_SETTLE: RevealMotion = {
   durationMs: 380,
-  easing: "cubic-bezier(0.45, 0, 0.55, 1.15)",
+  easing: "cubic-bezier(0.45, 0, 0.55, 1)",
 };
 
-/**
- * A damped spring: over, back, over, settle.
- *
- * Needs `linear()` rather than a bezier, which has exactly one hump — an
- * oscillation is several, so it is spelled out as points along the curve.
- * Longer than the settle, because a spring that resolves in a third of a
- * second reads as a glitch rather than as elasticity.
- */
-export const REVEAL_ELASTIC: RevealMotion = {
-  durationMs: 620,
-  // Re-shaped for the same reason as the settle: the first version put 13% of
-  // the travel into the opening 3%, which is a spring that has already been
-  // released before you see it. A real one accelerates out of rest, so the
-  // opening tenth barely moves and the oscillation comes after.
-  easing:
-    "linear(0, 0.01 4%, 0.07 10%, 0.28 18%, 0.58 26%, 0.86 34%, 1.05 42%, 1.09 48%, 1.04 56%, 0.99 64%, 0.98 74%, 1.0 88%, 1)",
-};
 
 export function WorkbenchSplitPane({
   surface,
