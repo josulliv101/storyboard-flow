@@ -56,60 +56,77 @@ export type SeamTimeline = Readonly<{
 const EMPTY: SeamTimeline = { spans: [], totalSeconds: 0, centreStart: 0 };
 
 /**
- * Build the bar: a run-up through the end of the previous clip, the whole of
- * the centre clip, then a run-out into the start of the next.
+ * Build the bar: a lead into the clip truncated at the left edge, every fully
+ * visible clip at its FULL length, then a lead out into the clip truncated at
+ * the right edge.
  *
- * THE CENTRE IS WHOLE AND THE NEIGHBOURS ARE NOT, which is the shape the view
- * asks for. The bar is for judging the two seams around one clip, so the clip
- * itself has to be reachable frame by frame while the neighbours only need to
- * supply enough material to hear the cut land. Spanning all three in full would
- * make the bar's scale a hostage to a neighbour's length — a nine-second bed
- * beside a half-second insert, and the insert is three pixels of bar.
+ * WHAT IS WHOLE ON SCREEN IS WHOLE ON THE BAR. That is the rule, and it falls
+ * out of what the panels are showing: a clip you can see all of is a clip you
+ * can reason about all of, so refusing to scrub past its first two seconds
+ * makes the bar disagree with the picture. Only the two clips that are
+ * themselves cut off by the edge of the screen get cut off here too.
  *
- * THE RUN-UP IS CLAMPED to what the neighbour actually has. A two-second lead
- * into a one-second clip is one second, not two seconds of nothing: the bar
- * must not contain time that cannot be played.
+ * At three panels this is exactly the old behaviour — one whole clip between
+ * two leads — which is the point: the rule generalises the three-up case
+ * rather than replacing it. At nine it is seven whole clips between two leads.
  *
- * A MISSING NEIGHBOUR CONTRIBUTES NOTHING rather than empty bar. At the start
- * and end of a timeline the bar is simply shorter, so the playhead cannot be
- * dragged into a void and the seam that does exist keeps its full scale.
+ * THE LEADS ARE CLAMPED to what the edge clip actually has. A two-second lead
+ * into a half-second clip is half a second, not two seconds of nothing: the
+ * bar must not contain time that cannot be played.
+ *
+ * A MISSING EDGE CONTRIBUTES NOTHING rather than empty bar. At the start and
+ * end of a timeline the bar is simply shorter, so the playhead cannot be
+ * dragged into a void and the clips that do exist keep their full scale.
  */
 export function buildSeamTimeline(
-  previous: SeamClip | null,
-  centre: SeamClip | null,
-  next: SeamClip | null,
+  before: SeamClip | null,
+  whole: readonly SeamClip[],
+  after: SeamClip | null,
   leadSeconds: number,
+  /** Which of `whole` is the clip the view was opened on. Only used to say
+   *  where the bar should sit before anything has moved it. */
+  centreIndex = 0,
 ): SeamTimeline {
-  if (centre === null || centre.showingSeconds <= 0) return EMPTY;
+  const playable = whole.filter((clip) => clip.showingSeconds > 0);
+  if (playable.length === 0) return EMPTY;
   const lead = Math.max(0, leadSeconds);
 
   const spans: SeamSpan[] = [];
   let cursor = 0;
 
-  const runUp = previous ? Math.min(lead, Math.max(0, previous.showingSeconds)) : 0;
-  if (previous && runUp > 0) {
+  const runUp = before ? Math.min(lead, Math.max(0, before.showingSeconds)) : 0;
+  if (before && runUp > 0) {
     spans.push({
-      clipId: previous.id,
+      clipId: before.id,
       from: 0,
       to: runUp,
-      // Joined near its END: the last `runUp` seconds of what it shows.
-      sourceOffset: previous.showingSeconds - runUp,
+      // Joined near its END: the last `runUp` seconds of what it shows, which
+      // is the approach to the first cut on the bar.
+      sourceOffset: before.showingSeconds - runUp,
     });
     cursor = runUp;
   }
 
-  const centreStart = cursor;
-  spans.push({
-    clipId: centre.id,
-    from: cursor,
-    to: cursor + centre.showingSeconds,
-    sourceOffset: 0,
-  });
-  cursor += centre.showingSeconds;
+  // Where the SUBJECT starts, which is where the bar rests until something
+  // moves it. Clamped, because a centre index can outrun the playable list
+  // once zero-length clips are dropped.
+  let centreStart = cursor;
+  const subject = Math.min(Math.max(0, centreIndex), playable.length - 1);
 
-  const runOut = next ? Math.min(lead, Math.max(0, next.showingSeconds)) : 0;
-  if (next && runOut > 0) {
-    spans.push({ clipId: next.id, from: cursor, to: cursor + runOut, sourceOffset: 0 });
+  playable.forEach((clip, index) => {
+    if (index === subject) centreStart = cursor;
+    spans.push({
+      clipId: clip.id,
+      from: cursor,
+      to: cursor + clip.showingSeconds,
+      sourceOffset: 0,
+    });
+    cursor += clip.showingSeconds;
+  });
+
+  const runOut = after ? Math.min(lead, Math.max(0, after.showingSeconds)) : 0;
+  if (after && runOut > 0) {
+    spans.push({ clipId: after.id, from: cursor, to: cursor + runOut, sourceOffset: 0 });
     cursor += runOut;
   }
 

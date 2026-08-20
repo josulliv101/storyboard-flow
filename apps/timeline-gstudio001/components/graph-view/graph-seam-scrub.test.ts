@@ -13,8 +13,8 @@ const clip = (id: string, showingSeconds: number): SeamClip => ({ id, showingSec
 const LEAD = 2;
 
 describe("buildSeamTimeline", () => {
-  it("runs up through the previous clip, across the centre, and out into the next", () => {
-    const timeline = buildSeamTimeline(clip("a", 9), clip("b", 4), clip("c", 6), LEAD);
+  it("leads in, plays the whole middle, leads out", () => {
+    const timeline = buildSeamTimeline(clip("a", 9), [clip("b", 4)], clip("c", 6), LEAD);
     expect(timeline.totalSeconds).toBe(2 + 4 + 2);
     expect(timeline.centreStart).toBe(2);
     expect(timeline.spans).toEqual([
@@ -25,30 +25,54 @@ describe("buildSeamTimeline", () => {
     ]);
   });
 
-  it("CLAMPS the run-up to what the neighbour actually has", () => {
-    // A two-second lead into a half-second clip is half a second. Bar time that
-    // cannot be played is worse than a shorter bar.
-    const timeline = buildSeamTimeline(clip("a", 0.5), clip("b", 4), clip("c", 0.25), LEAD);
+  it("gives EVERY fully visible clip its whole length", () => {
+    // THE RULE. Five panels on screen means three whole clips between the two
+    // truncated edges, and a clip you can see all of is one you can scrub all
+    // of — anything else makes the bar disagree with the picture.
+    const timeline = buildSeamTimeline(
+      clip("a", 9),
+      [clip("b", 4), clip("c", 3), clip("d", 5)],
+      clip("e", 6),
+      LEAD,
+      1,
+    );
+    expect(timeline.totalSeconds).toBe(2 + 4 + 3 + 5 + 2);
+    // The bar rests on the SUBJECT, which here is the middle of the three.
+    expect(timeline.centreStart).toBe(2 + 4);
+    expect(timeline.spans.map((s) => [s.clipId, s.from, s.to])).toEqual([
+      ["a", 0, 2],
+      ["b", 2, 6],
+      ["c", 6, 9],
+      ["d", 9, 14],
+      ["e", 14, 16],
+    ]);
+  });
+
+  it("CLAMPS the leads to what the edge clips actually have", () => {
+    // A two-second lead into a half-second clip is half a second. Bar time
+    // that cannot be played is worse than a shorter bar.
+    const timeline = buildSeamTimeline(clip("a", 0.5), [clip("b", 4)], clip("c", 0.25), LEAD);
     expect(timeline.spans[0]).toEqual({ clipId: "a", from: 0, to: 0.5, sourceOffset: 0 });
     expect(timeline.totalSeconds).toBe(0.5 + 4 + 0.25);
   });
 
-  it("gives a missing neighbour no bar at all", () => {
-    // At the start of a timeline the bar simply begins at the centre clip,
-    // rather than opening with two seconds of nothing to drag through.
-    const timeline = buildSeamTimeline(null, clip("b", 4), clip("c", 6), LEAD);
+  it("gives a missing edge no bar at all", () => {
+    // At the start of a timeline the bar simply begins at the first whole
+    // clip, rather than opening with two seconds of nothing to drag through.
+    const timeline = buildSeamTimeline(null, [clip("b", 4)], clip("c", 6), LEAD);
     expect(timeline.centreStart).toBe(0);
     expect(timeline.spans[0]!.clipId).toBe("b");
     expect(timeline.totalSeconds).toBe(6);
   });
 
-  it("is empty without a centre clip", () => {
-    expect(buildSeamTimeline(clip("a", 3), null, clip("c", 3), LEAD).spans).toEqual([]);
+  it("is empty with nothing whole to play", () => {
+    expect(buildSeamTimeline(clip("a", 3), [], clip("c", 3), LEAD).spans).toEqual([]);
+    expect(buildSeamTimeline(clip("a", 3), [clip("b", 0)], clip("c", 3), LEAD).spans).toEqual([]);
   });
 });
 
 describe("seamAt", () => {
-  const timeline = buildSeamTimeline(clip("a", 9), clip("b", 4), clip("c", 6), LEAD);
+  const timeline = buildSeamTimeline(clip("a", 9), [clip("b", 4)], clip("c", 6), LEAD);
 
   it("reads the run-up as the END of the previous clip", () => {
     // 0.5s into the bar is 7.5s into `a`, not 0.5s into it. Getting this wrong
@@ -77,12 +101,12 @@ describe("seamAt", () => {
   });
 
   it("is null for an empty timeline", () => {
-    expect(seamAt(buildSeamTimeline(null, null, null, LEAD), 0)).toBeNull();
+    expect(seamAt(buildSeamTimeline(null, [], null, LEAD), 0)).toBeNull();
   });
 });
 
 describe("seamStripProgress", () => {
-  const timeline = buildSeamTimeline(clip("a", 9), clip("b", 4), clip("c", 6), LEAD);
+  const timeline = buildSeamTimeline(clip("a", 9), [clip("b", 4)], clip("c", 6), LEAD);
 
   it("STAYS INSIDE THE TRIMMED WINDOW on the strip", () => {
     // THE BUG THIS PINS. The strip draws the whole 20s source with the showing
@@ -128,7 +152,7 @@ describe("seamStripProgress", () => {
 
 describe("seamSpanFor", () => {
   it("finds a clip's stretch of bar", () => {
-    const timeline = buildSeamTimeline(clip("a", 9), clip("b", 4), clip("c", 6), LEAD);
+    const timeline = buildSeamTimeline(clip("a", 9), [clip("b", 4)], clip("c", 6), LEAD);
     expect(seamSpanFor(timeline, "b")).toMatchObject({ from: 2, to: 6 });
     expect(seamSpanFor(timeline, "nope")).toBeNull();
   });

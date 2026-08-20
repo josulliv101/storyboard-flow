@@ -1046,19 +1046,40 @@ function DetailsFilmstripModal({
     };
   };
 
-  const previousClip = clipAt(centre - 1);
-  const nextClip = clipAt(centre + 1);
+  // WHAT IS ON SCREEN, AND HOW MUCH OF IT IS WHOLE.
+  //
+  // The two outermost panels are the half-visible ones, so they are the two
+  // that get a lead rather than their full length; everything between them is
+  // fully in view and therefore fully scrubbable. At three panels that is one
+  // whole clip between two leads — exactly what this always did — and the same
+  // rule gives seven at nine.
+  const half = Math.floor(viewCount / 2);
+  const wholeClips = useMemo(() => {
+    const clips: MediaNode[] = [];
+    for (let index = centre - half + 1; index <= centre + half - 1; index += 1) {
+      const found = clipAt(index);
+      if (found !== null) clips.push(found);
+    }
+    return clips;
+  }, [clipAt, centre, half]);
+  const edgeBefore = clipAt(centre - half);
+  const edgeAfter = clipAt(centre + half);
   const centreClip = clipAt(centre);
+  // Where the subject sits among the whole clips — the bar rests there.
+  const subjectIndex = wholeClips.findIndex(
+    (clip) => centreClip !== null && clip.id === centreClip.id,
+  );
 
   const timeline = useMemo(
     () =>
       buildSeamTimeline(
-        seamClipOf(previousClip),
-        seamClipOf(centreClip),
-        seamClipOf(nextClip),
+        seamClipOf(edgeBefore),
+        wholeClips.map((clip) => seamClipOf(clip)!).filter(Boolean),
+        seamClipOf(edgeAfter),
         SEAM_LEAD_SECONDS,
+        Math.max(0, subjectIndex),
       ),
-    [previousClip, centreClip, nextClip],
+    [edgeBefore, edgeAfter, wholeClips, subjectIndex],
   );
 
   // ADVANCING RESETS THE CLOCK TO THIS CLIP'S START, because the bar is rebuilt
@@ -1096,10 +1117,13 @@ function DetailsFilmstripModal({
   // Until then every panel rests on its own frame, which is what makes opening
   // the view show the cut rather than a playback state nobody asked for.
   const position = scrubbed ? seamAt(timeline, shownSeconds) : null;
+  // ANY clip the bar covers, not just the three it used to. With nine panels
+  // the playhead can be inside a clip four along, and the monitor still has to
+  // be able to paint it.
   const monitorNode =
     position === null
       ? null
-      : [previousClip, centreClip, nextClip].find(
+      : [edgeBefore, ...wholeClips, edgeAfter].find(
           (candidate) => candidate !== null && (candidate.id as string) === position.clipId,
         ) ?? null;
 

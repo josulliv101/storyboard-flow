@@ -879,3 +879,53 @@ export const TheNeighboursFadeBackDuringPlayback: Story = {
     expect(centre.filter === "none" || centre.filter.includes("grayscale(0")).toBe(true);
   },
 };
+
+/**
+ * A CLIP YOU CAN SEE ALL OF IS A CLIP YOU CAN SCRUB ALL OF.
+ *
+ * With three panels up the bar is one whole clip between two short leads, and
+ * that was hard-coded rather than derived: at five it still gave one whole
+ * clip, so two panels sat fully on screen with only a couple of seconds of
+ * them reachable. The bar disagreed with the picture.
+ *
+ * Measured through the bar's own total length, because that is the claim —
+ * widening the view has to lengthen the run of time it covers, and by the
+ * duration of the clips it just took in.
+ */
+export const WiderViewsScrubEveryWholeClip: Story = {
+  render: () => <SeamHarness scene={LONG_SCENE} />,
+  play: async () => {
+    const picker = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-details-view-count]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const barMax = () =>
+      Number(document.querySelector("[data-seam-track]")!.getAttribute("aria-valuemax"));
+    const press = async (label: string) => {
+      const button = Array.from(picker.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === label,
+      )!;
+      fireEvent.click(button);
+      await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
+    };
+
+    // Three up: one whole clip plus the two leads.
+    const atThree = barMax();
+    expect(atThree).toBeGreaterThan(0);
+
+    // Five up: three whole clips plus the same two leads, so the bar has to
+    // have grown by the two clips that became fully visible.
+    await press("5");
+    await waitFor(() => expect(barMax()).toBeGreaterThan(atThree));
+    const atFive = barMax();
+
+    // Nine up: seven whole clips. Longer again.
+    await press("9");
+    await waitFor(() => expect(barMax()).toBeGreaterThan(atFive));
+
+    // And back down, exactly — the wider views add clips, they do not rescale.
+    await press("3");
+    await waitFor(() => expect(barMax()).toBe(atThree));
+  },
+};
