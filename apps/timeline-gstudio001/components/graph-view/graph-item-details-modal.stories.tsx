@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { Meta, StoryObj } from "@storybook/react";
-import { expect, waitFor, within } from "storybook/test";
+import { expect, fireEvent, waitFor, within } from "storybook/test";
 
 import type { ClipDetail } from "@storyboard/timeline-domain";
 import {
@@ -88,6 +88,56 @@ const SEAM_SCENE: GraphNodeSpec = {
   ],
 };
 
+/**
+ * The same scene in VIDEO, with the subject trimmed hard at both ends.
+ *
+ * Images render no trim strip at all, so the colour-plate scene above cannot
+ * see the playhead's relationship to the trim — and that relationship is
+ * exactly where this went wrong. Twelve seconds of source showing four, so the
+ * window occupies a quarter of the strip and a line that escapes it is
+ * unmissable rather than a rounding argument.
+ */
+const TRIMMED_SCENE: GraphNodeSpec = {
+  kind: "collection",
+  id: "root",
+  name: "Root",
+  children: [
+    {
+      kind: "media",
+      mediaKind: "video",
+      id: "before",
+      name: "Before",
+      src: plate("BEFORE", "#7dd3fc"),
+      posterSrcs: [plate("BEFORE", "#7dd3fc")],
+      fullDurationSeconds: 6,
+      trimInSeconds: 1,
+      trimOutSeconds: 2,
+    },
+    {
+      kind: "media",
+      mediaKind: "video",
+      id: "subject",
+      name: "Subject",
+      src: plate("SUBJECT", "#bef264"),
+      posterSrcs: [plate("SUBJECT", "#bef264")],
+      fullDurationSeconds: 12,
+      trimInSeconds: 5,
+      trimOutSeconds: 3,
+    },
+    {
+      kind: "media",
+      mediaKind: "video",
+      id: "after",
+      name: "After",
+      src: plate("AFTER", "#fca5a5"),
+      posterSrcs: [plate("AFTER", "#fca5a5")],
+      fullDurationSeconds: 5,
+      trimInSeconds: 0,
+      trimOutSeconds: 2,
+    },
+  ],
+};
+
 function graphOfRoot(root: GraphNodeSpec): CollectionsGraph {
   const result = buildGraph([root]);
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -110,7 +160,7 @@ function EndHarness() {
   );
 }
 
-function SeamHarness() {
+function SeamHarness({ scene = SEAM_SCENE }: { scene?: GraphNodeSpec }) {
   const store = createGraphDetailsStore({
     before: DETAIL,
     subject: DETAIL,
@@ -118,7 +168,7 @@ function SeamHarness() {
   });
   return (
     <div className="graph-view-theme min-h-[600px] bg-zinc-950">
-      <DndCollections initialGraph={graphOfRoot(SEAM_SCENE)}>
+      <DndCollections initialGraph={graphOfRoot(scene)}>
         <GraphDetailsProvider store={store}>
           <ItemDetailsProvider>
             <OpenOnMount id="subject" />
@@ -363,5 +413,59 @@ export const OpensShowingItsOwnPicture: Story = {
     // And no playhead line anywhere yet: nothing is playing, so nothing claims
     // to be.
     expect(document.querySelectorAll("[data-seam-playhead-line]").length).toBe(0);
+  },
+};
+
+/**
+ * THE PLAYHEAD STAYS INSIDE THE TRIMMED WINDOW.
+ *
+ * The regression: the line's position was measured as a fraction of what the
+ * clip SHOWS, then drawn across a strip that renders the whole SOURCE. So it
+ * swept the entire filmstrip — dimmed, trimmed-off material included — while
+ * the picture only ever played the trimmed part. It reads precisely as being
+ * able to scrub past the trim; the picture was fine and the line was lying
+ * about it.
+ *
+ * Asserted against the amber window's own box rather than against a computed
+ * number, because the thing that was wrong was an ASSUMPTION about what the
+ * strip draws — and only the strip can settle that. A unit test agreeing with
+ * my arithmetic would have agreed with the broken arithmetic too.
+ */
+export const PlayheadStaysInsideTheTrim: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
+    );
+    const track = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-seam-track]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+
+    // Scrub to a few points across the centre clip and check every one.
+    const box = track.getBoundingClientRect();
+    for (const ratio of [0.35, 0.5, 0.65]) {
+      const x = box.left + box.width * ratio;
+      fireEvent.pointerDown(track, { clientX: x, clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 });
+      fireEvent.pointerUp(track, { clientX: x, clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 });
+
+      const centre = document.querySelector('[data-item-details-panel="centre"]')!;
+      const line = await waitFor(() => {
+        const found = centre.querySelector<HTMLElement>("[data-seam-playhead-line]");
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      const window_ = centre.querySelector<HTMLElement>("[data-trim-overview-window]");
+      expect(window_).not.toBeNull();
+
+      const lineBox = line.getBoundingClientRect();
+      const windowBox = window_!.getBoundingClientRect();
+      const centreX = lineBox.left + lineBox.width / 2;
+      // A pixel of slack for the line's own width and rounding; the window is
+      // a third of this strip, so a line escaping it misses by far more.
+      expect(centreX).toBeGreaterThanOrEqual(windowBox.left - 1);
+      expect(centreX).toBeLessThanOrEqual(windowBox.right + 1);
+    }
   },
 };

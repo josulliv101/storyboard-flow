@@ -47,10 +47,29 @@ export function SeamBar({
   // the gesture dies the moment the pointer crosses onto a panel — which is
   // most of the screen, and precisely where someone dragging toward a cut is
   // looking. The same reason the trim grips capture.
+  //
+  // GUARDED, because `setPointerCapture` THROWS for a pointer the browser has
+  // no active record of — an untrusted event, or one already released — and an
+  // exception here kills the whole gesture before it starts. The same guard the
+  // trim grips and the seek rails carry.
+  //
+  // WHETHER TO SCRUB IS TRACKED SEPARATELY rather than read back from
+  // `hasPointerCapture`, which answers false whenever the capture did not take
+  // and would silently make the bar undraggable in exactly those cases. With a
+  // flag, a failed capture costs only the ability to follow the pointer off the
+  // bar; moves across it still scrub.
+  const draggingRef = useRef(false);
+
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      event.currentTarget.setPointerCapture(event.pointerId);
+      if (event.button !== 0) return;
       event.preventDefault();
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        /* untrusted or already-released pointer — moves over the bar suffice */
+      }
+      draggingRef.current = true;
       scrubTo(event.clientX);
     },
     [scrubTo],
@@ -58,11 +77,15 @@ export function SeamBar({
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+      if (!draggingRef.current) return;
       scrubTo(event.clientX);
     },
     [scrubTo],
   );
+
+  const endDrag = useCallback(() => {
+    draggingRef.current = false;
+  }, []);
 
   // Arrow keys step a frame at 25fps, shift steps a second — the bar is
   // focusable because judging a cut frame by frame with a pointer is a fight.
@@ -112,6 +135,8 @@ export function SeamBar({
         aria-valuenow={Math.round(seconds * 100) / 100}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
         onKeyDown={onKeyDown}
         className="relative h-8 flex-1 cursor-ew-resize rounded bg-zinc-800/80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
       >

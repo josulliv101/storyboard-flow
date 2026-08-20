@@ -7,8 +7,25 @@
 // than the run-up, a missing neighbour at the ends of a timeline, a scrub
 // landing exactly on a seam — and none of it needs a DOM to be wrong in.
 
-/** A clip as this clock sees it: an id and how long it actually SHOWS. */
-export type SeamClip = Readonly<{ id: string; showingSeconds: number }>;
+/**
+ * A clip as this clock sees it.
+ *
+ * TWO DURATIONS, because a trimmed clip lives in two spaces at once and the
+ * view uses both. `showingSeconds` is what PLAYS — the trimmed length, and the
+ * only thing the bar ever reaches. `fullSeconds` is what the trim strip DRAWS:
+ * the whole source, with the showing part marked on it. Conflating them puts a
+ * playhead in the wrong place while every number involved still looks right.
+ */
+export type SeamClip = Readonly<{
+  id: string;
+  /** Trimmed length — what the bar plays. */
+  showingSeconds: number;
+  /** Where the showing part starts inside the source. Defaults to 0. */
+  trimInSeconds?: number;
+  /** The whole source length. Defaults to `showingSeconds` — correct for media
+   *  with no source window at all, like a still. */
+  fullSeconds?: number;
+}>;
 
 /** One clip's stretch of the bar. */
 export type SeamSpan = Readonly<{
@@ -146,17 +163,28 @@ export function seamSpanFor(timeline: SeamTimeline, clipId: string): SeamSpan | 
 }
 
 /**
- * How far through a clip's own SHOWING range the playhead is, 0–1, or null when
- * it is not inside that clip.
+ * Where to draw the playhead on a clip's TRIM STRIP, 0-1 across that strip, or
+ * null when the playhead is not inside the clip at all.
  *
- * Expressed against the clip's whole showing range rather than against the
- * span, because it positions a line on the trim strip — which draws the whole
- * trimmed clip, not just the part this bar reaches. A run-up covering the last
- * two seconds of a nine-second shot has to put its line near the RIGHT-HAND
- * END of that strip; measuring against the span would put it across the whole
- * width and claim the shot was being played from its start.
+ * MEASURED AGAINST THE WHOLE SOURCE, not against what is showing, because that
+ * is what the strip is a picture of: `TrimOverviewStrip` renders the full
+ * source across its width and marks the showing part as an amber window over
+ * it. So the fraction that lands inside that window is
+ * `(trimIn + howFarIn) / full` — and the showing fraction, which this returned
+ * before, sweeps the ENTIRE strip including the dimmed material either side.
+ * That reads exactly like being able to scrub past the trim, because the line
+ * says so; the picture is fine and the line is lying about it.
+ *
+ * The run-up into the previous clip is what makes the offset visible: it covers
+ * that clip's last seconds, so the line belongs near the RIGHT-HAND END of its
+ * window. Against the raw showing fraction it starts at the window's left edge
+ * and claims the shot is beginning.
+ *
+ * NULL OUTSIDE THE CLIP rather than pinned to an edge. A line parked at a
+ * clip's start reads as "playing here, at the very beginning", which is a
+ * different and wrong claim from "not playing here".
  */
-export function seamProgressWithin(
+export function seamStripProgress(
   timeline: SeamTimeline,
   clip: SeamClip,
   barSeconds: number,
@@ -164,6 +192,12 @@ export function seamProgressWithin(
   const span = seamSpanFor(timeline, clip.id);
   if (span === null || clip.showingSeconds <= 0) return null;
   if (barSeconds < span.from || barSeconds > span.to) return null;
-  const withinClip = span.sourceOffset + (barSeconds - span.from);
-  return Math.min(1, Math.max(0, withinClip / clip.showingSeconds));
+
+  const trimIn = Math.max(0, clip.trimInSeconds ?? 0);
+  const full = Math.max(clip.showingSeconds, clip.fullSeconds ?? clip.showingSeconds);
+  if (full <= 0) return null;
+
+  const withinShowing = span.sourceOffset + (barSeconds - span.from);
+  const withinSource = trimIn + Math.min(Math.max(0, withinShowing), clip.showingSeconds);
+  return Math.min(1, Math.max(0, withinSource / full));
 }

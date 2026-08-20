@@ -33,7 +33,7 @@ import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { SeamBar, useSeamTransport } from "./graph-seam-bar";
-import { buildSeamTimeline, seamAt, seamProgressWithin } from "./graph-seam-scrub";
+import { buildSeamTimeline, seamAt, seamStripProgress, type SeamClip } from "./graph-seam-scrub";
 
 /** How much of each neighbour the bar reaches into. Long enough to hear a cut
  *  land, short enough that the centre clip keeps most of the bar's scale. */
@@ -792,8 +792,21 @@ function DetailsFilmstripModal({
     [ids, graph],
   );
 
-  const showingOf = (media: MediaNode | null) =>
-    media === null ? null : { id: media.id as string, showingSeconds: mediaDurationSeconds(media) };
+  // A clip as the seam clock sees it: what PLAYS, and separately what the trim
+  // strip DRAWS. `mediaDurationSeconds` is already the trimmed length, so the
+  // bar only ever reaches trimmed material — but the strip renders the whole
+  // source with that part marked on it, so the playhead needs the source
+  // length and the trim-in as well to land inside the marked window.
+  const seamClipOf = (media: MediaNode | null): SeamClip | null => {
+    if (media === null) return null;
+    const windowed = hasSourceWindow(media) ? media : null;
+    return {
+      id: media.id as string,
+      showingSeconds: mediaDurationSeconds(media),
+      trimInSeconds: windowed ? windowed.trimInSeconds : 0,
+      fullSeconds: windowed ? windowed.fullDurationSeconds : mediaDurationSeconds(media),
+    };
+  };
 
   const previousClip = clipAt(centre - 1);
   const nextClip = clipAt(centre + 1);
@@ -802,9 +815,9 @@ function DetailsFilmstripModal({
   const timeline = useMemo(
     () =>
       buildSeamTimeline(
-        showingOf(previousClip),
-        showingOf(centreClip),
-        showingOf(nextClip),
+        seamClipOf(previousClip),
+        seamClipOf(centreClip),
+        seamClipOf(nextClip),
         SEAM_LEAD_SECONDS,
       ),
     [previousClip, centreClip, nextClip],
@@ -931,13 +944,7 @@ function DetailsFilmstripModal({
               }
               restingFrame={index < centre ? "last" : "first"}
               playhead={
-                scrubbed
-                  ? seamProgressWithin(
-                      timeline,
-                      { id, showingSeconds: mediaDurationSeconds(media) },
-                      shownSeconds,
-                    )
-                  : null
+                scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
               }
               onClose={onClose}
               onAdvance={onOpenNeighbour}

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSeamTimeline,
   seamAt,
-  seamProgressWithin,
+  seamStripProgress,
   seamSpanFor,
   type SeamClip,
 } from "./graph-seam-scrub";
@@ -81,32 +81,48 @@ describe("seamAt", () => {
   });
 });
 
-describe("seamProgressWithin", () => {
+describe("seamStripProgress", () => {
   const timeline = buildSeamTimeline(clip("a", 9), clip("b", 4), clip("c", 6), LEAD);
 
-  it("measures against the clip's WHOLE showing range, not the span", () => {
-    // The line is drawn on a trim strip showing all nine seconds of `a`, so a
-    // run-up covering its last two must put the line near the right-hand end.
-    // Against the span it would read 0 and claim the shot was starting.
-    expect(seamProgressWithin(timeline, clip("a", 9), 0)).toBeCloseTo(7 / 9, 5);
-    expect(seamProgressWithin(timeline, clip("a", 9), 2)).toBeCloseTo(1, 5);
+  it("STAYS INSIDE THE TRIMMED WINDOW on the strip", () => {
+    // THE BUG THIS PINS. The strip draws the whole 20s source with the showing
+    // 4s marked on it as an amber window from 0.25 to 0.45 of its width. The
+    // playhead must travel that fifth of the strip and no more; measured
+    // against the showing range it swept 0 to 1 — the entire strip, dimmed
+    // trimmed-off material included — which looks exactly like being able to
+    // scrub past the trim.
+    const trimmed: SeamClip = {
+      id: "b",
+      showingSeconds: 4,
+      trimInSeconds: 5,
+      fullSeconds: 20,
+    };
+    expect(seamStripProgress(timeline, trimmed, 2)).toBeCloseTo(5 / 20, 5);
+    expect(seamStripProgress(timeline, trimmed, 4)).toBeCloseTo(7 / 20, 5);
+    expect(seamStripProgress(timeline, trimmed, 6)).toBeCloseTo(9 / 20, 5);
   });
 
-  it("runs 0 to 1 across the centre clip", () => {
-    expect(seamProgressWithin(timeline, clip("b", 4), 2)).toBe(0);
-    expect(seamProgressWithin(timeline, clip("b", 4), 4)).toBe(0.5);
-    expect(seamProgressWithin(timeline, clip("b", 4), 6)).toBe(1);
+  it("puts the run-up near its window's RIGHT-HAND end", () => {
+    // The run-up covers `a`'s last two showing seconds, so the line belongs at
+    // the far end of its window — not at the start of it.
+    const previous: SeamClip = { id: "a", showingSeconds: 9, trimInSeconds: 1, fullSeconds: 12 };
+    expect(seamStripProgress(timeline, previous, 0)).toBeCloseTo((1 + 7) / 12, 5);
+    expect(seamStripProgress(timeline, previous, 2)).toBeCloseTo((1 + 9) / 12, 5);
+  });
+
+  it("spans the whole strip only when nothing is trimmed", () => {
+    expect(seamStripProgress(timeline, clip("b", 4), 2)).toBe(0);
+    expect(seamStripProgress(timeline, clip("b", 4), 4)).toBe(0.5);
+    expect(seamStripProgress(timeline, clip("b", 4), 6)).toBe(1);
   });
 
   it("is NULL outside the clip rather than pinned to an edge", () => {
-    // A line parked at a clip's start reads as "playing here, at the very
-    // beginning", which is a different claim from "not playing here".
-    expect(seamProgressWithin(timeline, clip("c", 6), 3)).toBeNull();
-    expect(seamProgressWithin(timeline, clip("a", 9), 5)).toBeNull();
+    expect(seamStripProgress(timeline, clip("c", 6), 3)).toBeNull();
+    expect(seamStripProgress(timeline, clip("a", 9), 5)).toBeNull();
   });
 
   it("is null for a clip the bar does not contain", () => {
-    expect(seamProgressWithin(timeline, clip("elsewhere", 4), 3)).toBeNull();
+    expect(seamStripProgress(timeline, clip("elsewhere", 4), 3)).toBeNull();
   });
 });
 
