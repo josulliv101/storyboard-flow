@@ -322,7 +322,21 @@ async function searchCloudinaryVideos(
 // PROMISE also dedupes the burst: concurrent callers share one in-flight
 // listing. Uploads and deletes invalidate, so a fresh listing follows any
 // change a user makes through this app.
-const ASSET_LIST_TTL_MS = 60_000;
+const ASSET_LIST_TTL_MS = 300_000;
+
+/**
+ * How long a COLD listing may block a render before it is given up on.
+ *
+ * Measured on a real board open: the listing took 1844ms of a 1887ms serve —
+ * 98% of it — for 311 assets, while the closure walk it sat beside took 35ms.
+ * It is fetched to HEAL the root document's `src` urls, which is a repair, not
+ * the content; a render that skips it shows what is stored, and the refresh it
+ * started still populates the cache for the next one.
+ *
+ * So the trade is explicit: at worst one load's thumbnails go unrepaired,
+ * instead of every cold load costing two seconds.
+ */
+const COLD_ASSET_LIST_WAIT_MS = 400;
 const assetListCache = new Map<string, { at: number; promise: Promise<CloudinaryAsset[]> }>();
 
 const assetListCacheKey = (userId: string, projectId?: string) =>
@@ -359,9 +373,34 @@ export async function listCloudinaryAssets(userId: string, projectId?: string) {
 
   const promise = listCloudinaryAssetsUncached(userId, projectId);
   assetListCache.set(key, { at: Date.now(), promise });
-  // Failures are never cached — the next caller retries immediately.
-  promise.catch(() => assetListCache.delete(key));
-  return promise;
+  // Failures are never cached — the next caller retries immediately. A failed
+  // REFRESH puts the stale entry back rather than deleting it: an answer from
+  // five minutes ago beats none, and deleting would make the next caller pay
+  // the cold path for a listing we already have.
+  promise.catch(() => {
+    if (assetListCache.get(key)?.promise === promise) {
+      if (cached) assetListCache.set(key, cached);
+      else assetListCache.delete(key);
+    }
+  });
+
+  // STALE IS SERVED IMMEDIATELY while the refresh runs behind it. The entry
+  // expiring does not mean it is wrong — uploads and deletes invalidate this
+  // cache explicitly, so the TTL is a backstop against drift from outside the
+  // app, not the thing keeping it correct. Blocking a render on it was costing
+  // 1844ms to re-learn something that had not changed.
+  if (cached) return cached.promise;
+
+  // COLD: nothing to serve, so wait — but not indefinitely. Losing the race
+  // yields an empty list, which `healTimelineDocument` treats as "nothing to
+  // repair against" and passes the document through untouched.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bounded = new Promise<CloudinaryAsset[]>((resolve) => {
+    timer = setTimeout(() => resolve([]), COLD_ASSET_LIST_WAIT_MS);
+  });
+  return Promise.race([promise, bounded]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 async function listCloudinaryAssetsUncached(userId: string, projectId?: string) {

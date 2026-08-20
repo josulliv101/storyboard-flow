@@ -26,6 +26,7 @@ import {
 import {
   graphChildrenToClips,
   hydratedCollectionPlayableDuration,
+  hydratedCollectionPlayableSpan,
   manifestToClips,
   type DetailsById,
   type FlatItem,
@@ -105,6 +106,7 @@ import {
 } from "@storyboard/ui/timeline/viewport/waveform-peaks";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import { compileClientPlaybackManifest } from "@/lib/client-playback-manifest";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 import { sharedWaveformCache, type WaveformCache } from "@/lib/waveform-cache";
 
@@ -160,7 +162,17 @@ export function useFocusedTimelineAggregate(
     // longer than the total claimed here whenever something is disabled.
     return {
       count: cards.filter((card) => card.disabled !== true).length,
-      seconds: playableSpanSeconds(cards),
+      // FROM THE GRAPH, not from the card spans. `playableSpanSeconds` measures
+      // what the strip DRAWS, and a card whose descendants are disabled keeps
+      // its full slot — so this readout claimed 23:01 while its own three cards
+      // summed to about 20:45. The spans carry no node id, so the playable
+      // length cannot be recovered from them; it has to be walked.
+      seconds: hydratedCollectionPlayableSpan(
+        graph,
+        details,
+        focusedId as NodeId,
+        graphDocumentsGateway.isKnownMissing,
+      ),
     };
   }, [graph, details, focusedId, spans, pixelsPerSecond, flatItems]);
 }
@@ -852,6 +864,11 @@ function useManifestClips(
   // dependency that would itself re-run the fetch.
   const failureCountRef = useRef(0);
   const lastFetchedIdRef = useRef(focusedId);
+  /** The last INSTALLED manifest and the `focusedId:staleAt` it was compiled
+   *  for. Single slot: this exists for the close-and-reopen case, where the key
+   *  is unchanged; switching timelines evicts, which is the honest bound on how
+   *  much compiled state a preview panel should hold. */
+  const manifestCacheRef = useRef<{ key: string; manifest: PlaybackManifest } | null>(null);
 
   // Disabling preview unsubscribes the effect below, so a commit made while
   // CLOSED would otherwise never clear the cached manifest — see
@@ -897,6 +914,91 @@ function useManifestClips(
 
   useEffect(() => {
     if (!enabled) return;
+
+    // REUSE THE LAST MANIFEST when nothing it was compiled from has changed.
+    //
+    // Closing and reopening preview re-ran this effect and refetched identical
+    // bytes — measured at ~149 document reads per toggle on a 143-collection
+    // project, for a manifest that could not have changed because no commit
+    // happened in between. The server has no cache, so every one of those
+    // walked the whole closure again.
+    //
+    // `staleAt` is already the "content moved" signal: the subscription above
+    // bumps it after every committed change (and a failed fetch bumps it to
+    // retry). Keying on it means an edit invalidates the memo exactly when it
+    // should, and a toggle does not.
+    //
+    // RE-CHECKED THROUGH THE INSTALL GUARD rather than trusted. A cached
+    // manifest that passed `manifestTrailsLedger` when it arrived can still
+    // fall behind it afterwards — a write that was pending then may have
+    // settled since, moving the ledger without producing a commit of its own.
+    // Running the same comparison keeps the guard's invariant intact instead of
+    // carving an exception into it for cached values.
+    // COMPILE IT HERE when this session provably holds the whole closure.
+    //
+    // The server route re-reads every document under the root to compile the
+    // same thing — ~149 reads on a 143-collection project, repeated after every
+    // edit while preview is open, all of it re-reading documents `ensureClosure`
+    // primed on entry and the gateway has kept current since.
+    //
+    // Refuses and falls through to the fetch when anything under the root is
+    // not loaded, or on a cycle. That guard is the whole reason this is safe:
+    // the manifest exists so playback depth does not depend on how much of the
+    // graph a session happens to have hydrated, and compiling from a partial
+    // closure would silently play nothing for a collection below the hydration
+    // depth. The server reads from storage and has no such limit.
+    //
+    // Installed WITHOUT `manifestTrailsLedger`, unlike a fetched manifest. That
+    // guard catches a server compile that read pre-write state; this one is
+    // compiled from the very documents this session's writes produced, so it
+    // cannot trail them — it is the live projection, at full depth.
+    const localManifest = compileClientPlaybackManifest(
+      graphDocumentsGateway.read(),
+      focusedId,
+      (id) => graphDocumentsGateway.revisionOf(id),
+      new Date().toISOString(),
+      // Dangling references are the server's answer, remembered — without this
+      // a project containing any (every export has them, since export drops
+      // branches whose documents are gone) could never compile locally.
+      (id) => graphDocumentsGateway.isKnownMissing(id),
+    );
+    if (localManifest !== null) {
+      // Installed on a zero timer rather than straight from the effect body —
+      // the same move, and the same reason, as the fetch kick-off below: this
+      // sets state, and the cascading-render lint cannot see an await that
+      // makes it asynchronous because there isn't one. Zero is immediate in
+      // practice, and the timer is cleared on teardown so a focus change
+      // cannot install a manifest for the timeline you just left.
+      const installTimer = setTimeout(() => {
+        setState({
+          clips: manifestToClips(localManifest),
+          spans: cardSpansOf(localManifest),
+          forId: focusedId,
+        });
+      }, 0);
+      return () => clearTimeout(installTimer);
+    }
+
+    const cacheKey = `${focusedId}:${staleAt}`;
+    const cached = manifestCacheRef.current;
+    if (
+      cached !== null &&
+      cached.key === cacheKey &&
+      !manifestTrailsLedger(
+        cached.manifest,
+        focusedId,
+        (id) => graphDocumentsGateway.revisionOf(id),
+        (id) => graphDocumentsGateway.hasPendingWrite(id),
+      )
+    ) {
+      setState({
+        clips: manifestToClips(cached.manifest),
+        spans: cardSpansOf(cached.manifest),
+        forId: focusedId,
+      });
+      return;
+    }
+
     // Abort, not just a flag: the flag only protected state, leaving the
     // request itself running after unmount/refocus. Abort also rejects the
     // in-flight json() parse, so the signal check below is the single guard.
@@ -957,6 +1059,9 @@ function useManifestClips(
           retryTimer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
           return;
         }
+        // Cached only AFTER the install guard passed, so the memo can never
+        // hold a manifest this session already judged pre-write.
+        manifestCacheRef.current = { key: cacheKey, manifest: result.manifest };
         setState({
           clips: manifestToClips(result.manifest),
           spans: cardSpansOf(result.manifest),

@@ -88,7 +88,7 @@ export default defineConfig({
       timeout: 60000,
       use: {
         ...devices["Desktop Chrome"],
-        baseURL: "http://127.0.0.1:3000",
+        baseURL: "http://localhost:3000",
         // Dev-mode Next compiles routes on first hit; give cold navigations
         // room before the suite's own (tight) assertions take over.
         navigationTimeout: 45000,

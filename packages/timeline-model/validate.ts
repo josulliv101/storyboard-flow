@@ -173,6 +173,14 @@ export function isTimelineClip(value: unknown): value is TimelineClip {
     }
     // A count of children: integral and never negative.
     if (!isNonNegativeInteger(clip.itemCount)) return false;
+    // What the collection is FOR. Absent on every collection a person makes,
+    // so only the known values are refused-if-wrong — and checked BEFORE the
+    // `previewItems` early return below, which would otherwise wave a
+    // malformed role straight through. A role the app does not recognise is
+    // worse than none: the resolver would skip the marked collection and fall
+    // back to the title, i.e. exactly the bug the marker exists to fix, except
+    // now with a stored field that looks like it should be working.
+    if (clip.role !== undefined && clip.role !== "renders") return false;
     // The playable half of a collection's span. Optional, and never longer
     // than the layout span it is derived from — it counts the ENABLED subset.
     if (!isOptionalNonNegative(clip.playableDuration)) return false;

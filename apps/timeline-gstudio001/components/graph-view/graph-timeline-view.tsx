@@ -62,7 +62,11 @@ import { laneDropIndex, splitLaneRows } from "./graph-lane-rows";
 import { withDefaultLayerFrame } from "./graph-layer-frame";
 import { GraphViewLoadingSkeleton } from "./graph-view-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
-import { FlatClosureHydrator, HydrationController } from "./graph-hydration";
+import {
+  BackgroundClosureHydrator,
+  FlatClosureHydrator,
+  HydrationController,
+} from "./graph-hydration";
 import { GraphItemActionsBridge } from "./graph-item-actions";
 import { RemoteChangesBridge } from "./graph-remote-changes";
 import { McpToolsBridge } from "./graph-mcp-tools";
@@ -82,6 +86,7 @@ import {
   MAX_SUBTREE_DEPTH,
 } from "./graph-view-config";
 import { GraphBreadcrumb } from "./graph-view-chrome";
+import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 
 type BootState =
   | Readonly<{ status: "loading" }>
@@ -180,11 +185,20 @@ function FlatRunAnnouncement({
 export function GraphTimelineView({
   projectId,
   bootstrap,
+  bootstrapMissing,
 }: {
   projectId: string;
   /** Server-read boot payloads (RSC layout). Null = no session at render
    *  time; the legacy fetch boot covers it. */
   bootstrap?: readonly GraphServerPayload[] | null;
+  /**
+   * Ids the server's closure walk could not resolve. Recorded before the
+   * payloads are primed so anything asking "do I hold the whole closure?" can
+   * tell a dangling reference from a document still in flight — only the server
+   * knows the difference, and on a primed boot `ensureClosure` (its other
+   * source) never runs.
+   */
+  bootstrapMissing?: readonly string[] | null;
 }) {
   const pathname = usePathname();
   const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
@@ -248,6 +262,9 @@ export function GraphTimelineView({
   );
   const [itemSize, setItemSize] = useState<ItemSize>(DEFAULT_ITEM_SIZE);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
+  // Decides whether trim handles are drawn on every clip or only the
+  // selected one — see the prop below.
+  const coarsePointer = useCoarsePointer();
   // Children timelines are OFF by default (the focused timeline is the
   // page's subject; the tree is opt-in) — the sidebar's children icon
   // mounts them.
@@ -379,15 +396,24 @@ export function GraphTimelineView({
     }
   }, [user]);
 
+  // The board this session is editing, so writes can carry it and the server
+  // can stamp `projectId` (#458). Its own effect, keyed on the project rather
+  // than the user: drilling into a different project changes this and nothing
+  // else, and a re-bind must not reset the cache the way `bindUser` does.
+  useEffect(() => {
+    graphDocumentsGateway.bindProject(projectId);
+  }, [projectId]);
+
   // RSC payloads prime the gateway (guarded inside it: only for the bound
   // user, never over local edits, never regressing the revision ledger).
   // `user` is a dep so payloads that arrived before the client-side auth
   // resolved get re-applied once the binding exists.
   useEffect(() => {
+    graphDocumentsGateway.recordMissing(bootstrapMissing ?? []);
     for (const payload of bootstrap ?? []) {
       graphDocumentsGateway.prime(payload.document, payload.revision, payload.forUid);
     }
-  }, [bootstrap, user]);
+  }, [bootstrap, bootstrapMissing, user]);
   // Whether THIS mount booted from server payloads — captured once: the
   // boot effect must not re-run when later layout renders replace the
   // bootstrap array's identity.
@@ -423,6 +449,29 @@ export function GraphTimelineView({
     if (!bootedFromServer) graphDocumentsGateway.refresh();
     let cancelled = false;
     void (async () => {
+      // FILL THE CACHE FIRST, in one request: the project and every document
+      // under it. Without it the cache fills a document at a time as cards
+      // mount, and each of those reads walks its own subtree server-side —
+      // measured at 58 requests and ~430 document reads for a 151-document
+      // project (#437).
+      //
+      // ONLY on the legacy boot. A server-primed boot already arrives with the
+      // whole closure in its payloads (`loadGraphBootstrapPayloads` ships what
+      // it had to read anyway), and asking again here walked all 151 documents
+      // a SECOND time — measured at 465 reads against the 237 it was meant to
+      // beat. The fix for a duplicated walk is not a faster walk.
+      //
+      // AWAITED, which is the point of it: letting this race the hydration
+      // below leaves both running, and the per-card reads mostly win.
+      //
+      // Best effort — it primes what it can and says nothing when it cannot (a
+      // closure too large to walk, a network failure), because every document
+      // it would have primed is one `ensure` fetches anyway.
+      if (!bootedFromServer) {
+        await graphDocumentsGateway.ensureClosure(projectId);
+        if (cancelled) return;
+      }
+
       const [projectDocument, trashDocument] = await Promise.all([
         graphDocumentsGateway.ensure(projectId),
         graphDocumentsGateway.ensure(trashDocumentId),
@@ -750,7 +799,21 @@ export function GraphTimelineView({
         // press-and-hold drags — the package's arbitration keeps the four
         // from ever colliding.
         clickSelection="toggle"
-        trimRequiresSelection
+        // ALWAYS ON WITH A POINTER, SELECTION-GATED WITH A THUMB.
+        //
+        // With a mouse the handles are worth having on every clip: the edge is
+        // where you already are, and the ink is quiet until you approach it
+        // (see `GraphTrimHandle`), so six of them across a strip cost nothing
+        // to look at.
+        //
+        // Touch cannot have both. The reachable target there is 44px — this
+        // app's own `[@media(pointer:coarse)]` size everywhere else — which is
+        // a quarter of a 3s clip and more than half of a 1.2s one, so
+        // always-on would turn a strip into adjacent trim zones with the clips
+        // squeezed between them. Selection is already an explicit tap, so
+        // gating on it means exactly one clip at a time carries thumb-sized
+        // targets and nothing collides with its neighbour.
+        trimRequiresSelection={coarsePointer}
         // The drag ghost is a fixed 16:9 thumbnail of the item (see
         // GraphGhost): width AND height pinned so it shows the clip's own
         // frame at a stable landscape ratio, centred on the grabbed pixel,
@@ -801,6 +864,10 @@ export function GraphTimelineView({
             serverPrimed={bootedFromServer}
             onFocusError={setFocusError}
           />
+          {/* Fills in the times the one-level board open cannot vouch for.
+              Disabled while FLAT mode is on, which loads the same closure for
+              its own reasons — two passes would race for the same documents. */}
+          <BackgroundClosureHydrator projectId={projectId} enabled={!flatOn} />
           {/* Flat mode needs the WHOLE closure loaded, not just the focus
               chain — mounted here because the collections store lives only
               inside the provider. */}

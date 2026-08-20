@@ -205,58 +205,35 @@ describe("collectionCardItemCount", () => {
 });
 
 describe("collectionCardSeconds", () => {
-  it("uses live seconds once hydrated", () => {
-    expect(
-      collectionCardSeconds({
-        hydrated: true,
-        liveSeconds: 12.5,
-        storedPlayableDuration: 99,
-        storedDuration: 99,
-      }),
-    ).toBe(12.5);
+  /**
+   * THE RULE CHANGED, and deliberately: the card used to fall back to the
+   * clip's STORED summary whenever it was not hydrated, and those fallbacks
+   * were what these tests pinned.
+   *
+   * Stored summaries are wrong on 58.4% of collection clips, because the write
+   * set is patch-derived — editing a descendant never rewrites the ancestors it
+   * invalidated. That was survivable while every board open re-derived the
+   * whole closure (149 documents) and overwrote them on the way out. The board
+   * now reads one level, so the fallback would be showing numbers nothing had
+   * corrected: measured on a real project, two of three cards reported a
+   * duration up to 40 seconds wrong.
+   *
+   * A wrong number is worse than no number, because nobody can tell which ones
+   * are wrong. So the readout appears only when the whole subtree is loaded,
+   * and a card earns its time by being opened.
+   */
+  it("shows live seconds when the whole subtree is loaded", () => {
+    expect(collectionCardSeconds({ vouched: true, liveSeconds: 12.5 })).toBe(12.5);
   });
 
-  it("passes a hydrated null through rather than reaching for the stored summary", () => {
-    expect(
-      collectionCardSeconds({
-        hydrated: true,
-        liveSeconds: null,
-        storedPlayableDuration: 99,
-        storedDuration: 99,
-      }),
-    ).toBeNull();
+  it("shows nothing when any part of the subtree is missing", () => {
+    // The case the change exists for: the collection itself is loaded, but a
+    // descendant is not, so `liveSeconds` was computed by substituting that
+    // descendant's stored summary. Plausible, unverifiable, not shown.
+    expect(collectionCardSeconds({ vouched: false, liveSeconds: 209.65 })).toBeNull();
   });
 
-  it("prefers the stored PLAYABLE duration for a placeholder", () => {
-    expect(
-      collectionCardSeconds({
-        hydrated: false,
-        liveSeconds: null,
-        storedPlayableDuration: 8,
-        storedDuration: 20,
-      }),
-    ).toBe(8);
-  });
-
-  it("falls back to duration for documents saved before the two were split", () => {
-    expect(
-      collectionCardSeconds({
-        hydrated: false,
-        liveSeconds: null,
-        storedPlayableDuration: undefined,
-        storedDuration: 20,
-      }),
-    ).toBe(20);
-  });
-
-  it("is null when a placeholder carries no duration at all", () => {
-    expect(
-      collectionCardSeconds({
-        hydrated: false,
-        liveSeconds: null,
-        storedPlayableDuration: undefined,
-        storedDuration: undefined,
-      }),
-    ).toBeNull();
+  it("passes a vouched null through rather than inventing a zero", () => {
+    expect(collectionCardSeconds({ vouched: true, liveSeconds: null })).toBeNull();
   });
 });

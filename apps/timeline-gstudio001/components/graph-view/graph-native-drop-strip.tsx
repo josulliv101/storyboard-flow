@@ -6,6 +6,7 @@ import { getChildren, parseNodeId, useCollectionsStore } from "@storyboard/ui/dn
 
 import { useFlatItems } from "./graph-preview";
 import { useNativeDragArmed } from "./graph-native-drag-signal";
+import { MediaDropTarget } from "./graph-tool-buttons";
 import { AppendFilesContext, useNativeDrop } from "./graph-native-drop-engine";
 import {
   DROP_INDICATOR_CLASS,
@@ -46,7 +47,14 @@ export function NativeDropStrip({
   // resolves its drop boundary in whatever order it is SHOWING, and in flat
   // mode that is not this collection's children.
   const flatItems = useFlatItems();
-  const { commitDrop, upload, appendFiles } = useNativeDrop(collectionId, projectId);
+  const {
+    commitDrop,
+    upload,
+    appendFiles,
+    pendingMedia,
+    resolveMediaDrop,
+    cancelMediaDrop,
+  } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicatorX, setIndicatorX] = useState<number | null>(null);
   const armed = useNativeDragArmed();
@@ -192,6 +200,21 @@ export function NativeDropStrip({
       onDrop={handleDrop}
     >
       <AppendFilesContext.Provider value={appendFiles}>{children}</AppendFilesContext.Provider>
+      {/* A dropped "Add item" has landed a POSITION but not a kind; this asks
+          for the kind where it landed. Rendered from engine state rather than
+          from state of this component's own, so the grid gets the identical
+          behaviour from the identical code — the exact drift #30 was that only
+          the strip ever wired a drop target, and grid mode silently accepted
+          nothing. */}
+      {pendingMedia !== null && (
+        <MediaDropTarget
+          hadUserActivation={pendingMedia.hadUserActivation}
+          clientX={pendingMedia.clientX}
+          clientY={pendingMedia.clientY}
+          onFiles={resolveMediaDrop}
+          onDismiss={cancelMediaDrop}
+        />
+      )}
       {indicatorX !== null && (
         <div
           data-native-drop-indicator

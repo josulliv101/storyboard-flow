@@ -42,8 +42,23 @@ export const DefaultTrimHandleContent = memo(function DefaultTrimHandleContent({
   );
 });
 
-/** Shell-owned hit zone: geometry + gesture; pixels from TrimHandleContent. */
-const HIT_ZONE_CLASS = "absolute inset-y-0 z-20 w-2 cursor-ew-resize";
+/**
+ * Shell-owned hit zone: geometry + gesture; pixels from TrimHandleContent.
+ *
+ * 8px is a pointer-FINE number. A thumb needs about 44, so on a coarse pointer
+ * the reachable area grows to that via an `after:` pseudo while the drawn
+ * handle stays 8px wide — target and ink are separate, and inflating what you
+ * can SEE to thumb size would bury the clip it belongs to.
+ *
+ * IT GROWS INWARD, over its own clip. Clips in a strip sit flush, so a target
+ * that overhung outward would land on the neighbour's — and on video, whose
+ * left handle is right there at that edge, the two would be the same pixels
+ * disagreeing about which one the touch meant.
+ */
+const HIT_ZONE_CLASS =
+  "absolute inset-y-0 z-20 w-2 cursor-ew-resize " +
+  "after:absolute after:inset-y-0 after:w-2 after:content-[''] " +
+  "[@media(pointer:coarse)]:after:w-11";
 
 export function TrimHandles({
   node,
@@ -82,19 +97,19 @@ export function TrimHandles({
         <div
           data-trim-handle="left"
           aria-hidden="true"
-          className={`${HIT_ZONE_CLASS} left-0`}
+          className={`${HIT_ZONE_CLASS} left-0 after:left-0`}
           onPointerDown={(event) => startTrim("left", event)}
         >
-          <TrimHandleContent side="left" node={node} selected={selected} />
+          <TrimHandleContent side="left" node={node} selected={selected} pixelsPerSecond={pixelsPerSecond} />
         </div>
       )}
       <div
         data-trim-handle="right"
         aria-hidden="true"
-        className={`${HIT_ZONE_CLASS} right-0`}
+        className={`${HIT_ZONE_CLASS} right-0 after:right-0`}
         onPointerDown={(event) => startTrim("right", event)}
       >
-        <TrimHandleContent side="right" node={node} selected={selected} />
+        <TrimHandleContent side="right" node={node} selected={selected} pixelsPerSecond={pixelsPerSecond} />
       </div>
     </>
   );

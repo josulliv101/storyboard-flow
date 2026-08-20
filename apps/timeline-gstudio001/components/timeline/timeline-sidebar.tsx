@@ -18,6 +18,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { flushSync } from "react-dom";
+import {
+  StoryboardMonsterMark,
+  STORYBOARD_MONSTER_ACCENT,
+} from "./storyboard-monster-mark";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
@@ -102,7 +107,7 @@ function subscribeRailExpanded(onChange: () => void): () => void {
   };
 }
 
-function writeRailExpanded(next: boolean): void {
+function commitRailExpanded(next: boolean): void {
   try {
     window.localStorage.setItem(RAIL_EXPANDED_STORAGE_KEY, String(next));
   } catch {
@@ -110,6 +115,254 @@ function writeRailExpanded(next: boolean): void {
     // the event still fires, so the rail still moves for this session.
   }
   window.dispatchEvent(new Event(RAIL_EXPANDED_EVENT));
+}
+
+/**
+ * Toggle the rail INSIDE a view transition, so the monster can jump between its
+ * two homes rather than teleport.
+ *
+ * The creature's two positions are genuinely different DOM layouts — inline in
+ * "m…nster" when open, alone and larger when closed — so nothing about the
+ * change is animatable by ordinary means: the element does not move, it is
+ * re-laid-out. A view transition snapshots both states and gives the browser
+ * something to interpolate between, and `globals.css` styles that interpolation
+ * as a hop (see the `sw-monster-*` keyframes).
+ *
+ * `flushSync` is not optional. `startViewTransition` captures the "after" state
+ * when its callback returns, and the callback here only dispatches an event —
+ * React's re-render would land after the capture, so the transition would
+ * animate from a state to itself.
+ *
+ * Falls back to a plain commit where the API is missing or the reader asked for
+ * less motion; the rail still moves, it just cuts.
+ */
+/**
+ * THE TWO DIRECTIONS ARE TWO DIFFERENT JUMPS, and each is three settings.
+ *
+ * They were one for a while. Unifying them was tempting — the arithmetic worked
+ * out, one launch constant explained both — but it meant every correction to
+ * one silently rewrote the other, and the closing jump had already been signed
+ * off. The opening one needed a change of SHAPE rather than of parameter, so
+ * there was nothing left to share.
+ *
+ * Each direction therefore names its own keyframes, its own clock between them,
+ * and its own travel curve. All three have to move together: the arcs are
+ * authored against their own clocks and neither survives being given the
+ * other's.
+ */
+type JumpArc = {
+  /** The keyframe set that draws the arc. */
+  hop: string;
+  /** The clock BETWEEN its keyframes — part of the shape, not a finish on it. */
+  hopEase: string;
+  /** How the ground goes by underneath: the group's own position curve. */
+  travel: string;
+  /** How long that travel takes. Ends with the hop, or short of it. */
+  travelMs: string;
+  /** The group's hole-filler: an opaque rect that travels with it, so it helps
+   *  only while the creature is on top of it. See the note in globals.css. */
+  fill: string;
+};
+
+/**
+ * CLOSING: shaped, and signed off as-is. Do not retune without being asked.
+ *
+ * The travel is a `linear()` because three things have to be true at once and
+ * no cubic-bezier holds all three — anything slow enough to keep the crouch in
+ * place decelerates through the middle and parks the apex over open ground:
+ *
+ *   17%    3% across   the crouch happens IN PLACE, not while sliding sideways
+ *   32%   13% across   paired with the rise, a ~37deg climb out of the ground
+ *   58%   82% across   the apex sits near the landing
+ *
+ * Generated as a monotone cubic through those points and sampled at 19 stops:
+ * monotone so the interpolation can never send the creature briefly backwards,
+ * 19 so the segments sit below the eye's resolution. Regenerate it rather than
+ * hand-editing a stop.
+ */
+const CLOSING: JumpArc = {
+  hop: "sw-monster-hop",
+  hopEase: "cubic-bezier(0.34, 0.8, 0.28, 1)",
+  travel:
+    "linear(0 0%, 0.008508 6%, 0.01694 11%, 0.02907 17%, 0.0522 22%," +
+    " 0.09105 28%, 0.1467 33%, 0.2732 39%, 0.4545 44%, 0.6412 50%," +
+    " 0.7839 56%, 0.8508 61%, 0.8965 67%, 0.9309 72%, 0.9543 78%," +
+    " 0.9693 83%, 0.9804 89%, 0.9898 94%, 1 100%)",
+  travelMs: "620ms",
+  fill: "rgb(9 9 11) linear-gradient(oklab(0.21 0.00164225 -0.00577088 / 0.5) 0 100%)",
+};
+
+/**
+ * OPENING: ballistic.
+ *
+ * A jump has no horizontal force, so its horizontal velocity is CONSTANT and
+ * only the vertical accelerates. Both settings here follow from that one fact:
+ * a near-linear travel whose peak speed is 1.22x its mean, and `linear` between
+ * keyframes so the arc is the keyframe VALUES rather than something a clock
+ * manufactures out of them.
+ *
+ * Both were wrong before, in opposite ways. The travel was front-loaded — 42%
+ * of the way across while still crouching. And `animation-timing-function`
+ * applies between EVERY pair of keyframes, so the eased hop re-eased each leg:
+ * 77% of the way to a stop a third into the segment, 92% half way through.
+ * Every leg landed early and held, which is what "reaches the apex too early"
+ * was describing.
+ *
+ * The result is an apex ~18px up at 57% of the travel, against 11.2px at ~20%.
+ */
+const OPENING: JumpArc = {
+  // THE CLOSING ARC, FORESHORTENED. Every setting here except the keyframe name
+  // is the closing one's, because the two directions want the same SHAPE and
+  // differ only in how big that shape reads.
+  //
+  // It was derived from scratch for several rounds — ballistic travel, `linear`
+  // between stops, gravity sampled from a parabola — and each version fixed the
+  // complaint it was aimed at and read wrong overall. Tracing both body centres
+  // is what settled it: the closing arc peaks at 80% of its travel and DROPS
+  // onto the spot at 38deg, while every from-scratch opening arc peaked near
+  // the middle and glided in at around 12deg. That is not a landing, it is an
+  // approach, and no amount of retuning a symmetric parabola makes it one.
+  //
+  // Depth belongs in the SIZE of the arc, which is why only the lift is scaled
+  // (see `sw-monster-hop-open`), and it is scaled DOWN because this direction
+  // ends about 1.45x further from the reader.
+  hop: "sw-monster-hop-open",
+  hopEase: CLOSING.hopEase,
+  travel: CLOSING.travel,
+  travelMs: CLOSING.travelMs,
+  // NO FILLER. It is an opaque rectangle that travels with the group, and this
+  // direction crosses the wordmark as the letters are revealing, so instead of
+  // hiding a hole it blanks them. Verified by eye that nothing dark appears in
+  // its absence here.
+  fill: "transparent",
+};
+
+function writeRailExpanded(next: boolean): void {
+  const doc = document as Document & {
+    startViewTransition?: (callback: () => void) => unknown;
+  };
+  const reduced =
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  if (typeof doc.startViewTransition !== "function" || reduced) {
+    commitRailExpanded(next);
+    return;
+  }
+  // WHICH WAY IT IS GOING, for the lean. Opening, the creature travels RIGHT —
+  // out of the collapsed rail's centre and into the middle of the word.
+  // Closing, it travels left. The keyframes multiply their rotation and drift
+  // by this, so the body leans into the direction of the jump instead of
+  // always tipping the same way. A creature that leans the wrong way reads as
+  // being blown sideways rather than as choosing to go.
+  document.documentElement.style.setProperty("--sw-hop-dir", next ? "1" : "-1");
+
+  // WHICH JUMP THIS IS. Three properties, set together, because the arc is all
+  // three: see `CLOSING` and `OPENING`.
+  const arc = next ? OPENING : CLOSING;
+  const root = document.documentElement.style;
+  root.setProperty("--sw-hop-name", arc.hop);
+  root.setProperty("--sw-hop-ease", arc.hopEase);
+  root.setProperty("--sw-group-ease", arc.travel);
+  root.setProperty("--sw-group-ms", arc.travelMs);
+  root.setProperty("--sw-group-fill", arc.fill);
+
+  // AIM THE EYE BEFORE THE BODY GOES. Both snapshots are captured with this
+  // attribute set — the pose it leaves from and the pose it lands in — so the
+  // pupil points along the arc for the WHOLE flight rather than only reacting
+  // once it is over. That ordering is the whole effect: an eye that moves first
+  // reads as a creature deciding to jump, and an eye that only moves on landing
+  // reads as one that was thrown.
+  //
+  // It has to be an attribute set here rather than a keyframe in the hop,
+  // because mid-flight the creature is a rasterised image and nothing inside it
+  // can move. A pose can still be captured INTO that image; motion cannot.
+  const mark = document.querySelector("[data-storyboard-monster]");
+  mark?.setAttribute("data-aiming", "");
+
+  // OPT INTO THE TRANSITION, and only this one. The `view-transition-name` that
+  // makes the creature a snapshot lives in `globals.css` behind these two
+  // attributes rather than inline on the element, because a name is not scoped
+  // to the transition you meant — it applies to every one the document runs,
+  // and this app runs others (the details modal, the trash drawer). Named for
+  // its whole life, the creature played its entire jump whenever a modal
+  // opened, under an opaque hole-filler, and then vanished when that unrelated
+  // transition finished.
+  //
+  // Set BEFORE `startViewTransition`, because the old state is captured the
+  // moment it is called, and held until `finished`, which covers the new
+  // capture too. Cleared on every exit below, next to the aim.
+  mark?.setAttribute("data-hopping", "");
+  document.documentElement.dataset.swHop = "";
+
+  const transition = doc.startViewTransition(() => {
+    flushSync(() => commitRailExpanded(next));
+    // THE SECOND POSE, and the reason there is one at all. The browser captures
+    // the OLD state before this callback runs and the NEW state after it
+    // returns, so anything set here lands in the arrival snapshot and not the
+    // departure one. That is the only lever that makes a part of the creature
+    // LOOK like it moved during a transition that freezes it: photograph the
+    // same element twice, in two poses, and hand over between the images.
+    //
+    // Today it is the feet — they leave angled off the toe and arrive flat, so
+    // the toe-off reads as a launch gesture rather than a permanent point. See
+    // `sw-monster-depart` / `sw-monster-arrive` for the handover itself.
+    mark?.setAttribute("data-landing", "");
+  }) as { finished?: Promise<unknown> };
+
+  // THE SETTLE, once the flight is over. The eye and the feet cannot move
+  // during the transition — the creature is a rasterised snapshot then, not
+  // elements — so the parts that should still be moving when the body stops are
+  // handed back to the live element here. See `sw-pupil-settle` and
+  // `sw-foot-settle`.
+  //
+  // Attribute rather than React state on purpose: this is a 500ms flourish, and
+  // routing it through the store would re-render the sidebar twice more for it.
+  // LEAVING THE TRANSITION, on every path out. Dropping these late is not a
+  // cosmetic slip: while `data-hopping` is on, the creature is still a named
+  // participant, so the NEXT transition anyone starts — a modal, the trash
+  // drawer — snapshots it and replays the jump. That is the bug this pair
+  // exists to prevent, so it must not survive the flight that set it.
+  const leaveTransition = () => {
+    mark?.removeAttribute("data-hopping");
+    delete document.documentElement.dataset.swHop;
+  };
+
+  const finished = transition.finished;
+  if (!finished) {
+    // Nothing to hang the settle off. Drop the aim on a timer regardless — a
+    // pupil left staring sideways is worse than no flourish at all.
+    window.setTimeout(() => {
+      mark?.removeAttribute("data-aiming");
+      mark?.removeAttribute("data-landing");
+      leaveTransition();
+    }, 620);
+    return;
+  }
+  void finished
+    .then(() => {
+      if (!mark) return;
+      // Swapped in ONE frame, and the settle's first pose is the aim, so the
+      // pupil is never briefly re-centred between the two — the handover from
+      // captured image to live element is invisible.
+      mark.removeAttribute("data-aiming");
+      mark.removeAttribute("data-landing");
+      leaveTransition();
+      mark.setAttribute("data-settling", "");
+      // Outlasts the longest part, which is the PUPIL: it now waits for the eye
+      // to finish moving (460ms) and then constricts over 800ms, so it is still
+      // going 620ms after the hat has stopped. Pulling the attribute early does
+      // not shorten the flourish, it truncates it — at 620ms the hat's final
+      // bounce was cut mid-air, and anything under 1260 snaps the last of the
+      // dilation off in one frame.
+      window.setTimeout(() => mark.removeAttribute("data-settling"), 1360);
+    })
+    .catch(() => {
+      // A transition skipped or superseded by a faster second click. The rail
+      // still moved; only the flourish is lost — but the aim must come off, or
+      // the eye is left pointing at a jump that never happened.
+      mark?.removeAttribute("data-aiming");
+      mark?.removeAttribute("data-landing");
+      leaveTransition();
+    });
 }
 
 /**
@@ -138,7 +391,9 @@ function writeRailExpanded(next: boolean): void {
  * click with no pointer anywhere near the tile, so no `pointerenter` would ever
  * arrive to clear the flag and that tile would go quiet for good.
  */
-function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): void {
+function suppressTipUntilPointerReturns(
+  event: React.MouseEvent<HTMLElement>,
+): void {
   if (event.detail === 0) return;
   const tile = (event.target as HTMLElement | null)?.closest("button, a");
   if (!(tile instanceof HTMLElement)) return;
@@ -151,7 +406,6 @@ function suppressTipUntilPointerReturns(event: React.MouseEvent<HTMLElement>): v
     { once: true },
   );
 }
-
 
 /**
  * Letters that grow from nothing to their natural width, and back.
@@ -189,11 +443,42 @@ function RevealedLetters({
     <span
       aria-hidden="true"
       className={cn(
-        "grid transition-[grid-template-columns] duration-200 motion-reduce:transition-none",
+        // THE TWO DIRECTIONS DO DIFFERENT THINGS, so the pacing lives on the
+        // branch rather than above it.
+        //
+        // OPENING, THE WORD CARRIES THE CREATURE. It used to trail the launch by
+        // a beat and finish in 420ms against a jump that lands at 680, so the
+        // gap the creature is aiming for arrived first and sat waiting while the
+        // creature caught up. Matching the group's own travel — same curve, same
+        // 680ms, no delay — makes the creature sit IN the "o" slot the whole way
+        // across instead of merely ending up there.
+        //
+        // It works out exactly, which is worth writing down because it looks
+        // like a coincidence. The creature's group interpolates its box from
+        // x=22 (alone in the rail) to x=153 (inside the word), so its position
+        // is 22 + 131p. The slot's left edge is 22 plus the revealed width of
+        // "storyboard " and "m", and that width is 131 when fully revealed — so
+        // the slot is 22 + 131q. Same form: give p and q the same curve and the
+        // two are the same number at every instant.
+        //
+        // CLOSING IS STILL OVERLAPPING ACTION, and deliberately unchanged: the
+        // word goes FIRST and quickly, clearing the space before the creature
+        // jumps back into it. Loose parts lag the thing driving them, and which
+        // part is loose depends on which way the motion runs.
+        "grid transition-[grid-template-columns] motion-reduce:transition-none",
+        show
+          ? "delay-0 duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.58)]"
+          : "delay-0 duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
     >
-      <span className="overflow-hidden font-semibold opacity-90">{children}</span>
+      {/* NO WEIGHT of its own, still — but for a different reason than it had
+          under Caprasimo. That face shipped one 400, so any weight class here
+          was a synthesised bold over something already heavy. Grandstander has
+          real weights, and the lockup's is picked once where the font is
+          loaded (700). A utility here would override that for the letters
+          only, and the wordmark would stop matching its own mark. */}
+      <span className="overflow-hidden opacity-90">{children}</span>
     </span>
   );
 }
@@ -613,12 +898,63 @@ export function TimelineSidebar() {
           // Width alone is animated. `transition-all` here would also catch the
           // backdrop filter, which is expensive to interpolate over a sticky
           // full-height surface.
-          "transition-[width] duration-200 motion-reduce:transition-none",
+          "transition-[width] motion-reduce:transition-none",
+          // OPENING AND CLOSING ARE NOT THE SAME MOVE, so the pacing lives on
+          // the state rather than here. A transition reads its duration and
+          // easing from the AFTER-change style, so whichever branch below is
+          // being switched TO is the one that times the move — which is what
+          // makes this direction-aware without a single line of JavaScript.
+          //
           // From RAIL_WIDTH_CLASS, which holds the literals Tailwind's scanner
           // needs — see the note there on why these cannot be built by template.
           railExpanded
-            ? `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS}`
-            : RAIL_WIDTH_CLASS.collapsed,
+            ? // OPENING: the rail arrives exactly as the creature lands, because
+              // it travels on the creature's own profile.
+              //
+              // It used to be 440ms of easeOutQuint, which is 99% done by 287ms
+              // against a jump that does not touch down until 680 — the rail
+              // was parked and waiting for most of the flight.
+              //
+              // MATCHING THE DURATION ALONE WOULD NOT HAVE FIXED IT. Stretched
+              // to 680ms that curve still LOOKS finished at 443ms; an ease-out
+              // spends its last 1% over a third of its time. So it takes the
+              // same near-linear travel the hop's group uses (see `OPENING`),
+              // which is 99% done at 670ms — the rail and the creature come to
+              // rest together rather than merely stopping at the same instant.
+              `${RAIL_WIDTH_CLASS.open} ${RAIL_OPEN_CLASS} duration-[680ms] ease-[cubic-bezier(0.42,0.3,0.58,0.72)]`
+            : // CLOSING: an early creep, then commit.
+              //
+              // It used to close on the opening curve, and that curve is
+              // easeOutQuint — 62px of the 168px travel gone in the FIRST 40ms
+              // and 79% shut by 120ms. The rail was always going to beat the
+              // creature to a standstill, because it did most of its move
+              // before the creature had finished crouching.
+              //
+              // Measured against the hop's own beats, this one is 2% closed at
+              // the crouch (116ms), 9% at the push-off (218ms), 71% at the apex
+              // (394ms) and 100% at contact (680ms). The rail closes WITH the
+              // jump instead of ahead of it, and the slow start is what buys
+              // that: the creature gets the first fifth of a second to itself.
+              //
+              // 680ms rather than 440ms for the same reason. A slow ramp inside
+              // 440ms has to make the time up somewhere, and it did — 145px in
+              // the 200ms through the middle, which read as a lurch rather than
+              // as a drawer.
+              //
+              // It matches the opening rail exactly, and both match the jump:
+              // 680ms is the hop's own length, so neither direction of the
+              // toggle is a different length of event. The two still FEEL
+              // different, and that is the easing rather than the clock — this
+              // one ramps and commits, so it is visually done around 600ms
+              // while the opening one is still arriving at 670.
+              //
+              // THE FIRST VERSION OF THIS RAMP WAS TOO DEAD. At (0.8, 0, 0.3, 1)
+              // the rail was 0% closed at 60ms and 7% at 200ms — a hold, not a
+              // ramp, and a control that visibly does nothing for a fifth of a
+              // second reads as one that missed the click. This one creeps: 1%
+              // at 60ms, 5% at 120ms, 16% at 200ms. Still nothing like the
+              // opening curve, which was 37% and 84% at those marks.
+              `${RAIL_WIDTH_CLASS.collapsed} duration-[680ms] ease-[cubic-bezier(0.6,0.04,0.3,1)]`,
         )}
       >
         <Link
@@ -628,7 +964,14 @@ export function TimelineSidebar() {
           // in the 72px rail already put it within a pixel of 22px, so pinning
           // it there costs nothing closed and is what lets the name grow to the
           // right rather than the whole mark sliding.
-          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] text-lg font-bold text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
+          // 22px, not `text-lg`. The wordmark used 186px of the rail's 239px
+          // at 18px, so there was room, and at 18px "storyboard monster" was
+          // hard to read against everything else in the rail. Measured after:
+          // see the note on the creature's scale for the other half of the fit.
+          // CAPRASIMO, the face the logo document is set in, and no
+          // `font-bold`: it ships a single 400 weight, so asking for 700 buys a
+          // synthesised bold on top of a face that is already heavy.
+          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] font-[family-name:var(--font-grandstander)] font-bold text-[21px] text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
           {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
               nothing, so closing slides the S and the W together into "SW"
@@ -638,11 +981,48 @@ export function TimelineSidebar() {
               contracting instead of a label being replaced by an abbreviation.
 
               The accessible name comes from `aria-label` on the link, so the
-              split spans are never read out letter by letter. */}
-          S
-          <RevealedLetters show={railExpanded}>toryboard&nbsp;</RevealedLetters>
-          W
-          <RevealedLetters show={railExpanded}>orkbench</RevealedLetters>
+              split spans are never read out letter by letter.
+
+              HIDDEN FROM ASSISTIVE TECH, for the same reason. Collapsed, the
+              mark reads "SW", which is not contained in "Storyboard Workbench
+              home" — Lighthouse flags that as `label-content-name-mismatch`
+              (WCAG 2.5.3 "Label in Name"): someone driving by voice says what
+              they see and matches nothing. The mark is branding, not a label,
+              so the label carries the name and the letters carry none.
+
+              `display: contents` so hiding them costs no layout — the letters
+              keep participating in the link's own flex box. */}
+          <span aria-hidden="true" className="contents">
+            <RevealedLetters show={railExpanded}>
+              storyboard&nbsp;
+            </RevealedLetters>
+            {/* The creature takes the monogram's place: it is what survives the
+                collapse, exactly as "SW" did. The word rebuilds around it —
+                "m" before, "nster" after — so opening the rail grows the name
+                out of the mark rather than swapping one thing for another. */}
+            {/* `contents`, so "m", the creature and "nster" stay FLEX ITEMS of
+                the link rather than becoming one narrow item that wraps inside
+                itself — the same reason the wrapper above uses it. Colour still
+                inherits through a `display: contents` box. */}
+            <span
+              className="contents"
+              style={{ color: STORYBOARD_MONSTER_ACCENT }}
+            >
+              <RevealedLetters show={railExpanded}>m</RevealedLetters>
+              {/* SMALL IN THE WORD, BIG ALONE. Expanded it is the source's own
+                  proportion (0.72em), which is what makes it read as the "o" of
+                  "monster" rather than a creature parked beside it. Collapsed
+                  there is no word left to belong to, so it grows into the mark
+                  the rail needs — and past the 19px floor the design document
+                  measured, below which "the fur spikes and the glint start to
+                  merge". */}
+              <StoryboardMonsterMark
+                scale={railExpanded ? 1.1 : 1.6}
+                gaze={railExpanded ? "ahead" : "breadcrumb"}
+              />
+              <RevealedLetters show={railExpanded}>nster</RevealedLetters>
+            </span>
+          </span>
         </Link>
 
         {activeProjectId && (
@@ -695,10 +1075,10 @@ export function TimelineSidebar() {
             const tooltipId = `sidebar-tooltip-utility-${item.id}`;
             const isPressed = isTrashOpen;
             // Through a view transition, so the drawer RISES instead of
-          // appearing. Same helper the trim modal uses — including the root
-          // flag the e2e waits on.
-          const handleClick = () =>
-            void withViewTransition(() => setIsTrashOpen(!isTrashOpen));
+            // appearing. Same helper the trim modal uses — including the root
+            // flag the e2e waits on.
+            const handleClick = () =>
+              void withViewTransition(() => setIsTrashOpen(!isTrashOpen));
 
             // WARM THE BIN ON INTENT, so the drawer opens at its final height
             // rather than growing when the fetch lands.
@@ -821,9 +1201,9 @@ export function TimelineSidebar() {
                 alt={user.name || user.email || "Profile"}
                 className={cn(
                   // `relative` for the same reason the glyphs carry it: the tile's pill is
-                // an absolute ::before and would otherwise paint a 40% black veil over
-                // this face. Same bug the collection thumbnails had.
-                "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
+                  // an absolute ::before and would otherwise paint a 40% black veil over
+                  // this face. Same bug the collection thumbnails had.
+                  "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
                   SIDEBAR_AVATAR_INSET,
                 )}
               />

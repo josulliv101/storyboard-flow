@@ -17,6 +17,8 @@ import {
 import { Button } from "@/components/core/button";
 import { Skeleton } from "@/components/core/skeleton";
 import { toast } from "@/components/core/sonner";
+import { LoadProjectButton } from "@/components/projects/load-project-button";
+import { useHoverPrefetch } from "@/components/projects/use-hover-prefetch";
 import { cn } from "@/lib/utils";
 
 type TimelineProjectSummary = {
@@ -66,6 +68,7 @@ function ProjectCardSkeleton() {
 
 export default function Home() {
   const router = useRouter();
+  const hoverPrefetch = useHoverPrefetch();
   const [projects, setProjects] = useState<TimelineProjectSummary[]>([]);
   const [projectTitle, setProjectTitle] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -214,9 +217,10 @@ export default function Home() {
           </p>
         </div>
 
+        <div className="flex w-full flex-col items-stretch gap-2 md:w-[420px] md:shrink-0">
         <form
           onSubmit={handleCreateProject}
-          className="flex w-full flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/55 p-3 sm:flex-row md:w-[420px] md:shrink-0"
+          className="flex w-full flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/55 p-3 sm:flex-row"
         >
           <label htmlFor="project-title" className="sr-only">
             Project title
@@ -238,6 +242,13 @@ export default function Home() {
             New Project
           </Button>
         </form>
+        {/* OUTSIDE the create form, deliberately — a submit-typed button inside
+            it would create an empty project on Enter. Under it rather than
+            beside it so the everyday verb keeps the full width it had. */}
+        <div className="flex justify-end">
+          <LoadProjectButton />
+        </div>
+        </div>
       </header>
 
       <section
@@ -302,9 +313,22 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {projects.map((project) => (
+            {projects.map((project) => {
+              const href = `/timeline/${encodeURIComponent(project.id)}/graph`;
+              return (
               <div
                 key={project.id}
+                // FETCH ON INTENT. The Link below already prefetches the
+                // skeleton on viewport entry, which costs nothing; this fetches
+                // the BOARD once the pointer settles, so the click has nothing
+                // left to wait for. See `useHoverPrefetch` for why this is not
+                // `<Link prefetch>`: that fires on viewport entry, and a full
+                // prefetch is 149 Firestore reads per card.
+                onMouseEnter={() => hoverPrefetch.onEnter(href)}
+                onMouseLeave={() => hoverPrefetch.onLeave(href)}
+                // Keyboard users get the same head start on focus — the anchor
+                // is inside this box, so focus bubbles to it.
+                onFocus={() => hoverPrefetch.onEnter(href)}
                 className="relative group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/55 shadow-xl shadow-black/20 transition-all duration-200 hover:border-blue-500/55 hover:bg-zinc-900"
               >
                 {/* Link overlay covering the whole card area. It NEEDS a name:
@@ -314,7 +338,7 @@ export default function Home() {
                     (WCAG 2.4.4). The visible <h3> below is a heading, not this
                     control's label. */}
                 <Link
-                  href={`/timeline/${encodeURIComponent(project.id)}/graph`}
+                  href={href}
                   className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <span className="sr-only">Open project {project.title}</span>
@@ -369,7 +393,8 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
       </section>

@@ -234,6 +234,28 @@ export type CollectionTimelineClip = TimelineItemBase & {
   kind: "collection";
   title: string;
   childTimelineId: string;
+  /**
+   * What this collection is FOR, when the app needs to find it again.
+   *
+   * Only `"renders"` today: the place finished renders are filed. It exists
+   * because that collection used to be resolved by matching its TITLE, which
+   * made the name load-bearing in a way nothing told the reader — rename it and
+   * the next render created a second "Renders" beside the first, silently
+   * splitting a project's output; call any top-level collection "Renders" and
+   * output landed in it.
+   *
+   * ABSENT IS NORMAL and always will be. Every collection a person makes has no
+   * role, so this is not a migration anyone has to run: the resolver falls back
+   * to the title when nothing carries the marker, and stamps it on the next
+   * render (see `findRendersCollectionId` and `attachRenderOutput`).
+   *
+   * ON THE CLIP, NOT THE CHILD DOCUMENT, because the lookup runs over a
+   * parent's clips — a marker on the child would cost a read per candidate to
+   * ask a question the parent can already answer. That is denormalization, but
+   * the safe kind: unlike `itemCount` or `duration` a role is not DERIVED from
+   * anything, so there is nothing for it to drift out of agreement with.
+   */
+  role?: "renders";
   itemCount: number;
   /**
    * Seconds of this collection that actually PLAY — its child's enabled clips

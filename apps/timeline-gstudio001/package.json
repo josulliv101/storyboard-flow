@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "npm run build --workspace=@storyboard/timeline-widget && next build",
+    "dev": "next dev --webpack",
+    "build": "npm run lint && npm run build --workspace=@storyboard/timeline-widget && next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "clean": "next clean",
@@ -14,12 +14,15 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "fixture:build": "node scripts/make-dev-fixture.mjs",
     "audit:ownership": "node --env-file=.env scripts/audit-ownerless-timelines.mjs",
     "audit:orphans": "node --env-file=.env scripts/audit-orphaned-timelines.mjs",
     "prune:orphans": "node --env-file=.env scripts/prune-empty-orphans.mjs",
     "audit:review-findings": "node --env-file=.env scripts/audit-review-findings.mjs",
     "inspect:squatted": "node --env-file=.env scripts/inspect-squatted-fixtures.mjs",
     "stamp:ownership": "node --env-file=.env scripts/stamp-ownerless-timelines.mjs",
+    "stamp:project-id": "node --env-file=.env scripts/stamp-project-id-on-timeline-documents.mjs",
+    "migrate:durations": "node --env-file=.env scripts/migrate-legacy-video-durations.mjs",
     "bin:orphans": "node --env-file=.env scripts/bin-unreachable-timelines.mjs",
     "correct:aspects": "node --env-file=.env scripts/correct-clip-aspects.mjs",
     "audit:accounts": "node --env-file=.env scripts/audit-foreign-accounts.mjs"
@@ -49,7 +52,7 @@
     "lucide-react": "^1.28.0",
     "mcp-handler": "^1.1.0",
     "motion": "^12.23.24",
-    "next": "^15.4.9",
+    "next": "^16.3.1",
     "postcss": "^8.5.6",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
@@ -75,6 +78,6 @@
     "tw-animate-css": "^1.4.0",
     "typescript": "5.9.3",
     "vite": "^8.1.5",
-    "vitest": "4.1.6"
+    "vitest": "4.1.10"
   }
 }

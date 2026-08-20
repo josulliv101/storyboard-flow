@@ -16,7 +16,11 @@ import {
 // Demo-content seed for the GET fallback — deliberately still the UI
 // package's fixture set, not model logic.
 import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
-import { serveTimelineDocument, serveTrashDocument } from "@/lib/serve-timeline";
+import {
+  BOARD_OPEN_MAX_DEPTH,
+  serveTimelineDocument,
+  serveTrashDocument,
+} from "@/lib/serve-timeline";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 import { clientFacingStorageMessage } from "@/lib/firestore-failure";
 
@@ -78,7 +82,13 @@ export async function GET(
 
     // Heal + read-time summary derivation live in lib/serve-timeline — the
     // ONE serve path this route shares with the RSC payload loaders.
-    const served = await serveTimelineDocument(id, user.uid);
+    // The drill-in hydrate. Bounded for the same reason the board open is:
+    // this route's job is to hand the client one document, and deriving its
+    // summaries across the whole subtree below it is what made hydrating a
+    // project cost more than loading it (#437).
+    const served = await serveTimelineDocument(id, user.uid, undefined, {
+      maxDepth: BOARD_OPEN_MAX_DEPTH,
+    });
     if (served) {
       return NextResponse.json({ document: served.document, revision: served.revision });
     }

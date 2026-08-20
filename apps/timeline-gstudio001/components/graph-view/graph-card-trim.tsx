@@ -2,9 +2,11 @@
 
 import { memo } from "react";
 
-import type {
-  CollectionTrimHandleContentProps,
-  CollectionTrimOverviewContentProps,
+import {
+  hasSourceWindow,
+  mediaDurationSeconds,
+  type CollectionTrimHandleContentProps,
+  type CollectionTrimOverviewContentProps,
 } from "@storyboard/ui/dnd-collections";
 
 import { OVERVIEW_FRAME_SIZE, overviewFrameCount } from "@/lib/card-ghost-frames";
@@ -68,26 +70,64 @@ export const GraphTrimOverviewContent = memo(
     prev.fullWidth === next.fullWidth,
 );
 
+/**
+ * THE SMALLEST SHARE OF A CLIP THAT MAY BE HANDLE, and why it is a ratio.
+ *
+ * The hit zone is a fixed 8px, so what a handle costs depends entirely on the
+ * clip under it: 2% of a 400px clip and 27% of a 30px one. The question is
+ * never "is this clip short" but "how much of it would stop being clip", which
+ * a `minWidth` cannot express — images carry one handle and video two, so the
+ * same ratio has to yield two different pixel cutoffs.
+ *
+ * A quarter is the line: past it a clip still has three quarters of itself
+ * left to look at, grab and drag.
+ */
+const MAX_HANDLE_SHARE = 0.25;
+/** The hit zone's width, from `HIT_ZONE_CLASS` in the package (`w-2`). */
+const HANDLE_PX = 8;
+
 export const GraphTrimHandle = memo(function GraphTrimHandle({
   side,
+  node,
+  pixelsPerSecond,
 }: CollectionTrimHandleContentProps) {
-  // Handles exist only on SELECTED clips (trimRequiresSelection at the
-  // provider), so these pixels are always the active affordance — no
-  // hover-reveal state for unselected cards to style anymore.
+  // BOTH EDGES COUNT, even though this renders one of them. Anything with a
+  // source window carries a left handle too, so its clip pays twice — and the
+  // decision has to come out the same for both or a clip keeps one handle and
+  // loses the other. `hasSourceWindow` rather than a `mediaKind` test for the
+  // reason the package uses it: audio windows into a longer source as well.
+  const sides = hasSourceWindow(node) ? 2 : 1;
+  // The clip's rendered width: its effective timeline duration — an image's
+  // own, or a windowed item's showing span — times the scale it is drawn at.
+  const width = mediaDurationSeconds(node) * pixelsPerSecond;
+  if (width <= 0 || (sides * HANDLE_PX) / width > MAX_HANDLE_SHARE) return null;
+
   return (
     <span
       className={[
-        // blue-500 — the SELECTION colour (the ring on a selected card, the
-        // count in the select row). These handles only exist on a selected
-        // clip, so wearing the selection's colour is what ties them to the
-        // thing they act on. Amber is left over from when amber WAS the
-        // selection colour; once selection moved to blue it read as a second,
-        // unrelated accent on the one card already wearing the first.
-        "flex h-full w-full items-center justify-center bg-blue-500 opacity-95",
+        "flex h-full w-full items-center justify-center",
+        // ON ALWAYS, not on approach. The first pass kept the handle quiet
+        // until the pointer neared it, which read well on a desktop and did
+        // not survive the question "what about iPad" — a hover reveal has no
+        // trigger on a touch screen, so the affordance would simply never
+        // arrive there. One always-visible treatment is the same on both, and
+        // it means the edge advertises what it does before you go looking.
+        //
+        // SOLID, NOT A GRADIENT. It was `bg-gradient-to-l ... to-transparent`,
+        // which faded the ink across the 8px and put its bright mass against
+        // the outer edge — so the grip below, at a measured 50%, still read as
+        // off-centre. The bar was never the problem; the field around it was.
+        "bg-white/85",
+        // WHITE, because it is the one highlight that is not already a state.
+        // Blue is selection everywhere on this board — the ring, the check,
+        // the count — so a handle on every clip would spend the colour that
+        // already had a job; amber was tried and reads as a third accent.
         side === "left" ? "rounded-l-md" : "rounded-r-md",
       ].join(" ")}
     >
-      <span className="h-4 w-0.5 rounded bg-black/60" />
+      {/* The grip, centred in a now-uniform field. Taller on a coarse pointer
+          for the same reason the target is wider there. */}
+      <span className="h-5 w-0.5 rounded-full bg-black/70 [@media(pointer:coarse)]:h-7" />
     </span>
   );
 });

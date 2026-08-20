@@ -5,6 +5,14 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
 import { getFirebaseDb } from "./firebase-admin";
 import { firstFrameUrl } from "./project-thumbnail";
+import {
+  fixtureCreateProject,
+  fixtureDeleteDocument,
+  fixtureListProjects,
+  fixtureReadEntry,
+  fixtureStoreEnabled,
+  fixtureWriteDocuments,
+} from "./fixture-timeline-store";
 import { resolveOwnership, TimelineAccessDeniedError } from "./timeline-ownership";
 import {
   describeFirestoreFailure,
@@ -19,6 +27,20 @@ type TimelineDocumentRecord = {
   lastNonEmptyDocument?: TimelineDocument;
   clips?: TimelineClip[];
   isProject?: boolean;
+  /**
+   * The PROJECT this document belongs to — its root's id, and its own id on the
+   * root itself.
+   *
+   * A PREFETCH HINT, never the source of truth. Nothing reads it to decide what
+   * a project contains; the closure walk still does that, and still decides.
+   * Its only job is to let one query address a whole subtree in one round trip
+   * instead of nine sequential ones, so a stale or missing value costs latency
+   * and never correctness (#458).
+   *
+   * Optional because every document written before this existed lacks it, and
+   * because that has to be survivable rather than migrated-or-broken.
+   */
+  projectId?: string;
   /** Authorization boundary. Optional only because Firestore documents are
    *  untyped at rest — every live record carries one, and a record without an
    *  owner is unreachable rather than up for grabs (see lib/timeline-ownership). */
@@ -183,6 +205,11 @@ export type TimelineProjectSummary = {
 };
 
 const TIMELINE_COLLECTION = "gstudioTimelineDocuments";
+
+/** Documents per batched read. Firestore's `getAll` takes a stream of refs
+ *  rather than a fixed maximum, so this is about keeping any one request a
+ *  reasonable size — not a platform limit like the 500-op write transaction. */
+const MAX_BATCH_READ_DOCUMENTS = 200;
 const FIREBASE_TIMEOUT_MS = 8_000;
 
 /**
@@ -398,6 +425,8 @@ async function ownedProjectDocs(requesterUid: string) {
 }
 
 export async function listFirebaseTimelineProjects(requesterUid: string) {
+  if (fixtureStoreEnabled()) return fixtureListProjects();
+
   const docs = await ownedProjectDocs(requesterUid);
 
   // Listing is READ ONLY. It used to stamp `ownerUid` onto every ownerless
@@ -511,6 +540,114 @@ export async function collectOwnedTimelineClips(
 }
 
 /**
+ * A running count of document reads, for diagnosing read VOLUME.
+ *
+ * Off unless `GSTUDIO_COUNT_READS` is set, and dev-only in practice. It exists
+ * because this is the one place every read passes through, and the question
+ * "why are we making 50,000 of these a day" cannot be answered from the
+ * Firebase console — that reports totals, not which page load caused them.
+ *
+ * How it was used, so the next person does not have to reinvent it: point
+ * `GSTUDIO_FIXTURE_TIMELINES` at a synthetic project of known shape
+ * (`scripts/make-scale-probe.mjs`), load a board, and read the last total off
+ * the server log. That measured the batch-read endpoint at 430 reads down to
+ * 250 for one page load of a 151-document project.
+ *
+ * The count lives on `globalThis` so it survives the dev server's module
+ * re-evaluation, which would otherwise reset it on every file save.
+ */
+/**
+ * REQUESTS, which is a different number from reads since #449.
+ *
+ * `countRead` counts DOCUMENTS, because that is what Firestore bills and what
+ * the 50,000/day free tier is denominated in. Batching cut round trips without
+ * touching that number — correctly — but it also made the log silent about the
+ * thing it changed: 148 lines either way, and no way to see whether a level
+ * went out as one request or as 148.
+ *
+ * So requests are counted separately and printed per call. The two numbers
+ * answer different questions and are meant to be read together: reads are the
+ * bill, requests are the latency.
+ */
+function countRequest(documents: number, kind: "batch" | "single"): void {
+  if (!process.env.GSTUDIO_COUNT_READS) return;
+  const scope = globalThis as unknown as { __gstudioRequests?: number };
+  scope.__gstudioRequests = (scope.__gstudioRequests ?? 0) + 1;
+  console.log(
+    `[READREQ ${scope.__gstudioRequests}] ${kind} — ${documents} document${documents === 1 ? "" : "s"} in 1 request`,
+  );
+}
+
+/**
+ * TWO COUNTERS, because one number cannot mean two things.
+ *
+ * This used to increment a single total for both stores and tag the SOURCE per
+ * line — so the running number conflated billable Firestore reads with free
+ * reads of a local JSON file. Opening a project offline printed "[READTOTAL
+ * 150]" while touching no quota at all, and flipping fixtures off mid-session
+ * carried the fixture count forward, so the number kept looking like Firestore
+ * usage it had never been.
+ *
+ * `[READTOTAL n]` is now FIRESTORE ONLY and is the billing figure — the one to
+ * compare against the 50,000/day free tier. Fixture reads count under
+ * `[FIXTUREREAD n]`, which costs nothing and is only useful for seeing that the
+ * same code path ran.
+ */
+function countRead(source: "fixture" | "firestore"): number | null {
+  if (!process.env.GSTUDIO_COUNT_READS) return null;
+  const scope = globalThis as unknown as {
+    __gstudioReads?: number;
+    __gstudioFixtureReads?: number;
+  };
+  if (source === "fixture") {
+    scope.__gstudioFixtureReads = (scope.__gstudioFixtureReads ?? 0) + 1;
+    return scope.__gstudioFixtureReads;
+  }
+  scope.__gstudioReads = (scope.__gstudioReads ?? 0) + 1;
+  return scope.__gstudioReads;
+}
+
+/**
+ * The `[READTOTAL n]` line, emitted once the read has RESOLVED so it can say
+ * what the read actually bought.
+ *
+ * A bare running total answers "how many" and nothing else, which is the wrong
+ * half of the question: 152 reads on one page load is only diagnosable if you
+ * can see that it was 151 distinct documents rather than one document fetched
+ * 151 times. So each line names its document and what came back with it.
+ *
+ * `source` is the field to read first. `fixture` means the read was served from
+ * disk and cost NOTHING, `firestore` means it was billed — a distinction the
+ * bare counter hid, and the reason a local dev loop with
+ * GSTUDIO_FIXTURE_TIMELINES set can look expensive while being free (and why
+ * the render poller, which has no fixture branch, was billing invisibly).
+ *
+ * Counted-but-absent is deliberately still a LINE. `MISSING` and `DENIED` reads
+ * cost exactly the same one read as a hit, and a total that is one or two above
+ * the document count is usually the trash bin being asked for and not found —
+ * unexplainable without seeing the miss.
+ */
+function logRead(
+  total: number | null,
+  id: string,
+  entry: TimelineEntry | null,
+  source: "fixture" | "firestore",
+  note?: "denied",
+): void {
+  if (total === null) return;
+  const detail = entry
+    ? `${JSON.stringify(entry.document.title || "(untitled)")} rev=${entry.revision} clips=${entry.document.clips.length}`
+    : note === "denied"
+      ? "DENIED"
+      : "MISSING";
+  // The LABEL carries the meaning now, not a tag at the end of the line: one is
+  // money, the other is not.
+  console.log(
+    `[${source === "fixture" ? "FIXTUREREAD" : "READTOTAL"} ${total}] ${id} ${detail}`,
+  );
+}
+
+/**
  * ONE stored record, EXACTLY as written — collection summaries and all.
  *
  * "Stored" is the load-bearing word, and the counterpart to `serveTimelineDocument`.
@@ -539,22 +676,203 @@ export async function readStoredTimelineEntry(
   id: string,
   requesterUid: string,
 ): Promise<TimelineEntry | null> {
+  // Counted HERE, before the fixture branch and before the fetch: the metric is
+  // read ATTEMPTS, so a miss, a denial and a fixture hit all count. What each
+  // attempt turned out to be is reported by `logRead` once it resolves.
+  const usingFixtures = fixtureStoreEnabled();
+  const readTotal = countRead(usingFixtures ? "fixture" : "firestore");
+  // OFFLINE MODE. Dev-only, refused outright in production — see
+  // `fixture-timeline-store`. Intercepted HERE rather than per route because
+  // this is the single read seam: `serveTimelineDocument`, `serveTrashDocument`,
+  // the RSC focus-path loader and the closure walker all come through it, so
+  // one branch covers every reader and none of them can drift.
+  if (usingFixtures) {
+    const fixtureEntry = fixtureReadEntry(id);
+    logRead(readTotal, id, fixtureEntry, "fixture");
+    return fixtureEntry;
+  }
+
+  // One document, one request — the case the batch exists to replace, and the
+  // one worth being able to spot in the log when it happens outside a walk.
+  countRequest(1, "single");
   const snapshot = await withFirebaseTimeout(
     collection().doc(id).get(),
     "Loading timeline document",
   );
 
-  if (!snapshot.exists) return null;
+  if (!snapshot.exists) {
+    logRead(readTotal, id, null, "firestore");
+    return null;
+  }
   const data = snapshot.data() as TimelineDocumentRecord;
   // Reads no longer write. An ownerless record is denied like any other record
   // the requester does not own — knowing its id is not a claim to it.
   if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") {
+    // Logged before the throw: a denied read is billed like any other, and a
+    // gap in the numbered sequence would be the one thing this instrument
+    // cannot explain.
+    logRead(readTotal, id, null, "firestore", "denied");
     throw new TimelineAccessDeniedError(id);
   }
-  return {
+  const entry = {
     document: toTimelineDocument(snapshot.id, data),
     revision: data.revision ?? 0,
   };
+  logRead(readTotal, id, entry, "firestore");
+  return entry;
+}
+
+/**
+ * MANY documents in ONE Firestore round trip.
+ *
+ * The closure walk read a document at a time — `mapWithConcurrency` over
+ * `doc(id).get()`, twelve in flight — so a 500-document closure was ~42
+ * sequential rounds. Firestore takes a batched read, which makes it one call
+ * per BFS level: depth rather than breadth. Measured before: 3,701ms to export
+ * a 143-document project, most of it round trips rather than Firestore work.
+ *
+ * THE BILL DOES NOT MOVE. Firestore charges per document returned, so 500
+ * documents cost 500 reads however they arrive. `countRead` still fires once
+ * per id, before the fetch, exactly as the single-document path does — if
+ * [READTOTAL] changes after this, something broke rather than got faster.
+ *
+ * DENIED IS NULL HERE, where the single-document read throws. Its callers map
+ * that throw to a 404; this one's caller is the closure walk, which already
+ * wrote `.catch(() => null)` around every child read — a subtree you cannot see
+ * is a dangling branch, not a failed page. Returning null keeps that behaviour
+ * without making the whole frontier fail because one document in it was
+ * someone else's.
+ */
+export async function readStoredTimelineEntries(
+  ids: readonly string[],
+  requesterUid: string,
+): Promise<Map<string, TimelineEntry | null>> {
+  const out = new Map<string, TimelineEntry | null>();
+  // Deduped before counting: a repeated id would otherwise be billed twice in
+  // the log and passed to `getAll` twice.
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return out;
+
+  // Counted BEFORE the fetch, per id, so the metric stays "read attempts" —
+  // the same rule the single-document path follows.
+  const usingFixtures = fixtureStoreEnabled();
+  const totals = new Map<string, number | null>();
+  for (const id of unique) totals.set(id, countRead(usingFixtures ? "fixture" : "firestore"));
+
+  if (usingFixtures) {
+    for (const id of unique) {
+      const entry = fixtureReadEntry(id);
+      logRead(totals.get(id) ?? null, id, entry, "fixture");
+      out.set(id, entry);
+    }
+    return out;
+  }
+
+  // CHUNKED, because one `getAll` is one request and a BFS level can be most of
+  // a 500-document closure. The chunks go out together, so the round trips still
+  // overlap; the bound is on request size, not on parallelism.
+  const chunks: string[][] = [];
+  for (let index = 0; index < unique.length; index += MAX_BATCH_READ_DOCUMENTS) {
+    chunks.push(unique.slice(index, index + MAX_BATCH_READ_DOCUMENTS));
+  }
+  const snapshots = (
+    await Promise.all(
+      chunks.map((chunk) => {
+        countRequest(chunk.length, "batch");
+        return withFirebaseTimeout(
+          getFirebaseDb().getAll(...chunk.map((id) => collection().doc(id))),
+          "Loading timeline documents",
+        );
+      }),
+    )
+  ).flat();
+
+  for (const snapshot of snapshots) {
+    const id = snapshot.id;
+    const total = totals.get(id) ?? null;
+    if (!snapshot.exists) {
+      logRead(total, id, null, "firestore");
+      out.set(id, null);
+      continue;
+    }
+    const data = snapshot.data() as TimelineDocumentRecord;
+    // Per SNAPSHOT, never per request: one readable document in a batch must
+    // not carry the rest past the ownership boundary.
+    if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") {
+      logRead(total, id, null, "firestore", "denied");
+      out.set(id, null);
+      continue;
+    }
+    const entry = {
+      document: toTimelineDocument(snapshot.id, data),
+      revision: data.revision ?? 0,
+    };
+    logRead(total, id, entry, "firestore");
+    out.set(id, entry);
+  }
+  return out;
+}
+
+/**
+ * Every document stamped with this project, in ONE query.
+ *
+ * THE WATERFALL IS THE POINT. The closure walk can only ask for a level once
+ * the previous level's documents have named it, so opening the 143-document
+ * project costs nine SEQUENTIAL round trips — latency proportional to DEPTH,
+ * independent of width (#458). A query addresses documents by attribute instead
+ * of by walking to them, so it needs nobody's answer first: one round trip,
+ * whatever the shape.
+ *
+ * THE BILL IS UNCHANGED, as ever. Firestore charges per document returned, so
+ * 148 documents cost 148 reads here exactly as they did across nine `getAll`s.
+ * What collapses is the round trips.
+ *
+ * A PREFETCH, NOT AN ANSWER. Callers must not treat this as "what the project
+ * contains" — `projectId` is a hint that can be stale, absent on anything
+ * written before it existed, or wrong. It primes the cache; the closure walk
+ * still decides, and still fetches whatever the prime did not cover. That is
+ * what keeps a bad hint costing latency instead of correctness.
+ *
+ * Empty under fixtures: offline mode has no query engine and no round trips to
+ * save, so the walk simply does its usual work against the local file.
+ */
+export async function readStoredTimelineProjectEntries(
+  projectId: string,
+  requesterUid: string,
+): Promise<Map<string, TimelineEntry>> {
+  const found = new Map<string, TimelineEntry>();
+  if (fixtureStoreEnabled()) return found;
+
+  const snapshot = await withFirebaseTimeout(
+    collection()
+      .where("ownerUid", "==", requesterUid)
+      .where("projectId", "==", projectId)
+      .get(),
+    "Loading project documents",
+  );
+  // Counted AFTER, because the size is only known once it answers — and the
+  // whole point of the line is that one request carried all of them.
+  countRequest(snapshot.size, "batch");
+
+  for (const doc of snapshot.docs) {
+    const total = countRead("firestore");
+    const data = doc.data() as TimelineDocumentRecord;
+    // The query already filtered on `ownerUid`, so this cannot return someone
+    // else's — but the check stays rather than being assumed away: it is the
+    // same boundary every other read enforces, and a query is a longer way to
+    // be wrong about who owns what.
+    if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") {
+      logRead(total, doc.id, null, "firestore", "denied");
+      continue;
+    }
+    const entry = {
+      document: toTimelineDocument(doc.id, data),
+      revision: data.revision ?? 0,
+    };
+    logRead(total, doc.id, entry, "firestore");
+    found.set(doc.id, entry);
+  }
+  return found;
 }
 
 /** `readStoredTimelineEntry` without the revision — same caveats, read them there. */
@@ -565,6 +883,9 @@ export async function readStoredTimelineDocument(id: string, requesterUid: strin
 
 export type SaveOptions = Readonly<{
   isProject?: boolean;
+  /** Stamp `projectId` on this write. Absent leaves whatever is stored alone —
+   *  a write that does not know its project must not erase a correct value. */
+  projectId?: string;
   /**
    * Permit a save that leaves the document with NO clips, and clear the
    * `lastNonEmptyDocument` recovery snapshot with it. Off by default: an empty
@@ -605,6 +926,13 @@ function buildSavePayload(
         ? { lastNonEmptyDocument: FieldValue.delete() }
         : {}),
     isProject: options?.isProject ?? existing?.isProject === true,
+    // KEPT when the caller does not know it. A write that omits `projectId`
+    // leaves the stored value alone rather than writing undefined over it: the
+    // MCP tools and the trash routes write documents without a board's project
+    // context, and a correct hint must survive them.
+    ...(options?.projectId ?? existing?.projectId
+      ? { projectId: options?.projectId ?? existing?.projectId }
+      : {}),
     // Ownership: a save CREATES with the requester as owner, CLAIMS a legacy
     // unowned record, and was refused earlier on someone else's. Children
     // minted implicitly through writes (collection drops) are stamped too.
@@ -625,6 +953,15 @@ export async function saveFirebaseTimelineEntry(
   }
 
   const normalizedDocument = normalizeDocument(document);
+
+  // OFFLINE MODE — see readStoredTimelineEntry. Last-write-wins, which is what
+  // this path already is, so nothing is lost by not modelling the transaction.
+  if (fixtureStoreEnabled()) {
+    fixtureWriteDocuments([normalizedDocument]);
+    const entry = fixtureReadEntry(normalizedDocument.id);
+    return entry ?? { document: normalizedDocument, revision: 1 };
+  }
+
   const ref = collection().doc(normalizedDocument.id);
 
   // ONE TRANSACTION for read, checks and write.
@@ -769,6 +1106,15 @@ export async function saveFirebaseTimelineDocument(
 export async function saveFirebaseTimelineDocumentsAtomic(
   writes: readonly TimelineBatchWrite[],
   requesterUid: string,
+  /**
+   * The board that produced this batch, stamped onto every document in it.
+   *
+   * Batch-wide rather than per-write because a batch IS one board's edit — a
+   * cross-timeline move touches two documents and both belong to the same
+   * project. Callers without a board (the MCP tools, the trash routes) omit it,
+   * and omitting leaves any stored value alone.
+   */
+  options?: Readonly<{ projectId?: string }>,
 ): Promise<{ id: string; revision: number }[]> {
   for (const write of writes) {
     if (isUnsavedProjectPlaceholder(write.document)) {
@@ -778,6 +1124,21 @@ export async function saveFirebaseTimelineDocumentsAtomic(
   const ids = writes.map((write) => write.document.id);
   if (new Set(ids).size !== ids.length) {
     throw new Error("A batch write must not repeat a timeline id.");
+  }
+
+  // OFFLINE MODE. The two guards above still run — they are pure argument
+  // checks and catching a malformed batch offline is strictly better than
+  // discovering it later against the real store. What is NOT modelled below is
+  // everything the transaction does: revision compare-and-set, the orphan
+  // guard, the duplicate-owner guard. Offline writes always succeed, so a
+  // conflict or an orphan is invisible here BY CONSTRUCTION and has to be
+  // verified against Firestore.
+  if (fixtureStoreEnabled()) {
+    fixtureWriteDocuments(writes.map((write) => write.document));
+    return writes.map((write) => ({
+      id: write.document.id,
+      revision: (write.expectedRevision ?? 0) + 1,
+    }));
   }
 
   return withFirebaseTimeout(
@@ -879,12 +1240,14 @@ export async function saveFirebaseTimelineDocumentsAtomic(
             existingData,
             requesterUid,
             actualRevision + 1,
+            // `projectId` rides alongside `allowEmptying`: batch-wide, and only
+            // when the caller knows it.
             // Carries through to `lastNonEmptyDocument`, which MUST be dropped
             // for a deliberate empty: `toTimelineDocument` reads that snapshot
             // back whenever a stored document has no clips, so leaving it would
             // re-hydrate the very clips this write removed and the empty would
             // never stick.
-            { allowEmptying: write.allowEmptying },
+            { allowEmptying: write.allowEmptying, projectId: options?.projectId },
           ),
         });
       }
@@ -957,7 +1320,8 @@ export async function createFirebaseTimelineProject(requesterUid: string, title?
     description: "Custom timeline project.",
     clips: [],
   };
-  await saveFirebaseTimelineDocument(document, requesterUid, { isProject: true });
+  if (fixtureStoreEnabled()) fixtureCreateProject(id, cleanTitle);
+  else await saveFirebaseTimelineDocument(document, requesterUid, { isProject: true });
   return document;
 }
 
@@ -969,6 +1333,46 @@ export async function createFirebaseTimelineProject(requesterUid: string, title?
  * the user can no longer see or retry from.
  */
 const MAX_CASCADE_DOCUMENTS = 500;
+
+/** A clip left pointing at a document a delete would destroy. */
+export type TimelineInboundReference = Readonly<{
+  /** The document holding the clip — NOT part of the delete. */
+  fromId: string;
+  /** The clip's target, which the delete would remove. */
+  toId: string;
+}>;
+
+/**
+ * A delete refused because it would leave someone else pointing at nothing.
+ *
+ * The cascade walks DOWN: it collects the subtree below the root and removes
+ * it. Nothing asked who else pointed INTO that subtree, so a reference from
+ * outside it survived its target and became a dangling `childTimelineId` — a
+ * clip that still draws a card for a document that no longer exists. Five of
+ * those in one real project quietly added 33.9s of phantom footage to a
+ * collection's readout before anyone noticed.
+ *
+ * The twin of `TimelineOrphanError`, pointed the other way: that one refuses to
+ * leave a child with no parent, this one refuses to leave a parent with no
+ * child.
+ *
+ * REFUSES rather than repairs. Stripping the referring clips would edit
+ * documents the caller never named, during an operation they asked to be
+ * destructive — so the caller is told exactly what points in and decides.
+ */
+export class TimelineInboundReferenceError extends Error {
+  readonly references: readonly TimelineInboundReference[];
+
+  constructor(id: string, references: readonly TimelineInboundReference[]) {
+    super(
+      `Refusing to delete "${id}": ` +
+        `${references.map((r) => `"${r.fromId}" still points at "${r.toId}"`).join(", ")}. ` +
+        `Remove those clips first, or they will be left referencing nothing.`,
+    );
+    this.name = "TimelineInboundReferenceError";
+    this.references = references;
+  }
+}
 
 export class TimelineCascadeTooLargeError extends Error {
   constructor(id: string) {
@@ -1008,7 +1412,18 @@ const CASCADE_READ_CONCURRENCY = 12;
 const FIRESTORE_BATCH_LIMIT = 500;
 
 export async function deleteFirebaseTimelineDocument(id: string, requesterUid: string) {
+  // OFFLINE MODE. The real path cascades through children with a size ceiling;
+  // this removes the one document and nothing else, so an offline delete leaves
+  // orphans the real one would have taken with it.
+  if (fixtureStoreEnabled()) {
+    fixtureDeleteDocument(id);
+    return;
+  }
+
   const visited = new Set<string>([id]);
+  /** The root's project, captured on the way past — the inbound check below
+   *  needs it and the root is the only document certain to be read. */
+  let rootProjectId: string | undefined;
   // Root-first, so reversing it deletes the deepest documents first and the
   // root last — relevant only in the multi-batch path below, where a failure
   // part-way leaves a visibly broken parent the user can retry from rather
@@ -1038,6 +1453,7 @@ export async function deleteFirebaseTimelineDocument(id: string, requesterUid: s
       }
 
       const data = snapshot.data() as TimelineDocumentRecord;
+      if (currentId === id) rootProjectId = data.projectId;
       if (resolveOwnership(data.ownerUid, requesterUid) === "denied") {
         // At the root this is the authorization answer. Deeper it means a
         // stored clip pointed at someone else's document: skip it, and keep
@@ -1085,6 +1501,39 @@ export async function deleteFirebaseTimelineDocument(id: string, requesterUid: s
       }
     }
     frontier = next;
+  }
+
+  // WHO ELSE POINTS IN? Asked BEFORE anything is destroyed.
+  //
+  // Newly affordable. Answering it used to mean scanning the collection —
+  // hundreds of reads for every delete — so the cascade simply did not ask, and
+  // a reference from outside the subtree was left dangling. Now that every
+  // document carries `projectId`, it is ONE query.
+  //
+  // The ROOT is excluded on purpose: its own parent legitimately points at it,
+  // and removing that clip is the caller's job (the graph command that deletes
+  // a node writes its parent in the same batch). Only references to the
+  // DESCENDANTS being taken down with it are a problem, and only from documents
+  // that are not themselves being deleted.
+  //
+  // A document with no `projectId` cannot be checked this way, and the check is
+  // skipped rather than answered with a collection scan. That is a real gap and
+  // a deliberate one: `npm run stamp:project-ids` backfills the field, and a
+  // scan per delete is the cost this whole line of work exists to remove.
+  if (rootProjectId !== undefined && toDelete.length > 1) {
+    const deleting = new Set(toDelete);
+    const project = await readStoredTimelineProjectEntries(rootProjectId, requesterUid);
+    const references: TimelineInboundReference[] = [];
+    for (const [documentId, entry] of project) {
+      if (deleting.has(documentId)) continue;
+      for (const clip of entry.document.clips) {
+        if (clip.kind !== "collection" || !clip.childTimelineId) continue;
+        if (clip.childTimelineId === id) continue;
+        if (!deleting.has(clip.childTimelineId)) continue;
+        references.push({ fromId: documentId, toId: clip.childTimelineId });
+      }
+    }
+    if (references.length > 0) throw new TimelineInboundReferenceError(id, references);
   }
 
   // ONE atomic batch for the whole cascade, where it fits — which, given

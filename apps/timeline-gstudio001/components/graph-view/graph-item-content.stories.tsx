@@ -239,7 +239,12 @@ export const SingleFrame: Story = {
   play: async ({ canvasElement }) => {
     const images = previewImages(canvasElement);
     await expect(images).toHaveLength(1);
-    await expect(canvasElement).toHaveTextContent(/4\.0s\s*\/\s*1 item/);
+    // NO TIME on a placeholder. This fixture is un-hydrated, so the seconds
+    // could only come from the stored summary — and those are wrong on 58.4% of
+    // collection clips, with nothing on screen marking which. The count is
+    // still shown; the time arrives when the branch loads.
+    await expect(canvasElement).toHaveTextContent(/1 item/);
+    await expect(canvasElement.textContent ?? "").not.toContain("4.0s");
   },
 };
 
@@ -256,8 +261,17 @@ export const PlaceholderAriaCountMatchesBadge: Story = {
   play: async ({ canvasElement }) => {
     const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
     // The stored summary (itemCount 2), not the live childCount (0).
-    await expect(surface.getAttribute("aria-label")).toBe("A timeline (collection, 2 items)");
-    await expect(canvasElement).toHaveTextContent(/8\.0s\s*\/\s*2 items/);
+    //
+    // NAME FIRST, then context — a speech-input user says what they see.
+    // The duration is deliberately absent: folding it in makes the accessible
+    // name change when a branch finishes loading (see the card).
+    await expect(surface.getAttribute("aria-label")).toBe("A timeline, collection, 2 items");
+    // The COUNT survives on a placeholder and the time does not, which is the
+    // asymmetry worth pinning: one level of reading settles a count exactly
+    // (measured 0/3 wrong), while a duration sums the whole subtree and cannot
+    // be known without it.
+    await expect(canvasElement).toHaveTextContent(/2 items/);
+    await expect(canvasElement.textContent ?? "").not.toContain("8.0s");
 
     const name = canvasElement.querySelector<HTMLElement>(
       '[title="Click or press F2 to rename"]',
@@ -311,12 +325,12 @@ export const CollectionMarkSitsOnATranslucentDisc: Story = {
 
     const style = getComputedStyle(disc!);
     // The ALPHA, parsed out of whatever colour space the toolchain serialises
-    // in — Tailwind v4 resolves this to `oklab(0 0 0 / 0.25)`, not the
-    // `rgba(0, 0, 0, 0.25)` the utility name suggests, and pinning either
+    // in — Tailwind v4 resolves this to `oklab(0 0 0 / 0.45)`, not the
+    // `rgba(0, 0, 0, 0.45)` the utility name suggests, and pinning either
     // literal makes this story a test of the build rather than of the design.
     // Both spellings put the alpha last, which is the part worth pinning.
     const alpha = Number.parseFloat(/([\d.]+)\s*\)\s*$/.exec(style.backgroundColor)?.[1] ?? "1");
-    await expect(alpha).toBeCloseTo(0.25, 2);
+    await expect(alpha).toBeCloseTo(0.45, 2);
     await expect(style.opacity).toBe("1");
 
     // A CIRCLE, which is a square box plus a radius — checking the radius
@@ -335,20 +349,29 @@ export const CollectionMarkSitsOnATranslucentDisc: Story = {
 };
 
 /**
- * …and NOT over the empty state, which draws its own placeholder glyph. Two
- * glyphs stacked in the middle of one card just reads as a bug.
+ * …and over the EMPTY state too, which is a reversal worth recording.
+ *
+ * The mark used to be withheld here, because the empty slot drew an academy
+ * leader — a ring and a crosshair — and two glyphs stacked in one centre read
+ * as a bug. That placeholder is a flat gradient now, so the reason is gone and
+ * the opposite rule applies: a collection wears its mark whether or not it has
+ * anything in it, because that mark is the only thing on the card saying what
+ * KIND of thing it is.
  */
-export const EmptyCollectionHasNoCollectionMark: Story = {
+export const EmptyCollectionAlsoWearsTheCollectionMark: Story = {
   args: baseArgs,
   decorators: [renderWithDetail([])],
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelector("[data-empty-collection-preview]")).not.toBeNull();
-    await expect(canvasElement.querySelector("[data-collection-mark]")).toBeNull();
+    const mark = canvasElement.querySelector("[data-collection-mark]");
+    await expect(mark).not.toBeNull();
+    // The same disc-and-glyph a populated card gets, not a second treatment.
+    await expect(mark!.querySelector("svg")).not.toBeNull();
   },
 };
 
-/** An empty or unresolved collection shows only the collection affordance;
- * no fallback copy is allowed to bleed through behind the folder glyph. */
+/** An empty or unresolved collection shows a bare graded panel: no fallback
+ * copy is allowed to bleed through behind the centred collection mark. */
 export const EmptyCardUsesCleanIconFallback: Story = {
   args: baseArgs,
   decorators: [renderWithDetail([])],
@@ -361,12 +384,13 @@ export const EmptyCardUsesCleanIconFallback: Story = {
     await expect(previewImages(canvasElement)).toHaveLength(0);
     await expect(canvasElement).not.toHaveTextContent(/open to load|empty|no media preview/i);
 
-    // What the card shows INSTEAD: the leader glyph, drawn into the empty
-    // frame. This used to check for the corner drill button on the same
-    // reasoning — "an empty card still says collection" — but that button is
-    // gone (a plain click opens the card now), and the glyph was always the
-    // part of the answer that belongs to this story.
-    await expect(fallback!.querySelector("svg")).not.toBeNull();
+    // The empty slot itself draws NOTHING now — it is a bare gradient panel,
+    // which is what lets the centred collection mark be the single thing
+    // saying "collection" on every card. The glyph is therefore a SIBLING of
+    // this element rather than a child of it; asserting it here would have
+    // quietly kept passing on the old leader drawing.
+    await expect(fallback!.querySelector("svg")).toBeNull();
+    await expect(canvasElement.querySelector("[data-collection-mark] svg")).not.toBeNull();
   },
 };
 
@@ -384,7 +408,7 @@ export const EmptyCardUsesCleanIconFallback: Story = {
  * A collection that LEADS WITH AUDIO shows the music glyph, not the leader.
  *
  * The thumbnail is the first child's frame and audio has none, so a collection
- * of voice takes fell through to `CollectionLeaderPlaceholder` — the film
+ * of voice takes fell through to `EmptyCollectionPlaceholder` — the film
  * crosshair, which means "no picture here". For sound that is the wrong
  * sentence, and the audio media card already had the right glyph.
  */
@@ -506,7 +530,7 @@ export const ComposedCardStructure: Story = {
     await userEvent.clear(editor!);
     await userEvent.type(editor!, "Renamed timeline{Enter}");
     await waitFor(() =>
-      expect(surface!.getAttribute("aria-label")).toMatch(/^Renamed timeline \(collection/),
+      expect(surface!.getAttribute("aria-label")).toMatch(/^Renamed timeline,/),
     );
   },
 };
@@ -948,7 +972,10 @@ export const DisabledCollection: Story = {
     await expect(getComputedStyle(metadata).filter).toBe("none");
     await expect(getComputedStyle(metadata).opacity).toBe("1");
     await expect(metadata.textContent).toContain("A timeline");
-    await expect(metadata.textContent).toContain("8.0s");
+    // The time is absent here for the same reason as the other placeholder
+    // stories, not because disabling hid it — the disabled CHIP and the
+    // metadata row are what this story is about, and both still render.
+    await expect(metadata.textContent).not.toContain("8.0s");
     await expect(metadata.textContent).toContain("2 items");
     // The corner drill control used to be checked here too (its glyph's stroke
     // weight). It is gone, and its Layers glyph survives as the caption's KIND
@@ -1134,7 +1161,11 @@ export const AnchorControlAndCountBadge: Story = {
  *  GraphCollectionItemParts rather than GraphClipContent, so they need their
  *  own cover — a media-only implementation would leave tagged collections
  *  showing nothing at all. */
-function renderWithTags(tags: string[], surface: "grid" | "strip" = "strip") {
+function renderWithTags(
+  tags: string[],
+  surface: "grid" | "strip" = "strip",
+  selectMode = false,
+) {
   const detail: ClipDetail = {
     alt: "A timeline",
     aspect: 16 / 9,
@@ -1145,8 +1176,15 @@ function renderWithTags(tags: string[], surface: "grid" | "strip" = "strip") {
   };
   const store = createGraphDetailsStore({ [COLLECTION_ID]: detail });
   const decorator: Decorator = (Story) => (
-    <DndCollections initialGraph={providerGraph}>
+    // `keepMultiSelectModeWhenEmpty` is REQUIRED for a select-mode story, not
+    // decoration: without it the store disarms the mode the moment the
+    // selection is empty, so arming it with nothing selected turns straight
+    // back off and the checkbox never appears. The media decorator has carried
+    // this from the start; this one did not need it until a story armed the
+    // mode here.
+    <DndCollections initialGraph={providerGraph} keepMultiSelectModeWhenEmpty>
       <GraphDetailsProvider store={store}>
+        {selectMode ? <ArmSelectMode /> : null}
         {/* The grid marker is what the card matches on, so a "grid" story sets
             it here exactly as VirtualGrid does — and gets the taller box a
             grid cell actually has, since the caption needs somewhere to go. */}
@@ -1713,32 +1751,41 @@ export const SelectModeShowsACheckbox: Story = {
 };
 
 /**
- * Idle, the checkbox is RENDERED but invisible, waiting on hover.
+ * Outside select mode there is NO checkbox — not a transparent one, none.
  *
- * The change from "absent" to "transparent" is the whole mechanism: hover is
- * owned by CSS so that no pointer state has to reach React, where a hover that
- * re-rendered every card would land on the drag/INP hot path. So the old
- * `toBeNull` is the wrong assertion now and would pass for the wrong reason if
- * the reveal ever broke — opacity is what to measure.
+ * It used to be rendered and revealed by CSS `:hover`, which made this story
+ * an opacity measurement. The element is gone now, so the assertion is back to
+ * presence — and presence is the stronger property: a transparent control is
+ * still a click target, which is why the old code had to keep
+ * `pointer-events-none` welded to the opacity in one rule.
  *
- * THE REVEAL ITSELF IS NOT TESTABLE HERE, and the first version of this story
- * pretended otherwise. `userEvent.hover` dispatches synthetic pointer events;
- * CSS `:hover` is a browser state driven by real pointer position, and no
- * synthetic event sets it. The story sat at opacity 0 and failed, which was the
- * test being wrong rather than the CSS. Real-mouse hover lives in the e2e suite
- * ("the select checkbox appears on hover…"), which is the layer this repo keeps
- * for trusted input.
+ * Why it went: this is a dragging board, the cursor is over cards constantly
+ * because things are being moved rather than chosen, and a checkbox appearing
+ * under it every time was noise during the gesture the board is for.
  */
-export const CheckboxWaitsForHoverOutsideSelectMode: Story = {
+export const NoCheckboxOutsideSelectMode: Story = {
   args: mediaArgs,
   decorators: [renderMediaCard({ surface: "grid" })],
   play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-selection-indicator]")).toBeNull();
+  },
+};
+
+/**
+ * And in select mode it is there, opaque, with no pointer anywhere near it.
+ *
+ * The pair is the point: absence alone would pass just as well if the checkbox
+ * were broken in BOTH states, which is exactly the failure a one-sided test
+ * cannot see.
+ */
+export const CheckboxAppearsInSelectMode: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "grid", selectMode: true })],
+  play: async ({ canvasElement }) => {
     const indicator = canvasElement.querySelector<HTMLElement>("[data-selection-indicator]");
     await expect(indicator).not.toBeNull();
-    await expect(indicator!.dataset.selectionIndicatorReveal).toBe("hover");
-    await expect(getComputedStyle(indicator!).opacity).toBe("0");
-    // Transparent, NOT display:none — it has to keep its box, or the reveal
-    // would relayout the card under the pointer.
+    await expect(indicator!.dataset.selectionIndicatorReveal).toBe("armed");
+    await expect(getComputedStyle(indicator!).opacity).toBe("1");
     await expect(indicator!.getBoundingClientRect().width).toBeGreaterThan(0);
   },
 };
@@ -1884,26 +1931,157 @@ export const CollectionSelectModeCheckboxClearsTheMetadata: Story = {
 };
 
 /**
- * The collection card's checkbox waits on hover too.
+ * The collection card, both ways — and it is the kind that pays for this.
  *
- * Its own story rather than a second case in the media one, because the two
- * card kinds carry DIFFERENT literal class strings
- * (`group-hover/collection-item` vs `group-hover/media-item`). Tailwind's JIT
- * scans source text, so a wrong or interpolated group name produces a class
- * that is never generated and a checkbox that silently never appears — and the
- * media story would still be green. Two kinds, two literals, two covers.
+ * A plain click on a collection DRILLS IN, so the checkbox was the only thing
+ * on the card saying it could be picked at all. Removing it outside select mode
+ * means there is no pointer route to selecting a collection until the mode is
+ * on. That is the accepted trade, and this pair is where it is visible.
  *
- * Collections are the kind that needs it most: a plain click drills IN, so this
- * circle is the only thing on the card that says it can be picked at all.
+ * Its own story rather than a case in the media one, because the two card kinds
+ * are rendered by DIFFERENT components — collections through the composed
+ * CollectionItem shell, media through NodeCard — so nothing structural forces
+ * them to agree, and they have diverged before.
  */
-export const CollectionCheckboxWaitsForHover: Story = {
+export const CollectionHasNoCheckboxOutsideSelectMode: Story = {
   args: baseArgs,
   decorators: [renderWithTags([], "grid")],
   play: async ({ canvasElement }) => {
-    const indicator = canvasElement.querySelector<HTMLElement>("[data-selection-indicator]");
-    await expect(indicator).not.toBeNull();
-    await expect(indicator!.dataset.selectionIndicatorReveal).toBe("hover");
-    await expect(getComputedStyle(indicator!).opacity).toBe("0");
-    await expect(indicator!.getBoundingClientRect().width).toBeGreaterThan(0);
+    await expect(canvasElement.querySelector("[data-selection-indicator]")).toBeNull();
+  },
+};
+
+export const CollectionCheckboxAppearsInSelectMode: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags([], "grid", true)],
+  play: async ({ canvasElement }) => {
+    // Armed by an effect, so the first committed frame legitimately has no
+    // checkbox — `waitFor` covers that, and covers nothing else. It is NOT what
+    // made this story pass: it failed for a full second against a decorator
+    // missing `keepMultiSelectModeWhenEmpty`, which is the actual reason and is
+    // recorded there.
+    const indicator = await waitFor(() => {
+      const found = canvasElement.querySelector<HTMLElement>("[data-selection-indicator]");
+      if (!found) throw new Error("no selection indicator yet");
+      return found;
+    });
+    await expect(indicator.dataset.selectionIndicatorReveal).toBe("armed");
+    await expect(getComputedStyle(indicator).opacity).toBe("1");
+  },
+};
+
+/* ── Vouching: a card shows a time only when it can add one up ────────────── */
+
+const VOUCH_PARENT_ID = "vouch-parent" as NodeId;
+const VOUCH_KID_ID = "vouch-kid" as NodeId;
+
+/** A collection holding only MEDIA — everything its time depends on is in the
+ *  graph, so it can be added up exactly. 103 of 149 collections in the real
+ *  project look like this. */
+const mediaOnlyGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: VOUCH_PARENT_ID,
+      name: "Locations",
+      children: [
+        { kind: "media", id: "loc-a" as NodeId, name: "Alley", fullDurationSeconds: 4 },
+        { kind: "media", id: "loc-b" as NodeId, name: "Diner", fullDurationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+/** The same card, but one child is a COLLECTION that has not loaded. Its
+ *  seconds are unknowable without reading that branch. */
+const nestedCollectionGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: VOUCH_PARENT_ID,
+      name: "Characters",
+      children: [{ kind: "collection", id: VOUCH_KID_ID, name: "Pat", children: [] }],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+const detail = (over: Partial<ClipDetail>): ClipDetail => ({
+  alt: "A timeline",
+  aspect: 16 / 9,
+  hydrated: true,
+  itemCount: 2,
+  duration: 999,
+  previewItems: [],
+  ...over,
+});
+
+/** Renders as text like "8.1s" or "23:21" — either shape counts as a time. */
+const A_TIME = /\d+(\.\d+)?s|\d+:\d{2}/;
+
+function vouchDecorator(
+  graph: CollectionsGraph,
+  details: Record<string, ClipDetail>,
+): Decorator {
+  // NAMED, not a bare arrow returned from a factory: `react/display-name`
+  // cannot infer a name for the latter, and it is an ERROR in this config —
+  // `renderWithDetail` above assigns to a named const for the same reason.
+  const WithVouchFixture: Decorator = (Story) => (
+    <DndCollections initialGraph={graph}>
+      <GraphDetailsProvider store={createGraphDetailsStore(details)}>
+        <div className="h-32 w-40 bg-zinc-950 p-2">
+          <Story />
+        </div>
+      </GraphDetailsProvider>
+    </DndCollections>
+  );
+  return WithVouchFixture;
+}
+
+/**
+ * A collection whose branch is fully loaded SHOWS its time.
+ *
+ * The board reads one level (`BOARD_OPEN_MAX_DEPTH`), so a media-only
+ * collection arrives complete and can be added up exactly. This is the case
+ * that keeps the board from being uniformly timeless.
+ */
+export const VouchedCollectionShowsItsTime: Story = {
+  args: { ...baseArgs, id: VOUCH_PARENT_ID },
+  decorators: [
+    vouchDecorator(mediaOnlyGraph, { [VOUCH_PARENT_ID]: detail({ duration: 999 }) }),
+  ],
+  play: async ({ canvasElement }) => {
+    // NOT 999: the stored summary is deliberately absurd here, so a card
+    // reading it rather than its live children fails loudly.
+    await expect(canvasElement.textContent ?? "").toMatch(A_TIME);
+    await expect(canvasElement.textContent ?? "").not.toContain("999");
+  },
+};
+
+/**
+ * A collection with an unloaded branch shows its COUNT and no time.
+ *
+ * Previously it fell back to the stored summary, which drifts — measured on a
+ * real project, two of the three cards on the board reported a duration up to
+ * 40 seconds wrong, and nothing on screen distinguished them from the right
+ * one. A count is still exact (these are this collection's own children), so
+ * the card stays informative; the time arrives when the branch is opened.
+ */
+export const UnvouchedCollectionShowsCountOnly: Story = {
+  args: { ...baseArgs, id: VOUCH_PARENT_ID },
+  decorators: [
+    vouchDecorator(nestedCollectionGraph, {
+      [VOUCH_PARENT_ID]: detail({ itemCount: 1 }),
+      // The child that has not loaded — the reason the parent cannot add up.
+      [VOUCH_KID_ID]: detail({ hydrated: false, itemCount: 5, duration: 60 }),
+    }),
+  ],
+  play: async ({ canvasElement }) => {
+    const text = canvasElement.textContent ?? "";
+    await expect(text).toContain("1 item");
+    await expect(text).not.toMatch(A_TIME);
   },
 };

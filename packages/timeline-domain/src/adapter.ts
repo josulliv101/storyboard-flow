@@ -118,6 +118,10 @@ export type ClipDetail = Readonly<{
   trashedAt?: string;
   trashedFrom?: TrashOrigin;
   itemCount?: number;
+  /** What a collection is FOR — see `CollectionTimelineClip["role"]`. Rides
+   *  the side-table for the same reason `tags` and `sourceAsset` do: the
+   *  engine never reads it, so no graph command is needed to carry it. */
+  role?: CollectionTimelineClip["role"];
   previewItems?: CollectionTimelineClip["previewItems"];
   /** The collection clip's own display duration in its parent timeline — its
    *  LAYOUT span, disabled descendants included. */
@@ -250,6 +254,7 @@ function collectionDetail(clip: CollectionTimelineClip, hydrated: boolean): Clip
     ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
     sourceClipId: clip.id,
     itemCount: clip.itemCount,
+    ...(clip.role === undefined ? {} : { role: clip.role }),
     ...(clip.previewItems === undefined ? {} : { previewItems: clip.previewItems }),
     duration: clip.duration,
     ...(clip.playableDuration === undefined
@@ -451,28 +456,182 @@ export function buildFocusedGraph(
  * from the live graph makes the projection agree with the manifest wherever
  * the session has real knowledge, and writes become self-healing.
  */
+/**
+ * What a PLACEHOLDER collection is worth, in seconds.
+ *
+ * All anyone knows about an un-hydrated child is its stored summary — but a
+ * stored `0` is not knowledge, it is the write path persisting a duration it
+ * did not have. Zero survives `??` (it is not nullish), so every reader that
+ * wrote `summary ?? 3` was silently counting those children as no time at all.
+ *
+ * Found as a number that changed on reload: a collection read 12.4s on a cold
+ * load, where the server ignores stored summaries and re-derives bottom-up, and
+ * 3.4s after navigating to it and back, where the client trusted three stored
+ * zeroes. The floor is not invented here either — `collectionSpanSeconds` gives
+ * an empty collection the same 3 seconds, because "a zero-width collection card
+ * cannot be seen or clicked", and the `?? 3` this replaces was plainly reaching
+ * for that same rule.
+ *
+ * One helper, three callers (duration, playable duration, and the projection's
+ * own clip), so a fourth reader cannot reintroduce the gap.
+ */
+function placeholderSeconds(...candidates: readonly (number | undefined)[]): number {
+  for (const candidate of candidates) {
+    // Positive AND finite: a stored NaN or Infinity is the same kind of
+    // non-knowledge as a zero, and either would poison every ancestor's total.
+    if (candidate !== undefined && Number.isFinite(candidate) && candidate > 0) return candidate;
+  }
+  return EMPTY_COLLECTION_SECONDS;
+}
+
+/**
+ * What a collection with nothing countable in it is worth.
+ *
+ * The model's own number, from `collectionSpanSeconds`: "An EMPTY list is 3
+ * seconds, not zero: a zero-width collection card cannot be seen or clicked."
+ * Named here rather than repeated as a literal, because the two walks below and
+ * the placeholder fallback above are three chances to disagree with it.
+ */
+const EMPTY_COLLECTION_SECONDS = 3;
+
+/**
+ * The node whose CHILDREN are this collection's real content, or null when it
+ * is not loaded.
+ *
+ * Ordinarily that is the node itself. A DUPLICATE placement is the exception:
+ * the same child referenced twice inside one hydrated area is demoted to a
+ * `dup:` node with no children of its own, carrying `duplicateOfTimelineId`
+ * back to the placement that does have them.
+ *
+ * The walks below used to read such a node's STORED summary, which is a copy
+ * nothing maintains. In a real project the two parents of the one duplicated
+ * collection store 6.12s and 7.12s for the same 4.0s of content — so at least
+ * one was always wrong, and whichever ancestor contained it inherited the
+ * error. Following the pointer costs nothing (the original is already in the
+ * graph) and makes the answer exact.
+ */
+function collectionContentSource(details: DetailsById, id: NodeId): NodeId | null {
+  const detail = details[id as string];
+  if (detail?.hydrated === true) return id;
+  const original = detail?.duplicateOfTimelineId;
+  if (original !== undefined && details[original]?.hydrated === true) return original as NodeId;
+  return null;
+}
+
+/**
+ * Can this collection's aggregate readouts be VOUCHED for?
+ *
+ * True only when the collection and every collection beneath it is hydrated.
+ * The distinction matters because `hydratedCollectionDuration` below answers
+ * for a partly-loaded tree by substituting each unhydrated child's STORED
+ * summary — a number that is right often enough to look right and wrong often
+ * enough to mislead. Measured on a real project served one level deep, two of
+ * the three cards on the board reported a duration off by up to 40 seconds.
+ *
+ * So the walks stay as they are (the write path projects through them, and
+ * geometry must always have an answer), and this says whether the answer is
+ * worth SHOWING. A card that cannot vouch for its time renders no time and
+ * gains one when the branch is opened and its subtree loads.
+ *
+ * A reference CYCLE resolves as vouched rather than looping: an unhydrated node
+ * anywhere in it has already returned false, so the only way back to a node
+ * being visited is through nodes that were all hydrated.
+ */
+export function collectionSubtreeHydrated(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  collectionId: NodeId,
+  /**
+   * Ids the server has REPORTED as gone — a `childTimelineId` whose document
+   * does not exist.
+   *
+   * GONE IS KNOWN, and conflating it with "not loaded yet" is what made this
+   * predicate wait forever. A dangling reference has no document to load, so a
+   * branch containing one could never vouch and its card was permanently
+   * timeless rather than briefly so. Measured on a real project: five dangling
+   * references under one collection held an otherwise complete 133-document
+   * branch at "no duration", indefinitely.
+   *
+   * A missing child contributes nothing to a total, and the walks already
+   * treat it that way, so a subtree whose only unhydrated members are known
+   * missing is exactly computable.
+   */
+  isKnownMissing: (id: string) => boolean = () => false,
+): boolean {
+  const visit = (id: NodeId, visiting: Set<string>): boolean => {
+    const key = id as string;
+    if (visiting.has(key)) return true;
+    // Gone, and known to be gone — see above.
+    if (isKnownMissing(key)) return true;
+    // ABSENT is not unhydrated. Details are built from a parent's CLIP, so the
+    // focused root has no entry of its own — its document is the one thing we
+    // certainly hold. Any referenced child does have an entry (with
+    // `hydrated: false` until it loads), so absence only ever means "this is
+    // the root". Failing on absence made the board header permanently
+    // timeless.
+    const detail = details[key];
+    if (detail !== undefined) {
+      // A DUPLICATE resolves to the placement that holds the content, exactly
+      // as the duration walks do — otherwise a second reference to a loaded
+      // collection blocks every ancestor forever, which is what kept a
+      // 133-document branch timeless after the dangling ids were handled.
+      const source = collectionContentSource(details, id);
+      if (source === null) return false;
+      if (source !== id) return visit(source, visiting);
+    }
+    visiting.add(key);
+    for (const childId of getChildren(graph, id)) {
+      const node = graph.nodesById.get(childId);
+      if (!node || node.kind !== "collection") continue;
+      if (!visit(childId, visiting)) return false;
+    }
+    visiting.delete(key);
+    return true;
+  };
+  return visit(collectionId, new Set());
+}
+
 export function hydratedCollectionDuration(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: NodeId,
 ): number {
-  let total = TIMELINE_LEADING_PADDING_SECONDS;
-  let first = true;
-  for (const childId of getChildren(graph, collectionId)) {
-    const node = graph.nodesById.get(childId);
-    if (!node) continue;
-    if (!first) total += CLIP_GAP_SECONDS;
-    first = false;
-    if (node.kind === "media") {
-      total += mediaDurationSeconds(node);
-      continue;
+  // VISITING GUARD. Following a duplicate's pointer is the first thing in this
+  // walk that can reach a node already on the stack, so the recursion needs a
+  // way to stop. A tree never triggers it.
+  const walk = (id: NodeId, visiting: Set<string>): number => {
+    const key = id as string;
+    if (visiting.has(key)) return EMPTY_COLLECTION_SECONDS;
+    visiting.add(key);
+    let total = TIMELINE_LEADING_PADDING_SECONDS;
+    let first = true;
+    for (const childId of getChildren(graph, id)) {
+      const node = graph.nodesById.get(childId);
+      if (!node) continue;
+      if (!first) total += CLIP_GAP_SECONDS;
+      first = false;
+      if (node.kind === "media") {
+        total += mediaDurationSeconds(node);
+        continue;
+      }
+      const source = collectionContentSource(details, childId);
+      total +=
+        source === null
+          ? placeholderSeconds(details[childId as string]?.duration)
+          : walk(source, visiting);
     }
-    const detail = details[childId as string];
-    total += detail?.hydrated
-      ? hydratedCollectionDuration(graph, details, childId)
-      : (detail?.duration ?? 3);
-  }
-  return total;
+    visiting.delete(key);
+    // NOTHING COUNTABLE means the model's empty floor, not the padding
+    // constant. This walk starts at TIMELINE_LEADING_PADDING_SECONDS — which is
+    // zero — and adds a term per child, so an empty collection returned 0 while
+    // `collectionSpanSeconds` returned 3 for the same question. That is where
+    // the stored zeroes came from: the write path persists documents THROUGH
+    // this projection, so every empty collection wrote a duration of 0, and
+    // every reader downstream then had to defend against a value that was never
+    // a measurement.
+    return first ? EMPTY_COLLECTION_SECONDS : total;
+  };
+  return walk(collectionId, new Set());
 }
 
 /**
@@ -490,29 +649,130 @@ export function hydratedCollectionDuration(
  * before the field existed — where nothing is disabled the two are equal
  * anyway, so the fallback is exact rather than approximate.
  */
+/**
+ * What a viewer sits through in ONE collection — lane-aware.
+ *
+ * The board header's number. Its twin below answers the same question
+ * lane-BLIND, by summing every child, and cannot be changed to do otherwise:
+ * `graphChildrenToClips` projects through it to persist each clip's
+ * `playableDuration`, so redefining it would rewrite stored summaries.
+ *
+ * WHY THE HEADER NEEDED ITS OWN. It was computing from card GEOMETRY —
+ * `playableSpanSeconds` over the spans the strip draws — which is the layout
+ * span, and a card whose descendants are disabled keeps its full slot. So the
+ * header counted time nobody watches: on a real project it read 23:01 while its
+ * three cards summed to about 20:45, because more than half of one branch is
+ * disabled deep inside. The spans carry no node id, so the fix could not live
+ * in `playableSpanSeconds` — it has to start from the graph.
+ *
+ * LANES PLAY TOGETHER, so a lane's contents are summed and the longest lane
+ * wins. Summing across lanes would claim a 4s bed under a 4s shot makes an 8s
+ * timeline. Only 4 clips across 2 documents use a non-picture lane here, but
+ * the header is the one readout that already got this right and it should not
+ * regress to fix the other half.
+ */
+export function hydratedCollectionPlayableSpan(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  collectionId: NodeId,
+  isKnownMissing: (id: string) => boolean = () => false,
+): number {
+  const byLane = new Map<number, number[]>();
+  for (const childId of getChildren(graph, collectionId)) {
+    const node = graph.nodesById.get(childId);
+    if (!node || node.disabled === true) continue;
+    const key = childId as string;
+    // Gone contributes NO SECONDS but still takes a slot, which is the same
+    // bargain the lane-blind walk makes: the broken reference is drawn, so it
+    // still separates its neighbours and its gap is real.
+    const seconds = isKnownMissing(key)
+      ? 0
+      : node.kind === "media"
+        ? mediaDurationSeconds(node)
+        : hydratedCollectionPlayableDuration(graph, details, childId, isKnownMissing);
+    // THE LANE IS ON THE NODE, not the detail — the same source
+    // `graphChildrenToClips` reads when it projects a clip back out.
+    const lane = trackIndexOf({ trackIndex: node.trackIndex ?? 0 });
+    const row = byLane.get(lane);
+    if (row) row.push(seconds);
+    else byLane.set(lane, [seconds]);
+  }
+  let longest = 0;
+  for (const row of byLane.values()) {
+    const content = row.reduce((total, seconds) => total + seconds, 0);
+    longest = Math.max(
+      longest,
+      TIMELINE_LEADING_PADDING_SECONDS + content + CLIP_GAP_SECONDS * (row.length - 1),
+    );
+  }
+  return longest;
+}
+
 export function hydratedCollectionPlayableDuration(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: NodeId,
+  /**
+   * Ids the server has reported as GONE. They contribute ZERO here.
+   *
+   * Not what this did: a dangling reference fell through to
+   * `placeholderSeconds`, which returns the clip's stored duration — a
+   * remembered number for content that no longer exists. Measured on a real
+   * project, five dangling references added 33.9s to one collection's readout,
+   * so a card reported 19:24 of material when 18:51 of it was real.
+   *
+   * Its GEOMETRY twin deliberately keeps the stored span: the broken reference
+   * still draws a card, and a zero-width card cannot be seen or clicked. What
+   * a viewer would sit through is a different question, and the answer for a
+   * document that is gone is nothing.
+   */
+  isKnownMissing: (id: string) => boolean = () => false,
 ): number {
-  let total = TIMELINE_LEADING_PADDING_SECONDS;
-  let first = true;
-  for (const childId of getChildren(graph, collectionId)) {
-    const node = graph.nodesById.get(childId);
-    if (!node) continue;
-    if (node.disabled === true) continue;
-    if (!first) total += CLIP_GAP_SECONDS;
-    first = false;
-    if (node.kind === "media") {
-      total += mediaDurationSeconds(node);
-      continue;
+  const walk = (id: NodeId, visiting: Set<string>): number => {
+    const key = id as string;
+    if (visiting.has(key)) return 0;
+    visiting.add(key);
+    let total = TIMELINE_LEADING_PADDING_SECONDS;
+    let first = true;
+    for (const childId of getChildren(graph, id)) {
+      const node = graph.nodesById.get(childId);
+      if (!node) continue;
+      if (node.disabled === true) continue;
+      if (!first) total += CLIP_GAP_SECONDS;
+      first = false;
+      if (node.kind === "media") {
+        total += mediaDurationSeconds(node);
+        continue;
+      }
+      const childKey = childId as string;
+      // Gone plays for zero seconds — see `isKnownMissing` above. The gap is
+      // still counted: the card is drawn, so it still separates its neighbours.
+      if (isKnownMissing(childKey)) continue;
+      const source = collectionContentSource(details, childId);
+      const detail = details[childKey];
+      total +=
+        source === null
+          ? placeholderSeconds(detail?.playableDuration, detail?.duration)
+          : walk(source, visiting);
     }
-    const detail = details[childId as string];
-    total += detail?.hydrated
-      ? hydratedCollectionPlayableDuration(graph, details, childId)
-      : (detail?.playableDuration ?? detail?.duration ?? 3);
-  }
-  return total;
+    visiting.delete(key);
+    // NO FLOOR HERE, unlike its twin, and the difference is the whole point of
+    // there being two walks.
+    //
+    // A floor was tried here and an existing test refused it: "returns ZERO
+    // when every child is disabled — a real answer, not 'unknown'". Geometry
+    // needs a floor because a zero-width card cannot be seen or clicked; a
+    // READOUT of what a viewer would sit through has no such need, and zero is
+    // a legitimate live value for a collection that plays nothing. Flooring it
+    // would also re-break what that test guards: a reader treating 0 as
+    // "unknown" falls back on a stale nonzero summary and re-quotes it.
+    //
+    // The placeholder fallback above still defaults to 3, and that is
+    // consistent: an UN-HYDRATED child is unknown, an all-disabled one is
+    // measured.
+    return total;
+  };
+  return walk(collectionId, new Set());
 }
 
 /**
@@ -836,7 +1096,7 @@ export function graphChildrenToClips(
     // anyone knows about them.
     const duration = detail?.hydrated
       ? hydratedCollectionDuration(graph, details, node.id)
-      : (detail?.duration ?? 3);
+      : placeholderSeconds(detail?.duration);
     // Hydrated collections DERIVE their preview frames from live children (see
     // hydratedCollectionPreviewItems) — same stale-summary rule duration and
     // itemCount already follow; placeholders keep the stored summary.
@@ -899,6 +1159,7 @@ export function graphChildrenToClips(
       itemCount: detail?.hydrated
         ? getChildren(graph, node.id).length
         : (detail?.itemCount ?? getChildren(graph, node.id).length),
+      ...(detail?.role === undefined ? {} : { role: detail.role }),
       ...(previewItems === undefined ? {} : { previewItems }),
       ...(playableDuration === undefined ? {} : { playableDuration }),
       alt: detail?.alt ?? `${node.name} collection`,

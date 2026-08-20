@@ -160,46 +160,38 @@ export const CARD_CONTROL_INSET_RIGHT = "right-5";
  *  8px the controls sat tight under the card's edge once they grew to 28px. */
 export const CARD_CONTROL_INSET_TOP = "top-3";
 
-// Hover-reveal, per card kind. Whole literal class names: Tailwind's JIT scans
-// source text, so a computed `group-hover/${kind}` is a class that never gets
-// generated and the checkbox would silently never appear.
-//
-// `pointer-events-none` travels WITH the opacity and is not decoration: the
-// checkbox is a click target now, and an invisible one would be a trap. On
-// touch the `@media (hover: hover)` gate never opens, so without this a tap in
-// the card's bottom-right corner would toggle a selection through a control the
-// user cannot see. Hidden means unclickable, in the same rule, so the two can
-// never drift apart.
-export const SELECT_HOVER_REVEAL_MEDIA = [
-  "pointer-events-none opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
-  "[@media(hover:hover)]:group-hover/media-item:pointer-events-auto",
-  "[@media(hover:hover)]:group-hover/media-item:opacity-100",
-].join(" ");
-
-/** The same, for a COLLECTION card's group. */
-export const SELECT_HOVER_REVEAL_COLLECTION = [
-  "pointer-events-none opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
-  "[@media(hover:hover)]:group-hover/collection-item:pointer-events-auto",
-  "[@media(hover:hover)]:group-hover/collection-item:opacity-100",
-].join(" ");
+// The hover-reveal class pairs lived here, one per card kind, and are gone with
+// the hover checkbox they revealed. They carried a rule worth remembering if
+// anything is ever revealed on hover again: `pointer-events-none` has to travel
+// WITH the opacity, because an invisible click target is a trap — on touch the
+// `@media (hover: hover)` gate never opens, so a tap in the card's bottom-right
+// corner would otherwise toggle a selection through a control nobody can see.
 
 /**
- * The selection checkbox, bottom-right, while select mode is armed.
+ * The selection checkbox, bottom-right. ONLY IN SELECT MODE.
+ *
+ * It used to appear on HOVER outside the mode as well, and clicking it both
+ * toggled and ARMED the mode — which made it the only pointer route to picking
+ * a collection, since the rest of that card drills in.
+ *
+ * REMOVED BECAUSE THIS IS A DRAGGING BOARD. The ordinary way to work here is
+ * grabbing and moving things, so the cursor is over cards constantly and not
+ * because anyone is choosing them — and a checkbox that materialises under it
+ * on every card you pass is noise during the gesture the board is actually for.
+ *
+ * It also had less to offer than it looked: most of what select mode does is
+ * already covered by drag and drop. The mode earns its place on the edge cases —
+ * acting on several things at once — and those are worth an explicit step.
+ *
+ * So the route is not lost, only staged: press Select, then click. That is one
+ * more step to select a collection, and it is the accepted trade, not an
+ * oversight.
  *
  * DECORATIVE as far as the a11y tree is concerned, and that is forced, not a
  * shortcut. This renders inside NodeCard's real `<button>`, and a button may
  * not contain interactive content: browsers auto-close the outer one at the
  * first nested button, which ejects the rest of the card out of its own box.
- *
- * Nothing is lost in select mode, because the whole card is already the toggle
- * there. OUTSIDE the mode it appears on HOVER, and CLICKING IT TOGGLES *and
- * ARMS the mode*. That matters most on a collection: the rest of that card
- * drills in, so this circle is the only pointer route to picking one at all.
- *
- * DESKTOP ONLY, via `@media (hover: hover)`. A touch device has no hover state
- * to reveal it with, and without the query a tap would leave the checkbox
- * stuck on the last-tapped card — the sticky-hover bug — where it would read as
- * a selection that is not there.
+ * Nothing is lost by it, because in select mode the whole card is the toggle.
  *
  * Two details worth keeping if this is ever restyled. The check is ALWAYS
  * rendered and only its opacity changes, so the circle never resizes as it
@@ -211,24 +203,28 @@ export function SelectionIndicator({
   id,
   selected,
   armed,
-  revealOnHover,
 }: Readonly<{
   selected: boolean;
-  /** Select mode is on, so the checkbox is permanent rather than hover-only. */
+  /** Select mode is on. The checkbox does not exist otherwise. */
   armed: boolean;
-  /** Literal hover-reveal classes for THIS card kind's group. */
-  revealOnHover: string;
   /** The card this toggles. */
   id: NodeId;
 }>) {
   const store = useCollectionsStore();
+  // Not rendered at all rather than hidden. A hover-revealed checkbox was also
+  // a click target that could be hit before it was visible; absent, it cannot
+  // be. It also drops the `@media (hover: hover)` guard the reveal needed, and
+  // with it the sticky-hover bug that left one stuck on the last-tapped card.
+  if (!armed) return null;
   return (
     <span
       aria-hidden="true"
       data-selection-indicator={selected ? "on" : "off"}
       // Distinguishes "permanently shown because the mode is armed" from
       // "revealed by the pointer", which a geometry-only assertion cannot see.
-      data-selection-indicator-reveal={armed ? "armed" : "hover"}
+      // Kept, and now constant: the tests read it, and "armed" is the only
+      // state this element can be in.
+      data-selection-indicator-reveal="armed"
       // A SPAN with its own click, not a <button>. This renders inside the
       // card's selection surface, which IS a button, and nesting interactive
       // semantics is invalid HTML — the composed-card tests pin that. The
@@ -245,26 +241,14 @@ export function SelectionIndicator({
       onClick={(event) => {
         event.stopPropagation();
         store.toggleSelected(id);
-        // PICKING IS ENTERING THE MODE. The header row is driven by
-        // `multiSelectMode` alone (see GraphBoard's `selectModeRow`), so
-        // toggling the selection without arming left the checkbox filling in
-        // while the breadcrumb trail sat there unchanged — a selection with no
-        // way to act on it and no visible way out. Since a plain click OPENS
-        // and never selects, this checkbox IS the pointer gesture that means
-        // "I am selecting now", and that is the same statement the Select
-        // button makes.
-        //
-        // Only on the way IN. Un-checking the last item leaves the mode armed
-        // at "0 selected · Done", which is exactly where pressing Select and
-        // picking nothing lands you — whereas disarming on empty would yank
-        // the row away mid-correction, the moment a mis-pick is undone.
-        if (!selected) store.setMultiSelectMode(true);
+        // NO `setMultiSelectMode(true)` any more. It used to arm the mode here,
+        // because this was reachable outside it; now it only exists once the
+        // mode is on, so arming would be a no-op restating the obvious.
       }}
       className={[
         "absolute right-2 bottom-2 z-20 grid size-[26px] cursor-pointer place-items-center",
         "rounded-full border-2 backdrop-blur-sm motion-safe:transition-colors",
         selected ? "border-blue-500 bg-blue-500" : "border-white/90 bg-black/35",
-        armed ? "" : revealOnHover,
       ].join(" ")}
     >
       <Check

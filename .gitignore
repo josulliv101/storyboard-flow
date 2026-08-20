@@ -1,6 +1,10 @@
 node_modules/
 .next/
 .next-dev/
+# Any build dir a `NEXT_DIST_DIR` override produces — see next.config.ts. The
+# override exists so a second dev server can run beside the usual one, and its
+# output is build cache like any other.
+.next-*/
 storybook-static/
 test-results/
 playwright-report/
@@ -41,3 +45,4 @@ apps/backend/venv/
 apps/backend/.venv/
 __pycache__/
 *.pyc
+.vercel

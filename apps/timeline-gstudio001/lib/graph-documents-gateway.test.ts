@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
-import { createGraphDocumentsGateway } from "./graph-documents-gateway";
+import { createGraphDocumentsGateway as createGateway } from "./graph-documents-gateway";
 import { at } from "../lib/test-support/at";
 
 const SAVE_DEBOUNCE_MS = 900;
@@ -56,6 +56,8 @@ type FetchCall = {
   /** GET: the timeline id from the url. POST: "batch". */
   id: string;
   writes?: BatchWrite[];
+  /** The board a write batch declares, so the server can stamp it (#458). */
+  projectId?: string;
   keepalive?: boolean;
   /** Kept so tests can assert a batch was abandoned (unload takeover). */
   signal?: AbortSignal;
@@ -63,24 +65,73 @@ type FetchCall = {
   bodyBytes?: number;
 };
 
-/** Stubs global fetch; returns the recorded calls for assertions. */
+/**
+ * Every gateway in this file batches its reads on a MICROTASK rather than the
+ * production 12ms timer. The window has to be a real delay to coalesce reads at
+ * all (see `fetchDocument`), and a real delay deadlocks the many tests here
+ * that `await gateway.ensure(...)` under fake timers. Timing is not what this
+ * suite is for — protocol, dedupe, revisions and the write path are.
+ */
+const createGraphDocumentsGateway = () => createGateway({ scheduleBatch: queueMicrotask });
+
+/**
+ * Stubs global fetch; returns the recorded calls for assertions.
+ *
+ * READS ARE BATCHED at the transport now (`POST /api/timelines/batch-get`), and
+ * this adapter is what keeps that from rewriting every test in the file. A
+ * handler still answers ONE document at a time — it is called once per id in
+ * the batch, with `{ method: "GET", id }`, exactly as it was when each read was
+ * its own request — and the stub assembles the `{ results }` envelope the
+ * gateway now expects.
+ *
+ * The recorded `calls` keep the same meaning too: one `GET` entry per document
+ * READ REQUESTED, so `getsOf` still counts document reads rather than HTTP
+ * round trips, and `batchesOf` still means WRITE batches. Read batches are
+ * recorded as `READ` so they cannot be mistaken for either.
+ */
 function installFetch(handler: (call: FetchCall) => Promise<MockResponse> | MockResponse) {
   const calls: FetchCall[] = [];
-  const impl = (input: RequestInfo | URL, init?: RequestInit) => {
+  const impl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const body = typeof init?.body === "string" ? init.body : undefined;
+
+    if (url.includes("/api/timelines/batch-get")) {
+      const ids = (JSON.parse(body ?? "{}") as { ids?: string[] }).ids ?? [];
+      calls.push({ method: "READ", id: ids.join(","), bodyBytes: body?.length });
+      const results = [];
+      for (const id of ids) {
+        const call: FetchCall = { method: "GET", id };
+        calls.push(call);
+        const response = await handler(call);
+        // A handler that refuses this id answers as the endpoint does: an entry
+        // carrying its own error, not a failure of the whole batch.
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          results.push({ id, error: payload.error ?? "failed", status: response.status });
+          continue;
+        }
+        const payload = (await response.json().catch(() => ({}))) as {
+          document?: TimelineDocument;
+          revision?: number;
+        };
+        results.push({ id, document: payload.document, revision: payload.revision });
+      }
+      return jsonResponse({ results });
+    }
+
     const call: FetchCall = {
       method: init?.method ?? "GET",
-      id: decodeURIComponent(String(input).split("/").pop() ?? ""),
-      writes:
-        typeof init?.body === "string"
-          ? (JSON.parse(init.body) as { writes: BatchWrite[] }).writes
-          : undefined,
+      id: decodeURIComponent(url.split("/").pop() ?? ""),
+      writes: body ? (JSON.parse(body) as { writes: BatchWrite[] }).writes : undefined,
+      projectId: body
+        ? (JSON.parse(body) as { projectId?: string }).projectId
+        : undefined,
       keepalive: init?.keepalive,
       signal: init?.signal ?? undefined,
-      bodyBytes:
-        typeof init?.body === "string" ? new TextEncoder().encode(init.body).length : undefined,
+      bodyBytes: body ? new TextEncoder().encode(body).length : undefined,
     };
     calls.push(call);
-    return Promise.resolve(handler(call));
+    return handler(call);
   };
   vi.stubGlobal("fetch", impl as unknown as typeof fetch);
   return calls;
@@ -970,5 +1021,218 @@ describe("graph-documents-gateway", () => {
     gateway.writeClips("a", [clip("x2")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
     expect(gateway.lastError()).toBeNull();
+  });
+
+  describe("ensureClosure", () => {
+    /** A collection clip, which is what makes one document part of another's
+     *  closure. The `clip()` helper above builds media clips. */
+    const child = (id: string, childTimelineId: string): TimelineClip => {
+      // BUILT, not spread from `clip()`: a collection clip is a different
+      // member of the union, and a media clip with its `kind` overwritten
+      // carries `src`/`sourceDuration` that `CollectionTimelineClip` refuses.
+      const { id: _id, kind: _kind, ...common } = clip(id);
+      return {
+        ...common,
+        id,
+        kind: "collection",
+        title: `Collection ${id}`,
+        childTimelineId,
+        itemCount: 1,
+      };
+    };
+
+    it("collapses concurrent callers into ONE request", async () => {
+      // `holdsFreshClosure` is a check on state, so it cannot stop callers that
+      // arrive before the first response lands — and they do. React runs an
+      // effect twice in development and a re-render can run it again; the
+      // observed result was FIVE identical closure POSTs inside 30ms, each one
+      // walking the whole project. That is 745 document reads to do a 149-read
+      // job, in the exact code added to REDUCE reads.
+      // Typed from what `jsonResponse` returns, not the DOM `Response`: the
+      // suite's stub is a minimal shape and the gateway only reads json()/ok.
+      let resolveFetch: (value: ReturnType<typeof jsonResponse>) => void = () => {};
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", (url: string) => {
+        calls.push(url);
+        return new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+          resolveFetch = resolve;
+        });
+      });
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+
+      // All five before any of them settles — the case a state check misses.
+      const all = Promise.all([
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+        gateway.ensureClosure("root"),
+      ]);
+      expect(calls).toHaveLength(1);
+
+      resolveFetch(jsonResponse({ results: [], missing: [] }));
+      await all;
+      expect(calls).toHaveLength(1);
+    });
+
+    it("does not walk a closure the session already holds, fresh", async () => {
+      const calls = installFetch(() => jsonResponse({}));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      // Exactly what a server-primed boot arrives with: every document under
+      // the root, installed through the prime path.
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+      gateway.prime(doc("kid", [clip("k1")]), 1, "user-a");
+
+      await gateway.ensureClosure("root");
+
+      // THE WHOLE POINT: no request at all. Asking again walked all 151
+      // documents a second time — 465 reads against the 237 it was meant to
+      // beat (#437).
+      expect(calls).toEqual([]);
+    });
+
+    it("walks it anyway once the cache is marked stale, because stale is why refresh exists", async () => {
+      const calls = installFetch(() => jsonResponse({ results: [], missing: [] }));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+      gateway.prime(doc("kid", [clip("k1")]), 1, "user-a");
+
+      // The legacy boot's first act. It exists to stop an edit made in another
+      // view or another tab being overwritten by a write built from stale
+      // content — so skipping the fetch on PRESENCE alone would trade a
+      // data-loss bug for a saved request.
+      gateway.refresh();
+      await gateway.ensureClosure("root");
+
+      expect(calls.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+    });
+
+    it("walks it when any document under the root is missing from the cache", async () => {
+      const calls = installFetch(() => jsonResponse({ results: [], missing: [] }));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      // The root points at a child this session has never loaded — a partial
+      // prime, which is the ordinary state after a focus-path boot that ships
+      // one eager level rather than the whole tree.
+      gateway.prime(doc("root", [child("c1", "kid")]), 1, "user-a");
+
+      await gateway.ensureClosure("root");
+
+      expect(calls.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+    });
+
+    it("treats a dangling reference as resolved, so it does not refetch forever", async () => {
+      const gone = installFetch(() =>
+        jsonResponse({ results: [], missing: ["ghost"] }),
+      );
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("root", [child("c1", "ghost")]), 1, "user-a");
+
+      // First walk learns that `ghost` does not exist...
+      await gateway.ensureClosure("root");
+      expect(gone.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+
+      // ...and the second must not go looking again. A deleted document's id
+      // stays in its parent's clips, so without the missing list an
+      // unresolvable reference is indistinguishable from an unhydrated one and
+      // the closure never counts as complete.
+      await gateway.ensureClosure("root");
+      expect(gone.map((call) => `${call.method} ${call.id}`)).toEqual(["POST closure"]);
+    });
+  });
+
+  describe("known-missing ids", () => {
+    /** The server's answer for a dangling `childTimelineId`: the document is
+     *  gone, but the reference to it stays in its parent's clips. */
+    // The 404 comes from the RESPONSE, exactly as the endpoint sends it — the
+    // batch adapter derives each entry's `status` from it. Putting a `status`
+    // in the body instead would let these pass without the mechanism working.
+    const notFound = () => jsonResponse({ error: "Timeline was not found." }, 404);
+
+    it("does not ask again for an id the server already said is gone", async () => {
+      const calls = installFetch(notFound);
+      const gateway = createGraphDocumentsGateway();
+      // Exactly what the RSC bootstrap reports through `bootstrapMissing`.
+      gateway.recordMissing(["ghost"]);
+
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(await gateway.ensure("ghost")).toBeNull();
+
+      // Measured on the real project before this: five dangling ids fetched
+      // TWICE per page load, two batch-gets answering 404 five times over.
+      expect(getsOf(calls)).toHaveLength(0);
+    });
+
+    it("records them from its own fetch too, so the second ask is free", async () => {
+      const calls = installFetch(notFound);
+      const gateway = createGraphDocumentsGateway();
+
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(getsOf(calls)).toHaveLength(1);
+
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(getsOf(calls)).toHaveLength(1);
+    });
+
+    it("re-checks after refresh, so a document created since is not shadowed", async () => {
+      let exists = false;
+      const calls = installFetch(() =>
+        exists ? jsonResponse({ document: doc("ghost", [clip("g1")]), revision: 1 }) : notFound(),
+      );
+      const gateway = createGraphDocumentsGateway();
+      gateway.recordMissing(["ghost"]);
+      expect(await gateway.ensure("ghost")).toBeNull();
+      expect(getsOf(calls)).toHaveLength(0);
+
+      // Entering the view distrusts the session cache — the absences included,
+      // or a document created elsewhere stays invisible for the life of the tab.
+      exists = true;
+      gateway.refresh();
+
+      expect(clipIds(await gateway.ensure("ghost"))).toEqual(["g1"]);
+    });
+
+    it("a prime for a missing id wins over the negative answer", async () => {
+      const calls = installFetch(notFound);
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.recordMissing(["ghost"]);
+      expect(await gateway.ensure("ghost")).toBeNull();
+
+      // The server streamed it after all. The negative answer must not outlive
+      // the evidence against it.
+      gateway.prime(doc("ghost", [clip("g1")]), 1, "user-a");
+
+      expect(clipIds(await gateway.ensure("ghost"))).toEqual(["g1"]);
+      expect(getsOf(calls)).toHaveLength(0);
+    });
+  });
+
+  describe("bindProject", () => {
+    it("sends the bound project with a write batch, and nothing when unbound", async () => {
+      // The board's id rides with the batch so the server can stamp `projectId`
+      // — the prefetch hint that lets one query address a whole subtree in one
+      // round trip instead of nine sequential ones (#458).
+      const calls = installFetch(() => jsonResponse({ results: [{ id: "a", revision: 1 }] }));
+      const gateway = createGraphDocumentsGateway();
+      gateway.bindUser("user-a");
+      gateway.prime(doc("a", [clip("a1")]), 0, "user-a");
+
+      // UNBOUND first: the field is absent rather than null or empty, which is
+      // what the server reads as "leave whatever is stored alone".
+      gateway.writeClips("a", [clip("a1"), clip("a2")]);
+      await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+      expect(at(batchesOf(calls), 0).projectId).toBeUndefined();
+
+      gateway.bindProject("project-a");
+      gateway.writeClips("a", [clip("a1")]);
+      await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+      expect(at(batchesOf(calls), 1).projectId).toBe("project-a");
+    });
   });
 });

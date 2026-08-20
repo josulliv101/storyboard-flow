@@ -3,7 +3,9 @@ import "server-only";
 import { collectionChildIds } from "./derive-collection-summaries";
 import type { GraphServerPayload } from "./graph-documents-gateway";
 import {
+  BOARD_OPEN_MAX_DEPTH,
   createTimelineEntryReader,
+  serveTimelineClosure,
   serveTimelineDocument,
   serveTrashDocument,
 } from "./serve-timeline";
@@ -32,29 +34,88 @@ const MAX_PATH_PAYLOADS = 16;
  */
 const MAX_PATH_ATTEMPTS = 48;
 
+
+
 /**
  * The boot payloads: the project document and the user's trash — the two
  * roots the graph builds from. Null when the project can't be served
  * (missing or denied): the client boots through its legacy fetch path and
  * surfaces the error there.
  */
+export type GraphBootstrap = Readonly<{
+  payloads: readonly GraphServerPayload[];
+  /**
+   * Ids the closure walk could not resolve — a `childTimelineId` whose document
+   * is gone. Shipped because ONLY the server can tell that apart from a
+   * document the client has not loaded yet, and the client needs the difference
+   * to know whether it holds a complete closure. Empty on the fallback path
+   * below, where the client holds two documents and can prove nothing anyway.
+   */
+  missing: readonly string[];
+}>;
+
 export async function loadGraphBootstrapPayloads(
   projectId: string,
   requesterUid: string,
-): Promise<readonly GraphServerPayload[] | null> {
+): Promise<GraphBootstrap | null> {
   try {
-    // One reader for the whole render: the project's own serve reads every
-    // child to derive summaries, and the trash read joins the same cache.
+    // THE WHOLE CLOSURE, not just the project.
+    //
+    // This used to serve the project alone — and serving a project reads every
+    // document beneath it anyway, to derive collection summaries bottom-up. So
+    // all of them were loaded, two of them were shipped, and the client then
+    // asked for the rest one card at a time, each of those requests walking its
+    // own subtree again. Measured on a 151-document project: 58 requests and
+    // ~430 document reads for one page load (#437).
+    //
+    // Shipping what was already loaded costs nothing extra and leaves the
+    // client with a full cache, so the per-card reads never happen.
+    //
+    // A closure too large to walk returns null, and the caller falls back to
+    // the project alone — the old behaviour, which still works, just slower.
+    const probing = process.env.GSTUDIO_COUNT_READS === "1";
+    const startedAt = Date.now();
     const read = createTimelineEntryReader(requesterUid);
-    const project = await serveTimelineDocument(projectId, requesterUid, read);
-    if (!project) return null;
-    const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
+    // TOGETHER, because the trash is not under the project and never was.
+    //
+    // It was read AFTER the closure, so it waited out all nine levels of the
+    // walk for an answer that depended on none of them — one whole round trip
+    // (~160ms against Firestore) of pure serialisation on every board open.
+    // Nothing orders these: the walk cannot reach `trash-<uid>` (it is a
+    // separate root) and the trash cannot contain the project.
+    //
+    // Latency is the CRITICAL PATH, not the request count. These are still two
+    // requests and still two billed reads' worth of documents; they simply cost
+    // one round trip between them instead of two.
+    const [closure, trash] = await Promise.all([
+      serveTimelineClosure(projectId, requesterUid, { maxDepth: BOARD_OPEN_MAX_DEPTH }),
+      serveTrashDocument(`trash-${requesterUid}`, requesterUid, read),
+    ]);
+    if (!closure) {
+      const project = await serveTimelineDocument(projectId, requesterUid, read);
+      if (!project) return null;
+      return {
+        payloads: [
+          { ...project, forUid: requesterUid },
+          { ...trash, forUid: requesterUid },
+        ],
+        missing: [],
+      };
+    }
+    if (probing) console.log(`[SERVEPROBE] bootstrap total ${Date.now() - startedAt}ms`);
     // forUid lets the client's prime refuse payloads that survive an auth
     // transition in the router cache.
-    return [
-      { ...project, forUid: requesterUid },
-      { ...trash, forUid: requesterUid },
-    ];
+    return {
+      payloads: [
+        ...Object.entries(closure.documents).map(([, served]) => ({
+          document: served.document,
+          revision: served.revision,
+          forUid: requesterUid,
+        })),
+        { ...trash, forUid: requesterUid },
+      ],
+      missing: closure.missing,
+    };
   } catch {
     return null;
   }
@@ -90,7 +151,13 @@ export async function loadFocusPathPayloads(
     if (payloads.length >= MAX_PATH_PAYLOADS) return null;
     seen.add(id);
     try {
-      const served = await serveTimelineDocument(id, requesterUid, read);
+      // BOUNDED, like the board open. Deriving this segment's summaries used to
+      // walk everything beneath it, so one focus navigation cost a whole
+      // subtree: measured at 149 reads to serve the project root, billed again
+      // on every click up the breadcrumb.
+      const served = await serveTimelineDocument(id, requesterUid, read, {
+        maxDepth: BOARD_OPEN_MAX_DEPTH,
+      });
       if (!served) return null;
       return { ...served, forUid: requesterUid };
     } catch {

@@ -13,7 +13,9 @@ import {
   buildFocusedGraph,
   buildHydrationSpecs,
   collectAffectedCollectionIds,
+  collectionSubtreeHydrated,
   collectUnhydratedDropTargets,
+  hydratedCollectionPlayableSpan,
   graphChildrenToClips,
   hydratedCollectionDuration,
   hydratedCollectionPlayableDuration,
@@ -745,6 +747,76 @@ describe("hydrated collection durations", () => {
     expect(clips[0].duration).toBe(999);
   });
 
+  it("gives an EMPTY hydrated collection the same floor the model does", () => {
+    // Where the zeroes come from in the first place, and the root of the
+    // reload-changes-the-number bug.
+    //
+    // `hydratedCollectionDuration` starts at TIMELINE_LEADING_PADDING_SECONDS
+    // (zero) and adds a term per child, so a collection with no children
+    // returns 0 — while `collectionSpanSeconds`, the model's own answer to the
+    // same question, returns 3 for an empty list because "a zero-width
+    // collection card cannot be seen or clicked".
+    //
+    // It is not only a display bug: the write path persists documents THROUGH
+    // this projection, so every empty collection wrote a stored duration of 0,
+    // which is then the value every later reader has to defend against.
+    const documents: Record<string, TimelineDocument> = {
+      "empty-root": {
+        id: "empty-root",
+        title: "Empty root",
+        clips: [{ ...collectionClip("clip-empty", "empty", "Empty"), duration: 999 }],
+      },
+      empty: { id: "empty", title: "Empty", clips: [] },
+    };
+    const focused = buildFocusedGraph(documents, "empty-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "empty-root");
+    expect(clips[0].duration).toBeCloseTo(3, 5);
+  });
+
+  it("floors a placeholder's ZERO summary rather than counting it as no time", () => {
+    // The disagreement this fixes, reproduced from a real board: the same
+    // collection read 12.4s on a cold load and 3.4s after navigating to it and
+    // back, so the number changed on reload.
+    //
+    // The server ignores stored summaries and re-derives bottom-up, where
+    // `collectionSpanSeconds` floors an empty collection at 3 — "a zero-width
+    // collection card cannot be seen or clicked". The client trusted the stored
+    // value for placeholders, and the stored value was `0`: the write path
+    // persists a duration it does not know, and `?? 3` never fires because zero
+    // is not nullish. Three children contributing nothing collapsed the parent's
+    // badge to one child's worth.
+    //
+    // Storing 0 is worse than storing nothing, and until the write path stops
+    // doing it, every reader has to defend against it.
+    const documents: Record<string, TimelineDocument> = {
+      "zero-root": {
+        id: "zero-root",
+        title: "Zero root",
+        clips: [{ ...collectionClip("clip-parent", "parent", "Parent"), duration: 999 }],
+      },
+      parent: {
+        id: "parent",
+        title: "Parent",
+        clips: packTimelineClips([
+          { ...collectionClip("clip-a", "a", "A"), duration: 3 },
+          { ...collectionClip("clip-b", "b", "B"), duration: 0 },
+          { ...collectionClip("clip-c", "c", "C"), duration: 0 },
+        ]),
+      },
+      // a, b and c never load: placeholders, so their stored summaries are all
+      // anyone knows about them.
+    };
+    const focused = buildFocusedGraph(documents, "zero-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "zero-root");
+    // 3 + gap + 3 + gap + 3 — the two zeroes floored to the same 3 seconds the
+    // server's derivation gives them. Counting them as 0 yields 3.24.
+    expect(clips[0].duration).toBeCloseTo(9.24, 5);
+  });
+
   it("recurses through hydrated nesting and stops at placeholders", () => {
     const documents: Record<string, TimelineDocument> = {
       "nest-root": {
@@ -1366,5 +1438,273 @@ describe("previews when the walk cannot see the whole subtree (#290)", () => {
     expect(scene.previewItems).toEqual([
       { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
     ]);
+  });
+});
+
+describe("collectionSubtreeHydrated", () => {
+  /**
+   * Whether a collection's aggregate readouts can be shown at all.
+   *
+   * `hydratedCollectionDuration` always returns a number: for any child it does
+   * not have, it substitutes that child's STORED summary. Those summaries drift
+   * (58.4% of collection clips in a real project carry at least one stale
+   * field), so the number is plausible and unverifiable. This predicate is how
+   * a card knows to say nothing instead — and TRANSITIVITY is the whole point,
+   * because a collection can be fully loaded while its grandchild is not.
+   */
+  const media = (rootId: string) => ({
+    [rootId]: {
+      id: rootId,
+      title: rootId,
+      clips: [collectionClip("clip-leaf", "leaf", "Leaf")],
+    },
+    leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+  });
+
+  const graphOf = (documents: Record<string, TimelineDocument>, rootId: string) => {
+    const focused = buildFocusedGraph(documents, rootId);
+    if (!focused.ok) throw new Error(focused.error);
+    return focused.value;
+  };
+
+  it("vouches for a collection whose children are all media", () => {
+    // The cheap case, and the reason the board is not simply blank: a
+    // media-only collection is exactly known from its own document, so it earns
+    // its readout at one level of reading.
+    const { graph, details } = graphOf(media("root"), "root");
+    expect(collectionSubtreeHydrated(graph, details, "leaf")).toBe(true);
+  });
+
+  it("refuses a collection whose child collection never loaded", () => {
+    const documents = media("root");
+    delete (documents as Record<string, unknown>).leaf;
+    const { graph, details } = graphOf(documents, "root");
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+  });
+
+  it("refuses a LOADED collection with an unloaded grandchild", () => {
+    // The case the predicate exists for. `root` and `mid` are both present, so
+    // asking only about immediate children would vouch for root — while its
+    // duration is quietly standing in `deep`'s stored summary.
+    const { graph, details } = graphOf(
+      {
+        root: { id: "root", title: "root", clips: [collectionClip("c-mid", "mid", "Mid")] },
+        mid: { id: "mid", title: "Mid", clips: [collectionClip("c-deep", "deep", "Deep")] },
+      },
+      "root",
+    );
+    // Not a vacuous pass: the root has NO detail entry (details come from a
+    // parent's clip, and the focused root is nobody's clip), so the refusal
+    // has to come from `deep`, two levels down.
+    expect(details.root).toBeUndefined();
+    expect(details.mid?.hydrated).toBe(true);
+    expect(details.deep?.hydrated).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+  });
+
+  it("still refuses when a document is LOADED but not hydrated into the graph", () => {
+    // A fact about the client worth pinning: `buildFocusedGraph` hydrates the
+    // focused collection and ONE level below it. `deep` below is present in the
+    // documents and still comes back unhydrated, because nothing has called
+    // `hydrateTimeline` for it — drill-in and sub-timeline expansion do that.
+    //
+    // Which is why the server's full-closure derivation existed at all: the
+    // client's graph never held the deep documents, so every number below the
+    // first level came from the clip summaries the server had just recomputed.
+    // Reading one level and vouching is the same bargain made honestly.
+    const { graph, details } = graphOf(
+      {
+        root: { id: "root", title: "root", clips: [collectionClip("c-mid", "mid", "Mid")] },
+        mid: { id: "mid", title: "Mid", clips: [collectionClip("c-deep", "deep", "Deep")] },
+        deep: { id: "deep", title: "Deep", clips: packTimelineClips([image("d-a", 4)]) },
+      },
+      "root",
+    );
+    expect(details.deep?.hydrated).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+  });
+
+  it("treats a DANGLING child as resolved, not as pending forever", () => {
+    // The card this fixed: five dangling references under one collection held
+    // an otherwise complete 133-document branch at "no duration" permanently,
+    // because a document that does not exist can never arrive. Gone is known —
+    // it contributes nothing, and the total is exactly computable without it.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: [collectionClip("c-gone", "gone", "Gone")],
+        },
+      },
+      "root",
+    );
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root", (id) => id === "gone")).toBe(true);
+  });
+
+  it("vouches for a DUPLICATE placement once the original is loaded", () => {
+    // A second reference to the same collection is demoted to a card with no
+    // children of its own, permanently unhydrated. Waiting on it blocked every
+    // ancestor forever — a real project had one such duplicate, and it alone
+    // kept a 133-document branch timeless after the dangling ids were handled.
+    // Its content is not unknown: the original placement is right there.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: packTimelineClips([
+            collectionClip("ref-a", "leaf", "Leaf"),
+            collectionClip("ref-b", "leaf", "Leaf"),
+          ]),
+        },
+        leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+      },
+      "root",
+    );
+
+    expect(details["ref-b"]).toMatchObject({ duplicateOfTimelineId: "leaf" });
+    expect(details["ref-b"]?.hydrated).toBe(false);
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(true);
+  });
+
+  it("counts a duplicate's REAL content rather than its stored summary", () => {
+    // The reason vouching for it is honest. The walk used to read the dup
+    // card's stored duration, a copy nothing maintains — in the real project
+    // the two parents of one duplicated collection stored 6.12s and 7.12s for
+    // the same 4.0s of content, so at least one was always wrong and its
+    // ancestors inherited the error.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: packTimelineClips([
+            collectionClip("ref-a", "leaf", "Leaf"),
+            { ...collectionClip("ref-b", "leaf", "Leaf"), duration: 999 },
+          ]),
+        },
+        leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+      },
+      "root",
+    );
+
+    // Two placements of a 4s leaf, one gap between them — NOT 4 + gap + 999.
+    expect(hydratedCollectionDuration(graph, details, parseNodeId("root"))).toBeCloseTo(8.12, 5);
+  });
+
+  it("counts a DANGLING child as zero playable seconds, not its stored duration", () => {
+    // What the board was doing: quoting the remembered length of a document
+    // that no longer exists. Five of these added 33.9s to one collection, so a
+    // card claimed 19:24 of material when 18:51 of it was real.
+    const { graph, details } = graphOf(
+      {
+        root: {
+          id: "root",
+          title: "root",
+          clips: packTimelineClips([
+            { ...collectionClip("c-gone", "gone", "Gone"), duration: 12.36 },
+            collectionClip("c-leaf", "leaf", "Leaf"),
+          ]),
+        },
+        leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+      },
+      "root",
+    );
+
+    // Unaware of the absence, it quotes the stored 12.36.
+    expect(hydratedCollectionPlayableDuration(graph, details, parseNodeId("root"))).toBeCloseTo(
+      12.36 + 0.12 + 4,
+      5,
+    );
+    // Told the document is gone, it contributes nothing — but the GAP stays,
+    // because the broken reference still draws a card between its neighbours.
+    expect(
+      hydratedCollectionPlayableDuration(
+        graph,
+        details,
+        parseNodeId("root"),
+        (id) => id === "gone",
+      ),
+    ).toBeCloseTo(0.12 + 4, 5);
+  });
+
+  it("vouches for a one-level tree, which is what a board actually shows", () => {
+    // The case that makes the board useful rather than blank: the focused
+    // collection plus media-only children is fully in the graph, so its cards
+    // and the header both earn their times. Measured on the real project, this
+    // is 103 of 149 collections.
+    const { graph, details } = graphOf(media("root"), "root");
+    expect(collectionSubtreeHydrated(graph, details, "root")).toBe(true);
+  });
+});
+
+describe("hydratedCollectionPlayableSpan", () => {
+  /**
+   * The board header's number, and why it needed its own function.
+   *
+   * It was measured from card GEOMETRY (`playableSpanSeconds` over the spans
+   * the strip draws), which keeps a card's full slot even when its descendants
+   * are disabled. On a real project the header read 23:01 while its own three
+   * cards summed to about 20:45 — more than half of one branch is disabled deep
+   * inside. The spans carry no node id, so the playable length could not be
+   * recovered from them.
+   *
+   * Its lane-blind twin cannot simply be reused: `graphChildrenToClips`
+   * projects through that one to persist each clip's `playableDuration`.
+   */
+  it("excludes what a disabled descendant contributes", () => {
+    const documents = {
+      root: { id: "root", title: "root", clips: [collectionClip("c-kid", "kid", "Kid")] },
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([image("k-a", 4), { ...image("k-b", 6), disabled: true }]),
+      },
+    };
+    const focused = buildFocusedGraph(documents, "root");
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+
+    // 4s plays, 6s does not.
+    expect(hydratedCollectionPlayableSpan(graph, details, parseNodeId("root"))).toBeCloseTo(4, 5);
+  });
+
+  it("takes the LONGEST lane, not the sum — lanes play together", () => {
+    // A 4s bed under a 4s shot is a 4s timeline, not an 8s one.
+    const documents = {
+      root: {
+        id: "root",
+        title: "root",
+        clips: packTimelineClips([image("picture", 4), { ...image("bed", 4), trackIndex: 1 }]),
+      },
+    };
+    const focused = buildFocusedGraph(documents, "root");
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+
+    expect(hydratedCollectionPlayableSpan(graph, details, parseNodeId("root"))).toBeCloseTo(4, 5);
+  });
+
+  it("counts a dangling child as nothing, like every other readout", () => {
+    const documents = {
+      root: {
+        id: "root",
+        title: "root",
+        clips: packTimelineClips([
+          { ...collectionClip("c-gone", "gone", "Gone"), duration: 12.36 },
+          collectionClip("c-leaf", "leaf", "Leaf"),
+        ]),
+      },
+      leaf: { id: "leaf", title: "Leaf", clips: packTimelineClips([image("m-a", 4)]) },
+    };
+    const focused = buildFocusedGraph(documents, "root");
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+
+    expect(
+      hydratedCollectionPlayableSpan(graph, details, parseNodeId("root"), (id) => id === "gone"),
+    ).toBeCloseTo(0.12 + 4, 5);
   });
 });

@@ -23,6 +23,7 @@ import { resolveFlatDropTarget, type ClipDetail } from "@storyboard/timeline-dom
 
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 import { probeVideoFile, uploadTimelineMedia } from "@/lib/timeline-media-client";
+import { GRAPH_ADD_ITEM_EVENT, type GraphAddItemDetail } from "@/lib/graph-view-events";
 
 import { useFlatItems } from "./graph-preview";
 import { classifyDroppedMedia, type DroppedMediaKind } from "./graph-dropped-media";
@@ -34,12 +35,41 @@ import {
   MAX_CONCURRENT_MEDIA,
   TOOL_MIME,
   aggregateDropStatus,
+  isMediaTool,
   isSidebarTool,
   resolveAnchorIndex,
   type DropAnchor,
   type DropStatus,
   type DropSummary,
 } from "./graph-native-drop-model";
+
+/**
+ * A MEDIA drop that has landed but has no files yet: WHERE it landed, and where
+ * on screen to ask for them.
+ *
+ * The anchor is the same id-based `DropAnchor` a file drop carries, and for the
+ * same reason — it names its gap by the cards either side of it, so it still
+ * points at the place you dropped even if the board changes while the picker is
+ * open. That property was built for uploads finishing late; a picker waiting on
+ * a human is the same shape of wait, only longer and more likely.
+ */
+export type PendingMediaDrop = Readonly<{
+  anchor: DropAnchor;
+  /**
+   * Whether the browser still had TRANSIENT USER ACTIVATION at the instant of
+   * the drop, and the file picker can therefore be opened without a further
+   * click.
+   *
+   * Captured HERE, in the drop handler, rather than later in the component that
+   * opens the picker. Activation is transient by definition — it expires on a
+   * timer — so a reading taken after a render and an effect is a reading of a
+   * different moment than the one that matters.
+   */
+  hadUserActivation: boolean;
+  /** Viewport coordinates of the drop, for positioning the fallback prompt. */
+  clientX: number;
+  clientY: number;
+}>;
 
 /**
  * The surface-agnostic native-drop ENGINE: sidebar TOOL insertion, OS FILE
@@ -351,8 +381,14 @@ export function useNativeDrop(collectionId: string, projectId: string) {
     [addNodes, resolveAnchoredTarget, setDropStatus, projectId],
   );
 
+  // A dropped MEDIA tool, waiting on files. Null the rest of the time, which is
+  // what the surfaces render nothing from.
+  const [pendingMedia, setPendingMedia] = useState<PendingMediaDrop | null>(null);
+  const cancelMediaDrop = useCallback(() => setPendingMedia(null), []);
+
   /** Commit a drop whose insert boundary the surface already resolved. Tools
-   *  land synchronously; files hand the anchor over to the async upload. */
+   *  land synchronously; files hand the anchor over to the async upload; an
+   *  ADD ITEM drop lands nothing yet and opens its menu instead. */
   const commitDrop = useCallback(
     (event: DragEvent<HTMLElement>, anchor: DropAnchor) => {
       const tool = event.dataTransfer.getData(TOOL_MIME);
@@ -360,10 +396,48 @@ export function useNativeDrop(collectionId: string, projectId: string) {
         insertTool(tool, anchor.index);
         return;
       }
+      if (tool && isMediaTool(tool)) {
+        // Park the position and ask for files. Nothing is dispatched here — the
+        // graph is untouched until files arrive, so cancelling the picker
+        // leaves no trace, which is what makes it a real cancel rather than an
+        // undo.
+        setPendingMedia({
+          anchor,
+          // `isActive` is transient activation specifically. `hasBeenActive` is
+          // "ever", true forever after the first click anywhere on the page,
+          // which would claim every drop could open a picker.
+          hadUserActivation: navigator.userActivation?.isActive ?? false,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
+        return;
+      }
       const files = [...event.dataTransfer.files];
       if (files.length > 0) void dropFiles(files, anchor);
     },
     [insertTool, dropFiles],
+  );
+
+  /**
+   * Land the files a parked MEDIA drop was waiting for, at the position it was
+   * dropped.
+   *
+   * The very same `dropFiles` an OS drop uses: one decode per video, bounded
+   * concurrency, per-file failure reporting and ONE undoable commit all come
+   * along, none of it reimplemented for this route.
+   *
+   * Runs OUTSIDE a state updater, reading the parked drop from the closure. An
+   * updater must be pure — React calls it twice in StrictMode — and uploading
+   * from inside one would upload and insert every chosen file twice.
+   */
+  const resolveMediaDrop = useCallback(
+    (files: readonly File[]) => {
+      if (pendingMedia === null) return;
+      const { anchor } = pendingMedia;
+      setPendingMedia(null);
+      if (files.length > 0) void dropFiles(files, anchor);
+    },
+    [pendingMedia, dropFiles],
   );
 
   /**
@@ -393,7 +467,42 @@ export function useNativeDrop(collectionId: string, projectId: string) {
     [dropFiles, store, collectionId],
   );
 
-  return { commitDrop, upload, appendFiles };
+  /**
+   * Append a collection to the end — the click half of "Add item".
+   *
+   * Reads the child count LIVE rather than taking an index from the caller: the
+   * button is in the controls row, several components away, and "the end" it
+   * meant when it rendered is not necessarily the end by the time it is
+   * pressed.
+   */
+  const appendCollection = useCallback(() => {
+    const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+    insertTool("collection", children.length);
+  }, [store, collectionId, insertTool]);
+
+  // The controls row's Add item button, reaching down into this engine. See
+  // GRAPH_ADD_ITEM_EVENT for why it is ADDRESSED and not broadcast: every
+  // sub-timeline row mounts one of these, and an unaddressed event would add
+  // one item per row on screen.
+  useEffect(() => {
+    const onAddItem = (event: Event) => {
+      const detail = (event as CustomEvent<GraphAddItemDetail>).detail;
+      if (!detail || detail.collectionId !== collectionId) return;
+      if (detail.kind === "collection") appendCollection();
+      else appendFiles(detail.files);
+    };
+    window.addEventListener(GRAPH_ADD_ITEM_EVENT, onAddItem);
+    return () => window.removeEventListener(GRAPH_ADD_ITEM_EVENT, onAddItem);
+  }, [collectionId, appendCollection, appendFiles]);
+
+  return {
+    commitDrop,
+    upload,
+    appendFiles,
+    pendingMedia,
+    resolveMediaDrop,
+    cancelMediaDrop,
+  };
 }
 
 /**

@@ -19,8 +19,8 @@ import {
   ClipboardPaste,
   Command,
   EllipsisVertical,
-  FolderPlus,
   FolderTree,
+  Image as ImageIcon,
   Layers,
   Redo2,
   Ruler,
@@ -50,7 +50,7 @@ import {
 } from "@/lib/graph-item-action-specs";
 import {
   requestGraphItemAction,
-  requestGraphToolInsert,
+  requestGraphAddItem,
   type GraphItemAction,
   type GraphSurface,
 } from "@/lib/graph-view-events";
@@ -91,7 +91,7 @@ import {
 } from "./graph-selection-menu";
 import { NativeDropGrid } from "./graph-native-drop-grid";
 import { NativeDropStrip } from "./graph-native-drop-strip";
-import { SidebarToolInsertBridge } from "./graph-native-drop-insertion";
+import { MEDIA_TOOL_PAYLOAD, ToolButton } from "./graph-tool-buttons";
 import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
@@ -110,6 +110,7 @@ import {
   useSelectionCount,
   type PreviewTimeChannel,
 } from "./graph-preview";
+import { useCollectionSubtreeHydrated } from "./graph-card-derivations";
 import { splitLaneRows } from "./graph-lane-rows";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
@@ -120,6 +121,7 @@ import { useGraphDetailsSnapshot } from "./graph-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
 import { GraphRenderFormat } from "./graph-render-format";
 import { GraphRenderStatus } from "./graph-render-status";
+import { GraphProjectMenu } from "./graph-project-menu";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
@@ -131,6 +133,7 @@ import {
   ITEM_SIZE_DIMENSIONS,
   ITEM_SIZES,
   MAX_SUBTREE_DEPTH,
+  DEFAULT_TIMELINE_PPS,
   MAX_TIMELINE_PPS,
   MIN_TIMELINE_PPS,
   isItemSize,
@@ -381,6 +384,13 @@ function FocusedAggregate({
   pixelsPerSecond,
 }: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
   const { count, seconds } = useFocusedTimelineAggregate(focusedId, pixelsPerSecond);
+  // The total sums this board's cards, so it inherits their uncertainty: a
+  // collection card whose branch is not loaded contributes a STORED summary,
+  // and those drift. The count is safe — it is this board's own children — so
+  // an unvouched board says "3 clips" and earns the time when its branches
+  // load. Measured before this: the root board claimed 23:21 against a true
+  // 21:55.
+  const vouched = useCollectionSubtreeHydrated(focusedId);
   if (count === 0) return null;
   return (
     <span
@@ -388,9 +398,29 @@ function FocusedAggregate({
       className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400"
       title="Focused timeline total"
     >
-      {count} {count === 1 ? "clip" : "clips"} · {formatDuration(seconds)}
+      {count} {count === 1 ? "clip" : "clips"}
+      {vouched ? <> · {formatDuration(seconds)}</> : null}
     </span>
   );
+}
+
+/**
+ * The zoom slider's reading, as a PERCENTAGE of the default.
+ *
+ * The stored value is pixels-per-second, which is the right unit for the layout
+ * maths and the wrong one to show a person: it is an implementation detail of
+ * how a strip is drawn, and "50" means nothing without knowing what the other
+ * numbers are. A percentage answers the only question the readout is asked —
+ * how far from normal is this — and needs no scale to interpret.
+ *
+ * `DEFAULT_TIMELINE_PPS` is the 100% mark, so the control opens reading 100%.
+ * The bounds (6..200 px/s) land at 12%..400%.
+ *
+ * DISPLAY ONLY. The slider's own value, its min/max and everything downstream
+ * stay in px/s — including the `aria-valuenow` an e2e test reads.
+ */
+function zoomPercent(pixelsPerSecond: number): number {
+  return Math.round((pixelsPerSecond / DEFAULT_TIMELINE_PPS) * 100);
 }
 
 /**
@@ -429,14 +459,31 @@ function HeaderZoomControl({
       // you click to jump the value is the track beside it, which would
       // otherwise read as empty board and drop the selection.
       data-collections-control
-      className="flex shrink-0 items-center gap-2"
+      // `pl-1.5` on top of the row's `gap-2`, and only on the LEFT. Every
+      // neighbour is a button whose glyph sits inside its own padding, so the
+      // row's gap lands between two cushioned edges; the slider's track starts
+      // hard at its box edge, which put it visibly nearer the fence than any
+      // two other controls are to each other. This buys back the padding the
+      // buttons have and it does not.
+      className="flex shrink-0 items-center gap-2 pl-1.5"
     >
       <Slider
+        // A hook on the SLIDER, distinct from `data-header-zoom` on the wrapper
+        // around it. A pointer test aiming at "the left end of the track" has to
+        // measure the track — measuring the wrapper worked only while the two
+        // shared an edge, and a later `pl-1.5` on the wrapper silently moved the
+        // click into the padding, where it did nothing and the zoom never
+        // changed.
+        data-header-zoom-slider
         // The name and the READING both go to the thumb, which is where Radix
         // puts `role="slider"` (see components/core/slider). A bare number on
         // an axis like pixels-per-second announces nothing on its own.
         aria-label="Timeline zoom"
-        aria-valuetext={`${value} pixels per second`}
+        // Announced as the PERCENTAGE shown, not the raw pixels-per-second the
+        // slider stores. A bare number on an axis like px/s announces nothing
+        // on its own, and "100%" carries the one fact that matters — how far
+        // from the default you are.
+        aria-valuetext={`${zoomPercent(value)}%`}
         min={MIN_TIMELINE_PPS}
         max={MAX_TIMELINE_PPS}
         step={1}
@@ -451,9 +498,11 @@ function HeaderZoomControl({
       <span
         data-header-zoom-value
         aria-hidden="true"
-        className="w-[52px] shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+        // Narrower than the `52px` "200 px/s" needed: the widest reading is
+        // now "400%".
+        className="w-[38px] shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
       >
-        {value} px/s
+        {zoomPercent(value)}%
       </span>
     </span>
   );
@@ -507,8 +556,8 @@ const HEADER_TOGGLE_IDLE = "text-zinc-400 hover:text-zinc-100";
  * they may compress, and a 1px flex child with no floor is the first thing a
  * tight row rounds away to nothing — leaving the groups it separates touching.
  */
-function ControlFence() {
-  return <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />;
+function ControlFence({ className }: Readonly<{ className?: string }> = {}) {
+  return <div aria-hidden="true" className={cn("h-5 w-px shrink-0 bg-zinc-700", className)} />;
 }
 
 /**
@@ -526,6 +575,7 @@ function HeaderToggle({
   label,
   title,
   busy = false,
+  text,
 }: Readonly<{
   active: boolean;
   onToggle: () => void;
@@ -542,6 +592,16 @@ function HeaderToggle({
    *  needs it — loading a deep closure takes a moment, and a half-built run
    *  would otherwise look like the real answer. */
   busy?: boolean;
+  /**
+   * A visible word beside the glyph. Absent for almost every toggle here — the
+   * row's language is bare glyphs — and present where a control has earned the
+   * width by being something other than one more view switch.
+   *
+   * It does NOT replace `label`: that stays the accessible name, and the two
+   * differ on purpose ("Preview" on screen, "Show preview"/"Hide preview" to a
+   * screen reader, which needs the STATE the pressed look conveys visually).
+   */
+  text?: string;
 }>) {
   return (
     <Button
@@ -568,9 +628,18 @@ function HeaderToggle({
       // `min-content` the real width of its controls, which is what the
       // header row's right column now sizes itself against — a squeezable
       // icon would report a smaller minimum and let the column collapse again.
-      className={cn("h-8 w-8 shrink-0", active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE)}
+      className={cn(
+        "h-8 shrink-0",
+        // Square when it is a glyph alone; grown to fit when it carries a word.
+        // `size="icon"` sets a fixed square, so a labelled one has to opt out of
+        // the width and take its own padding — and `whitespace-nowrap` so the
+        // word cannot wrap and drag the row's pinned height with it.
+        text === undefined ? "w-8" : "w-auto gap-1.5 px-2 text-[11px] font-medium whitespace-nowrap",
+        active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE,
+      )}
     >
       <Icon aria-hidden className={cn("h-4 w-4", busy && "motion-safe:animate-pulse")} />
+      {text}
     </Button>
   );
 }
@@ -850,7 +919,12 @@ function SelectionCentreControls({
  */
 function HeaderPasteButton({
   anchorName,
-}: Readonly<{ anchorName: string | null }>) {
+  /** Rendered into the verb run's measuring ruler — same box, nothing that
+   *  identifies it. `[data-header-paste]` is located globally by tests, and the
+   *  ruler is a second copy of this markup inside the same row: copy in browse
+   *  mode, then arm select mode, and the page would hold two of it. */
+  measuring = false,
+}: Readonly<{ anchorName: string | null; measuring?: boolean }>) {
   const state = useSelectionActionState();
   const clipboardCount = useClipboardCount();
 
@@ -867,14 +941,14 @@ function HeaderPasteButton({
       type="button"
       variant="ghost"
       size="icon"
-      aria-label={pasteLabel}
+      aria-label={measuring ? undefined : pasteLabel}
       title={pasteLabel}
-      data-header-paste
+      data-header-paste={measuring ? undefined : ""}
       // Still dims while an action is in flight, so a paste cannot double-fire
       // behind a slow one.
       aria-disabled={state.busy || undefined}
       onClick={() => {
-        if (state.busy) return;
+        if (measuring || state.busy) return;
         requestGraphItemAction("paste");
       }}
       className={cn(
@@ -904,10 +978,13 @@ function HeaderPasteButton({
  * beside a label; this is the design's `CircleCheck`, which reads as a control
  * rather than a state. The word beside it is what makes it a mode and not a verb.
  *
- * Rendered only while the mode is DISARMED or nothing is picked yet — once
- * there is a selection the whole row becomes `SelectModeHeader`, which carries
- * its own way out. So this shows its armed state (a pressed toggle you can
- * press again) for exactly the window in which it is still on screen.
+ * ALWAYS RENDERED, in both faces of the header. It used to disappear the moment
+ * a selection existed, because the whole row became `SelectModeHeader` — so the
+ * control the user had just pressed vanished from under the cursor, and its
+ * pressed state was only ever visible in the window before the first card was
+ * picked. It stays in place and stays pressed for as long as the mode is on,
+ * which is what a toggle is supposed to do; pressing it again is now one of two
+ * ways out, alongside Done.
  */
 function SelectModeButton() {
   const store = useCollectionsStore();
@@ -938,13 +1015,18 @@ function SelectModeButton() {
 }
 
 /**
- * The header row while a selection is being assembled — the breadcrumb's place,
- * taken over by the thing the user is actually doing.
+ * The LEFT of the header row while a selection is being assembled — the
+ * breadcrumb's place, taken over by the thing the user is actually doing.
  *
- * It replaces rather than joins, because the two say different things about
- * where you are: the trail answers "which collection am I in", and in this mode
- * the answer that matters is "what have I got". The trail comes back the moment
- * the selection empties, which is also the moment it becomes useful again.
+ * It replaces the breadcrumb rather than joining it, because the two say
+ * different things about where you are: the trail answers "which collection am
+ * I in", and in this mode the answer that matters is "what have I got". The
+ * trail comes back the moment the selection empties, which is also the moment
+ * it becomes useful again.
+ *
+ * It replaces only THAT. The row's right-hand cluster (`BoardViewControls`)
+ * renders either way — this used to take the whole row, Preview and Select and
+ * the project menu with it.
  *
  * NOT shown merely because the mode is armed. With nothing picked this would be
  * a row of dimmed verbs and a count of zero — it says nothing, and it would
@@ -1043,17 +1125,29 @@ function useFittedVerbCount(
     if (!container || !ruler) return;
 
     const measure = () => {
-      const budget = container.clientWidth;
+      const fullBudget = container.clientWidth;
       // 0 while the row is display:none (the browse header is showing) — keep
       // the last answer rather than collapsing to zero verbs and flashing them
       // all back in on the next frame.
-      if (budget === 0) return;
+      if (fullBudget === 0) return;
       const widths = Array.from(ruler.children).map((child) =>
         Math.ceil((child as HTMLElement).getBoundingClientRect().width),
       );
-      // The ruler's LAST child is the `⋮`, sitting past every verb index — see
-      // the note on it in SelectModeHeader.
+      // The ruler's last two children sit past every verb index — see the note
+      // on them in SelectModeVerbRun.
       const overflowWidth = widths[SELECT_MODE_VERBS.length] ?? 0;
+      // DONE IS ALWAYS DRAWN, so its width comes off the budget unconditionally
+      // — before pass 1, unlike the `⋮`, whose cost depends on whether pass 1
+      // needed it. It lives INSIDE this container (that is what puts it beside
+      // Delete rather than an inch away at the end of the row), and the
+      // container clips what does not fit, so a width nobody reserved is a way
+      // out of select mode that disappears on a narrow window.
+      const trailingWidth = widths[SELECT_MODE_VERBS.length + 1] ?? 0;
+      // Plus the gutter BETWEEN the run and it, which the ruler's own wrapper
+      // cannot show: the ruler measures the tail's controls and the gaps among
+      // them, while the gap that separates the whole tail from the last verb is
+      // the run's, and is only spent once the tail is drawn beside it.
+      const budget = fullBudget - (trailingWidth > 0 ? trailingWidth + SELECT_MODE_VERB_GAP_PX : 0);
 
       // PASS 1 — does the whole run fit with NO `⋮` at all? Asked first, and
       // against the full budget, because when everything fits there is no
@@ -1167,7 +1261,20 @@ function SelectModeVerb({
  * the whole run out is what makes the swap legal, and it also stops the
  * measuring ResizeObserver from running for a row that is not drawn.
  */
-function SelectModeVerbRun({ state }: Readonly<{ state: ItemActionState }>) {
+function SelectModeVerbRun({
+  state,
+  /** Drawn at the END of the run and never dropped — Done. Passed in rather
+   *  than rendered here so the run stays a run of verbs, and so the ARMED
+   *  branch (which has no verb run at all) can place the same control itself. */
+  trailing,
+  /** The same markup as `trailing`, stripped of anything that identifies it,
+   *  for the ruler to measure — see SelectModeTail's `measuring`. */
+  trailingRuler,
+}: Readonly<{
+  state: ItemActionState;
+  trailing?: React.ReactNode;
+  trailingRuler?: React.ReactNode;
+}>) {
   const { containerRef, rulerRef, visible } = useFittedVerbCount(state);
   // What the row could not draw — exactly the overflow menu's contents, taken
   // in DRAW order so the two halves of one list stay in one order.
@@ -1206,6 +1313,13 @@ function SelectModeVerbRun({ state }: Readonly<{ state: ItemActionState }>) {
             a verb early. Kept LAST, past every verb index, so the per-verb
             lookup by `indexOf` above is unaffected by its presence. */}
         <span data-select-mode-overflow-ruler="" className={cn(HEADER_SELECTION_SIZE, "shrink-0")} />
+        {/* The TRAILING control's width, measured the same way and for the same
+            reason — it is inside this container, so a width nobody reserved is
+            a control the container clips. Kept last, past the `⋮`, so neither
+            the per-verb lookup by `indexOf` nor the overflow index moves. */}
+        <span data-select-mode-trailing-ruler="" className="flex shrink-0 items-center gap-x-5">
+          {trailingRuler}
+        </span>
       </div>
       {SELECT_MODE_VERBS.filter((action) => visible.has(action)).map((action) => (
         <SelectModeVerb key={action} action={action} state={state} />
@@ -1243,7 +1357,117 @@ function SelectModeVerbRun({ state }: Readonly<{ state: ItemActionState }>) {
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
+      {trailing}
+      {/* THE SLACK GOES HERE, past everything, which is the whole reason the
+          tail is inside this container at all.
+
+          The run is `flex-1` because the fit maths needs its budget to come
+          from the ROW rather than from its own contents (see
+          useFittedVerbCount). That makes it the element that absorbs the row's
+          leftover width — so a Done rendered OUTSIDE it lands at the far end of
+          that leftover, an inch of empty space away from the Delete it is meant
+          to sit beside. Measured at 280px on a 1280 viewport. Inside, with the
+          slack explicitly BEHIND it, it stays put. Same fix, and the same
+          reason, as the `⋮` above. */}
+      <span aria-hidden="true" className="min-w-0 flex-1" />
     </div>
+  );
+}
+
+/**
+ * The row's right-hand cluster: what you are looking at, and the board-wide
+ * controls that qualify it.
+ *
+ * RENDERED IN BOTH FACES OF THE HEADER. Select mode used to replace the whole
+ * row, which took Preview, Select and the project `⋮` off screen for as long as
+ * the mode was armed — so the control you had just pressed vanished from under
+ * your cursor, and the way back out was a different button in a different
+ * place. They stay put now, and `SelectModeButton` shows its pressed state for
+ * the whole time the mode is on rather than only until the first card is
+ * picked.
+ */
+function BoardViewControls({
+  previewOn,
+  onPreviewToggle,
+  projectId,
+  className,
+}: Readonly<{
+  previewOn: boolean;
+  onPreviewToggle: () => void;
+  projectId: string;
+  className?: string;
+}>) {
+  return (
+    <DragChromeFade className={cn("flex min-w-0 shrink-0 items-center justify-end gap-2", className)}>
+              {/* SELECT leads what is left of this cluster. It used to lead as
+                  a PAIR with the tag filter — the two controls that change how
+                  you WORK with the board rather than what it contains — and
+                  that pairing is gone deliberately: the filter moved down to
+                  the controls row under the divider, with the rest of the
+                  controls that qualify what the board shows. Select stays here
+                  because it is the one that arms an ACTION, and the verbs it
+                  arms (the centre cluster) are in this row.
+
+                  The Collection tool, the children-timelines toggle and the
+                  zoom slider all went down with the filter. What remains up
+                  here is the row's original job: where you are, what you have
+                  picked, and what you can do to it. */}
+              {/* PREVIEW LEADS, Select follows. It was a tile in the icon
+                  rail, which gave it prominence but put it a long way from the
+                  board it opens over — and it is a VIEW toggle, which is what
+                  this end of the row is for. Ungated by surface deliberately:
+                  the pane plays the focused timeline in grid as well as strip,
+                  so hiding it in grid would remove a working control.
+
+                  Preview and Select are the two controls in this row that are
+                  ALWAYS here — nothing about them is gated on surface or on
+                  flat mode, which is exactly why the ruler pair went down to
+                  the controls row and these did not.
+
+                  Preview first because it is the icon in a pair whose other
+                  half carries a WORD: leading with the labelled control pushed
+                  the icon out to the fence, away from the icon toggles beyond
+                  it, so the row read as a button with an ornament rather than
+                  as one run of controls. */}
+              <HeaderToggle
+                active={previewOn}
+                onToggle={onPreviewToggle}
+                icon={TvMinimal}
+                text="Preview"
+                label={previewOn ? "Hide preview" : "Show preview"}
+                title="Preview — play the focused timeline"
+              />
+              <SelectModeButton />
+              {/* PROJECT `⋮`, immediately right of Select. Export and Load act
+                  on the whole project and produce (or consume) a file, which is
+                  a different question from the gear's set-once settings at the
+                  end of the controls row — so it is a second menu rather than
+                  two more items in that one. */}
+              <GraphProjectMenu projectId={projectId} />
+              <ControlFence />
+              {/* Ruler and waveform used to sit here, behind a fence of their
+                  own. They are down in the board's controls row now, beside
+                  the zoom: all three qualify the strip's TIME AXIS, and this
+                  row is where you are and what you can do to the selection.
+                  They also came and went with flat mode, so this row's width
+                  changed as you toggled it — the one place that cannot afford
+                  it, since the breadcrumb trail measures its budget against
+                  what is left. */}
+              {/* Paste used to sit here, fenced between the view group and
+                  history. It is in the CENTRE now, with copy and cut — the
+                  three clipboard verbs read as one group, which is worth more
+                  than the container-scoped grouping it had here. This cluster
+                  keeps only what qualifies the board itself. */}
+              <GraphUndoRedo />
+              {/* The ACCOUNT is not here. It was briefly, after history — and
+                  it went back to the bottom of the icon rail, where it can be
+                  reached from the projects page too. This rail is in the root
+                  layout; this header is not. */}
+              {/* Board options are not here — they are the last control in the
+                  board's own controls row under the divider, with the rest of
+                  the chrome that qualifies the board rather than navigates
+                  it. */}
+            </DragChromeFade>
   );
 }
 
@@ -1270,6 +1494,48 @@ function SelectModeHeader({
   // here on they want exactly the same things.
   const cutPending = usePendingCutCount() > 0;
 
+  // Clear THEN disarm. The store keeps the mode armed through an empty
+  // selection for this view (keepMultiSelectModeWhenEmpty), so the clear cannot
+  // disarm it out from under this; the order is only about ending in one notify
+  // rather than leaving the row briefly showing "0 selected" on its way out.
+  //
+  // Done also ABANDONS a pending cut. Leaving without pasting is the user
+  // saying the move is not happening, and the alternative is worse than untidy:
+  // the sources would stay dimmed on a board with no select row and — since the
+  // `✕` that cancels a cut lives only in the BROWSE header — no obvious way
+  // back to them. `clear()` drops the entries and the pending set in one
+  // notify, which un-dims the sources in place; they never moved, so there is
+  // nothing to put back.
+  const leave = () => {
+    graphClipboard.clear();
+    store.clearSelection();
+    store.setMultiSelectMode(false);
+  };
+
+  // PLACED BY EACH FACE, not by the row. It leads the verb run, where it is the
+  // subject the verbs act on; while armed it FOLLOWS the breadcrumb, where the
+  // trail is the subject and the count is what is in flight over it.
+  const count = (
+    <span
+      data-select-mode-count={armed ? armedCount : selectionCount}
+      // Mono and tabular so the row does not twitch sideways as the count
+      // crosses 9 — this number changes on every tap, which is precisely the
+      // moment a reflowing toolbar is most annoying.
+      //
+      // blue-500, the SAME step as the ring around a selected card
+      // (`ring-2 ring-blue-500` in graph-item-content). This text is the count
+      // of exactly those ringed cards, so matching the ring is what ties the
+      // number to the thing it counts; blue-400 was a near-miss that read as a
+      // third accent rather than the selection colour. `text-sm` (14px),
+      // matching the breadcrumb trail it now sits beside — a count a pixel
+      // smaller than the trail is exactly the kind of drift that makes the two
+      // read as different toolbars.
+      className="shrink-0 font-mono text-sm tabular-nums text-blue-500"
+    >
+      {armed ? armedCount : selectionCount} selected
+    </span>
+  );
+
   return (
     <div
       data-select-mode-header=""
@@ -1281,26 +1547,6 @@ function SelectModeHeader({
       // same height. Verbs move into the `⋮` instead.
       className="flex min-w-0 flex-1 items-center gap-x-5"
     >
-      <span
-        data-select-mode-count={armed ? armedCount : selectionCount}
-        // Mono and tabular so the row does not twitch sideways as the count
-        // crosses 9 — this number changes on every tap, which is precisely the
-        // moment a reflowing toolbar is most annoying.
-        //
-        // blue-500, the SAME step as the ring around a selected card
-        // (`ring-2 ring-blue-500` in graph-item-content). This text is the
-        // count of exactly those ringed cards, so matching the ring is what
-        // ties the number to the thing it counts; blue-400 was a near-miss
-        // that read as a third accent rather than the selection colour.
-        // `text-sm` (14px), matching the breadcrumb trail this row swaps
-        // places with. The two faces of the header have to read as the same
-        // row wearing a different hat — a count a pixel smaller than the trail
-        // it replaces is exactly the kind of drift that makes the swap feel
-        // like a different toolbar appearing.
-        className="shrink-0 font-mono text-sm tabular-nums text-blue-500"
-      >
-        {armed ? armedCount : selectionCount} selected
-      </span>
       {/* THE SWAP. Dimmed verbs are worse than absent ones here: after a cut
           all five are unavailable for the same reason, and the row still has
           to get the user somewhere. The breadcrumb takes the identical wing —
@@ -1310,28 +1556,111 @@ function SelectModeHeader({
           half of "where am I pasting this": the same row now answers it by
           click and by drag. */}
       {armed ? (
-        <div
-          data-select-mode-breadcrumb=""
-          data-crumb-wing
-          className="flex min-w-0 flex-1 items-center overflow-hidden"
-        >
-          {breadcrumb}
-        </div>
+        <>
+          <div
+            data-select-mode-breadcrumb=""
+            data-crumb-wing
+            className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden"
+          >
+            {breadcrumb}
+            {/* NO RULE between the trail, the count and Paste. All three are
+                one statement — where you are, what you are holding, where it
+                goes — and a rule inside a sentence reads as a full stop. The
+                one rule left in this row is the one before Cancel, which is a
+                real boundary: everything left of it continues the gesture.
+
+                INSIDE THE WING, all of it, which is the same move Done makes
+                into the verb run and for the same reason. The wing is `flex-1`
+                because `useFittedAncestorCount` takes its budget from the
+                wing's width — so it is the box that absorbs the row's leftover,
+                and anything rendered outside it lands at the far end of that
+                leftover rather than beside the breadcrumb it belongs to.
+
+                No width reservation needed here, unlike Done's: that hook
+                already computes its budget as the wing's width MINUS every
+                child of the wing that is not the trail, so these take their
+                room out of the crumbs' before the trail decides how many
+                ancestors it can show. The slack falls after them on its own —
+                a `justify-start` flex box leaves its leftover at the end. */}
+            {count}
+            <SelectModeTail
+              anchorName={anchorName}
+              armed={armed}
+              cutPending={cutPending}
+              onDone={leave}
+            />
+          </div>
+        </>
       ) : (
-        <SelectModeVerbRun state={state} />
+        <>
+        {count}
+        <SelectModeVerbRun
+          state={state}
+          trailing={
+            <SelectModeTail
+              anchorName={anchorName}
+              armed={armed}
+              cutPending={cutPending}
+              onDone={leave}
+            />
+          }
+          trailingRuler={
+            <SelectModeTail
+              anchorName={anchorName}
+              armed={armed}
+              cutPending={cutPending}
+              onDone={leave}
+              measuring
+            />
+          }
+        />
+        </>
       )}
-      <HeaderPasteButton anchorName={anchorName} />
-      {/* `ml-auto`: Done sits at the far end, away from Delete. Both end the
-          gesture, only one of them destroys anything, and putting them
-          shoulder to shoulder is how a mis-click becomes a deletion. The
-          empty space is what separates it on this side — a rule here as well
-          fenced Done in from both directions and made the way OUT read as
-          just another item in the verb run. */}
-      <Button
+      {/* NO right-hand cluster here any more. Preview, Select, the project `⋮`
+          and undo/redo render OUTSIDE this component, from the header row
+          itself, in both of its faces — so they keep their positions when the
+          mode is armed instead of being taken away and put back. */}
+    </div>
+  );
+}
+
+/**
+ * What ends the gesture: Paste when there is something to paste, then Done.
+ *
+ * DONE SITS BESIDE DELETE NOW, one fence away, which is a deliberate reversal.
+ * It used to take `ml-auto` to the far end of the row on the argument that two
+ * controls which both end the gesture — one of them destructive — should not be
+ * shoulder to shoulder. The fence is what replaces that distance: it still
+ * reads as a separate group, and the way out is now where the rest of the
+ * selection controls are rather than adrift at the end of a row whose other end
+ * is a full cluster of unrelated buttons.
+ *
+ * `measuring` renders the same boxes for the ruler to size and NOTHING that
+ * identifies them — no `data-select-mode-done`, no `data-header-paste`, no
+ * handlers. The ruler is a second copy of this markup living inside the same
+ * row, and a second element answering to either locator is a strict-mode
+ * failure in every test that reaches for one.
+ */
+function SelectModeTail({
+  anchorName,
+  armed,
+  cutPending,
+  onDone,
+  measuring = false,
+}: Readonly<{
+  anchorName: string | null;
+  armed: boolean;
+  cutPending: boolean;
+  onDone: () => void;
+  measuring?: boolean;
+}>) {
+  return (
+    <>
+      <HeaderPasteButton anchorName={anchorName} measuring={measuring} />
+      <ControlFence />
+      <button
         type="button"
-        variant="ghost"
-        size="sm"
-        data-select-mode-done
+        data-select-mode-done={measuring ? undefined : ""}
         title={
           armed
             ? cutPending
@@ -1339,59 +1668,42 @@ function SelectModeHeader({
               : "Cancel — discard what was copied"
             : "Finish selecting"
         }
-        // Clear THEN disarm. The store keeps the mode armed through an empty
-        // selection for this view (keepMultiSelectModeWhenEmpty), so the clear
-        // cannot disarm it out from under this and the order is only about
-        // ending in one notify rather than leaving the row briefly showing "0
-        // selected" on its way out.
+        onClick={measuring ? undefined : onDone}
+        // The verb run's own box, class for class — so it shares their
+        // baseline, their hit area and their coarse-pointer growth rather than
+        // setting a second standard next to them. It was a `text-sm
+        // font-medium` pill in an `h-8` zinc-700 outline, which was right while
+        // it lived alone at the far end of the row and had nothing to agree
+        // with; beside Delete it read as a dialog's confirm button that had
+        // wandered into a toolbar. Shorter than that `h-8`, which cannot cost
+        // the row height: Preview, Select and the `⋮` opposite are all still
+        // `h-8` and the two faces of the header stay pinned to one height.
         //
-        // Done also ABANDONS a pending cut. Leaving without pasting is the
-        // user saying the move is not happening, and the alternative is worse
-        // than untidy: the sources would stay dimmed on a board with no select
-        // row and — since the `✕` that cancels a cut lives only in the BROWSE
-        // header — no obvious way back to them. `clear()` drops the entries and
-        // the pending set in one notify, which un-dims the sources in place;
-        // they never moved, so there is nothing to put back.
-        onClick={() => {
-          graphClipboard.clear();
-          store.clearSelection();
-          store.setMultiSelectMode(false);
-        }}
-        // BORDERED, unlike every other control on this row. It is the way out,
-        // and the only one here that is not a verb acting on the selection —
-        // an outline is what separates "leave" from "do something to these".
+        // What separates it now is the rule to its left and its INK: the verbs
+        // idle at zinc-400 and brighten on hover, this one idles at zinc-100.
+        // Same shape, same type, more weight of colour — the quiet version of
+        // the distinction the outline was making loudly.
         //
-        // `h-8`, matching every other header control (HEADER_SELECTION_SIZE).
-        // It was `h-9`, and that 4px was the whole reason entering select mode
-        // nudged the board down: this is the tallest thing in the row, so it
-        // alone set the header's height — 61px against the browse row's 57.
+        // No `ml-auto`: the slack is absorbed inside the verb run, PAST this,
+        // which is what keeps it beside Delete.
         className={cn(
-          "ml-auto h-8 shrink-0 rounded-lg border border-zinc-700 px-3.5 text-sm font-medium",
-          "[@media(pointer:coarse)]:h-11",
-          "text-zinc-100 hover:border-zinc-500 hover:bg-transparent hover:text-white",
+          "inline-flex shrink-0 items-center gap-1.5 rounded px-1 py-1.5 text-[13px] transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
+          "[@media(pointer:coarse)]:py-3",
+          "text-zinc-100 hover:text-white",
         )}
       >
+        {/* NO ICON, unlike every verb beside it. A tick was tried and taken
+            back out: the verbs' glyphs each name an ACTION, and a tick beside
+            the way out reads as confirming something. The word alone is what
+            distinguishes leaving from acting, now that the two share a box. */}
         {/* CANCEL while armed. The button does the same thing either way —
             clear the clipboard, drop the selection, leave the mode — but the
             word has to match what the user is walking away from. "Done" over a
             half-finished paste reads as "commit it", which is the opposite. */}
         {armed ? "Cancel" : "Done"}
-      </Button>
-      {/* History lives on the RIGHT of Done, fenced off by its own rule.
-          Undo/redo are not selection verbs — they act on the board whatever is
-          picked — so they sit outside the run of verbs and outside the way
-          out, as their own group.
-
-          Select mode used to drop them entirely: `GraphUndoRedo` was rendered
-          only in the browse branch, so arming the mode took undo away at
-          exactly the moment a multi-select delete makes it most wanted.
-
-          Already `h-8` icon buttons, so the row's height is unchanged — which
-          matters, because both faces of the header are pinned to one height
-          and the last thing to break that was a single `h-9` on Done. */}
-      <ControlFence />
-      <GraphUndoRedo />
-    </div>
+      </button>
+    </>
   );
 }
 
@@ -1443,67 +1755,93 @@ function GraphUndoRedo() {
 }
 
 /**
- * The Collection tool, relocated from the icon sidebar into the board header
- * (right cluster). Same two affordances it always had: CLICK (or keyboard)
- * appends a nested timeline to the open collection through the insert bridge,
- * and native DRAG carries it onto a strip to pick a POSITION. The default
- * browser drag image is suppressed (1×1 transparent gif) so only the strip's
- * own drop indicator shows where it will land.
+ * The controls row's two ADD tools.
+ *
+ * They replace a single "Add item" button that asked which kind in a menu, and
+ * before that a Collection-only tool with no media route at all — media could
+ * only be added at the very end of a surface (the trailing slot) or by dragging
+ * in from the OS. The menu was a step that existed because one control had to
+ * serve two jobs; two controls answer the question by being two controls.
+ *
+ * CLICK appends to the end. DRAG places at the spot you let go. Both tools, the
+ * same two gestures — which is the whole reason for the pair.
+ *
+ * Appending is itself a change from the ORIGINAL collection tool, which landed
+ * next to the SELECTION via `resolveInsertPlacement`: a rule that reads well
+ * from a sidebar palette and poorly from a control sitting directly above the
+ * board, where "add one" plainly means "at the end of this". That rule is alive
+ * and still tested — PASTE uses it, which is where landing beside what you
+ * picked is unambiguously right.
+ *
+ * The work happens in `useNativeDrop`, inside the drop surface BELOW this row:
+ * that is where the mint-and-insert and the upload pipeline live, and context
+ * does not flow upward, so the click path crosses down by ADDRESSED event. See
+ * GRAPH_ADD_ITEM_EVENT for why addressed and not broadcast.
  */
-function GraphAddCollectionButton() {
-  const handleDragStart = (event: React.DragEvent) => {
-    // Same MIME the sidebar tool used, which NativeDropStrip/Grid accept.
-    event.dataTransfer.setData("application/x-gstudio-type", "collection");
-    event.dataTransfer.effectAllowed = "copy";
-    const img = new window.Image();
-    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-    event.dataTransfer.setDragImage(img, 0, 0);
-
-    // The browser shows a "no-drop" cursor wherever a dragover handler doesn't
-    // preventDefault — i.e. everywhere except directly over a strip/grid — so
-    // the cursor flickers to no-drop as the pointer crosses the gaps between
-    // them (and at the very start, up in the header). Claim EVERY dragover at
-    // the document level for the drag's lifetime so the cursor stays a valid
-    // "copy" throughout; the strips/grids still own the drop position and the
-    // actual add. A matching document drop swallows a stray drop that misses
-    // every strip so the browser takes no default action.
-    const onDocDragOver = (e: DragEvent) => {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-    };
-    const onDocDrop = (e: DragEvent) => {
-      e.preventDefault();
-    };
-    const cleanup = () => {
-      document.removeEventListener("dragover", onDocDragOver, true);
-      document.removeEventListener("drop", onDocDrop, true);
-      document.removeEventListener("dragend", cleanup);
-    };
-    // Capture before nested surfaces. Chromium can briefly expose an empty
-    // `types` list while crossing DOM boundaries, so the drag-lifetime guard
-    // must not depend on reading our MIME type back from each event.
-    document.addEventListener("dragover", onDocDragOver, true);
-    document.addEventListener("drop", onDocDrop, true);
-    document.addEventListener("dragend", cleanup, { once: true });
-  };
-
+function BoardAddTools({
+  collectionId,
+  flatOn,
+  onLeaveFlat,
+}: Readonly<{ collectionId: string; flatOn: boolean; onLeaveFlat: () => void }>) {
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
   return (
-    <button
-      type="button"
-      draggable
-      aria-label="Add Collection to the open timeline"
-      title="New collection — click to append, drag onto a strip to place"
-      onDragStart={handleDragStart}
-      onClick={() => requestGraphToolInsert("collection")}
-      // NO BORDER at rest. It was the only bordered control in this row —
-      // every toggle beside it is a bare ghost square — so the box read as a
-      // different KIND of thing rather than as the same row's tool. The
-      // hover still fills and tints, which is what says it is pressable, and
-      // `cursor-grab` is what says it is also draggable.
-      className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-md bg-zinc-900/40 text-zinc-400 transition-colors hover:bg-sky-950/30 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-    >
-      <FolderPlus aria-hidden="true" className="h-4 w-4" />
-    </button>
+    <>
+      <ToolButton
+        testId="collection"
+        label="Collection"
+        payload="collection"
+        icon={Layers}
+        title="Collection — click to add one at the end, or drag onto the board to place it"
+        onActivate={() => {
+          requestGraphAddItem({ collectionId, kind: "collection" });
+          // LEAVE FLAT MODE, because otherwise this looks like it did nothing.
+          //
+          // A flat run is every MEDIA item in the closure, in order. A new
+          // collection is empty, so it contributes none and the board does not
+          // change by a pixel — the item really is there, and the only sign of
+          // it is a row in the children tree, which is off by default.
+          // Measured: board cards 11 to 11, sub-timeline rows 6 to 7.
+          //
+          // Which makes a real add indistinguishable from a dead button.
+          // Switching the view is the smaller surprise: they asked for a
+          // collection, so put them where collections exist.
+          //
+          // Only for COLLECTIONS — media appears in a flat run immediately, so
+          // there is nothing to explain and no reason to move anybody's view.
+          if (flatOn) onLeaveFlat();
+        }}
+      />
+      <ToolButton
+        testId="media"
+        label="Media"
+        payload={MEDIA_TOOL_PAYLOAD}
+        icon={ImageIcon}
+        title="Media — click to browse and add at the end, or drag onto the board to place what you pick"
+        onActivate={() => mediaInputRef.current?.click()}
+      />
+      {/* The CLICK path's picker. It lives here, in the button's own tree, so
+          the picker opens inside the click that asked for it and user
+          activation is never in question. The DRAG path cannot borrow this one:
+          its files have to land at a PARKED position that only the surface
+          knows, so it carries a picker of its own (see MediaDropTarget). */}
+      <input
+        ref={mediaInputRef}
+        type="file"
+        multiple
+        accept="image/*,video/*"
+        tabIndex={-1}
+        aria-hidden="true"
+        data-add-media-end-input
+        className="sr-only"
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])];
+          // Reset BEFORE handing off, so picking the same file twice running
+          // fires `change` again — the input compares against its own value.
+          event.target.value = "";
+          if (files.length > 0) requestGraphAddItem({ collectionId, kind: "media", files });
+        }}
+      />
+    </>
   );
 }
 
@@ -1812,7 +2150,18 @@ export function GraphBoard({
                 shape. It stays outside DragChromeFade with the breadcrumb,
                 because a save landing mid-drag is still worth seeing. */}
             {selectModeRow ? (
-              <SelectModeHeader anchorName={anchorName} breadcrumb={breadcrumb} />
+              <>
+                <SelectModeHeader anchorName={anchorName} breadcrumb={breadcrumb} />
+                {/* The SAME cluster the browse row ends with, in the same place.
+                    Select mode changes what the LEFT of the row is doing; it
+                    has never had a reason to change what the right of it
+                    offers. */}
+                <BoardViewControls
+                  previewOn={previewOn}
+                  onPreviewToggle={onPreviewToggle}
+                  projectId={projectId}
+                />
+              </>
             ) : (
               <>
             {/* `data-crumb-wing`: the box whose width the trail measures
@@ -1848,65 +2197,11 @@ export function GraphBoard({
                 board pinned beneath it — with it. Narrow viewports are
                 answered by moving controls OUT (the row under the divider now
                 carries four of them) rather than by wrapping. */}
-            <DragChromeFade className="flex min-w-0 items-center justify-end gap-2">
-              {/* SELECT leads what is left of this cluster. It used to lead as
-                  a PAIR with the tag filter — the two controls that change how
-                  you WORK with the board rather than what it contains — and
-                  that pairing is gone deliberately: the filter moved down to
-                  the controls row under the divider, with the rest of the
-                  controls that qualify what the board shows. Select stays here
-                  because it is the one that arms an ACTION, and the verbs it
-                  arms (the centre cluster) are in this row.
-
-                  The Collection tool, the children-timelines toggle and the
-                  zoom slider all went down with the filter. What remains up
-                  here is the row's original job: where you are, what you have
-                  picked, and what you can do to it. */}
-              {/* PREVIEW LEADS, Select follows. It was a tile in the icon
-                  rail, which gave it prominence but put it a long way from the
-                  board it opens over — and it is a VIEW toggle, which is what
-                  this end of the row is for. Ungated by surface deliberately:
-                  the pane plays the focused timeline in grid as well as strip,
-                  so hiding it in grid would remove a working control.
-
-                  Preview and Select are the two controls in this row that are
-                  ALWAYS here — nothing about them is gated on surface or on
-                  flat mode, which is exactly why the ruler pair went down to
-                  the controls row and these did not.
-
-                  Preview first because it is the icon in a pair whose other
-                  half carries a WORD: leading with the labelled control pushed
-                  the icon out to the fence, away from the icon toggles beyond
-                  it, so the row read as a button with an ornament rather than
-                  as one run of controls. */}
-              <HeaderToggle
-                active={previewOn}
-                onToggle={onPreviewToggle}
-                icon={TvMinimal}
-                label={previewOn ? "Hide preview" : "Show preview"}
-                title="Preview — play the focused timeline"
-              />
-              <SelectModeButton />
-              <ControlFence />
-              {/* Ruler and waveform used to sit here, behind a fence of their
-                  own. They are down in the board's controls row now, beside
-                  the zoom: all three qualify the strip's TIME AXIS, and this
-                  row is where you are and what you can do to the selection.
-                  They also came and went with flat mode, so this row's width
-                  changed as you toggled it — the one place that cannot afford
-                  it, since the breadcrumb trail measures its budget against
-                  what is left. */}
-              {/* Paste used to sit here, fenced between the view group and
-                  history. It is in the CENTRE now, with copy and cut — the
-                  three clipboard verbs read as one group, which is worth more
-                  than the container-scoped grouping it had here. This cluster
-                  keeps only what qualifies the board itself. */}
-              <GraphUndoRedo />
-              {/* Board options are not here — they are the last control in the
-                  board's own controls row under the divider, with the rest of
-                  the chrome that qualifies the board rather than navigates
-                  it. */}
-            </DragChromeFade>
+            <BoardViewControls
+              previewOn={previewOn}
+              onPreviewToggle={onPreviewToggle}
+              projectId={projectId}
+            />
               </>
             )}
 
@@ -1919,9 +2214,6 @@ export function GraphBoard({
           </div>
         }
       >
-        {/* Outside the surface branch on purpose: the sidebar's tool buttons
-            must insert in grid mode too, where no NativeDropStrip exists. */}
-        <SidebarToolInsertBridge collectionId={focusedId} />
         {/* Also outside it (PL10-012): details are not a strip idea. A grid
             card has no trim handles, but it has a name, a duration, and
             whatever an item grows next — so it opens the same view. The modal
@@ -2025,20 +2317,55 @@ export function GraphBoard({
                 the intended order. */}
             <div
               data-board-controls-row
-              className="grid min-h-7 grid-cols-[minmax(min-content,1fr)_auto_minmax(min-content,1fr)] items-center gap-3 border-b border-white/10 px-3 py-2"
+              // WRAPS when it cannot fit, three columns when it can.
+              //
+              // The row needs ~648px of content. Below roughly an 800px
+              // viewport the three columns overflow the panel, and every way of
+              // absorbing that inside one line is worse than a second line:
+              // clipping the sides would cut off the Add item and filter menus,
+              // which are absolutely positioned INSIDE those columns; letting
+              // the columns shrink puts their `shrink-0` contents on top of
+              // each other again; and `overflow-x-auto` on the row would
+              // establish a scroll container that clips those same menus
+              // vertically.
+              //
+              // Wrapping is available here in a way it is not one row up: the
+              // breadcrumb header is pinned to a single height that the preview
+              // pane measures itself against, and this row is deliberately not
+              // sticky and measured by nothing.
+              className="flex min-h-7 flex-wrap items-center gap-3 border-b border-white/10 px-3 py-2 lg:grid lg:grid-cols-[minmax(min-content,1fr)_auto_minmax(min-content,1fr)]"
             >
               {/* LEFT COLUMN — WHAT THE BOARD IS MADE OF. Two fenced groups:
-                  the toggles that change its shape, then the one control that
-                  adds to it.
+                  the one control that ADDS to it, then the toggles that change
+                  its shape.
+
+                  ADD LEADS. It is the only control in the row that writes, and
+                  the only one that is a verb rather than a view — so it opens
+                  the row rather than trailing the switches. It also carries the
+                  row's only label, and a labelled control reads as the start of
+                  a run far better than as something wedged after two glyphs.
 
                   `min-w-0` on the flex box inside the column, so its own
                   children may compress. The column's `min-content` floor
                   governs how far that can go. */}
               <div className="flex min-w-0 items-center gap-2">
-                {/* GROUP 1 — HOW THE BOARD IS STRUCTURED. Two toggles that
-                    change the shape of what is drawn, not its contents:
-                    whether this run is grouped into its collections, and
-                    whether the nested timelines draw below it. */}
+                <BoardAddTools
+                  collectionId={focusedId}
+                  flatOn={flatOn}
+                  onLeaveFlat={onFlatToggle}
+                />
+                {/* Extra room on the LEFT only. The row's `gap-2` is measured
+                    between boxes, and the two tool buttons carry a drag grip
+                    inside theirs — so the gap that reads as generous between
+                    two glyph toggles reads as cramped where a labelled button
+                    with a grip meets a rule. The asymmetry is the point: this
+                    fence separates a written verb from a run of view toggles,
+                    and the space belongs on the side with more in it. */}
+                <ControlFence className="ml-1" />
+                {/* HOW THE BOARD IS STRUCTURED. Two toggles that change the
+                    shape of what is drawn, not its contents: whether this run
+                    is grouped into its collections, and whether the nested
+                    timelines draw below it. */}
                 {/* INVERTED against the state it drives. The strip opens flat
                     (see `flatOn`'s default), so the thing left to offer is the
                     nesting, and `active` is `!flatOn` — pressed means you have
@@ -2070,12 +2397,10 @@ export function GraphBoard({
                   label={childrenShown ? "Hide children timelines" : "Show children timelines"}
                   title="Children timelines — show the nested timeline tree"
                 />
-                <ControlFence />
-                {/* GROUP 2 — the one control here that CHANGES THE TIMELINE
-                    rather than the view of it, which is the whole reason it
-                    gets a fence to itself. Everything either side is a
-                    reading; this one writes. */}
-                <GraphAddCollectionButton />
+                {/* NO trailing fence. A fence is the edge BETWEEN two groups,
+                    and there is nothing after this one — the column ends here.
+                    One was briefly left behind when Add item moved to the front
+                    of the row, drawing a line against empty space. */}
               </div>
 
               {/* CENTRE COLUMN — WHAT THE BOARD AMOUNTS TO. One readout, and
@@ -2084,8 +2409,24 @@ export function GraphBoard({
 
                   `justify-center` inside an `auto` column is belt and braces:
                   the column is already exactly its content's width. It matters
-                  the moment anything joins the readout here. */}
-              <div className="flex items-center justify-center">
+                  the moment anything joins the readout here.
+
+                  `min-w-0 overflow-hidden` IS NOT decoration — it fixes a real
+                  bug this grid introduced. On a narrow viewport the three
+                  columns cannot all fit; the sides hold their `min-content`
+                  floors, so CSS squeezes the flexible `auto` track instead —
+                  measured at 30px against a 91px readout. The readout is
+                  `shrink-0`, so it kept its full width and, being centred,
+                  overhung its own column by 30px on EACH side, landing on top
+                  of the buttons either way. Not a cosmetic overlap: it
+                  intercepted their pointer events, and at 560px the children
+                  toggle became unclickable. Flex children cannot do this to
+                  each other, which is why the old flex row never could.
+
+                  Clipping is the right thing to lose first. Everything either
+                  side is a control; this is the one thing in the row you only
+                  read. */}
+              <div className="flex min-w-0 items-center justify-center overflow-hidden">
                 <FocusedAggregate
                   focusedId={focusedId}
                   pixelsPerSecond={deferredPixelsPerSecond}
@@ -2133,6 +2474,14 @@ export function GraphBoard({
                         />
                       </>
                     ) : null}
+                    {/* The ruler and the waveform are TOGGLES — things drawn
+                        onto the strip. The slider is a continuous control that
+                        changes the axis they are drawn against. Fenced apart
+                        because they read as one undifferentiated run
+                        otherwise, and only inside the flat branch: with the
+                        toggles gone this fence would open the group with a
+                        line against nothing. */}
+                    {flatOn ? <ControlFence /> : null}
                     <HeaderZoomControl
                       pixelsPerSecond={pixelsPerSecond}
                       onChange={onPixelsPerSecondChange}

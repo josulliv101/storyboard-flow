@@ -4,6 +4,25 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
 import { readStoredTimelineEntry, type TimelineEntry } from "./firebase-timeline-store";
 
+/**
+ * How a caller reads documents.
+ *
+ * Declared HERE rather than in `serve-timeline`, which re-exports it: the
+ * closure walk is what consumes `many`, and this module must not import from
+ * its own caller.
+ */
+export type TimelineEntryReader = ((id: string) => Promise<TimelineEntry | null>) & {
+  /** Optional bulk path — see `createTimelineEntryReader`. A plain function
+   *  still satisfies this type, which is what test readers hand in. */
+  many?: (ids: readonly string[]) => Promise<Map<string, TimelineEntry | null>>;
+  /**
+   * Optional single-query prime of a whole project, resolving the returned
+   * count. See `readStoredTimelineProjectEntries` — it collapses the walk's
+   * round trips without changing what the walk decides.
+   */
+  prefetchProject?: (projectId: string) => Promise<number>;
+};
+
 // The nested document closure for a timeline: the root plus every document
 // reachable through collection clips, breadth-first with a visited set (a
 // reference cycle in stored data terminates the WALK here; the manifest
@@ -77,11 +96,33 @@ export async function loadTimelineClosure(
      * closure walk that bypassed it would re-fetch documents the caller had
      * just loaded. It is also the seam its tests inject through.
      */
-    read?: (id: string) => Promise<TimelineEntry | null>;
+    read?: TimelineEntryReader;
+    /**
+     * Stop descending after this many levels below the root. Absent = the whole
+     * closure, which is what the preview/export compile needs and must keep.
+     *
+     * The BOARD does not need it. A board open renders the focused collection
+     * plus its children as placeholder cards, so everything below the first
+     * level is read only to recompute the summaries those cards display — 149
+     * documents to correct four numbers per card. Bounding the walk is the
+     * difference between paying for the whole project and paying for what is
+     * on screen.
+     */
+    maxDepth?: number;
   }>,
 ): Promise<{
   documents: Record<string, TimelineDocument>;
   missing: string[];
+  /**
+   * Children the bound declined to read — NOT the same thing as `missing`.
+   *
+   * `missing` means the document is GONE, and the client changes what it shows
+   * because of it. These exist and simply were not fetched, so a caller
+   * deriving summaries must treat them as UNRESOLVED (keep the stored summary)
+   * rather than absent (derive an empty collection). Merging the two lists
+   * would turn a cheap read into apparent data loss.
+   */
+  unvisited: string[];
   /** Per-document save revisions at compile time — the manifest carries them
    *  so the client can refuse a compile that predates its own writes to ANY
    *  document in the closure, not just the root. */
@@ -118,24 +159,52 @@ export async function loadTimelineClosure(
   // `rootEntry: null` is a caller that looked and found nothing — honour it
   // rather than re-reading to rediscover the same absence. `undefined` means
   // the caller has no opinion.
-  const read =
+  const read: TimelineEntryReader =
     options?.read ?? ((childId: string) => readStoredTimelineEntry(childId, requesterUid));
   const rootEntry =
     options?.rootEntry !== undefined
       ? options.rootEntry
       : await read(rootId).catch(() => null);
 
+  // ONE QUERY BEFORE THE WALK, when the reader can do it.
+  //
+  // The walk below is unchanged and still authoritative: it decides what the
+  // closure IS. This only puts the documents where it will look, so its nine
+  // sequential levels resolve from memory instead of from nine round trips.
+  // Anything the prime missed — a document written before `projectId` existed,
+  // or one whose hint is stale — the walk fetches exactly as it always did.
+  await read.prefetchProject?.(rootId).catch(() => 0);
+
   let frontier: readonly string[] = record(rootId, rootEntry);
+  const unvisited = new Set<string>();
+  let depth = 0;
 
   while (frontier.length > 0) {
-    const entries = await mapWithConcurrency(frontier, READ_CONCURRENCY, async (id) => ({
-      id,
-      entry: await read(id).catch(() => null),
-    }));
+    // Checked BEFORE the level is read, so `maxDepth: 1` reads the root and its
+    // children and nothing deeper.
+    depth += 1;
+    if (options?.maxDepth !== undefined && depth > options.maxDepth) {
+      for (const id of frontier) unvisited.add(id);
+      break;
+    }
+    // ONE ROUND TRIP PER LEVEL when the reader can batch, twelve-at-a-time when
+    // it cannot (hand-written readers in tests, and the un-shared default). The
+    // shape of the walk is identical either way — a level is read, then
+    // recorded in frontier order — so only the number of network calls moves.
+    const batched = await read.many?.(frontier);
+    const entries = batched
+      ? frontier.map((id) => ({ id, entry: batched.get(id) ?? null }))
+      : await mapWithConcurrency(frontier, READ_CONCURRENCY, async (id) => ({
+          id,
+          // A read that throws is a document this requester cannot see. It is
+          // recorded as missing, exactly as a document that does not exist:
+          // one unreadable branch must not fail the whole closure.
+          entry: await read(id).catch(() => null),
+        }));
     // Recorded in frontier order, so `documents` and `missing` keep the
     // deterministic ordering the sequential walk produced.
     frontier = entries.flatMap(({ id, entry }) => record(id, entry));
   }
 
-  return { documents, missing, revisions };
+  return { documents, missing, revisions, unvisited: [...unvisited] };
 }

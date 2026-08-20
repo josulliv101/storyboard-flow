@@ -23,12 +23,11 @@ import { GraphViewNavContext } from "./graph-navigation";
 import { CardCornerSlot } from "./graph-anchor-menu";
 import {
   AudioPlaceholder,
-  CollectionLeaderPlaceholder,
+  EmptyCollectionPlaceholder,
 } from "./graph-card-placeholders";
 import {
   DisabledChip,
   LaneChip,
-  SELECT_HOVER_REVEAL_COLLECTION,
   SelectionIndicator,
 } from "./graph-card-badges";
 import {
@@ -44,6 +43,7 @@ import {
   useDisabledByAncestor,
   useEnabledChildCount,
   useFirstChildIsAudio,
+  useCollectionSubtreeHydrated,
   useHydratedCollectionSeconds,
 } from "./graph-card-derivations";
 
@@ -86,12 +86,11 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
     enabledChildCount,
     storedItemCount: detail?.itemCount,
   });
-  const totalSeconds = collectionCardSeconds({
-    hydrated,
-    liveSeconds,
-    storedPlayableDuration: detail?.playableDuration,
-    storedDuration: detail?.duration,
-  });
+  // VOUCHED, not merely hydrated — see `collectionSubtreeHydrated`. A card
+  // whose branch is only partly loaded shows its item count and no time,
+  // rather than a plausible number derived from stale stored summaries.
+  const vouched = useCollectionSubtreeHydrated(id as string);
+  const totalSeconds = collectionCardSeconds({ vouched, liveSeconds });
   const previews = useCollectionPreviewFrames(id as string, hydrated, detail?.previewItems);
   const displayName = title ?? node.name;
   const inheritedDisabled = useDisabledByAncestor(id);
@@ -116,11 +115,24 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           can then be trashed with Delete alongside media. */}
       <CollectionItem.SelectionSurface
         dragActivation={dragActivation === "hold" ? "hold" : "body"}
+        // STARTS WITH THE NAME, so a speech-input user saying what they see
+        // ("Scenes") matches — the substance of WCAG 2.5.3 "Label in Name".
+        //
+        // Lighthouse's `label-content-name-mismatch` still flags this, and
+        // deliberately not chased: the caption's spans carry no whitespace
+        // between them, so axe compares against the concatenation
+        // "Scenes1:29/1 item". Satisfying that literally means an accessible
+        // name no one would want spoken. Two other routes were tried and are
+        // worse — folding the duration in makes the name CHANGE when a branch
+        // finishes loading (announced mid-read), and hiding the readouts from
+        // assistive tech changes nothing, because an `aria-label` on a button
+        // already replaces its content for AT.
+        //
         // Announce the count the card actually SHOWS — the stored summary for a
         // placeholder, the live children once hydrated. The primitive's default
         // reads live childCount alone, which speaks "0 items" over a card
         // displaying "9" until its clips load.
-        ariaLabel={`${displayName} (collection, ${count} ${count === 1 ? "item" : "items"})`}
+        ariaLabel={`${displayName}, collection, ${count} ${count === 1 ? "item" : "items"}`}
         className={[
           // `relative` so the disabled chip below can pin to this card's own
           // top-right corner rather than some ancestor's.
@@ -185,7 +197,6 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             id={id}
             selected={selected}
             armed={selectMode}
-            revealOnHover={SELECT_HOVER_REVEAL_COLLECTION}
           />
           {/* THE COLLECTION MARK, dead centre over the frames.
               A collection's frames are its children's pictures, so at a glance
@@ -199,45 +210,52 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
               click, drag and checkbox untouched, and it is `aria-hidden`
               because the surface's label already announces "collection".
 
-              Only over real frames — the empty state below draws its own
-              placeholder, and two glyphs stacked would just read as a bug. */}
-          {previews.length > 0 ? (
-            <span
-              data-collection-mark
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 z-10 grid place-items-center"
-            >
+              ON EVERY COLLECTION CARD, empty or not. It used to be gated on
+              there being real frames, because the empty state drew an academy
+              leader and two glyphs stacked in one centre read as a bug. That
+              placeholder is a plain gradient now precisely so this mark can be
+              the one thing saying "collection" — said once, and the same way,
+              whether the card has frames behind it or nothing at all. */}
+          <span
+            data-collection-mark
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-10 grid place-items-center"
+          >
               {/* A disc behind the glyph, so the mark reads on ANY frame.
                   The glyph alone is white-on-whatever-the-children-are: over a
                   pale or busy frame the strokes break up, and the drop-shadow
                   under it only outlines them rather than giving them a ground.
                   The disc is that ground.
 
-                  Deliberately faint — `bg-black/25`. This sits over the frame
-                  that tells you WHICH collection this is, so it has to darken
-                  the picture without hiding it; anything heavier reads as a
-                  scrim over the card. It is a background-colour alpha, NOT
-                  `opacity` on the wrapper, which would take the glyph down to
-                  an eighth (0.25 × its own 0.5) along with it. */}
-              <span className="rounded-full bg-black/25 p-2">
-                <Layers
-                  className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
-                  strokeWidth={1.5}
-                />
-              </span>
+                  `bg-black/45`, up from the 0.25 it shipped at. The original
+                  was tuned to darken the frame as little as possible, and it
+                  went too far the other way: on a mid-tone frame the disc
+                  barely registered, so the glyph was back to floating on the
+                  picture with no ground. It is still an alpha well short of
+                  opaque — the frame is how you recognise WHICH collection this
+                  is, so it must read through.
+
+                  A background-colour alpha, NOT `opacity` on the wrapper,
+                  which would take the glyph down along with it (0.45 × its own
+                  0.5). */}
+            <span className="rounded-full bg-black/45 p-2">
+              <Layers
+                className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.5}
+              />
             </span>
-          ) : null}
+          </span>
           {previews.length === 0 ? (
             <span
               data-empty-collection-preview
-              data-collection-preview-kind={leadsWithAudio ? "audio" : "leader"}
+              data-collection-preview-kind={leadsWithAudio ? "audio" : "empty"}
               aria-hidden="true"
               className="flex flex-1 items-center justify-center overflow-hidden rounded-sm"
             >
-              {/* The film leader means "no picture". For a collection of voice
-                  takes that is the wrong sentence — the right one is "this is
-                  sound", and the audio card's own glyph already says it. */}
-              {leadsWithAudio ? <AudioPlaceholder /> : <CollectionLeaderPlaceholder />}
+              {/* A collection of voice takes gets the audio card's own glyph:
+                  "this is sound" is a truer sentence there than "this is
+                  empty", and it is the same mark an audio clip wears. */}
+              {leadsWithAudio ? <AudioPlaceholder /> : <EmptyCollectionPlaceholder />}
             </span>
           ) : (
             previews.map((preview, index) => (
@@ -254,7 +272,31 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
                 src={collectionPreviewFrameUrl(preview)}
                 alt=""
                 draggable={false}
-                loading="lazy"
+                // EAGER, because the grid is virtualized. `VirtualGrid` renders
+                // only the rows at or near the viewport, so a card that exists
+                // in the DOM has already been judged on-screen — `loading=lazy`
+                // then defers a request the browser could have started, and
+                // waits for layout to re-decide what virtualization just
+                // decided. Below-the-fold cards are not lazy, they are absent.
+                //
+                // Measured: this element was the LCP on a board open, and its
+                // request was queued at 1,495ms having taken 0.4ms to download.
+                // The delay was discovery, not transfer.
+                loading="eager"
+                // Only the FIRST frame. All three are visible, but a hint that
+                // marks everything high marks nothing — the leading frame is
+                // the one that carries the card, and on the measured board it
+                // was the LCP element.
+                {...(index === 0 ? { fetchPriority: "high" as const } : {})}
+                // INTRINSIC SIZE, so the browser can reserve the box before the
+                // bytes arrive. CSS already fixes the rendered size (`h-full`,
+                // `flex-1`), but with no width/height the element has no aspect
+                // ratio until decode, and the trace attributed two layout
+                // shifts to exactly that ("An unsized image"). 16:9 is what the
+                // Cloudinary transform emits (w_640,h_360) — see
+                // `collectionPreviewFrameUrl`.
+                width={640}
+                height={360}
                 className="h-full min-w-0 flex-1 rounded-sm object-cover"
               />
             ))

@@ -64,9 +64,29 @@ export type GraphServerPayload = Readonly<{
   forUid: string;
 }>;
 
+/** The empty snapshot the server rendered with — one frozen object, so
+ *  `useSyncExternalStore` sees a stable value. */
+const EMPTY_DOCUMENTS: DocumentsById = Object.freeze({});
+
 export type GraphDocumentsGateway = Readonly<{
   /** Snapshot of every document the session has loaded or written. */
   read: () => DocumentsById;
+  /**
+   * What the SERVER rendered: nothing.
+   *
+   * The third argument to `useSyncExternalStore` has to describe the HTML the
+   * server produced, and every caller was passing `read` — the live store. That
+   * store is EMPTY during SSR and PRIMED by the time hydration runs (the RSC
+   * payloads install themselves during render), so React compared a server tree
+   * built from no documents against a client tree built from all of them.
+   *
+   * In the sidebar that difference is structural — the shortcuts section exists
+   * in one tree and not the other — and Next reported a hydration mismatch.
+   *
+   * Always the same object, because `useSyncExternalStore` re-renders forever if
+   * the snapshot is a fresh value each call.
+   */
+  readServerSnapshot: () => DocumentsById;
   /** The document if already cached, without triggering IO. */
   peek: (timelineId: string) => TimelineDocument | null;
   /**
@@ -75,6 +95,23 @@ export type GraphDocumentsGateway = Readonly<{
    * (or the request failed — surfaced via `lastError`).
    */
   ensure: (timelineId: string) => Promise<TimelineDocument | null>;
+  /**
+   * Fill the cache with a timeline AND everything under it, in ONE request.
+   *
+   * The opening move on entering a board. Without it the cache fills a document
+   * at a time as cards mount, and each of those reads walks its own subtree
+   * server-side — 58 requests and ~430 document reads for a 151-document
+   * project, against 151 for the closure the server already loaded anyway
+   * (#437).
+   *
+   * BEST EFFORT, and the caller is expected to ignore the result. Everything it
+   * primes is something `ensure` would otherwise have fetched, so a failure —
+   * a closure too large to walk, a network error — costs nothing but the old
+   * behaviour. It resolves once the primes are installed so a caller CAN await
+   * it before hydrating, which is the difference between one request and a
+   * hundred.
+   */
+  ensureClosure: (rootId: string) => Promise<void>;
   /**
    * The write path: update the cached document's clips now, join the
    * current debounce window — the whole dirty set goes out as one atomic
@@ -134,6 +171,16 @@ export type GraphDocumentsGateway = Readonly<{
    * prime/ensure in an authenticated session.
    */
   bindUser: (uid: string) => void;
+  /**
+   * The board this session is editing, sent with every write so the server can
+   * stamp `projectId` (#458).
+   *
+   * Separate from `bindUser` because it changes far more often — every drill
+   * into a different project — and because it carries no authorization weight:
+   * it is a prefetch hint, and the server validates it against the caller's own
+   * scope regardless.
+   */
+  bindProject: (projectId: string) => void;
   /** The compare-and-set ledger's revision for a document, if known. */
   revisionOf: (timelineId: string) => number | undefined;
   /**
@@ -152,6 +199,15 @@ export type GraphDocumentsGateway = Readonly<{
    * not get, or to surface the state in their own UI.
    */
   isConflicted: (timelineId: string) => boolean;
+  /**
+   * True when a closure walk reported this id as UNRESOLVABLE — the document
+   * does not exist, as opposed to not being loaded yet. Only the server can
+   * tell those apart, so this is its answer, remembered.
+   */
+  isKnownMissing: (timelineId: string) => boolean;
+  /** Record ids a SERVER walk reported unresolvable. The RSC boot path ships
+   *  them alongside its payloads; `ensureClosure` records its own. */
+  recordMissing: (ids: readonly string[]) => void;
   /**
    * Declare that the CACHE is ahead of the live graph for this document, so
    * clip writes projected from that graph must stop.
@@ -237,7 +293,22 @@ export type GraphDocumentsGateway = Readonly<{
   markStale: (timelineId: string) => void;
 }>;
 
-export function createGraphDocumentsGateway(): GraphDocumentsGateway {
+/**
+ * How a pending READ BATCH is scheduled. Injectable for ONE reason: the window
+ * has to be a real delay to coalesce anything (see `fetchDocument`), and a real
+ * delay deadlocks a test that awaits `ensure` under fake timers. Tests pass
+ * `queueMicrotask`; nothing else should.
+ */
+export type BatchScheduler = (flush: () => void) => void;
+
+const DEFAULT_BATCH_SCHEDULER: BatchScheduler = (flush) => {
+  setTimeout(flush, 12);
+};
+
+export function createGraphDocumentsGateway(
+  options: { scheduleBatch?: BatchScheduler } = {},
+): GraphDocumentsGateway {
+  const scheduleBatch = options.scheduleBatch ?? DEFAULT_BATCH_SCHEDULER;
   let documents: DocumentsById = {};
   // The expected-revision ledger: revision observed at GET (or returned by
   // the last batch), per document. Absent = no expectation (a server that
@@ -253,6 +324,12 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   // change that touches several documents writes them in the same window,
   // so they travel in the SAME atomic batch.
   const dirtyIds = new Set<string>();
+  /** Ids the SERVER reported as unresolvable while walking a closure — a
+   *  dangling childTimelineId, not a document waiting to load. See the note in
+   *  `ensureClosure`. */
+  const knownMissingIds = new Set<string>();
+  /** The board whose writes this session is sending — see `bindProject`. */
+  let boundProjectId: string | null = null;
   // Documents this session has actually EMPTIED — observed at the moment the
   // clips went from some to none, not inferred later from a projection that
   // happens to be empty. The store refuses an empty-over-non-empty write
@@ -377,53 +454,203 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     notify();
   };
 
-  const fetchDocument = async (timelineId: string): Promise<TimelineDocument | null> => {
-    const gen = generation;
-    try {
-      const response = await fetch(`/api/timelines/${encodeURIComponent(timelineId)}`, {
-        cache: "no-store",
-      });
-      // A reset (auth rebind) happened while this was in flight: the
-      // response belongs to the previous session and must not land.
-      if (gen !== generation) return null;
-      if (!response.ok) {
-        const result = (await response.json().catch(() => ({}))) as { error?: string };
-        if (gen !== generation) return null;
-        setError(
-          timelineId,
-          result.error || `Timeline "${timelineId}" failed to load (${response.status}).`,
-        );
-        return null;
-      }
-      const result = (await response.json().catch(() => ({}))) as {
-        document?: TimelineDocument;
-        revision?: number;
-      };
-      if (gen !== generation) return null;
-      if (!result.document || result.document.id !== timelineId) {
-        setError(timelineId, `Timeline "${timelineId}" returned an unexpected document.`);
-        return null;
-      }
-      documents = { ...documents, [timelineId]: result.document };
-      if (typeof result.revision === "number") {
-        revisions.set(timelineId, result.revision);
-      } else {
-        // No revision from the server: drop any stale expectation rather
-        // than let it force spurious conflicts.
-        revisions.delete(timelineId);
-      }
-      setError(timelineId, null);
-      notify();
-      return result.document;
-    } catch (cause) {
-      if (gen !== generation) return null;
+  /** Mirrors `MAX_BATCH_IDS` on the endpoint. Larger bursts split into chunks
+   *  rather than being refused. */
+  const MAX_FETCH_BATCH = 200;
+
+  type QueuedFetch = {
+    timelineId: string;
+    resolve: (document: TimelineDocument | null) => void;
+  };
+  let fetchQueue: QueuedFetch[] = [];
+  let fetchScheduled = false;
+  /** Read batches currently on the wire. While any is, new ids WAIT. */
+  let fetchInFlight = 0;
+
+  type BatchReadEntry = {
+    id?: string;
+    document?: TimelineDocument;
+    revision?: number;
+    error?: string;
+    /** The status the equivalent single GET would have returned. 404 is the
+     *  server saying this document does not exist — the one failure worth
+     *  remembering, because asking again cannot change the answer. */
+    status?: number;
+  };
+
+  /** Install ONE document from a batch response into the cache. Returns the
+   *  document so the waiter can resolve with it, and reports its own error. */
+  const installFetched = (
+    timelineId: string,
+    entry: BatchReadEntry | undefined,
+    next: Record<string, TimelineDocument>,
+  ): TimelineDocument | null => {
+    if (!entry || entry.error !== undefined || !entry.document) {
+      // NOT FOUND is remembered; nothing else is. A 404 is an answer — asking
+      // again cannot change it, and `ensure` skips the id from here on. A
+      // transport failure, a 500 or a timeout is the OPPOSITE: the document may
+      // well exist, and recording it missing would hide it for the session and
+      // let the manifest compile a branch as empty rather than refuse.
+      if (entry?.status === 404) knownMissingIds.add(timelineId);
       setError(
         timelineId,
-        cause instanceof Error ? cause.message : `Timeline "${timelineId}" failed to load.`,
+        entry?.error || `Timeline "${timelineId}" failed to load.`,
       );
       return null;
     }
+    if (entry.document.id !== timelineId) {
+      setError(timelineId, `Timeline "${timelineId}" returned an unexpected document.`);
+      return null;
+    }
+    next[timelineId] = entry.document;
+    if (typeof entry.revision === "number") {
+      revisions.set(timelineId, entry.revision);
+    } else {
+      // No revision from the server: drop any stale expectation rather than let
+      // it force spurious conflicts.
+      revisions.delete(timelineId);
+    }
+    setError(timelineId, null);
+    return entry.document;
   };
+
+  const runFetchBatch = async (batch: readonly QueuedFetch[]) => {
+    const gen = generation;
+    const ids = batch.map((item) => item.timelineId);
+    try {
+      const response = await fetch("/api/timelines/batch-get", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids }),
+        cache: "no-store",
+      });
+      // A reset (auth rebind) happened while this was in flight: the response
+      // belongs to the previous session and must not land.
+      if (gen !== generation) {
+        for (const item of batch) item.resolve(null);
+        return;
+      }
+      if (!response.ok) {
+        const result = (await response.json().catch(() => ({}))) as { error?: string };
+        if (gen !== generation) {
+          for (const item of batch) item.resolve(null);
+          return;
+        }
+        // A whole-request failure is the ONLY case every id shares a message —
+        // per-document failures come back inside a 200 with their own error.
+        const message = result.error || `Timelines failed to load (${response.status}).`;
+        for (const item of batch) {
+          setError(item.timelineId, message);
+          item.resolve(null);
+        }
+        return;
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        results?: BatchReadEntry[];
+      };
+      if (gen !== generation) {
+        for (const item of batch) item.resolve(null);
+        return;
+      }
+      const byId = new Map<string, BatchReadEntry>();
+      for (const entry of payload.results ?? []) {
+        if (typeof entry.id === "string") byId.set(entry.id, entry);
+      }
+      // ONE new documents object and ONE notify for the whole batch, rather
+      // than a spread and a re-render per document. At fifty documents that is
+      // the difference between fifty renders of the board and one.
+      const next: Record<string, TimelineDocument> = { ...documents };
+      const resolved = batch.map((item) => ({
+        item,
+        document: installFetched(item.timelineId, byId.get(item.timelineId), next),
+      }));
+      documents = next;
+      notify();
+      for (const { item, document } of resolved) item.resolve(document);
+    } catch (cause) {
+      if (gen !== generation) {
+        for (const item of batch) item.resolve(null);
+        return;
+      }
+      const message =
+        cause instanceof Error ? cause.message : "The timeline documents failed to load.";
+      for (const item of batch) {
+        setError(item.timelineId, message);
+        item.resolve(null);
+      }
+    }
+  };
+
+  const drainFetchQueue = () => {
+    const queued = fetchQueue;
+    fetchQueue = [];
+    if (queued.length === 0) return;
+    for (let at = 0; at < queued.length; at += MAX_FETCH_BATCH) {
+      fetchInFlight += 1;
+      void runFetchBatch(queued.slice(at, at + MAX_FETCH_BATCH)).finally(() => {
+        fetchInFlight -= 1;
+        // The ids that arrived DURING this request are the next batch. This is
+        // the whole coalescing mechanism — see `fetchDocument`.
+        if (fetchInFlight === 0) drainFetchQueue();
+      });
+    }
+  };
+
+  const flushFetchQueue = () => {
+    fetchScheduled = false;
+    // A request is already out: leave the queue alone. Its completion drains
+    // whatever accumulated, as one batch.
+    if (fetchInFlight > 0) return;
+    drainFetchQueue();
+  };
+
+
+  /**
+   * Fetch one document — by joining the next BATCH.
+   *
+   * The signature is unchanged, so `ensure` keeps its cache check, its inflight
+   * dedupe, its saves-settled wait and its RSC prime window exactly as they
+   * were. All that changed is that N of these now cost one request instead of
+   * N, and — because the server serves the whole batch through one memoizing
+   * reader — one read per document instead of one subtree walk per document.
+   * See `app/api/timelines/batch-get`.
+   *
+   * `ensure` already dedupes by id, so an id can appear at most once per
+   * window; the queue does not need its own dedupe.
+   *
+   * ── What triggers a batch, measured rather than assumed ──────────────────
+   *
+   * Four triggers, one page load of a 151-document project each:
+   *
+   *   no batching (before)   58 requests, ~430 reads
+   *   microtask              50 batches,   313 reads
+   *   flush-on-in-flight     50 batches,   323 reads
+   *   fixed 12ms timer       22 batches,   250 reads   <- this one
+   *   fixed 60ms timer       23 batches,   300 reads
+   *
+   * The two "free" triggers coalesce NOTHING, and that is the finding: this
+   * board hydrates card by card as the virtualizer mounts them, so consecutive
+   * reads genuinely do not overlap. There is no burst to catch without waiting
+   * for one. A microtask does not wait; neither does flushing when the previous
+   * request lands, because by then the next card has not asked yet.
+   *
+   * So the window has to be a real delay, and 12ms is the size that paid: wider
+   * was worse (60ms lost ground, presumably by holding the first read long
+   * enough to delay the cascade behind it), and the delay is imperceptible on a
+   * read nobody is waiting on.
+   *
+   * IT IS ALSO NOT THE REAL FIX. 250 reads for 151 documents still re-walks
+   * shared subtrees across batches. What removes that is serving the closure
+   * the server already loaded, so the client never asks per card at all.
+   */
+  const fetchDocument = (timelineId: string): Promise<TimelineDocument | null> =>
+    new Promise((resolve) => {
+      fetchQueue.push({ timelineId, resolve });
+      if (!fetchScheduled) {
+        fetchScheduled = true;
+        scheduleBatch(flushFetchQueue);
+      }
+    });
 
   // Ids whose primes were declared INCOMING (expectPrimes), with the
   // deadline after which ensure stops waiting and fetches itself.
@@ -482,9 +709,148 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     }
   };
 
+  /**
+   * Does the session already hold every document under `rootId`, all of it
+   * fresh?
+   *
+   * BOTH HALVES MATTER, and the second is the one with teeth. Holding the
+   * documents is not enough: `refresh()` marks the whole cache stale on the
+   * legacy boot precisely so they get refetched, because an edit made in
+   * another view or another tab between graph sessions would otherwise be
+   * overwritten by a full-document write built from stale content. Skipping the
+   * fetch on presence alone would delete that protection — which is a data-loss
+   * bug, not a slow path.
+   *
+   * A known-missing id resolves as an empty document, exactly as the server's
+   * walk does, so a dangling `childTimelineId` does not make the closure look
+   * permanently incomplete and refetch it forever.
+   */
+  const holdsFreshClosure = (rootId: string): boolean => {
+    const seen = new Set<string>();
+    const walk = (id: string): boolean => {
+      if (seen.has(id)) return true;
+      seen.add(id);
+      if (!documents[id]) return knownMissingIds.has(id);
+      if (staleIds.has(id)) return false;
+      for (const clip of documents[id].clips) {
+        if (clip.kind !== "collection" || !clip.childTimelineId) continue;
+        if (!walk(clip.childTimelineId)) return false;
+      }
+      return true;
+    };
+    return walk(rootId);
+  };
+
+  /**
+   * One closure request per root at a time.
+   *
+   * `holdsFreshClosure` is a check on STATE, so it cannot stop callers that
+   * arrive before the first response lands — and they do: React runs an effect
+   * twice in development, a re-render can re-run it, and the observed result
+   * was FIVE identical closure POSTs within 30ms. Each one walks the whole
+   * project, so that is 745 document reads to do a 149-read job. The
+   * single-document `ensure` path has had this dedupe since #437; this is the
+   * same guarantee for the closure.
+   */
+  const closureInflight = new Map<string, Promise<void>>();
+
+  const ensureClosure = (rootId: string): Promise<void> => {
+    if (holdsFreshClosure(rootId)) return Promise.resolve();
+    const existing = closureInflight.get(rootId);
+    if (existing) return existing;
+    const run = runClosure(rootId).finally(() => {
+      closureInflight.delete(rootId);
+    });
+    closureInflight.set(rootId, run);
+    return run;
+  };
+
+  const runClosure = async (rootId: string): Promise<void> => {
+    // NOTHING TO FETCH, so do not spend a walk finding that out.
+    //
+    // The server-primed boot arrives holding the whole closure already, and
+    // asking again walked all 151 documents a SECOND time — measured at 465
+    // reads against the 237 it was meant to beat (#437). The caller guards that
+    // case too, by not calling this on a primed boot; this is the same
+    // guarantee made STRUCTURAL rather than positional, so deleting the
+    // caller's flag costs a redundant call rather than a doubled bill (#451).
+    if (holdsFreshClosure(rootId)) return;
+
+    const gen = generation;
+    try {
+      const response = await fetch("/api/timelines/closure", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: rootId }),
+        cache: "no-store",
+      });
+      // A reset (auth rebind) happened while this was in flight, or the server
+      // could not serve the closure. Either way this is best effort: say
+      // nothing and let `ensure` do it the long way.
+      if (gen !== generation || !response.ok) return;
+      const payload = (await response.json().catch(() => ({}))) as {
+        results?: { id?: string; document?: TimelineDocument; revision?: number }[];
+        missing?: string[];
+      };
+      if (gen !== generation) return;
+
+      // KEEP THE MISSING LIST, which this used to discard.
+      //
+      // The server distinguishes two things the client otherwise cannot: a
+      // document that is not loaded YET, and one that does not exist — a
+      // dangling `childTimelineId` whose document was deleted. Its walk
+      // substitutes an empty document for the second and reports the id here.
+      //
+      // Without that distinction, any consumer asking "do I hold the whole
+      // closure?" has to answer no whenever a reference dangles, because an
+      // unresolvable id looks identical to an unhydrated one. Recording them
+      // lets `compileClientPlaybackManifest` substitute empties exactly where
+      // the server does and still refuse on genuine gaps.
+      for (const id of payload.missing ?? []) knownMissingIds.add(id);
+
+      // Installed as PRIMES, through exactly the path an RSC payload uses. That
+      // matters for more than tidiness: `installPrime` is what refuses a
+      // payload for the wrong user, and what declines to overwrite a document
+      // with unsaved local edits. A closure arriving mid-session must not
+      // clobber work in progress, and reusing the prime path is what guarantees
+      // it cannot.
+      const next: Record<string, TimelineDocument> = { ...documents };
+      let installed = 0;
+      for (const entry of payload.results ?? []) {
+        if (!entry.document || typeof entry.id !== "string") continue;
+        if (entry.document.id !== entry.id) continue;
+        // Never over a document this session has pending writes for.
+        if (dirtyIds.has(entry.id) || saveInFlightIds.includes(entry.id)) continue;
+        next[entry.id] = entry.document;
+        if (typeof entry.revision === "number") revisions.set(entry.id, entry.revision);
+        staleIds.delete(entry.id);
+        setError(entry.id, null);
+        installed += 1;
+      }
+      if (installed === 0) return;
+      documents = next;
+      notify();
+    } catch {
+      // Best effort — see the type. The ordinary path still works.
+    }
+  };
+
   const ensure = (timelineId: string): Promise<TimelineDocument | null> => {
     const cached = documents[timelineId];
     if (cached && !staleIds.has(timelineId)) return Promise.resolve(cached);
+    // ALREADY ANSWERED: the server said this id does not exist.
+    //
+    // A dangling `childTimelineId` is normal — the reference stays in its
+    // parent's clips after the document is gone — and the board asks for one
+    // every time it hydrates the branch holding it. Measured on the real
+    // project: five dangling ids fetched TWICE per page load, `POST batch-get`
+    // at 158ms and 114ms, both answering 404 five times over. Against Firestore
+    // that is ten document reads per load for five documents that do not exist.
+    //
+    // Bounded rather than permanent: `refresh()` clears the list, so entering
+    // the view asks again and a document created since is picked up. Within one
+    // session, an id the server has already denied is not asked for twice.
+    if (!cached && knownMissingIds.has(timelineId)) return Promise.resolve(null);
     const pending = inflight.get(timelineId);
     if (pending) return pending;
     // A stale doc may still have writes in flight or queued (flushed on
@@ -623,7 +989,13 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       }
     };
 
-    const body = JSON.stringify({ writes });
+    // The project rides with the batch, not per write: a batch IS one board's
+    // edit, and a cross-timeline move touches two documents that belong to the
+    // same project. Omitted when unbound, which the server treats as "leave
+    // whatever is stored alone".
+    const body = JSON.stringify(
+      boundProjectId === null ? { writes } : { writes, projectId: boundProjectId },
+    );
     // The keepalive quota is 64 KiB across ALL in-flight keepalive requests,
     // and a request over it is not merely truncated — the fetch is a network
     // error, so asking for keepalive on an oversized body GUARANTEES the loss
@@ -836,6 +1208,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   const installPrime = (document: TimelineDocument, revision: number, forUid: string) => {
     const timelineId = document.id;
     if (boundUid === null || forUid !== boundUid) return;
+    // It exists after all, so stop shadowing it. A document can be created at
+    // an id this session already asked about — the negative answer must not
+    // outlive the evidence against it.
+    knownMissingIds.delete(timelineId);
     // Local edits win: a dirty document (or any batch mid-flight, whose write
     // set isn't inspectable here) must not be replaced by a server read that
     // predates it.
@@ -856,8 +1232,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
 
   return {
     read: () => documents,
+    readServerSnapshot: () => EMPTY_DOCUMENTS,
     peek: (timelineId) => documents[timelineId] ?? null,
     ensure,
+    ensureClosure,
     writeClips: (timelineId, clips) => {
       const document = documents[timelineId];
       if (!document) return;
@@ -945,6 +1323,9 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
         expectedPrimes.set(id, deadline);
       }
     },
+    bindProject: (projectId) => {
+      boundProjectId = projectId;
+    },
     bindUser: (uid) => {
       if (boundUid === uid) return;
       const hadUser = boundUid !== null;
@@ -960,6 +1341,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     hasPendingWrite: (timelineId) =>
       dirtyIds.has(timelineId) || saveInFlightIds.includes(timelineId),
     isConflicted: (timelineId) => conflictedIds.has(timelineId),
+    isKnownMissing: (timelineId) => knownMissingIds.has(timelineId),
+    recordMissing: (ids) => {
+      for (const id of ids) knownMissingIds.add(id);
+    },
     markGraphBehind: (timelineId, reason) => {
       if (documents[timelineId] === undefined) return;
       if (conflictedIds.has(timelineId)) return;
@@ -981,12 +1366,21 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     reportIssue: (key, message) => setError(key, message),
     flushPendingWrites,
     markStale: (timelineId) => {
+      // Named by the revisions endpoint, so it exists — clear the negative
+      // answer even for an id this session never held.
+      knownMissingIds.delete(timelineId);
       if (documents[timelineId] === undefined) return;
       staleIds.add(timelineId);
     },
     refresh: () => {
       flushPendingWrites();
       staleIds = new Set(Object.keys(documents));
+      // WHAT WAS MISSING IS RE-CHECKED. `ensure` skips a known-missing id
+      // outright, so without this a document created elsewhere between graph
+      // sessions would stay invisible for the life of the tab — the same
+      // don't-trust-the-session-cache reasoning that marks everything stale
+      // here, applied to the absences rather than the documents.
+      knownMissingIds.clear();
       // Entering the graph view rebuilds the graph from freshly fetched
       // documents, which is exactly the reconciliation the conflict gate was
       // waiting for — so the block lifts here and nowhere else.

@@ -445,6 +445,13 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                 Math.floor(childIds.length / cols) === row.index && (
                   <div
                     data-virtual-trailing-slot
+                    // A `role="row"` may only contain cell-ish children, and
+                    // this slot sat in one with no role at all — Lighthouse's
+                    // `aria-required-children` failed on whichever row holds it
+                    // (row 0 whenever the cards do not fill a row). It IS a cell
+                    // of the grid: it occupies a cell position and starts a new
+                    // row when the last one is full.
+                    role="gridcell"
                     style={{
                       order: childIds.length % cols,
                       width: fillCellWidth,

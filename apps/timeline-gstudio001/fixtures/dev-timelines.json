@@ -1,0 +1,282 @@
+{
+  "projectId": "project-dev-fixture",
+  "documents": {
+    "timeline-dev-scene-1": {
+      "id": "timeline-dev-scene-1",
+      "title": "Scene 1 — The Approach",
+      "clips": [
+        {
+          "id": "timeline-dev-scene-1-s1",
+          "index": 0,
+          "kind": "video",
+          "alt": "Wide, van pulls in",
+          "tags": [
+            "keeper"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxZTNhNWYiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM3ZGQzZmMiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM3ZGQzZmMiPldpZGUsIHZhbiBwdWxscyBpbjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iMTEyIiBmb250LWZhbWlseT0ibW9ub3NwYWNlIiBmb250LXNpemU9IjEzIiBmaWxsPSIjN2RkM2ZjIiBvcGFjaXR5PSIwLjY1Ij52aWRlbzwvdGV4dD48L3N2Zz4=",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxZTNhNWYiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM3ZGQzZmMiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM3ZGQzZmMiPldpZGUsIHZhbiBwdWxscyBpbjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iMTEyIiBmb250LWZhbWlseT0ibW9ub3NwYWNlIiBmb250LXNpemU9IjEzIiBmaWxsPSIjN2RkM2ZjIiBvcGFjaXR5PSIwLjY1Ij52aWRlbzwvdGV4dD48L3N2Zz4=",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 6,
+          "sourceDuration": 6,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "timeline-dev-scene-1-s2",
+          "index": 1,
+          "kind": "video",
+          "alt": "Pat at the wheel",
+          "tags": [
+            "wan2.1",
+            "keeper"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMzZjJkNTYiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNjNGI1ZmQiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNjNGI1ZmQiPlBhdCBhdCB0aGUgd2hlZWw8L3RleHQ+PHRleHQgeD0iODYiIHk9IjExMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iI2M0YjVmZCIgb3BhY2l0eT0iMC42NSI+dmlkZW88L3RleHQ+PC9zdmc+",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMzZjJkNTYiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNjNGI1ZmQiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNjNGI1ZmQiPlBhdCBhdCB0aGUgd2hlZWw8L3RleHQ+PHRleHQgeD0iODYiIHk9IjExMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iI2M0YjVmZCIgb3BhY2l0eT0iMC42NSI+dmlkZW88L3RleHQ+PC9zdmc+",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 4,
+          "sourceDuration": 4,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "timeline-dev-scene-1-s3",
+          "index": 2,
+          "kind": "image",
+          "alt": "Door plate",
+          "tags": [
+            "minimax-h3"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxNDUzMmQiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM4NmVmYWMiPuKWozwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM4NmVmYWMiPkRvb3IgcGxhdGU8L3RleHQ+PHRleHQgeD0iODYiIHk9IjExMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iIzg2ZWZhYyIgb3BhY2l0eT0iMC42NSI+aW1hZ2U8L3RleHQ+PC9zdmc+",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxNDUzMmQiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM4NmVmYWMiPuKWozwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM4NmVmYWMiPkRvb3IgcGxhdGU8L3RleHQ+PHRleHQgeD0iODYiIHk9IjExMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iIzg2ZWZhYyIgb3BhY2l0eT0iMC42NSI+aW1hZ2U8L3RleHQ+PC9zdmc+",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 3,
+          "sourceDuration": 3,
+          "trimIn": 0,
+          "trimOut": 0
+        }
+      ]
+    },
+    "timeline-dev-scene-2": {
+      "id": "timeline-dev-scene-2",
+      "title": "Scene 2 — The Briefing",
+      "clips": [
+        {
+          "id": "timeline-dev-scene-2-s1",
+          "index": 0,
+          "kind": "video",
+          "alt": "Pat, medium",
+          "tags": [
+            "needs-retake"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM1YzJlMmUiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmY2E1YTUiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmY2E1YTUiPlBhdCwgbWVkaXVtPC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiNmY2E1YTUiIG9wYWNpdHk9IjAuNjUiPnZpZGVvPC90ZXh0Pjwvc3ZnPg==",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM1YzJlMmUiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmY2E1YTUiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmY2E1YTUiPlBhdCwgbWVkaXVtPC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiNmY2E1YTUiIG9wYWNpdHk9IjAuNjUiPnZpZGVvPC90ZXh0Pjwvc3ZnPg==",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 5,
+          "sourceDuration": 5,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "timeline-dev-scene-2-s2",
+          "index": 1,
+          "kind": "video",
+          "alt": "Brian, reverse",
+          "tags": [
+            "wan2.1"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM0YTNjMTciLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmZGUwNDciPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmZGUwNDciPkJyaWFuLCByZXZlcnNlPC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiNmZGUwNDciIG9wYWNpdHk9IjAuNjUiPnZpZGVvPC90ZXh0Pjwvc3ZnPg==",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM0YTNjMTciLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmZGUwNDciPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmZGUwNDciPkJyaWFuLCByZXZlcnNlPC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiNmZGUwNDciIG9wYWNpdHk9IjAuNjUiPnZpZGVvPC90ZXh0Pjwvc3ZnPg==",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 5,
+          "sourceDuration": 5,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "timeline-dev-scene-2-s3",
+          "index": 2,
+          "kind": "video",
+          "alt": "Two-shot",
+          "tags": [
+            "minimax-h3",
+            "keeper"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxNjRlNjMiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM2N2U4ZjkiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM2N2U4ZjkiPlR3by1zaG90PC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiM2N2U4ZjkiIG9wYWNpdHk9IjAuNjUiPnZpZGVvPC90ZXh0Pjwvc3ZnPg==",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxNjRlNjMiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM2N2U4ZjkiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM2N2U4ZjkiPlR3by1zaG90PC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiM2N2U4ZjkiIG9wYWNpdHk9IjAuNjUiPnZpZGVvPC90ZXh0Pjwvc3ZnPg==",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 7,
+          "sourceDuration": 7,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "timeline-dev-scene-2-x1",
+          "index": 3,
+          "kind": "audio",
+          "alt": "Room tone bed",
+          "tags": [
+            "keeper"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxZTNhNWYiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM3ZGQzZmMiPuKZqjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM3ZGQzZmMiPlJvb20gdG9uZSBiZWQ8L3RleHQ+PHRleHQgeD0iODYiIHk9IjExMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iIzdkZDNmYyIgb3BhY2l0eT0iMC42NSI+YXVkaW88L3RleHQ+PC9zdmc+",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 1,
+          "placedStart": 5,
+          "startTime": 0,
+          "duration": 12,
+          "sourceDuration": 12,
+          "trimIn": 0,
+          "trimOut": 0
+        }
+      ]
+    },
+    "timeline-dev-scene-3": {
+      "id": "timeline-dev-scene-3",
+      "title": "Scene 3 — Outside",
+      "clips": [
+        {
+          "id": "timeline-dev-scene-3-s1",
+          "index": 0,
+          "kind": "image",
+          "alt": "Street, dusk",
+          "tags": [
+            "wan2.1",
+            "keeper"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMzZjJkNTYiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNjNGI1ZmQiPuKWozwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNjNGI1ZmQiPlN0cmVldCwgZHVzazwvdGV4dD48dGV4dCB4PSI4NiIgeT0iMTEyIiBmb250LWZhbWlseT0ibW9ub3NwYWNlIiBmb250LXNpemU9IjEzIiBmaWxsPSIjYzRiNWZkIiBvcGFjaXR5PSIwLjY1Ij5pbWFnZTwvdGV4dD48L3N2Zz4=",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMzZjJkNTYiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNjNGI1ZmQiPuKWozwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNjNGI1ZmQiPlN0cmVldCwgZHVzazwvdGV4dD48dGV4dCB4PSI4NiIgeT0iMTEyIiBmb250LWZhbWlseT0ibW9ub3NwYWNlIiBmb250LXNpemU9IjEzIiBmaWxsPSIjYzRiNWZkIiBvcGFjaXR5PSIwLjY1Ij5pbWFnZTwvdGV4dD48L3N2Zz4=",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 4,
+          "sourceDuration": 4,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "timeline-dev-scene-3-s2",
+          "index": 1,
+          "kind": "video",
+          "alt": "They leave",
+          "tags": [
+            "minimax-h3"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxNDUzMmQiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM4NmVmYWMiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM4NmVmYWMiPlRoZXkgbGVhdmU8L3RleHQ+PHRleHQgeD0iODYiIHk9IjExMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iIzg2ZWZhYyIgb3BhY2l0eT0iMC42NSI+dmlkZW88L3RleHQ+PC9zdmc+",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMxNDUzMmQiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiM4NmVmYWMiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiM4NmVmYWMiPlRoZXkgbGVhdmU8L3RleHQ+PHRleHQgeD0iODYiIHk9IjExMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMyIgZmlsbD0iIzg2ZWZhYyIgb3BhY2l0eT0iMC42NSI+dmlkZW88L3RleHQ+PC9zdmc+",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 5,
+          "sourceDuration": 5,
+          "trimIn": 0,
+          "trimOut": 0
+        }
+      ]
+    },
+    "project-dev-fixture": {
+      "id": "project-dev-fixture",
+      "title": "Dev Fixture — offline board",
+      "isProject": true,
+      "clips": [
+        {
+          "id": "dev-cold-open",
+          "index": 0,
+          "kind": "video",
+          "alt": "Cold open",
+          "tags": [
+            "needs-retake"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM1YzJlMmUiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmY2E1YTUiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmY2E1YTUiPkNvbGQgb3BlbjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iMTEyIiBmb250LWZhbWlseT0ibW9ub3NwYWNlIiBmb250LXNpemU9IjEzIiBmaWxsPSIjZmNhNWE1IiBvcGFjaXR5PSIwLjY1Ij52aWRlbzwvdGV4dD48L3N2Zz4=",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM1YzJlMmUiLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmY2E1YTUiPuKWtjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmY2E1YTUiPkNvbGQgb3BlbjwvdGV4dD48dGV4dCB4PSI4NiIgeT0iMTEyIiBmb250LWZhbWlseT0ibW9ub3NwYWNlIiBmb250LXNpemU9IjEzIiBmaWxsPSIjZmNhNWE1IiBvcGFjaXR5PSIwLjY1Ij52aWRlbzwvdGV4dD48L3N2Zz4=",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 5,
+          "sourceDuration": 5,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "dev-c1",
+          "index": 1,
+          "kind": "collection",
+          "title": "Scene 1 — The Approach",
+          "childTimelineId": "timeline-dev-scene-1",
+          "itemCount": 3,
+          "previewItems": [],
+          "alt": "Scene 1 — The Approach",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 3,
+          "sourceDuration": 3,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "dev-c2",
+          "index": 2,
+          "kind": "collection",
+          "title": "Scene 2 — The Briefing",
+          "childTimelineId": "timeline-dev-scene-2",
+          "itemCount": 4,
+          "previewItems": [],
+          "alt": "Scene 2 — The Briefing",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 3,
+          "sourceDuration": 3,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "dev-c3",
+          "index": 3,
+          "kind": "collection",
+          "title": "Scene 3 — Outside",
+          "childTimelineId": "timeline-dev-scene-3",
+          "itemCount": 2,
+          "previewItems": [],
+          "alt": "Scene 3 — Outside",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 3,
+          "sourceDuration": 3,
+          "trimIn": 0,
+          "trimOut": 0
+        },
+        {
+          "id": "dev-tail",
+          "index": 4,
+          "kind": "image",
+          "alt": "End card",
+          "tags": [
+            "wan2.1"
+          ],
+          "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM0YTNjMTciLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmZGUwNDciPuKWozwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmZGUwNDciPkVuZCBjYXJkPC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiNmZGUwNDciIG9wYWNpdHk9IjAuNjUiPmltYWdlPC90ZXh0Pjwvc3ZnPg==",
+          "poster": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzIwIDE4MCI+PHJlY3Qgd2lkdGg9IjMyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiM0YTNjMTciLz48dGV4dCB4PSIyNiIgeT0iOTYiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iNTQiIGZpbGw9IiNmZGUwNDciPuKWozwvdGV4dD48dGV4dCB4PSI4NiIgeT0iODgiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTkiIGZpbGw9IiNmZGUwNDciPkVuZCBjYXJkPC90ZXh0Pjx0ZXh0IHg9Ijg2IiB5PSIxMTIiIGZvbnQtZmFtaWx5PSJtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMTMiIGZpbGw9IiNmZGUwNDciIG9wYWNpdHk9IjAuNjUiPmltYWdlPC90ZXh0Pjwvc3ZnPg==",
+          "aspect": 1.7777777777777777,
+          "trackIndex": 0,
+          "startTime": 0,
+          "duration": 3,
+          "sourceDuration": 3,
+          "trimIn": 0,
+          "trimOut": 0
+        }
+      ]
+    }
+  }
+}

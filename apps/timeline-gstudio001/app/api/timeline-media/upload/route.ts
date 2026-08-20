@@ -15,6 +15,8 @@ import {
   toMediaUrl,
   uploadMedia,
 } from "@/lib/firebase-media-store";
+import { fixtureStoreEnabled } from "@/lib/fixture-timeline-store";
+import { writeOfflineMedia } from "@/lib/offline-media-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
   ProjectAssetScopeError,
@@ -168,6 +170,64 @@ export async function POST(request: Request) {
     }
     const mediaBuffer = Buffer.from(await file.arrayBuffer());
     const folderPath = readText(formData, "folderPath");
+
+    // OFFLINE MODE FIRST, ahead of Cloudinary.
+    //
+    // Without this branch, uploading with GSTUDIO_FIXTURE_TIMELINES set reached
+    // real Cloudinary: offline mode intercepted the timeline store and nothing
+    // else, so the one part of an upload that leaves the machine was never
+    // covered. Ahead of the Cloudinary check rather than after it because
+    // `hasCloudinaryConfig()` is true whenever the env is present — which it is,
+    // on the machine doing the offline testing.
+    //
+    // Same response shape as the other two, carrying a URL. Nothing downstream
+    // learns where the bytes went.
+    if (fixtureStoreEnabled()) {
+      const pathname = scopeStoragePathname(
+        uniqueStoragePathname(getUploadPathname(filename, contentType)),
+        user.uid,
+        projectId,
+        folderPath,
+      );
+      // The same rule the Firebase path enforces: a video with no thumbnail has
+      // nothing to draw on its card, and the client already generates one.
+      if (isVideoUpload(pathname, contentType) && !thumbnailFile) {
+        return NextResponse.json(
+          { error: "Video uploads require a generated thumbnail." },
+          { status: 400 },
+        );
+      }
+
+      const storedMedia = writeOfflineMedia(pathname, mediaBuffer);
+
+      let offlineThumbnail: { pathname: string; url: string } | undefined;
+      if (thumbnailFile) {
+        const thumbPathname = scopeStoragePathname(
+          uniqueStoragePathname(
+            thumbnailFilename
+              ? sanitizeStoragePathname(thumbnailFilename, "timeline-thumbnails")
+              : createThumbnailPathname(pathname),
+          ),
+          user.uid,
+          projectId,
+          folderPath,
+        );
+        offlineThumbnail = writeOfflineMedia(
+          thumbPathname,
+          Buffer.from(await thumbnailFile.arrayBuffer()),
+        );
+      }
+
+      return NextResponse.json({
+        pathname: storedMedia.pathname,
+        url: storedMedia.url,
+        thumbnailPathname: offlineThumbnail?.pathname,
+        thumbnailUrl: offlineThumbnail?.url,
+        width: storedMedia.width,
+        height: storedMedia.height,
+      });
+    }
+
     if (hasCloudinaryConfig()) {
       const storedMedia = await uploadCloudinaryMedia(
         filename,

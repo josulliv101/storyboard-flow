@@ -8,7 +8,9 @@ import {
   cellFollowingPointer,
   gridDropAnchor,
   gridIndicatorGeometry,
+  MEDIA_TOOL,
   indexOfChildId,
+  isMediaTool,
   isSidebarTool,
   neighborsAt,
   resolveAnchorIndex,
@@ -64,6 +66,39 @@ describe("isSidebarTool", () => {
     expect(isSidebarTool("collection")).toBe(true);
     expect(isSidebarTool("image")).toBe(false);
     expect(isSidebarTool("")).toBe(false);
+  });
+});
+
+describe("isMediaTool", () => {
+  it("admits the media payload only", () => {
+    expect(isMediaTool(MEDIA_TOOL)).toBe(true);
+    expect(isMediaTool("collection")).toBe(false);
+    expect(isMediaTool("")).toBe(false);
+  });
+
+  // THE POINT OF TWO PREDICATES. `commitDrop` branches on these in order, and a
+  // payload matching both would mint a collection AND open the file picker for
+  // one drop. Pinned as a test rather than left to reading, because the two live
+  // in a different file from their caller.
+  it("is disjoint from isSidebarTool, both ways round", () => {
+    expect(isSidebarTool(MEDIA_TOOL)).toBe(false);
+    expect(isMediaTool("collection")).toBe(false);
+  });
+
+  // The value travels through the DOM as a `DataTransfer` string, so it is part
+  // of the wire format: an e2e that sets this payload by hand, and any drag
+  // begun before a deploy and dropped after it, both depend on the spelling.
+  it("has the spelling the drag payload carries", () => {
+    expect(MEDIA_TOOL).toBe("media");
+  });
+});
+
+describe("acceptsDragTypes, for the media payload", () => {
+  // It rides the SAME mime as the collection tool, which is what lets every
+  // drop surface accept it, draw its indicator, and resolve its anchor without
+  // a single change. Only the commit differs.
+  it("is accepted by the surfaces without a new mime", () => {
+    expect(acceptsDragTypes([TOOL_MIME])).toBe(true);
   });
 });
 

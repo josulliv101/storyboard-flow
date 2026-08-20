@@ -8,7 +8,8 @@ import { readStoredTimelineEntry } from "@/lib/firebase-timeline-store";
 
 import {
   RENDERS_COLLECTION_NAME,
-  findRendersCollectionId,
+  RENDERS_COLLECTION_ROLE,
+  findRendersCollection,
   renderClipName,
 } from "./renders-collection";
 import type { StoredRenderJob } from "./job-store";
@@ -54,12 +55,23 @@ function mintTimelineId(): string {
 async function ensureRendersCollection(
   timelineId: string,
   uid: string,
-): Promise<Readonly<{ ok: true; id: string }> | Readonly<{ ok: false; reason: string }>> {
+): Promise<
+  | Readonly<{ ok: true; id: string; needsRoleStamp: boolean }>
+  | Readonly<{ ok: false; reason: string }>
+> {
   const entry = await readStoredTimelineEntry(timelineId, uid);
   if (!entry) return { ok: false, reason: `No timeline with id "${timelineId}".` };
 
-  const existing = findRendersCollectionId(entry.document.clips);
-  if (existing !== null) return { ok: true, id: existing };
+  const existing = findRendersCollection(entry.document.clips);
+  if (existing !== null) {
+    // FOUND BY NAME MEANS IT PREDATES THE MARKER, and this is the moment to
+    // fix that: the caller is about to write into this collection anyway, so
+    // the stamp costs no extra round trip and the NEXT render resolves by role
+    // — after which the collection can be renamed freely. A project that never
+    // renders again is never migrated, which is correct: nothing is wrong with
+    // it until something looks for its Renders collection.
+    return { ok: true, id: existing.id, needsRoleStamp: existing.matchedBy === "title" };
+  }
 
   const childId = mintTimelineId();
   const outcome = await applyCollectionsCommand(
@@ -91,6 +103,11 @@ async function ensureRendersCollection(
             aspect: 16 / 9,
             trackIndex: 0,
             itemCount: 0,
+            // WHAT MAKES IT THE RENDERS COLLECTION. Set at creation so a
+            // collection minted here is never identified by its name — it can
+            // be renamed the minute after it appears and renders keep landing
+            // in it.
+            role: RENDERS_COLLECTION_ROLE,
             duration: 3,
             sourceDuration: 3,
             trimIn: 0,
@@ -112,7 +129,8 @@ async function ensureRendersCollection(
       reason: outcome.kind === "rejected" ? outcome.rejection.reason : outcome.message,
     };
   }
-  return { ok: true, id: childId };
+  // Created carrying its role already, so there is nothing to migrate.
+  return { ok: true, id: childId, needsRoleStamp: false };
 }
 
 export async function attachRenderOutput(
@@ -130,11 +148,33 @@ export async function attachRenderOutput(
     // The ROOT is the timeline whose closure gets loaded; the Renders
     // collection is a child of it, so it is in the graph.
     job.timelineId,
-    (graph: CollectionsGraph) => {
+    (graph: CollectionsGraph, existingDetails) => {
       const parentId = parseNodeId(collection.id);
       if (!graph.nodesById.has(parentId)) {
         return { ok: false, message: `Renders collection "${collection.id}" is not loaded.` } as const;
       }
+      // THE MIGRATION, folded into a write that was happening anyway. Adding
+      // this clip already rewrites the Renders collection's own document AND
+      // its parent's — a new child changes the collection's `itemCount` and
+      // duration, which are denormalized onto the root's clip for it — so the
+      // stamp rides along for free.
+      //
+      // The whole existing detail is respread because details merge PER NODE
+      // and not per field: parking `{role}` alone would replace this
+      // collection's entry outright and drop its `alt`, `aspect`, `itemCount`
+      // and preview frames on the floor.
+      //
+      // NO DETAIL MEANS NO STAMP, rather than a synthesized one. `alt` and
+      // `aspect` are required on a detail, so inventing an entry here would
+      // write a card that had lost whatever it was actually showing — and a
+      // Renders collection loaded into the graph always has one, so an absent
+      // detail is a broken assumption, not a case to paper over. The title
+      // fallback still resolves it, so this costs correctness nothing.
+      const current = existingDetails[collection.id];
+      const stamp =
+        collection.needsRoleStamp && current !== undefined
+          ? { [collection.id]: { ...current, role: RENDERS_COLLECTION_ROLE } }
+          : {};
       return {
         ok: true,
         command: {
@@ -158,6 +198,7 @@ export async function attachRenderOutput(
           ],
         },
         details: {
+          ...stamp,
           [clipId]: {
             alt: name,
             title: name,

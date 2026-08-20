@@ -19,9 +19,11 @@ import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import {
   useCollectionPreviewFrames,
+  useCollectionSubtreeHydrated,
   useEnabledChildCount,
   useHydratedCollectionSeconds,
 } from "./graph-card-derivations";
+import { collectionCardSeconds } from "./graph-card-model";
 import { GraphViewNavContext } from "./graph-navigation";
 import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
 
@@ -66,8 +68,13 @@ export function CollectionDetailsBody({
   // Live numbers once loaded; the stored summary for a placeholder — the same
   // rule the card follows, so the two never disagree.
   const count = hydrated ? liveCount : (detail?.itemCount ?? liveCount);
-  const seconds =
-    (hydrated ? liveSeconds : (detail?.playableDuration ?? detail?.duration)) ?? 0;
+  // Same rule as the card, so the two cannot disagree about the same
+  // collection: a time is shown only when the whole subtree is loaded.
+  // Previously this fell back to the stored summary and then to ZERO, so an
+  // unloaded collection announced "0:00" — the most confident wrong answer
+  // available.
+  const vouched = useCollectionSubtreeHydrated(node.id as string);
+  const seconds = collectionCardSeconds({ vouched, liveSeconds });
   const previews = useCollectionPreviewFrames(node.id as string, hydrated, detail?.previewItems);
 
   const { dialogProps } = useDialogFocus<HTMLDivElement>();
@@ -146,7 +153,8 @@ export function CollectionDetailsBody({
           )}
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
-              {count} {count === 1 ? "item" : "items"} · {formatDuration(seconds)}
+              {count} {count === 1 ? "item" : "items"}
+              {seconds === null ? null : <> · {formatDuration(seconds)}</>}
             </span>
             <ItemDisableToggle nodeId={node.id as string} />
             <div className="flex items-center gap-1">

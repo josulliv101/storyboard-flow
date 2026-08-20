@@ -21,7 +21,7 @@ import { CornerRightDown, Music } from "lucide-react";
  * cards. Actual peaks belong to the waveform LANE, which is cached, capped at
  * three concurrent decodes and limited to visible cards.
  *
- * Paper, not black — the same call `CollectionLeaderPlaceholder` makes: an
+ * Paper, not black — an
  * audio card is a FRAME with no picture, not a hole where one failed to load.
  */
 export function AudioPlaceholder() {
@@ -42,41 +42,37 @@ export function AudioPlaceholder() {
 }
 
 /**
- * What an EMPTY collection shows: an academy-leader countdown frame.
+ * What an EMPTY collection shows: a dark gradient, and nothing else.
  *
- * The slot used to be blank — a dark rectangle that read as a broken thumbnail
- * rather than as "nothing in here yet". A leader frame is the film industry's
- * own mark for "before the picture starts", which is exactly the state, and it
- * gives the card a recognizable silhouette at strip size where any label would
- * be too small to read.
+ * This slot has now been three things, and the third is deliberate. It began
+ * BLANK — a flat dark rectangle that read as a broken thumbnail rather than as
+ * "nothing in here yet". It then drew an academy-leader countdown frame: the
+ * film industry's own mark for "before the picture starts", which is exactly
+ * the state, with a silhouette legible at strip size.
  *
- * Drawn rather than loaded. At card size the geometry is the whole message —
- * the ring, the crosshair, the sweep — and the reference photograph's grain and
- * scratches are invisible; a vector costs no request, stays crisp in the grid's
- * much larger cells, and takes the board's own palette instead of fighting it
- * with a bright sepia field. (If the scanned frame itself is wanted, this is the
- * one place to swap it.)
+ * The leader is gone because it was answering a question that is now answered
+ * better elsewhere. It had to say BOTH "this is empty" and "this is a
+ * collection", and it said the second one in a private vocabulary — a ring and
+ * a crosshair mean "collection" to nobody who has not been told. The card now
+ * wears the same `Layers` mark on its centre that every OTHER collection card
+ * wears (see `data-collection-mark`), so identity is said once, consistently,
+ * and this layer only has to say "empty".
+ *
+ * A GRADIENT rather than the original flat fill, because that distinction is
+ * the whole reason the leader was drawn in the first place: a flat dark
+ * rectangle looks like an image that failed to load, while a graded one reads
+ * as a surface somebody chose. It is dark enough that the mark's translucent
+ * disc still reads on top of it.
  */
-export function CollectionLeaderPlaceholder() {
+export function EmptyCollectionPlaceholder() {
   return (
-    <svg
-      viewBox="0 0 160 90"
+    <span
       aria-hidden="true"
-      className="h-full w-full text-zinc-500/70"
-      preserveAspectRatio="xMidYMid slice"
-    >
-      {/* Paper, not black: an empty card reads as a FRAME rather than a hole. */}
-      <rect width="160" height="90" className="fill-zinc-800/40" />
-      {/* The sweep — the sector a leader's rotating hand has already passed. */}
-      <path d="M80 45 L80 6 A39 39 0 0 1 114 26 Z" className="fill-zinc-700/45" />
-      <g stroke="currentColor" fill="none" strokeWidth="1.5">
-        {/* Crosshair, edge to edge. */}
-        <path d="M80 0 V90 M0 45 H160" strokeWidth="1" />
-        {/* The ring: two concentric strokes, the leader's signature. */}
-        <circle cx="80" cy="45" r="39" />
-        <circle cx="80" cy="45" r="33" />
-      </g>
-    </svg>
+      // zinc-800 → zinc-950 on a diagonal. Arbitrary-value gradients are used
+      // elsewhere in this app (the preview surface's mask), so this stays in
+      // Tailwind rather than reaching for an inline style.
+      className="h-full w-full bg-[linear-gradient(155deg,#27272a_0%,#18181b_55%,#09090b_100%)]"
+    />
   );
 }
 

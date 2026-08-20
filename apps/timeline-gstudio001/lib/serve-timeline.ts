@@ -2,7 +2,6 @@ import "server-only";
 
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
-import { listCloudinaryAssets } from "./cloudinary-media-store";
 import {
   collectionChildIds,
   deriveClosureSummaries,
@@ -10,13 +9,15 @@ import {
 } from "./derive-collection-summaries";
 import {
   loadTimelineClosure,
+  type TimelineEntryReader,
   TimelineClosureTooLargeError,
 } from "./load-timeline-closure";
 import {
+  readStoredTimelineEntries,
   readStoredTimelineEntry,
+  readStoredTimelineProjectEntries,
   type TimelineEntry,
 } from "./firebase-timeline-store";
-import { healTimelineDocument } from "./heal-timeline-document";
 
 // The ONE serve path for a stored timeline document — used by the
 // GET /api/timelines/[id] route AND the RSC payload loaders, so the two
@@ -43,18 +44,116 @@ export type ServedTimeline = Readonly<{
  * `TimelineAccessDeniedError` is a stable answer for the life of a request,
  * and re-reading to rediscover it would defeat the point.
  */
-export type TimelineEntryReader = (id: string) => Promise<TimelineEntry | null>;
+export type { TimelineEntryReader } from "./load-timeline-closure";
 
 export function createTimelineEntryReader(requesterUid: string): TimelineEntryReader {
   const inflight = new Map<string, Promise<TimelineEntry | null>>();
-  return (id) => {
+  const read: TimelineEntryReader = (id) => {
     const cached = inflight.get(id);
     if (cached) return cached;
     const request = readStoredTimelineEntry(id, requesterUid);
     inflight.set(id, request);
     return request;
   };
+
+  // The BATCH GOES THROUGH THE SAME `inflight` MAP, which is the whole point:
+  // batch-get shares one reader across several roots, so an id already being
+  // read for one root must not be re-read for the next. Ids already in flight
+  // are awaited, only the rest are fetched, and the results are recorded so a
+  // later single read joins this batch instead of issuing its own get().
+  read.many = async (ids) => {
+    const out = new Map<string, TimelineEntry | null>();
+    const wanted: string[] = [];
+    const joined: Promise<void>[] = [];
+    for (const id of new Set(ids)) {
+      const cached = inflight.get(id);
+      if (cached) {
+        // A rejected read is a document this caller cannot see; the walk turns
+        // that into "missing" rather than failing the level (see below).
+        joined.push(cached.then((entry) => void out.set(id, entry), () => void out.set(id, null)));
+      } else {
+        wanted.push(id);
+      }
+    }
+
+    const batch = wanted.length
+      ? readStoredTimelineEntries(wanted, requesterUid)
+      : Promise.resolve(new Map<string, TimelineEntry | null>());
+    // Seeded BEFORE the await so a concurrent reader joins rather than races.
+    // Falling back to null on a failed batch keeps a doomed request from
+    // leaving unhandled rejections behind it — the failure itself still
+    // propagates through the await below.
+    for (const id of wanted) {
+      inflight.set(id, batch.then((entries) => entries.get(id) ?? null, () => null));
+    }
+
+    const entries = await batch;
+    for (const id of wanted) out.set(id, entries.get(id) ?? null);
+    await Promise.all(joined);
+    return out;
+  };
+
+  // PRIME FROM ONE QUERY, through the same `inflight` map everything else uses
+  // — so the walk that follows resolves from memory and issues nothing.
+  //
+  // Recorded as already-resolved promises rather than as documents, because
+  // that is the shape `read` and `read.many` already consult: nothing
+  // downstream needs to know a prefetch happened, and a document the query
+  // missed simply is not there, so the walk fetches it exactly as before.
+  //
+  // Best effort. A query failure, a missing index, or a project whose documents
+  // predate `projectId` all land the same way — nothing primed, and the walk
+  // does its nine round trips. That is the whole safety property: the hint can
+  // fail and only latency changes.
+  const prefetched = new Set<string>();
+  read.prefetchProject = async (projectId) => {
+    // ONCE PER PROJECT PER REQUEST. Both `serveTimelineClosure` and the closure
+    // walk itself ask — the first so the ROOT comes from the query too, the
+    // second so any other caller of the walk gets the same benefit — and two
+    // asks must not mean two queries.
+    if (prefetched.has(projectId)) return 0;
+    prefetched.add(projectId);
+    const entries = await readStoredTimelineProjectEntries(projectId, requesterUid).catch(
+      () => new Map<string, TimelineEntry>(),
+    );
+    for (const [id, entry] of entries) {
+      if (inflight.has(id)) continue;
+      inflight.set(id, Promise.resolve(entry));
+    }
+    return entries.size;
+  };
+
+  return read;
 }
+
+/**
+ * How far below the project the BOARD OPEN reads.
+ *
+ * The board renders the root's children as cards, and every card below the
+ * first level is a placeholder the client hydrates on demand. Reading deeper
+ * bought exactly one thing: freshly derived `duration` / `previewItems` /
+ * `itemCount` on those cards — 149 documents on a real project to correct four
+ * numbers each, which is 96%+ of every read a board open has ever cost.
+ *
+ * At depth 1 those numbers come from the stored summaries instead. Those are
+ * measurably imperfect today (58.4% of collection clips carry at least one
+ * stale field), and the fix belongs on the WRITE path where the staleness is
+ * actually created — a client whose graph is only partly hydrated writes the
+ * stale values it was served straight back. Recomputing the world on every read
+ * to paper over a bad write was the expensive half of that bargain.
+ *
+ * NOT used by the preview/export compile, which genuinely needs every document
+ * and must keep reading them.
+ *
+ * ONE BEHAVIOUR CHANGE WORTH KNOWING: `missing` now reports only dangling
+ * references found within the bound. On the project this was measured against
+ * it went from 5 to 0 — those five childless ids live deeper than the first
+ * level, so the client meets them when it hydrates that branch instead of at
+ * boot. Nothing hides them; the discovery just moves to the point of use.
+ *
+ * Measured on that project: 150 billed reads -> 5.
+ */
+export const BOARD_OPEN_MAX_DEPTH = 1;
 
 /** Null when the document doesn't exist; throws TimelineAccessDeniedError
  *  for someone else's (callers map it to their 404). */
@@ -64,14 +163,54 @@ export async function serveTimelineDocument(
   /** Share one across a request to avoid re-reading documents (see
    *  `createTimelineEntryReader`). Defaults to an un-shared direct read. */
   read: TimelineEntryReader = (childId) => readStoredTimelineEntry(childId, requesterUid),
+  options?: Readonly<{
+    /**
+     * Levels below `id` to read when deriving its summaries. Absent = the whole
+     * closure below it.
+     *
+     * EVERY BOARD-SERVING CALLER SHOULD PASS ONE. Deriving a document's
+     * collection summaries means reading everything beneath it, so serving a
+     * single focus segment cost a full subtree walk — measured at 149 reads to
+     * serve the project root, and again on every focus navigation. A drill-in
+     * and two clicks back up the breadcrumb billed 580 reads across 149
+     * documents, every one of them read more than once.
+     *
+     * The preview/export compile is the caller that must NOT bound this: it
+     * flattens the real tree and a stale grandchild would window its parent's
+     * content out of the timeline.
+     */
+    maxDepth?: number;
+  }>,
 ): Promise<ServedTimeline | null> {
   const entry = await read(id);
   if (!entry) return null;
 
-  const cloudinaryAssets = await listCloudinaryAssets(requesterUid).catch(() => []);
-  const { document: healedDocument } = healTimelineDocument(entry.document, cloudinaryAssets);
+  const healedDocument = entry.document;
 
-  // The heal is SERVED, NOT PERSISTED.
+  // THE HEAL IS GONE. What follows records why, because "we used to repair
+  // documents against Cloudinary on every read" is exactly the kind of thing
+  // that gets reintroduced by someone finding a broken thumbnail.
+  //
+  // It did two unrelated jobs under one name. The DURATION backfill fixed clips
+  // stored before the Search API carried durations — a one-time migration, and
+  // `npm run migrate:durations` reports 0 documents to rewrite against live
+  // data, so it is already done. The SRC repair re-pointed clips whose asset
+  // had moved, which this app cannot cause: every upload gets a
+  // timestamp-suffixed public_id, so re-uploading never overwrites, and there
+  // is no rename or move anywhere in the store. Only a change made directly in
+  // Cloudinary can invalidate a stored url, and the owner's call is that such a
+  // clip should visibly break rather than be silently re-pointed.
+  //
+  // It cost 1844ms of an 1887ms serve — a listing of 311 assets fetched on
+  // every board open — to discover it had nothing to do.
+  //
+  // Its src matching also had teeth: for clips predating provenance it keyed on
+  // the bare FILENAME, so two assets named `alley` in different projects
+  // collapsed onto one key. Because the result was persisted then, a plain GET
+  // could repoint a clip at another project's file.
+  //
+  // The old note on why it was served rather than persisted, kept because the
+  // hazard it describes outlives it:
   //
   // It used to write itself back through `saveFirebaseTimelineEntry`, whose
   // single-document path is explicitly last-write-wins — and it did so after
@@ -109,6 +248,7 @@ export async function serveTimelineDocument(
   const closure = await loadTimelineClosure(id, requesterUid, {
     rootEntry: entry,
     read,
+    ...(options?.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
   }).catch((error: unknown) => {
     // A pathological tree must not make the document unopenable. Fall back to
     // the one-level derivation: less fresh at depth, but the same answer this
@@ -134,10 +274,133 @@ export async function serveTimelineDocument(
   // srcs and durations would be thrown away by this substitution.
   const summarized = deriveClosureSummaries(
     { ...closure.documents, [id]: healedDocument },
-    new Set(closure.missing),
+    // Skipped and missing alike cannot be derived FROM — see the note in
+    // `serveTimelineClosure`.
+    new Set([...closure.missing, ...closure.unvisited]),
   );
 
   return { document: summarized[id] ?? healedDocument, revision };
+}
+
+/**
+ * Serve a timeline AND every document reachable from it, in one answer.
+ *
+ * ── Why this is nearly free ────────────────────────────────────────────────
+ *
+ * `serveTimelineDocument` above ALREADY walks the whole closure and already
+ * derives a summarized document for every id in it — that is what
+ * `deriveClosureSummaries` returns — and then returns exactly one of them and
+ * discards the rest. The client, having been given only the root, asks for each
+ * child in turn, and each of those requests walks its own subtree again.
+ *
+ * So this does not add work. It stops throwing work away.
+ *
+ * Measured on a 151-document project: serving it per document cost 58 requests
+ * and ~430 reads, batching those requests brought it to 19 and 237, and this
+ * makes it one request and one read per document (#437).
+ *
+ * ── What it does NOT do ────────────────────────────────────────────────────
+ *
+ * No heal beyond the root, matching `serveTimelineDocument` — the heal has
+ * always been root-only, and widening it here would be a different change
+ * hiding inside a performance one.
+ *
+ * MISSING documents are omitted rather than served as empty placeholders. The
+ * closure walk substitutes `{ id, title: "", clips: [] }` for a child it cannot
+ * read so that one dangling reference degrades to silence instead of failing
+ * the whole preview — correct there, wrong here: priming that into the client's
+ * cache would install a convincing empty document over an id that might simply
+ * be someone else's, and the client would then never try to read it properly.
+ * They come back in `missing` instead, as information.
+ *
+ * A TOO-LARGE closure returns null rather than throwing, so the caller can fall
+ * back to serving just the root and let the client hydrate the old way. A
+ * pathological tree must not make a project unopenable.
+ */
+export async function serveTimelineClosure(
+  id: string,
+  requesterUid: string,
+  options?: Readonly<{
+    /**
+     * Levels below the root to read. Absent = the whole closure.
+     *
+     * The BOARD passes a bound; the preview/export compile must not. See
+     * `loadTimelineClosure`'s `maxDepth` for why the board can afford to stop.
+     */
+    maxDepth?: number;
+  }>,
+): Promise<Readonly<{
+  documents: Record<string, ServedTimeline>;
+  missing: string[];
+}> | null> {
+  // ONE reader for the whole walk — the property this endpoint exists for, and
+  // what makes a document read for its parent's summaries free when it becomes
+  // a payload of its own.
+  const read = createTimelineEntryReader(requesterUid);
+  // BEFORE the root read, so the root arrives in the same query as everything
+  // else. After it, this would be a second sequential round trip to save nine —
+  // still a win, but a needless one when the ordering is free.
+  // PHASE TIMINGS, behind the read counter's own flag.
+  //
+  // Added because a board render reporting "application-code: 1525ms" looked
+  // like a data problem for a whole evening, and was not: warm, this serve is
+  // 60ms of a 339ms request — 43ms walk, 2ms derive, 1ms heal — and the 1525ms
+  // belonged to a COLD render compiling the route (`next.js: 2.2s` on the same
+  // line). One line of log now answers what took an evening to guess at.
+  //
+  // Kept rather than deleted for that reason: the numbers are small, so the
+  // next person who suspects this path can rule it out in one load instead of
+  // instrumenting it again.
+  const probing = process.env.GSTUDIO_COUNT_READS === "1";
+  const mark = (label: string, since: number) => {
+    if (probing) console.log(`[SERVEPROBE] ${label} ${Date.now() - since}ms`);
+    return Date.now();
+  };
+  let at = Date.now();
+
+  await read.prefetchProject?.(id).catch(() => 0);
+  at = mark("prefetch", at);
+  const entry = await read(id);
+  if (!entry) return null;
+  at = mark("root read", at);
+
+
+  const closure = await ((async () =>
+    loadTimelineClosure(id, requesterUid, {
+      rootEntry: entry,
+      read,
+      ...(options?.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
+    }).catch((error: unknown) => {
+      if (error instanceof TimelineClosureTooLargeError) return null;
+      throw error;
+    }))());
+  if (closure === null) return null;
+  at = mark("closure walk", at);
+
+  // No heal, and so no Cloudinary listing on this path at all — see
+  // `serveTimelineDocument` for what it did and why it went.
+  const healedDocument = entry.document;
+  const missing = new Set(closure.missing);
+  // UNRESOLVED IS THE WIDER SET, and the distinction is the whole reason the
+  // walk reports the two separately. A child that is gone and a child the depth
+  // bound skipped are alike in one way — neither can be derived FROM, so both
+  // leave the parent's stored summary standing ("stale beats blank"). They are
+  // nothing alike to the client, which shows a dangling reference differently
+  // from a collection it simply has not loaded yet.
+  const unresolved = new Set([...closure.missing, ...closure.unvisited]);
+  const summarized = deriveClosureSummaries(
+    { ...closure.documents, [id]: healedDocument },
+    unresolved,
+  );
+
+  const documents: Record<string, ServedTimeline> = {};
+  at = mark("derive summaries", at);
+  for (const [documentId, document] of Object.entries(summarized)) {
+    if (missing.has(documentId)) continue;
+    documents[documentId] = { document, revision: closure.revisions[documentId] ?? 0 };
+  }
+  mark("heal + assemble", at);
+  return { documents, missing: [...missing] };
 }
 
 /** The user's trash document — an empty default (revision 0 = the first

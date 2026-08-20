@@ -1,5 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { at } from "../../lib/test-support/at";
+import { compilePlaybackManifest } from "@storyboard/timeline-domain";
+import type { TimelineDocument } from "@storyboard/timeline-model/types";
+import { deriveClosureSummaries } from "../../lib/derive-collection-summaries";
 
 // E2E for the graph project view (/timeline/[projectId]/graph) — the REAL
 // Next app driven with real mouse input. The server surface the view touches
@@ -140,83 +143,55 @@ function buildFixtureDocuments(): Map<string, FixtureDocument> {
  *  projection — which is every local run. CI is slower per step, the manifest
  *  won the race, and one test went red there and only there. A vacuous fixture,
  *  not a flake. */
+/**
+ * The fixture's playback manifest — compiled by the REAL pipeline.
+ *
+ * This was a hand-written walk living in this file: a second implementation of
+ * flattening, maintained by hand against the one in
+ * `packages/timeline-domain`. It drifted, as second implementations do — its
+ * own comment recorded emitting no `trackIndex` at all, so "every leaf arrived
+ * on lane 0 and the manifest said the timeline had no lanes" — and the tests
+ * calibrated against it were measuring the mock rather than the product.
+ *
+ * It compiles through `deriveClosureSummaries` then `compilePlaybackManifest`
+ * now, which is exactly what `compile-timeline-manifest.ts` does server-side
+ * and what the client does when it holds the whole closure. Three callers, one
+ * definition, no drift available.
+ *
+ * The derivation step is not optional here either: stored summaries are stale
+ * by design (patch-scoped writes), so compiling without it windows a grown
+ * child's newest clips out of playback.
+ */
 function compileFixtureManifest(
   documents: Map<string, FixtureDocument>,
   rootId: string,
   revision: number,
 ) {
-  const root = documents.get(rootId);
-  if (!root) return null;
-  type Leaf = Record<string, unknown>;
-  const leaves: Leaf[] = [];
-  const walk = (
-    documentId: string,
-    path: string[],
-    offset: number,
-    /** True once any collection clip ABOVE this document was disabled. There is
-     *  no way back on the way down: an enabled child of a disabled parent
-     *  still does not play. */
-    inheritedDisabled: boolean,
-    /** The OUTERMOST non-zero lane seen on the way down, 0 while still on the
-     *  picture — the same one-way shape as `inheritedDisabled`.
-     *
-     *  Missing here for the same reason `disabled` once was, and it would have
-     *  failed the same way: this mock emitted no `trackIndex` at all, so every
-     *  leaf arrived on lane 0 and the manifest said the timeline had no lanes.
-     *  A test asserting that a bed plays under the picture would have passed
-     *  against a manifest in which there was no bed. */
-    laneFromRoot: number,
-  ) => {
-    const doc = documents.get(documentId);
-    if (!doc) return;
-    for (const clip of doc.clips) {
-      const clipDisabled = inheritedDisabled || clip.disabled === true;
-      const clipLane =
-        laneFromRoot !== 0 ? laneFromRoot : ((clip.trackIndex as number | undefined) ?? 0);
-      if (clip.kind === "collection") {
-        const childId = clip.childTimelineId as string;
-        walk(
-          childId,
-          [...path, childId],
-          offset + (clip.startTime as number),
-          clipDisabled,
-          clipLane,
-        );
-        continue;
-      }
-      leaves.push({
-        id: clip.id,
-        collectionPath: path,
-        kind: clip.kind,
-        src: clip.src,
-        poster: clip.poster,
-        timelineStart: offset + (clip.startTime as number),
-        timelineDuration: clip.duration,
-        sourceStart: clip.trimIn ?? 0,
-        playbackRate: 1,
-        // Always present, exactly as the real compiler emits it — 0 is the
-        // answer for everything written before lanes, never absence.
-        trackIndex: clipLane,
-        // Omitted when false, exactly as the real compiler emits it.
-        ...(clipDisabled ? { disabled: true } : {}),
-      });
+  if (!documents.has(rootId)) return null;
+
+  const record: Record<string, TimelineDocument> = {};
+  for (const [id, document] of documents) {
+    record[id] = document as unknown as TimelineDocument;
+  }
+
+  // Referenced but absent — the server substitutes an empty document AND
+  // reports the id as unresolved, so the derivation leaves the parent's stored
+  // summary standing ("stale beats blank") instead of rewriting it to empty.
+  const missing = new Set<string>();
+  for (const document of documents.values()) {
+    for (const clip of document.clips) {
+      const childId = clip.childTimelineId as string | undefined;
+      if (clip.kind === "collection" && childId && !documents.has(childId)) missing.add(childId);
     }
-  };
-  walk(rootId, [rootId], 0, false, 0);
-  const durationSeconds = root.clips.reduce(
-    (duration, clip) =>
-      Math.max(duration, (clip.startTime as number) + (clip.duration as number)),
-    0,
+  }
+  for (const id of missing) record[id] = { id, title: "", clips: [] };
+
+  return compilePlaybackManifest(
+    deriveClosureSummaries(record, missing),
+    rootId,
+    revision,
+    new Date().toISOString(),
   );
-  return {
-    projectId: rootId,
-    projectRevision: revision,
-    durationSeconds,
-    leaves: leaves.sort(
-      (a, b) => (a.timelineStart as number) - (b.timelineStart as number),
-    ),
-    compiledAt: new Date().toISOString(),
-  };
 }
 
 // ── API mock ────────────────────────────────────────────────────────────────
@@ -236,26 +211,95 @@ type GraphApi = {
   batches: string[][];
 };
 
+/**
+ * Every `/api/` request that reached this page without a mock, per page.
+ *
+ * A WeakMap rather than a field on GraphApi: the assertion runs in `afterEach`,
+ * which has the page but not whatever the test did with the return value.
+ */
+const unmockedApiCalls = new WeakMap<Page, string[]>();
+
+/**
+ * THE ESCAPE GUARD. Anything under `/api/` that no test mocked is recorded and
+ * aborted, instead of reaching the real dev server.
+ *
+ * This suite runs against the real Next app, which has real `.env` credentials
+ * loaded, so "no real storage is read or written" was an INTENTION enforced by
+ * remembering to mock every route. The gap that motivated this: `/api/renders`
+ * was never mocked, and `lib/render/job-store.ts` has no offline branch — so
+ * while the render poller was live, every test with a board open queried the
+ * real `gstudioRenderJobs` collection every few seconds for the length of the
+ * test. Invisible in `[READTOTAL]`, which only instruments the timeline
+ * collection, and invisible here, because a fallthrough looked exactly like a
+ * mock working.
+ *
+ * REGISTERED FIRST, which is what makes it a backstop rather than a wall:
+ * Playwright matches handlers in reverse registration order, so every mock
+ * added later still wins. Only what nobody claimed lands here.
+ *
+ * Aborted AND recorded. The abort keeps the request off the network even if the
+ * assertion is never reached; the recording is what turns a silent escape into a
+ * named failure in `afterEach`.
+ */
+async function guardUnmockedApi(page: Page): Promise<void> {
+  const escaped: string[] = [];
+  unmockedApiCalls.set(page, escaped);
+  await page.route("**/api/**", (route) => {
+    const { pathname, search } = new URL(route.request().url());
+    escaped.push(`${route.request().method()} ${pathname}${search}`);
+    return route.abort("failed");
+  });
+}
+
+test.afterEach(({ page }) => {
+  const escaped = unmockedApiCalls.get(page) ?? [];
+  expect(
+    escaped,
+    "Unmocked /api/ request(s) escaped to the real app — mock them, or they hit real Firestore when offline mode is off",
+  ).toEqual([]);
+});
+
 async function installGraphApi(
   page: Page,
   options: {
     blockChildDocument?: boolean;
     /** Put named PROJECT clips on a lane above the picture, by id. */
     lanes?: Readonly<Record<string, number>>;
+    /**
+     * Pin named PROJECT clips to a start time. Only meaningful on lanes 1+,
+     * where packing would otherwise put a clip at the start of its own lane —
+     * a laned clip the user dropped somewhere carries this, so a fixture that
+     * wants one parked over a picture gap has to say so.
+     */
+    placedStarts?: Readonly<Record<string, number>>;
   } = {},
 ): Promise<GraphApi> {
+  await guardUnmockedApi(page);
   const documents = buildFixtureDocuments();
   // The fixtures are all trackIndex 0 — they predate lanes — so this is how a
   // test gets a layered board without maintaining a second fixture set.
-  const lanes = options.lanes;
-  if (lanes) {
+  const lanes = options.lanes ?? {};
+  const placedStarts = options.placedStarts ?? {};
+  if (options.lanes || options.placedStarts) {
     const project = documents.get(PROJECT_ID);
     if (project) {
       documents.set(PROJECT_ID, {
         ...project,
         clips: project.clips.map((clip) => {
           const lane = lanes[clip.id];
-          return lane === undefined ? clip : { ...clip, trackIndex: lane };
+          const placedStart = placedStarts[clip.id];
+          if (lane === undefined && placedStart === undefined) return clip;
+          // LANE ALONE PACKS FROM ZERO — that is the feature, and one test
+          // asserts exactly it. A clip that must sit somewhere else on its lane
+          // needs `placedStart`, because packing is per lane
+          // (`nextStartByTrack`) and the model "HONOURS placedStart on lanes 1+,
+          // which is what makes a lane a timeline". The two are separate options
+          // because the two tests need opposite things and both are right.
+          return {
+            ...clip,
+            ...(lane === undefined ? {} : { trackIndex: lane }),
+            ...(placedStart === undefined ? {} : { placedStart }),
+          };
         }),
       });
     }
@@ -329,6 +373,27 @@ async function installGraphApi(
         results.push({ id: write.document.id, revision: next });
       }
       batches.push(writes.map((write) => write.document.id));
+      await route.fulfill({ json: { results } });
+      return;
+    }
+
+    // The graph gateway's READ path: many documents in one POST, each with its
+    // own outcome. Mirrors the real endpoint, and shares the per-id rules with
+    // the single GET below so the two can never answer differently — including
+    // `blockChildDocument`, whose whole point is one document that never
+    // arrives, which has to keep meaning that inside a batch.
+    if (id === "batch-get" && request.method() === "POST") {
+      const ids = (request.postDataJSON() as { ids?: string[] }).ids ?? [];
+      if (options.blockChildDocument && ids.includes(CHILD_ID)) {
+        await route.abort("failed");
+        return;
+      }
+      const results = ids.map((wanted) => {
+        const doc = documents.get(wanted);
+        return doc
+          ? { id: wanted, document: doc, revision: revisions.get(wanted) ?? 0 }
+          : { id: wanted, error: "Timeline was not found.", status: 404 };
+      });
       await route.fulfill({ json: { results } });
       return;
     }
@@ -424,6 +489,18 @@ async function openGraph(page: Page): Promise<void> {
  * collections" while flat. Leaving restores "Show all items in order", which
  * is what the flat-specific tests click to go back.
  */
+/**
+ * Add a collection through the Collection tool — the CLICK route.
+ *
+ * One press again: an "Add item" button briefly asked which kind in a menu, and
+ * that menu is gone — there are two tools now, so the question is answered by
+ * which one you press. Kept as a helper because several tests only need "a
+ * collection exists" and should not each re-encode how the control works.
+ */
+async function addCollectionViaButton(page: Page): Promise<void> {
+  await page.locator('[data-tool-button="collection"]').click();
+}
+
 async function leaveFlatMode(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Show collections" }).click();
 }
@@ -713,7 +790,7 @@ async function openSelectionMenu(page: Page): Promise<void> {
  * corner button was a second way to do the easy thing, sitting permanently over
  * the artwork. This keeps the call sites reading the same.
  *
- * Matches the card's own accessible name (`Scene A (collection, 2 items)`)
+ * Matches the card's own accessible name (`Scene A, collection, 2 items`)
  * rather than its node id, because the id is not what a test knows.
  */
 /**
@@ -750,7 +827,7 @@ async function selectCard(card: Locator): Promise<void> {
 const drillButton = (page: Page, timelineName: string): Locator =>
   page
     .getByRole("button", {
-      name: new RegExp(`^${timelineName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(collection`),
+      name: new RegExp(`^${timelineName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, collection`),
     })
     .first();
 
@@ -958,11 +1035,11 @@ test.describe("graph view E2E", () => {
     // update only the document, so the visible title changed while screen
     // readers kept hearing "Scene A" indefinitely.
     const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
-    await expect(card).toHaveAttribute("aria-label", /^Opening Scene \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Opening Scene, collection/);
 
     // Undo restores BOTH representations rather than splitting them again.
     await undoButton(page).click();
-    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A, collection/);
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
       .toBe("Scene A");
@@ -974,7 +1051,7 @@ test.describe("graph view E2E", () => {
     const api = await installGraphApi(page);
     await openGraph(page);
     const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
-    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A, collection/);
 
     // ONE click on the card's name label → inline editor; commit with Enter.
     await card.getByText("Scene A", { exact: true }).click();
@@ -983,7 +1060,7 @@ test.describe("graph view E2E", () => {
     await editor.press("Enter");
 
     // node.name (the accessible name, ghost, and announcements) updates at once.
-    await expect(card).toHaveAttribute("aria-label", /^Heist Plan \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Heist Plan, collection/);
 
     // THE HOVER AFFORDANCE. A one-click target that looks exactly like static
     // text is a trap in both directions — nobody finds the rename, and anyone
@@ -1022,7 +1099,7 @@ test.describe("graph view E2E", () => {
     const api = await installGraphApi(page);
     await openGraph(page);
     const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
-    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A, collection/);
 
     // F2 on a focused collection card is the pointerless twin of double-clicking
     // the label: OpenKeyBoundary turns it into this rename request, which the
@@ -1048,7 +1125,7 @@ test.describe("graph view E2E", () => {
     await editor.fill("Heist Plan");
     await editor.press("Enter");
 
-    await expect(card).toHaveAttribute("aria-label", /^Heist Plan \(collection/);
+    await expect(card).toHaveAttribute("aria-label", /^Heist Plan, collection/);
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
       .toBe("Heist Plan");
@@ -3569,19 +3646,28 @@ test.describe("graph view E2E", () => {
     // part that is about gesture arbitration rather than about meaning.
     await installGraphApi(page);
     await openGraph(page);
-    // bravo is an IMAGE: selected images grow exactly ONE handle (the end
-    // edge) — a video would grow two.
+    // bravo is an IMAGE: images carry exactly ONE handle (the end edge) — a
+    // video would carry two.
+    //
+    // HANDLE COUNT USED TO STAND IN FOR "IS IT SELECTED" throughout this test,
+    // and it cannot any more: with a fine pointer the handles are on every
+    // clip whether or not it is picked. Selection is asserted directly on
+    // `data-selected` below, and the count is asserted ONCE, as the thing it
+    // now means — that handles do NOT track selection.
     const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
     const bravoWrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="bravo"]');
 
-    // Unselected media: no trim handles — the edges are plain card body.
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
-
-    // Ctrl/Cmd+click selects, and the handle grows in. (Retried inside
-    // `selectCard`: under load a press can outlast the 250ms hold threshold,
-    // becoming a hold-grab whose click is — correctly — suppressed.)
-    await selectCard(bravo);
+    // Unselected media still carries its handle: the edge advertises what it
+    // does before you pick anything. This is the assertion that would fail if
+    // trims went back to being selection-gated with a mouse.
+    await expect(bravo).not.toHaveAttribute("data-selected", "true");
     await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
+
+    // Ctrl/Cmd+click selects. (Retried inside `selectCard`: under load a press
+    // can outlast the 250ms hold threshold, becoming a hold-grab whose click
+    // is — correctly — suppressed.)
+    await selectCard(bravo);
+    await expect(bravo).toHaveAttribute("data-selected", "true");
 
     // Press-and-hold released IN PLACE is a grab, not a click: the trailing
     // click is suppressed, so the selection (and handles) stay put.
@@ -3591,7 +3677,6 @@ test.describe("graph view E2E", () => {
     await page.waitForTimeout(400); // past the 250ms hold activation
     await page.mouse.up();
     await expect(bravo).toHaveAttribute("data-selected", "true");
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
 
     // A PLAIN click does not deselect it — it opens this clip's edit overlay
     // and leaves the selection exactly where it was. The overlay is dismissed
@@ -3602,15 +3687,15 @@ test.describe("graph view E2E", () => {
     await page.keyboard.press("Escape");
     await expect(overlay).toHaveCount(0);
     await expect(bravo).toHaveAttribute("data-selected", "true");
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
 
-    // Ctrl/Cmd+click is what toggles it OFF, handles with it. (Same
-    // accidental-hold retry.)
+    // Ctrl/Cmd+click is what toggles it OFF. (Same accidental-hold retry.)
     await expect(async () => {
       await bravo.click({ modifiers: ["ControlOrMeta"] });
       await expect(bravo).not.toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
+    // Deselected, and the handle is STILL there — the pair that says these two
+    // are now independent.
+    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
 
     // A collection card's BODY now DRILLS IN — one click, no second click and
     // no folder button needed. This reverses what this test used to pin (body
@@ -3801,6 +3886,107 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
+  test("the two tools both append: a collection, and picked media", async ({ page }) => {
+    // One control for each of the two things a timeline can hold, replacing an
+    // "Add item" button that asked which kind in a menu. The assertions here
+    // are about the pair behaving as ONE idea: same gesture, same landing spot,
+    // different payload.
+    const api = await installGraphApi(page);
+    let uploads = 0;
+    await page.route("**/api/timeline-media/upload", (route) => {
+      uploads += 1;
+      return route.fulfill({
+        json: { pathname: `added-${uploads}.png`, url: PIXEL, thumbnailUrl: PIXEL },
+      });
+    });
+    await openGraph(page);
+    const before = (await stripOrder(page, PROJECT_ID)).length;
+
+    const collection = page.locator('[data-tool-button="collection"]');
+    const media = page.locator('[data-tool-button="media"]');
+    await expect(collection).toHaveCount(1);
+    await expect(media).toHaveCount(1);
+    // BOTH draggable, and it says so twice over: the attribute makes the
+    // gesture real, the grip glyph makes it visible before you try.
+    await expect(collection).toHaveAttribute("draggable", "true");
+    await expect(media).toHaveAttribute("draggable", "true");
+
+    // 1) Collection APPENDS — last, not next to any selection.
+    await collection.click();
+    await expect.poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length)).toBe(before + 1);
+    const afterCollection = await stripOrder(page, PROJECT_ID);
+    expect(afterCollection[afterCollection.length - 1]).toMatch(/^timeline-/);
+
+    // 2) Media goes through the SAME upload pipeline a drop uses, and also
+    //    appends. Files are set straight on the input: pressing the button
+    //    opens the OS picker, which a browser test cannot drive.
+    await page
+      .locator("[data-add-media-end-input]")
+      .setInputFiles([
+        { name: "added.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) },
+      ]);
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length), { timeout: 15000 })
+      .toBe(before + 2);
+    expect(uploads).toBe(1);
+    await expect.poll(() => api.patchesFor(PROJECT_ID).length, { timeout: 5000 }).toBeGreaterThan(0);
+  });
+
+  test("a dragged Collection commits where it lands; a dragged Media asks for files there", async ({
+    page,
+  }) => {
+    // The drag half, and the ONE place the two tools legitimately differ. A
+    // collection can be minted from nothing, so its drop commits immediately.
+    // Media cannot — there are no files yet — so its drop parks the position
+    // and asks, and nothing is added until files arrive.
+    await installGraphApi(page);
+    await openGraph(page);
+    const before = await stripOrder(page, PROJECT_ID);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    const payload = (value: string) =>
+      page.evaluateHandle((tool) => {
+        const transfer = new DataTransfer();
+        transfer.setData("application/x-gstudio-type", tool);
+        return transfer;
+      }, value);
+
+    // 1) COLLECTION: lands at the dropped boundary (clientX 0 = before the
+    //    first card), not appended where a click would put it.
+    await dropZone.dispatchEvent("drop", { dataTransfer: await payload("collection"), clientX: 0 });
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((o) => o.length))
+      .toBe(before.length + 1);
+    const afterCollection = await stripOrder(page, PROJECT_ID);
+    expect(afterCollection[0]).toMatch(/^timeline-/);
+    expect(afterCollection.slice(1)).toEqual(before);
+
+    // 2) MEDIA: the drop adds NOTHING on its own. That is the claim that makes
+    //    cancelling the picker a real cancel rather than something to undo.
+    const settled = await stripOrder(page, PROJECT_ID);
+    await dropZone.dispatchEvent("drop", {
+      dataTransfer: await payload("media"),
+      clientX: 0,
+      clientY: 300,
+    });
+    const input = page.locator("[data-media-drop-input]");
+    await expect(input).toHaveCount(1);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(settled);
+
+    // The prompt is ALWAYS there, whether or not the picker opened over it.
+    // This test is why: under Playwright the drop still carries activation from
+    // an earlier click, so the picker IS opened — and headless Chromium cancels
+    // it instantly. When `cancel` used to dismiss the pending drop, that left
+    // nothing at all, which is the same hole a real person falls into by
+    // closing a picker they opened by accident.
+    await expect(page.locator("[data-media-drop-prompt]")).toBeVisible();
+
+    // Escape dismisses, still with nothing added.
+    await page.keyboard.press("Escape");
+    await expect(input).toHaveCount(0);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(settled);
+  });
+
   test("the trailing slot browses for media — the only route that needs no pointer", async ({
     page,
   }) => {
@@ -3923,29 +4109,36 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
-  test("sidebar tools insert from the KEYBOARD, with no pointer involved", async ({ page }) => {
-    // The palette used to be pointer-only: its tiles were <div role="button">
-    // whose Enter/Space did nothing but show a "drag this" toast, and actual
-    // insertion needed a native drag carrying a custom DataTransfer. Keyboard
-    // and assistive-tech users could not create anything at all.
+  test("the tools work from the KEYBOARD, with no pointer involved", async ({ page }) => {
+    // The palette these replace was pointer-only: its tiles were
+    // <div role="button"> whose Enter/Space did nothing but show a "drag this"
+    // toast, and actual insertion needed a native drag carrying a custom
+    // DataTransfer. Keyboard and assistive-tech users could not create anything.
+    //
+    // An intermediate "Add item" version put a MENU between the keystroke and
+    // the add, which needed focus management to stay usable. Two plain buttons
+    // need none of that — worth a test, because losing a menu is exactly the
+    // kind of change that can quietly lose its accessible route with it.
     await installGraphApi(page);
     await openGraph(page);
 
-    const collectionTool = page.getByRole("button", { name: /add collection/i });
-    await expect(collectionTool).toBeVisible();
+    const collection = page.locator('[data-tool-button="collection"]');
+    await expect(collection).toBeVisible();
 
-    // Reach it by TABBING — it must be in the focus order, not just clickable.
-    await collectionTool.focus();
-    await expect(collectionTool).toBeFocused();
+    // Reach it by FOCUS — it must be in the focus order, not just clickable.
+    await collection.focus();
+    await expect(collection).toBeFocused();
     await page.keyboard.press("Enter");
 
-    // Appended to the end of the focused timeline.
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie", expect.stringMatching(/^timeline-/)]);
 
+    // Focus STAYS on the tool, so a second add is one more keystroke and the
+    // next Tab carries on from here.
+    await expect(collection).toBeFocused();
+
     // Space is the other native activation key, and must not be swallowed.
-    await collectionTool.focus();
     await page.keyboard.press(" ");
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
@@ -3963,70 +4156,53 @@ test.describe("graph view E2E", () => {
       .toMatch(/^timeline-/);
   });
 
-  test("the collection tool lands AFTER the selected card, in that card's own strip", async ({
+  test("the tools APPEND, whatever is selected and wherever the selection lives", async ({
     page,
   }) => {
+    // A DELIBERATE CHANGE, and the reason it is pinned rather than deleted.
+    //
+    // The collection tool this replaces landed next to the SELECTION, in that
+    // card's own strip, via `resolveInsertPlacement` — a rule that reads well
+    // from a sidebar palette and poorly from a control sitting directly above
+    // the board, where "add one" plainly means "at the end of this". The rule
+    // itself is alive and still tested: PASTE uses it, which is where landing
+    // next to what you picked is unambiguously right.
     await installGraphApi(page);
     await openGraph(page);
 
-    // Select bravo (a media clip: click toggles selection, no drill)…
+    // Select bravo, in the middle of the run…
     await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="bravo"]'));
     await expect(strip(page, PROJECT_ID).locator('[data-node-id="bravo"]')).toHaveAttribute(
       "data-selected",
       "true",
     );
 
-    // …then CLICK the sidebar tool: sidebar clicks never clear selection,
-    // so the new collection lands right after bravo, not at the end.
-    const collectionTool = page.getByRole("button", { name: /add collection/i });
-    await collectionTool.click();
+    // …and the collection still lands LAST, not after bravo.
+    await addCollectionViaButton(page);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual([
         "alpha",
         "bravo",
-        expect.stringMatching(/^timeline-/),
         CHILD_ID,
         "charlie",
+        expect.stringMatching(/^timeline-/),
       ]);
 
-    // The selected card may live in ANY strip: select c1 in the CHILD
-    // timeline — the insert follows the selection there, not the focus.
+    // Not even when the selection lives in ANOTHER strip. This is the case the
+    // old rule existed for, so it is the one that proves the rule is gone: the
+    // add goes to the FOCUSED timeline's end, and the child is untouched.
     await expandSubGraph(page, "Scene A");
     await expect
       .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
       .toEqual(["c1", "c2"]);
     await selectCard(strip(page, CHILD_ID).locator('[data-node-id="c1"]'));
-    await collectionTool.click();
-    await expect
-      .poll(() => stripOrder(page, CHILD_ID))
-      .toEqual(["c1", expect.stringMatching(/^timeline-/), "c2"]);
+    await addCollectionViaButton(page);
 
-    // The focused root gained exactly the ONE insert from before.
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
-      .toBe(5);
-
-    // …but only strips INSIDE the focused subtree count. Select charlie in the
-    // project, then drill into Scene A: the selection survives the navigation,
-    // and the tool must append into the collection now open rather than plant
-    // the new timeline back where the user came from (same rule as Paste).
-    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="charlie"]'));
-    await drillButton(page, "Scene A").click();
-    // Wait on the PROJECT strip leaving, not on a CHILD card appearing: the
-    // Scene A sub-row is expanded above, so its strip is already on the page
-    // and that wait would pass without the route having changed at all —
-    // letting the tool click race the navigation (it did, first run).
-    await expect(strip(page, PROJECT_ID)).toHaveCount(0);
-    await collectionTool.click();
-    await expect
-      .poll(() => stripOrder(page, CHILD_ID))
-      .toEqual([
-        "c1",
-        expect.stringMatching(/^timeline-/),
-        "c2",
-        expect.stringMatching(/^timeline-/),
-      ]);
+      .toBe(6);
   });
 
   test("keyboard insertion works in grid mode too", async ({ page }) => {
@@ -4038,7 +4214,8 @@ test.describe("graph view E2E", () => {
     await surfaceButton(page, "grid").click();
     await expect(page.locator(`[data-native-drop="${PROJECT_ID}"]`)).toHaveCount(1);
 
-    await page.getByRole("button", { name: /add collection/i }).focus();
+    // One keystroke: there is no menu between the tool and the add.
+    await page.locator('[data-tool-button="collection"]').focus();
     await page.keyboard.press("Enter");
 
     await expect
@@ -5499,7 +5676,7 @@ test.describe("graph view E2E", () => {
     await expect(empty).toContainText(/no child timelines/i);
 
     // Adding a collection replaces it with the real row, no reload.
-    await page.getByRole("button", { name: /add collection/i }).click();
+    await addCollectionViaButton(page);
     await expect(empty).toHaveCount(0);
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(1);
 
@@ -5897,24 +6074,27 @@ test.describe("graph view E2E", () => {
     await expect(status).toHaveText("");
   });
 
-  test("the collection tool in the breadcrumb row is a drag source, uncovered by the drop-zone layer", async ({ page }) => {
-    // The tool keeps BOTH affordances after moving to the header: keyboard
-    // activation (covered elsewhere) and native drag. Playwright's synthetic
-    // mouse cannot drive a native HTML5 drag, so this asserts the next best
-    // thing: the element is still draggable and its dragstart still loads the
-    // DataTransfer the drop targets read.
+  test("a tool button is a drag source, uncovered by the drop-zone layer", async ({ page }) => {
+    // The control keeps BOTH affordances: keyboard activation (covered
+    // elsewhere) and native drag. Playwright's synthetic mouse cannot drive a
+    // native HTML5 drag, so this asserts the next best thing: the element is
+    // still draggable and its dragstart still loads the DataTransfer the drop
+    // targets read.
     await installGraphApi(page);
     await openGraph(page);
 
-    const collectionTool = page.getByRole("button", { name: /add collection/i });
-    await expect(collectionTool).toHaveAttribute("draggable", "true");
+    const addItem = page.locator('[data-tool-button="media"]');
+    await expect(addItem).toHaveAttribute("draggable", "true");
 
-    const carried = await collectionTool.evaluate((el) => {
+    // The payload is `media`, NOT `collection`. That difference is the whole
+    // feature: a collection payload commits on drop, while this one parks the
+    // position and asks for files to put there.
+    const carried = await addItem.evaluate((el) => {
       const transfer = new DataTransfer();
       el.dispatchEvent(new DragEvent("dragstart", { dataTransfer: transfer, bubbles: true }));
       return transfer.getData("application/x-gstudio-type");
     });
-    expect(carried).toBe("collection");
+    expect(carried).toBe("media");
 
     // ...and the button must actually RECEIVE that dragstart under a real
     // pointer. dispatchEvent above bypasses hit-testing, so it can't catch a
@@ -5922,7 +6102,7 @@ test.describe("graph view E2E", () => {
     // layer sits over this same row. Assert hit-testing: the topmost element at
     // the tool's own centre is the tool itself, which holds only while the idle
     // drop-zone layer stays pointer-events-none.
-    const onThisTool = await collectionTool.evaluate((el) => {
+    const onThisTool = await addItem.evaluate((el) => {
       const r = el.getBoundingClientRect();
       const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       return el.contains(top);
@@ -6973,12 +7153,11 @@ test.describe("graph view E2E", () => {
     // left wherever the closing menu put it — a difference this test should not
     // encode, because the guarantee below holds either way.
     //
-    // WHICH control it is now depends on the row. The select row replaces the
-    // breadcrumb the moment the mode is armed — including at zero selected —
-    // and the header's Select toggle goes with the browse row it lives in. So
-    // armed-and-empty is served by Done, and only the disarmed state shows the
-    // toggle. The guarantee is unchanged and is what this asserts: whatever the
-    // selection, SOME visible control reports the mode and turns it off.
+    // BOTH controls are on screen now — the Select toggle keeps its place
+    // through select mode, beside a Done that does the same job. This still
+    // routes through Done when the row is armed, because that is the path worth
+    // exercising; the guarantee it asserts is unchanged: whatever the
+    // selection, a visible control reports the mode and turns it off.
     const header = page.locator("[data-graph-board-header]");
     const headerToggle = page.locator("[data-select-mode-toggle]");
     if ((await header.getAttribute("data-header-mode")) === "select") {
@@ -7438,12 +7617,46 @@ test.describe("graph view E2E", () => {
     await assertStacked("select");
   });
 
-  test("select mode keeps undo/redo, to the right of Done and fenced by a rule", async ({
+  test("select mode keeps the row's right-hand cluster, with Select pressed", async ({
     page,
   }) => {
-    // Arming the mode used to take undo AWAY — `GraphUndoRedo` rendered only
-    // in the browse branch — at exactly the moment a multi-select delete makes
-    // it most wanted.
+    // Arming the mode used to replace the WHOLE row, which took Preview, the
+    // Select toggle itself and the project `⋮` off screen — the control the
+    // user had just pressed vanished from under the cursor. Only the left of
+    // the row changes now.
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    await expect(header).toHaveAttribute("data-header-mode", "select");
+
+    const toggle = page.locator("[data-select-mode-toggle]");
+    await expect(toggle).toBeVisible();
+    // PRESSED, for as long as the mode is on. It used to be able to show that
+    // state only in the window before the first card was picked.
+    await expect(toggle).toHaveAttribute("data-select-mode-toggle", "on");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(header.getByRole("button", { name: /preview/i })).toBeVisible();
+    await expect(header.locator("[data-project-menu]")).toBeVisible();
+    await expect(header.getByRole("button", { name: "Undo" })).toBeVisible();
+    await expect(header.getByRole("button", { name: "Redo" })).toBeVisible();
+
+    // And it is a real way out, not just an indicator.
+    await toggle.click();
+    await expect(header).toHaveAttribute("data-header-mode", "browse");
+  });
+
+  test("Done sits beside Delete, one rule between them, undo/redo beyond", async ({
+    page,
+  }) => {
+    // REVERSED deliberately. Done used to take `ml-auto` to the far end of the
+    // row, on the argument that two controls which both end the gesture — one
+    // of them destructive — should not be shoulder to shoulder. The rule is
+    // what replaces that distance: Done now sits with the rest of the selection
+    // controls rather than adrift at the end of a row whose other end is a full
+    // cluster of unrelated buttons.
     await installGraphApi(page);
     await openGraph(page);
     const header = page.locator("[data-graph-board-header]");
@@ -7453,27 +7666,38 @@ test.describe("graph view E2E", () => {
     await expect(header).toHaveAttribute("data-header-mode", "select");
 
     const done = page.locator("[data-select-mode-done]");
+    // The last verb DRAWN, and the one kept longest as the row narrows, so it
+    // is reliably the one Done lands beside. DIRECT children only: the run also
+    // holds an invisible ruler copy of every verb, which it measures itself
+    // against, and matching both is a strict-mode failure.
+    const del = header.locator('[data-select-mode-verbs] > [data-header-action="delete"]');
     const undo = header.getByRole("button", { name: "Undo" });
-    const redo = header.getByRole("button", { name: "Redo" });
-    await expect(undo).toBeVisible();
-    await expect(redo).toBeVisible();
+    await expect(done).toBeVisible();
+    await expect(del).toBeVisible();
 
-    // RIGHT of Done, and in reading order among themselves.
     const doneBox = (await done.boundingBox())!;
+    const deleteBox = (await del.boundingBox())!;
     const undoBox = (await undo.boundingBox())!;
-    const redoBox = (await redo.boundingBox())!;
-    expect(undoBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
-    expect(redoBox.x).toBeGreaterThanOrEqual(undoBox.x + undoBox.width);
 
-    // EXACTLY ONE rule, and it sits after Done. Done's own separation on the
-    // left is the empty space `ml-auto` opens up; a rule there too fenced it
-    // in from both sides and made the way OUT read as one more item in the
-    // verb run.
-    const rules = header.locator('[data-select-mode-header] > [aria-hidden="true"].w-px');
+    // Done is to Delete's right, and CLOSE to it — the whole point of the
+    // change. The gap is one rule plus the run's gutters, so a generous ceiling
+    // still fails the old layout, where the row's entire leftover width sat
+    // between them: 280px, measured, on this viewport.
+    expect(doneBox.x).toBeGreaterThan(deleteBox.x + deleteBox.width);
+    expect(doneBox.x - (deleteBox.x + deleteBox.width)).toBeLessThan(80);
+
+    // EXACTLY ONE rule, and it is BETWEEN them — not after Done, where it used
+    // to be. The rule is what says "this one leaves, the rest act".
+    const rules = header.locator('[data-select-mode-verbs] > [aria-hidden="true"].w-px');
     await expect(rules).toHaveCount(1);
     const ruleBox = (await rules.first().boundingBox())!;
-    expect(ruleBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
-    expect(ruleBox.x).toBeLessThan(undoBox.x);
+    expect(ruleBox.x).toBeGreaterThanOrEqual(deleteBox.x + deleteBox.width);
+    expect(ruleBox.x).toBeLessThanOrEqual(doneBox.x);
+
+    // History still sits beyond the way out, in the shared cluster it now
+    // renders from. Arming the mode used to drop undo entirely — at exactly the
+    // moment a multi-select delete makes it most wanted.
+    expect(undoBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
   });
 
   test("the grid card carries NO ⋮ — the select row holds its actions", async ({
@@ -7557,143 +7781,91 @@ test.describe("graph view E2E", () => {
     );
   });
 
+  test("NO checkbox outside select mode — not hidden, not on hover, absent", async ({
+    page,
+  }) => {
+    // THE WHOLE CHANGE, in one assertion. The checkbox used to be rendered on
+    // every card and revealed by CSS `:hover`, and clicking it armed the mode.
+    // It is gone outside the mode: this is a DRAGGING board, the cursor is over
+    // cards constantly because things are being grabbed and moved rather than
+    // chosen, and a control that materialised under it every time was noise
+    // during the gesture the board is actually for.
+    //
+    // ABSENT rather than transparent, which is the stronger property and the
+    // one worth pinning: a hidden click target is a trap, and three tests used
+    // to exist to prove the opacity and the pointer-events could never drift
+    // apart. Nothing to drift now.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const card = surface.locator('[data-node-id="alpha"]');
+
+    await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
+
+    // A REAL hover, which is the only thing that could have revealed it — CSS
+    // `:hover` is browser state driven by pointer position, so no synthetic
+    // event can stand in for this and no story can cover it.
+    await card.hover();
+    await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
+    // Still nothing after the pointer has settled, so this is not a race with
+    // a transition that simply had not started.
+    await page.waitForTimeout(300);
+    await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
+
+    // And the card still does what a card does under an un-checkboxed cursor.
+    await card.click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  test("select mode shows it on EVERY card, picked or not", async ({ page }) => {
+    // The mode needs every card to show its state at once — unpicked ones
+    // included — which is exactly what a hover reveal could never do for more
+    // than one card at a time, and why the mode pins them all on.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await page.locator("[data-select-mode-toggle]").click();
+    const boxes = surface.locator("[data-selection-indicator]");
+    await expect.poll(() => boxes.count()).toBeGreaterThan(1);
+    // Pointer nowhere near any of them.
+    await page.mouse.move(0, 0);
+    await expect(boxes.first()).toBeVisible();
+    await expect(boxes.first()).toHaveAttribute("data-selection-indicator-reveal", "armed");
+    await expect
+      .poll(() => boxes.first().evaluate((el) => getComputedStyle(el).opacity))
+      .toBe("1");
+
+    // Leaving the mode takes them all away again.
+    await page.locator("[data-select-mode-toggle]").click();
+    await expect(surface.locator("[data-selection-indicator]")).toHaveCount(0);
+  });
+
   test("clicking the checkbox toggles — on a collection, where the rest of the card drills", async ({
     page,
   }) => {
     // THE COLLECTION CASE IS THE POINT. A plain click on a collection card
-    // drills in, so before this the only pointer route to picking one was to
-    // enter select mode first. The checkbox is that route, and it has to work
-    // WITHOUT navigating — a toggle that also drilled would be useless.
+    // drills into it, so inside select mode the checkbox is what says "pick
+    // this one" instead. Outside the mode there is no pointer route to
+    // selecting a collection at all any more — that is the accepted trade for
+    // losing the hover checkbox, and this test is where it is visible.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
     const collection = surface.locator(`[data-node-id="${CHILD_ID}"]`);
+
+    await page.locator("[data-select-mode-toggle]").click();
     const checkbox = collection.locator("[data-selection-indicator]");
+    await expect(checkbox).toBeVisible();
 
-    // Hover to reveal it, then click IT rather than the card.
-    await collection.hover();
-    await expect.poll(() => checkbox.evaluate((e) => getComputedStyle(e).opacity)).toBe("1");
     await checkbox.click();
-
-    // Selected, and still on the project — the drill-in did not fire underneath.
     await expect(collection).toHaveAttribute("data-selected", "true");
-    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
-    await expect(strip(page, PROJECT_ID)).toHaveCount(1);
+    // It selected rather than drilling: the breadcrumb has not moved.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(surface).toBeVisible();
 
-    // And it TOGGLES: a second click takes it back off, still without drilling.
     await checkbox.click();
     await expect(collection).not.toHaveAttribute("data-selected", "true");
-    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
-
-    // The media card's checkbox toggles the same way — one grammar, both kinds.
-    const alpha = surface.locator('[data-node-id="alpha"]');
-    await alpha.hover();
-    await alpha.locator("[data-selection-indicator]").click();
-    await expect(alpha).toHaveAttribute("data-selected", "true");
-  });
-
-  test("the checkbox ARMS the mode — the header swaps its breadcrumbs for the select row", async ({
-    page,
-  }) => {
-    // THE HEADER IS THE BUG. The checkbox filled in, but the row above it is
-    // driven by `multiSelectMode` alone (GraphBoard's `selectModeRow`), and
-    // toggling a selection never armed that — so a picked card got no count, no
-    // verbs and no Done, while the breadcrumb trail sat there as if nothing had
-    // happened. Pressing Select produced the right row; the checkbox did not.
-    await installGraphApi(page);
-    await openGraph(page);
-    const surface = strip(page, PROJECT_ID);
-    const card = surface.locator('[data-node-id="alpha"]');
-    const header = page.locator("[data-graph-board-header]");
-    const checkbox = card.locator("[data-selection-indicator]");
-
-    // The premise: browsing, with the trail showing.
-    await expect(header).toHaveAttribute("data-header-mode", "browse");
-
-    await card.hover();
-    await checkbox.click();
-
-    await expect(card).toHaveAttribute("data-selected", "true");
-    await expect(header).toHaveAttribute("data-header-mode", "select");
-    await expect(page.locator("[data-select-mode-count]")).toHaveText("1 selected");
-
-    // Un-checking the last card does NOT throw you back out. It holds at
-    // "0 selected", which is where pressing Select and picking nothing lands
-    // too — disarming here would yank the row away at the exact moment someone
-    // is correcting a mis-pick, and Done is the deliberate way out.
-    await checkbox.click();
-    await expect(card).not.toHaveAttribute("data-selected", "true");
-    await expect(header).toHaveAttribute("data-header-mode", "select");
-    await expect(page.locator("[data-select-mode-count]")).toHaveText("0 selected");
-  });
-
-  test("a hidden checkbox is not a click trap", async ({ page }) => {
-    // The checkbox is a click target now, and it is revealed by opacity rather
-    // than by mounting — so `pointer-events` has to travel with the opacity or
-    // there is an invisible toggle sitting in every card's corner. Worst on
-    // touch, where the hover gate never opens at all and the control would be
-    // permanently invisible AND permanently clickable.
-    await installGraphApi(page);
-    await openGraph(page);
-    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
-    const checkbox = alpha.locator("[data-selection-indicator]");
-
-    await page.mouse.move(0, 0);
-    await expect
-      .poll(() => checkbox.evaluate((e) => getComputedStyle(e).pointerEvents))
-      .toBe("none");
-    await expect.poll(() => checkbox.evaluate((e) => getComputedStyle(e).opacity)).toBe("0");
-  });
-
-  test("the select checkbox is revealed by a real hover, and pinned on by select mode", async ({
-    page,
-  }) => {
-    // E2E RATHER THAN A STORY, and not by preference. The reveal is CSS
-    // `:hover`, which is browser state driven by real pointer position — no
-    // synthetic event sets it, so a story using `userEvent.hover` measures
-    // opacity 0 forever and fails for a reason that has nothing to do with the
-    // component. Trusted mouse input is this suite's job.
-    //
-    // It is also the only check that the Tailwind class is REAL. The reveal is
-    // a literal `[@media(hover:hover)]:group-hover/media-item:opacity-100`;
-    // Tailwind's JIT scans source text, so a mistyped or interpolated group
-    // name yields a class that is never generated and a checkbox that silently
-    // never appears. Nothing but a computed style catches that.
-    await installGraphApi(page);
-    await openGraph(page);
-    const surface = strip(page, PROJECT_ID);
-    const card = surface.locator('[data-node-id="alpha"]');
-    const checkbox = card.locator("[data-selection-indicator]");
-    const opacity = () =>
-      checkbox.evaluate((element) => getComputedStyle(element).opacity);
-
-    // RENDERED but transparent, with nothing selected and the pointer away. Not
-    // absent: it keeps its box so the reveal cannot relayout the card under the
-    // pointer, which is also why presence is the wrong thing to assert.
-    await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "hover");
-    await page.mouse.move(0, 0);
-    await expect.poll(opacity).toBe("0");
-
-    await card.hover();
-    await expect.poll(opacity).toBe("1");
-
-    // And away again — a checkbox left behind would read as a selection that
-    // is not there.
-    await page.mouse.move(0, 0);
-    await expect.poll(opacity).toBe("0");
-
-    // SELECT MODE pins it on with the pointer nowhere near the card: the mode
-    // needs every card to show its state at once, unpicked ones included, which
-    // a hover reveal can never do for more than one card at a time.
-    //
-    // The mode toggle lives in the anchor's menu, so something has to be
-    // selected first — and a plain click would open this clip's editor rather
-    // than select it.
-    await selectCard(card);
-    await toggleMultiSelect(page);
-    await page.mouse.move(0, 0);
-    await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
-    await expect.poll(opacity).toBe("1");
   });
 
   // Its own context: `hasTouch` sets maxTouchPoints, which is what makes
@@ -7701,47 +7873,34 @@ test.describe("graph view E2E", () => {
   test.describe(() => {
     test.use({ hasTouch: true });
 
-    test("touch gets NO hover checkbox — tapping a card never leaves one stuck on", async ({
+    test("touch reaches selection through the Select control, and a tap still opens", async ({
       page,
     }) => {
-      // The other half of the desktop-only reveal, and the reason the CSS
-      // carries an explicit `@media (hover: hover)` instead of trusting a
-      // framework default. Without the query, a tap sets `:hover` on the
-      // tapped card and Chromium LEAVES IT THERE until something else is
-      // touched — so the checkbox would sit on the last card tapped, saying
-      // "picked" about a card that is not.
+      // The desktop-only hover reveal is gone, so the sticky-hover bug it
+      // carried cannot happen and the `@media (hover: hover)` guard that
+      // existed for it is gone too. What still matters is that touch — the
+      // input that never had the hover route — reaches selection the same way
+      // everything else does now.
       await installGraphApi(page);
       await openGraph(page);
       const surface = strip(page, PROJECT_ID);
       const card = surface.locator('[data-node-id="alpha"]');
-      const checkbox = card.locator("[data-selection-indicator]");
-      const opacity = () =>
-        checkbox.evaluate((element) => getComputedStyle(element).opacity);
 
-      // The premise, asserted first — `hasTouch` is what makes Chromium report
-      // this, and without it the checks below would pass for the wrong reason.
-      expect(await page.evaluate(() => window.matchMedia("(hover: none)").matches)).toBe(true);
+      await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
 
-      await expect.poll(opacity).toBe("0");
-
-      // A tap OPENS rather than selects, and leaves no checkbox behind it —
-      // which is the sticky-hover case: without the media query the tap would
-      // set `:hover` on this card and Chromium would keep it there.
       await card.tap();
       await expect(page.getByRole("dialog")).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog")).toHaveCount(0);
-      await expect.poll(opacity).toBe("0");
+      await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
 
-      // Select mode still works here — it is a mode, not a hover affordance,
-      // and touch is exactly the input that has no other way to select at all.
-      // Reached through the HEADER control, because the anchor menu route
-      // needs something already selected and on touch nothing can be.
       await page.locator("[data-select-mode-toggle]").tap();
+      const checkbox = card.locator("[data-selection-indicator]");
       await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
-      await expect.poll(opacity).toBe("1");
+      await expect
+        .poll(() => checkbox.evaluate((el) => getComputedStyle(el).opacity))
+        .toBe("1");
     });
-
     test("touch gets 44px hit targets on every selection control", async ({ page }) => {
       await installGraphApi(page);
       await openGraph(page);
@@ -8306,7 +8465,11 @@ test.describe("graph view E2E", () => {
     // Dragged to the left end with the POINTER, which is how this control is
     // actually used and what the move out of the menu was for. Keyboard Home
     // is Radix's to implement and is not what this test is about.
-    const track = (await page.locator("[data-header-zoom]").boundingBox())!;
+    // The SLIDER's own box, not the wrapper's. They used to share a left edge,
+    // so measuring the wrapper worked by coincidence; a `pl-1.5` added to the
+    // wrapper for spacing then put this click 6px into the padding, where it
+    // hit nothing and the zoom stayed at its default.
+    const track = (await page.locator("[data-header-zoom-slider]").boundingBox())!;
     await page.mouse.click(track.x + 1, track.y + track.height / 2);
     // NEAR the floor, not exactly on it: the thumb has width, so a click at the
     // track's left edge lands a step or two in. What the test needs is "zoomed
@@ -8437,7 +8600,11 @@ test.describe("graph view E2E", () => {
   test("a layered clip is LIVE in the preview, and the picture HOLDS under it", async ({
     page,
   }) => {
-    await installGraphApi(page, { lanes: { bravo: 1 } });
+    // PARKED, not merely laned. A lane packs from zero, so a bare `lanes`
+    // fixture puts bravo over alpha and there is no picture gap to hold across
+    // — the very thing this test is about. `placedStarts` pins it at 6, which
+    // is what a clip the user dropped there actually carries.
+    await installGraphApi(page, { lanes: { bravo: 1 }, placedStarts: { bravo: 6 } });
     await openGraph(page);
     await expect.poll(() => laneOrder(page, PROJECT_ID, 1)).toEqual(["bravo"]);
 
