@@ -472,10 +472,12 @@ function RevealedLetters({
         show ? "grid-cols-[1fr]" : "grid-cols-[0fr]",
       )}
     >
-      {/* NO WEIGHT of its own. This was `font-semibold`, which was right when
-          the mark was two capitals in the UI's sans face — but Caprasimo ships
-          a single 400, so 600 only bought a synthesised bold smeared over a
-          face that is already heavy. */}
+      {/* NO WEIGHT of its own, still — but for a different reason than it had
+          under Caprasimo. That face shipped one 400, so any weight class here
+          was a synthesised bold over something already heavy. Grandstander has
+          real weights, and the lockup's is picked once where the font is
+          loaded (700). A utility here would override that for the letters
+          only, and the wordmark would stop matching its own mark. */}
       <span className="overflow-hidden opacity-90">{children}</span>
     </span>
   );
@@ -969,7 +971,7 @@ export function TimelineSidebar() {
           // CAPRASIMO, the face the logo document is set in, and no
           // `font-bold`: it ships a single 400 weight, so asking for 700 buys a
           // synthesised bold on top of a face that is already heavy.
-          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] font-[family-name:var(--font-caprasimo)] text-[19px] text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
+          className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] font-[family-name:var(--font-grandstander)] font-bold text-[21px] text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
           {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
               nothing, so closing slides the S and the W together into "SW"

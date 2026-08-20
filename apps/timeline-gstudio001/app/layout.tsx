@@ -1,5 +1,5 @@
 import type {Metadata} from 'next';
-import { Caprasimo } from 'next/font/google';
+import { Grandstander } from 'next/font/google';
 import { Suspense } from 'react';
 import { AuthGate } from '@/components/auth/auth-gate';
 import { AuthProvider } from '@/components/auth/auth-provider';
@@ -13,14 +13,26 @@ import './globals.css'; // Global styles
  * rides Tailwind's `font-sans`.
  *
  * Exposed as a VARIABLE rather than applied to the body: it is a display face
- * for one lockup, not a UI font. It carries a single weight (400), which is why
- * the logo drops `font-bold` — asking for 700 would only get a synthesised
- * bold, and Caprasimo is already heavy.
+ * for one lockup, not a UI font.
+ *
+ * REAL WEIGHTS, unlike the Caprasimo this replaces. That face shipped a single
+ * 400 and was already heavy, which is why the lockup deliberately carried no
+ * weight class of its own — 600 there bought nothing but a synthesised bold
+ * smeared over it. Grandstander is a variable family, so the weight is a
+ * choice again, and 700 is the one that gives a 19px wordmark presence without
+ * the letterforms closing up at that size.
+ *
+ * LOADING A WEIGHT IS NOT ASKING FOR IT. `next/font` emits one `@font-face` at
+ * the weight named here; the ELEMENT still renders at whatever `font-weight`
+ * cascades to it, which is 400 by default. With a single face available the
+ * browser will use it either way, but it is then drawing a 700 face for a 400
+ * request and free to synthesise — so the lockup carries `font-bold` to ask
+ * for the weight that was loaded. Both numbers move together or neither does.
  */
-const caprasimo = Caprasimo({
-  weight: '400',
+const grandstander = Grandstander({
+  weight: '700',
   subsets: ['latin'],
-  variable: '--font-caprasimo',
+  variable: '--font-grandstander',
   display: 'swap',
 });
 
@@ -39,7 +51,7 @@ export default async function RootLayout({children}: {children: React.ReactNode}
   // to this class in globals.css, precisely so the app stops following the
   // reader's OS theme.
   return (
-    <html lang="en" className={`dark ${caprasimo.variable}`}>
+    <html lang="en" className={`dark ${grandstander.variable}`}>
       <body suppressHydrationWarning>
         {/* App-wide: the sidebar renders on every route, so anything it
             toasts needs a surface here rather than inside one view. */}

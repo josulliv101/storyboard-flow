@@ -466,16 +466,30 @@ export function StoryboardMonsterMark({
         // when that transition finishes — the same lifecycle `data-aiming`
         // already has. Inline would beat that rule outright, which is why this
         // is a comment and not a value.
-        // NUDGED, NOT BASELINE-ALIGNED. The lockup is a flex row, and the
-        // pieces around this are `RevealedLetters` — `display: grid`, so they
-        // can only be flex items and the whole row is laid out by flex, not by
-        // inline text. `align-self: baseline` on an item with no text of its
-        // own resolves to its bottom margin edge and threw the creature to the
-        // top of the 72px row. Centring it and dropping it by a fraction of its
-        // own size is what puts the body on the line and the feet just under
-        // it, which is where the source drawing sits inside the "o".
+        // BASELINE-ALIGNED BY MEASUREMENT, not by `align-self`. The lockup is
+        // a flex row and the pieces around this are `RevealedLetters` —
+        // `display: grid`, so they can only be flex items and the row is laid
+        // out by flex, not by inline text. `align-self: baseline` on an item
+        // with no text of its own resolves to its bottom margin edge and threw
+        // the creature to the top of the 72px row, which is why this is an
+        // explicit offset at all.
+        //
+        // THE NUMBER IS WHERE THE FEET MEET THE BASELINE. Measured on the
+        // rendered lockup: with the old offset the feet's top edge sat 4.45px
+        // BELOW the baseline, so the creature read as standing in a hole
+        // beside letters it was supposed to share a line with. Lifting it by
+        // that much puts the top of the feet exactly on the baseline and
+        // leaves the feet hanging under it like a descender, with the body
+        // overshooting the line a little the way a round letter should.
+        //
+        // NO `* scale`, and removing it is a fix rather than a simplification.
+        // `em` here resolves against this element's OWN font-size — set
+        // directly above, and already multiplied by `scale`. Multiplying again
+        // made the offset grow with the SQUARE of the scale, so the drawing
+        // that is 1.45x larger in the collapsed rail was dropped 2.1x further.
+        // A constant em is what keeps one optical relationship at every size.
         position: "relative",
-        top: `${0.14 * scale}em`,
+        top: "-0.1136em",
       }}
     >
       {/* MARKED SO IT CAN FOLLOW THE BODY'S SQUASH, which is not decoration.
