@@ -40,6 +40,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { flattenMediaOrder, type DetailsById } from "@storyboard/timeline-domain";
+import { usePreviewSettled } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 
 import { formatDuration } from "@/lib/format-duration";
 import { graphClipboard } from "@/lib/graph-clipboard";
@@ -1870,6 +1871,27 @@ function BoardAddTools({
   );
 }
 
+/**
+ * Renders its children only once the preview has finished opening.
+ *
+ * WHY THE RAILS WAIT. They are the last thing to appear when the preview comes
+ * up, and they were appearing DURING the slide — a fresh paint over the board
+ * while the board is still travelling, which is the flicker in the grey area
+ * under a pane that has not landed yet. A height animation runs on the main
+ * thread, so this is not two things happening at once so much as one thing
+ * interrupting the other.
+ *
+ * It has to be its own component because the signal is a context published
+ * INSIDE the split pane, and the board's rails are rendered from a scope above
+ * that provider. Reading it here puts the question where the answer is.
+ *
+ * Nothing is lost by waiting: these are controls for a pane you cannot use
+ * until it has opened anyway.
+ */
+function AfterPreviewOpens({ children }: Readonly<{ children: React.ReactNode }>) {
+  return usePreviewSettled() ? <>{children}</> : null;
+}
+
 export function GraphBoard({
   projectId,
   focusedId,
@@ -2671,7 +2693,13 @@ export function GraphBoard({
                   GRAPH_STRIP_TRACK_CLASS,
                   // Same 16px, same jolt, same fix as the grid's — see there.
                   "transition-[padding-top] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
-                  (previewOn && railsShown) || rulerOn || waveformOn ? "pt-4" : "",
+                  // Ruler and waveform have no reveal to wait for, so they
+                  // still spend it immediately; the preview's share waits.
+                  rulerOn || waveformOn
+                    ? "pt-4"
+                    : railsShown
+                      ? "[[data-preview-settled]_&]:pt-4"
+                      : "",
                 ].join(" ")}
               />
               {/* The strip's scrub control — the same rail treatment as the
@@ -2680,6 +2708,7 @@ export function GraphBoard({
                   auto-pans to reveal more items mid-scrub. Replaces the old
                   invisible PlayheadScrubBand. */}
               {previewOn && railsShown && (
+                <AfterPreviewOpens>
                 <GraphStripSeekRail
                   focusedId={focusedId}
                   channel={timeChannel}
@@ -2687,6 +2716,7 @@ export function GraphBoard({
                   cardHeight={dims.strip}
                   laneScope="picture"
                 />
+                </AfterPreviewOpens>
               )}
                 </NativeDropStrip>
               </VideoFrameLookAhead>
@@ -2740,17 +2770,23 @@ export function GraphBoard({
                   className={[
                     "rounded-none border-0 bg-transparent p-0",
                     "transition-[padding-top] duration-[var(--workbench-reveal-ms)] ease-[var(--workbench-reveal-ease)] motion-reduce:transition-none",
-                    previewOn && railsShown ? "pt-4" : "",
+                    // WAITS FOR THE SLIDE, like the rails it makes room for.
+                    // Driven off the pane's own `data-preview-settled` rather
+                    // than off `previewOn`, so the 16px is spent when the rails
+                    // actually arrive instead of at the click.
+                    railsShown ? "[[data-preview-settled]_&]:pt-4" : "",
                   ].join(" ")}
                 />
               </NativeDropGrid>
               {previewOn && railsShown && (
-                <GraphSeekRails
-                  focusedId={focusedId}
-                  channel={timeChannel}
-                  cellHeight={dims.gridHeight}
-                  pixelsPerSecond={deferredPixelsPerSecond}
-                />
+                <AfterPreviewOpens>
+                  <GraphSeekRails
+                    focusedId={focusedId}
+                    channel={timeChannel}
+                    cellHeight={dims.gridHeight}
+                    pixelsPerSecond={deferredPixelsPerSecond}
+                  />
+                </AfterPreviewOpens>
               )}
             </div>
           )}

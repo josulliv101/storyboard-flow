@@ -13,7 +13,9 @@ import {
   X,
 } from "lucide-react";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1856,6 +1858,28 @@ type WorkbenchSplitPaneProps = {
 export type RevealMotion = Readonly<{ durationMs: number; easing: string }>;
 
 /**
+ * Whether the preview is open AND has finished opening.
+ *
+ * EXISTS SO CONSUMER CONTENT CAN GET OUT OF THE WAY OF THE SLIDE. A height
+ * animation is main-thread work, so anything that renders or repaints while it
+ * runs competes with it directly — and the things that want to appear when the
+ * preview opens are exactly the things that appear WHILE it is opening. Rails
+ * over the board, a scrub bar, anything keyed off "preview is on": each one is
+ * a paint landing in the middle of the movement, and it reads as the board
+ * flickering under a pane that is still travelling.
+ *
+ * Waiting costs nothing that matters. These are controls for a pane you cannot
+ * use yet.
+ */
+const PreviewSettledContext = createContext(false);
+
+/** True once the preview is open and no longer moving. False while it slides,
+ *  and false whenever it is shut. */
+export function usePreviewSettled(): boolean {
+  return useContext(PreviewSettledContext);
+}
+
+/**
  * Away from rest, along, and a small settle past the mark.
  *
  * IT STARTS FROM STANDING, which is the whole correction here. The obvious
@@ -1987,6 +2011,10 @@ export function WorkbenchSplitPane({
     if (surface !== null) lastSurfaceRef.current = surface;
   }, [surface]);
   const shownSurface = surface ?? (mounted ? lastSurfaceRef.current : null);
+  // Open, and no longer moving. `sliding` covers both directions, so this is
+  // false for the whole of a close as well — nothing should be painting itself
+  // into a pane on its way out either.
+  const settled = mounted && revealed && !sliding;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dividerRef = useRef<HTMLButtonElement | null>(null);
   const lowerPaneRef = useRef<HTMLDivElement | null>(null);
@@ -2325,6 +2353,10 @@ export function WorkbenchSplitPane({
       // panes at the container's width; children overflow-scroll inside it.
       className="grid min-h-0 w-full grid-cols-[minmax(0,1fr)] gap-0"
       data-testid="workbench-split-pane"
+      // The same fact as the context, for consumers that only need CSS — a
+      // padding that should appear with the rails rather than with the click,
+      // say, which is a class name and not a render.
+      data-preview-settled={settled ? "" : undefined}
       // How far down the WHOLE sticky stack reaches — header, surface and
       // divider — published so a descendant wanting to pin below all of it has
       // a live offset as the divider resizes. The split pane remains mounted
@@ -2528,7 +2560,7 @@ export function WorkbenchSplitPane({
         className="relative z-0 min-h-0 isolate"
         data-testid="workbench-lower-pane"
       >
-        {children}
+        <PreviewSettledContext.Provider value={settled}>{children}</PreviewSettledContext.Provider>
       </div>
     </div>
   );
