@@ -700,11 +700,6 @@ function DetailsFilmstripModal({
                 setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
-              onStepBy={(delta) => {
-                const target = Math.min(Math.max(centre + delta, 0), ids.length - 1);
-                const id = ids[target];
-                if (id !== undefined && target !== centre) onOpenNeighbour(id);
-              }}
             />
           </div>
         </div>

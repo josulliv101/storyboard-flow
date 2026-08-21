@@ -65,18 +65,6 @@ import {
  */
 const BOX_INSET_PX = 2.5;
 
-/** Travel before a drag across the boxes counts as a swipe. */
-const BOXES_SWIPE_PX = 28;
-
-/**
- * How far one swipe across the BOXES moves the carousel.
- *
- * Three, because this gesture only exists to be coarser than the one below it.
- * The cards move a clip per swipe; if the bar did the same there would be two
- * controls for one step and no reason to reach past the nearer one.
- */
-const BOXES_SWIPE_CLIPS = 3;
-
 export function SeamStripBar({
   strip,
   centreClipId,
@@ -87,7 +75,6 @@ export function SeamStripBar({
   onStepBack,
   onStepForward,
   onScrubSeconds,
-  onStepBy,
   onScrubbingChange,
 }: Readonly<{
   strip: SeamStrip;
@@ -106,8 +93,7 @@ export function SeamStripBar({
   onStepForward: (() => void) | null;
   /** Scrub to an absolute point on the timeline, in seconds. */
   onScrubSeconds: (seconds: number) => void;
-  /** Move the carousel by `delta` clips — the boxes swipe in threes. */
-  onStepBy: (delta: number) => void;
+
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
   onScrubbingChange?: (active: boolean) => void;
@@ -159,43 +145,68 @@ export function SeamStripBar({
     return () => window.removeEventListener("resize", measure);
   }, [trackWidth]);
 
+  const [panPx, setPanPx] = useState<number | null>(null);
+  const [panning, setPanning] = useState(false);
+  const panRef = useRef<{ pointerId: number; x: number; from: number } | null>(null);
+
+  const onBoxesPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        /* untrusted pointer (stories) — moves still arrive on the element */
+      }
+      panRef.current = { pointerId: event.pointerId, x: event.clientX, from: offsetRef.current };
+      setPanning(true);
+    },
+    [],
+  );
+
+  const onBoxesPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    if (pan === null || event.pointerId !== pan.pointerId) return;
+    setPanPx(pan.from + (event.clientX - pan.x));
+  }, []);
+
+  const endPan = useCallback(() => {
+    panRef.current = null;
+    setPanning(false);
+  }, []);
+
   // `stripCentreOffset` centres within a container, so it is handed twice the
   // distance to the target — the one container width whose middle is exactly
   // where the card is.
-  const offset = stripCentreOffset(strip, centreClipId, centreAtPx > 0 ? centreAtPx * 2 : trackWidth);
-
-  // ── THE BOXES SWIPE; THEY DO NOT SCRUB ──────────────────────────────────
-  //
-  // Pressing a box used to scrub to it, which put two jobs on one surface: the
-  // bar was both the map and the control, and a press had to mean either "go
-  // there" or "look there" without any way to say which. Scrubbing moved to
-  // its own rail below, and the boxes became what they look like — a filmstrip
-  // you push.
-  //
-  // THREE AT A TIME, because the boxes are a coarse view: the cards below move
-  // one clip per swipe and this is the gesture you reach for when one is not
-  // enough. Same threshold as the cards' own swipe so the two feel like one
-  // instruction at two scales.
-  const swipeRef = useRef<{ pointerId: number; x: number } | null>(null);
-
-  const onBoxesPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!event.isPrimary || event.button !== 0) return;
-    swipeRef.current = { pointerId: event.pointerId, x: event.clientX };
-  }, []);
-
-  const onBoxesPointerUp = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const swipe = swipeRef.current;
-      swipeRef.current = null;
-      if (swipe === null || event.pointerId !== swipe.pointerId) return;
-      const dx = event.clientX - swipe.x;
-      if (Math.abs(dx) < BOXES_SWIPE_PX) return;
-      // Dragged LEFT pulls the strip forward, the same direction the cards
-      // move for the same gesture.
-      onStepBy(dx < 0 ? BOXES_SWIPE_CLIPS : -BOXES_SWIPE_CLIPS);
-    },
-    [onStepBy],
+  const centredOffset = stripCentreOffset(
+    strip,
+    centreClipId,
+    centreAtPx > 0 ? centreAtPx * 2 : trackWidth,
   );
+  const offset = panPx ?? centredOffset;
+  // Read by the pan gesture, which needs where the strip currently is without
+  // taking a dependency on it.
+  const offsetRef = useRef(offset);
+  offsetRef.current = offset;
+
+  // A NEW SUBJECT RE-CENTRES, and drops whatever pan was in force: the clip
+  // you just moved to has to be on screen, and leaving the strip where a
+  // previous shove put it could open the view with the subject off the end.
+  useEffect(() => {
+    setPanPx(null);
+  }, [centreClipId]);
+
+  // ── THE BOXES ARE PUSHED, NOT STEPPED ──────────────────────────────────
+  //
+  // Grab and shove: the strip follows the hand for as far as it is dragged and
+  // stays where it is let go. It briefly moved three clips per swipe, which
+  // was wrong twice over — it did not work at all (the gesture only fired on a
+  // clean release past a threshold, so a slow drag did nothing), and tying it
+  // to a NUMBER was the wrong idea anyway. This is a map you are moving
+  // around, not a control that advances.
+  //
+  // The pan is REMEMBERED once touched. Until then the strip auto-centres on
+  // the subject; after, it stays where it was put, and only a change of
+  // subject re-centres it.
 
   // ── THE RAIL SCRUBS ─────────────────────────────────────────────────────
   //
@@ -205,16 +216,26 @@ export function SeamStripBar({
   const railRef = useRef<HTMLDivElement | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
 
+  // THE RAIL SHARES THE STRIP'S COORDINATES, which is what makes the ball sit
+  // under the playhead.
+  //
+  // It was a proportional slider over the whole timeline: a fraction of the
+  // rail meant a fraction of the running time. That is a perfectly good
+  // scrubber and it did not LINE UP — the boxes above are drawn at a fixed
+  // scale and panned, so the same instant was at two different x positions and
+  // the ball drifted away from the mark it was supposed to be holding.
+  //
+  // Now a point on the rail is converted through the strip's own transform, so
+  // the two agree by construction at any pan.
   const secondsAt = useCallback(
-    (clientX: number, totalSeconds: number) => {
+    (clientX: number) => {
       const rail = railRef.current;
-      if (rail === null) return null;
+      if (rail === null || strip.pxPerSecond <= 0) return null;
       const box = rail.getBoundingClientRect();
-      if (box.width <= 0) return null;
-      const ratio = (clientX - box.left) / box.width;
-      return Math.min(Math.max(ratio, 0), 1) * totalSeconds;
+      const stripX = clientX - box.left - offsetRef.current;
+      return Math.min(Math.max(stripX / strip.pxPerSecond, 0), strip.totalPx / strip.pxPerSecond);
     },
-    [],
+    [strip],
   );
 
 
@@ -222,13 +243,9 @@ export function SeamStripBar({
 
   const totalSeconds = strip.totalPx / strip.pxPerSecond;
   const atSeconds = playheadPx === null ? null : playheadPx / strip.pxPerSecond;
-  // Where the ball sits on its rail: the same instant the playhead marks on
-  // the boxes, expressed against the whole running time instead of against
-  // the strip's pixels.
-  const railFraction =
-    totalSeconds > 0 && atSeconds !== null
-      ? Math.min(Math.max(atSeconds / totalSeconds, 0), 1)
-      : 0;
+  // Where the ball sits: exactly under the playhead, because it is the same
+  // number — the playhead's x on the strip, which the rail now measures in too.
+  const ballPx = playheadPx === null ? null : playheadPx + offset;
 
   return (
     <div data-seam-bar className="flex w-full items-center gap-3">
@@ -286,8 +303,9 @@ export function SeamStripBar({
         <div
           data-seam-boxes
           onPointerDown={onBoxesPointerDown}
-          onPointerUp={onBoxesPointerUp}
-          onPointerCancel={() => { swipeRef.current = null; }}
+          onPointerMove={onBoxesPointerMove}
+          onPointerUp={endPan}
+          onPointerCancel={endPan}
           className="relative h-9 cursor-grab overflow-hidden active:cursor-grabbing"
         >
         <div
@@ -296,16 +314,14 @@ export function SeamStripBar({
           style={{
             transform: `translateX(${offset}px)`,
             width: strip.totalPx,
-            // ONE MOVE PER CLIP, and none at all while the hand is down.
+            // EASED WHEN IT MOVES ITSELF, INSTANT WHEN YOU MOVE IT.
             //
-            // The first version followed the drag frame by frame, spending the
-            // same fraction of a step the row spent. It was faithful and it
-            // read badly: the bar twitched under a gesture that had not
-            // decided anything yet, and a swipe that fell short left it easing
-            // back from nowhere. The bar answers "which clip am I on", which
-            // is a question with no answer mid-drag — so it waits for the
-            // commit and then makes one smooth move to centred.
-            transition: "transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1)",
+            // A change of subject re-centres the strip, and that should glide.
+            // A hand pushing it should not: with the transition left on, every
+            // pointer move started a 260ms animation toward a target the next
+            // move replaced, so the strip lagged the hand and — measured — a
+            // second shove inside that window looked like no movement at all.
+            transition: panning ? "none" : "transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1)",
           }}
         >
           {strip.segments.map((segment) => {
@@ -395,12 +411,12 @@ export function SeamStripBar({
             }
             setScrubbing(true);
             onScrubbingChange?.(true);
-            const at = secondsAt(event.clientX, totalSeconds);
+            const at = secondsAt(event.clientX);
             if (at !== null) onScrubSeconds(at);
           }}
           onPointerMove={(event) => {
             if (!scrubbing) return;
-            const at = secondsAt(event.clientX, totalSeconds);
+            const at = secondsAt(event.clientX);
             if (at !== null) onScrubSeconds(at);
           }}
           onPointerUp={() => {
@@ -416,17 +432,23 @@ export function SeamStripBar({
           <span aria-hidden="true" className="absolute inset-x-0 h-0.5 rounded-full bg-white/20" />
           {/* Played so far, so the rail reads as a clock and not only as a
               track with a dot on it. */}
-          <span
-            aria-hidden="true"
-            style={{ width: `${railFraction * 100}%` }}
-            className="absolute left-0 h-0.5 rounded-full bg-white/45"
-          />
-          <span
-            data-seam-ball
-            aria-hidden="true"
-            style={{ left: `${railFraction * 100}%` }}
-            className="absolute h-3 w-3 -translate-x-1/2 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.6)]"
-          />
+          {ballPx !== null && (
+            <>
+              {/* Played so far, so the rail reads as a clock and not only as a
+                  track with a dot on it. */}
+              <span
+                aria-hidden="true"
+                style={{ width: Math.max(0, ballPx) }}
+                className="absolute left-0 h-0.5 rounded-full bg-white/45"
+              />
+              <span
+                data-seam-ball
+                aria-hidden="true"
+                style={{ left: ballPx }}
+                className="absolute h-3 w-3 -translate-x-1/2 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.6)]"
+              />
+            </>
+          )}
         </div>
       </div>
 
