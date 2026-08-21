@@ -151,9 +151,30 @@ export function SeamStripBar({
     return () => window.removeEventListener("resize", measure);
   }, [trackWidth]);
 
+
   const [panPx, setPanPx] = useState<number | null>(null);
   const [panning, setPanning] = useState(false);
   const panRef = useRef<{ pointerId: number; x: number; from: number; moved: boolean } | null>(null);
+
+  // PARKED ONCE, THEN LEFT ALONE.
+  //
+  // The centring is computed against the clip the view OPENED on, captured
+  // here and never updated. It used to follow the subject, which sounds
+  // helpful and is not: the bar jumped under the hand every time the cards
+  // moved, and a strip you had just pushed somewhere useful threw your
+  // position away. The active clip does not need to be in the middle — it is
+  // marked, which is what makes it findable.
+  //
+  // A state initialiser rather than an effect that freezes it later: an effect
+  // would set state during the first commit, which is a cascading render, and
+  // the compiler's lint refuses it outright.
+  const [parkedOn] = useState(centreClipId);
+  const centredOffset = stripCentreOffset(
+    strip,
+    parkedOn,
+    centreAtPx > 0 ? centreAtPx * 2 : trackWidth,
+  );
+  const offset = panPx ?? centredOffset;
 
   const onBoxesPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -166,12 +187,12 @@ export function SeamStripBar({
       panRef.current = {
         pointerId: event.pointerId,
         x: event.clientX,
-        from: offsetRef.current,
+        from: offset,
         moved: false,
       };
       setPanning(true);
     },
-    [],
+    [offset],
   );
 
   const onBoxesPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -189,46 +210,23 @@ export function SeamStripBar({
       setPanning(false);
       if (pan === null || pan.moved) return;
       // A PRESS THAT DID NOT TRAVEL IS A CLICK, and a click on a box makes
-      // that clip active — the third way into the same position, alongside
-      // letting go of the scrubber over it and stepping with the arrows.
-      // Distinguished by travel rather than by timing, because the surface's
-      // other job is a pan and a slow deliberate push must not also count as
-      // a tap on wherever it started.
+      // that clip active. Distinguished by travel rather than by timing,
+      // because the surface's other job is a pan and a slow deliberate push
+      // must not also count as a tap on wherever it started.
       const rail = railRef.current;
       if (rail === null) return;
-      const stripX = event.clientX - rail.getBoundingClientRect().left - offsetRef.current;
+      const stripX = event.clientX - rail.getBoundingClientRect().left - offset;
       const landedOn = stripPositionAt(strip, stripX)?.clipId ?? null;
       if (landedOn !== null && landedOn !== centreClipId) onCommitClip(landedOn);
     },
-    [strip, centreClipId, onCommitClip],
+    [strip, centreClipId, onCommitClip, offset],
   );
 
-  // `stripCentreOffset` centres within a container, so it is handed twice the
-  // distance to the target — the one container width whose middle is exactly
-  // where the card is.
-  const centredOffset = stripCentreOffset(
-    strip,
-    centreClipId,
-    centreAtPx > 0 ? centreAtPx * 2 : trackWidth,
-  );
-  const offset = panPx ?? centredOffset;
-  // Read by the pan gesture, which needs where the strip currently is without
-  // taking a dependency on it.
-  const offsetRef = useRef(offset);
-  offsetRef.current = offset;
 
-  // PARKED ONCE, THEN LEFT ALONE.
-  //
-  // It used to re-centre on every change of subject, which sounds helpful and
-  // is not: the bar jumped under the hand every time the cards moved, and a
-  // strip you had just pushed somewhere useful threw your position away. The
-  // active clip does not need to be in the middle — it is MARKED, which is
-  // what makes it findable — so the strip only has to be parked somewhere
-  // sensible to begin with.
-  useEffect(() => {
-    if (panPx !== null || trackWidth <= 0 || strip.totalPx <= 0) return;
-    setPanPx(centredOffset);
-  }, [panPx, trackWidth, strip.totalPx, centredOffset]);
+
+
+
+
 
   // ── THE BOXES ARE PUSHED, NOT STEPPED ──────────────────────────────────
   //
@@ -268,10 +266,10 @@ export function SeamStripBar({
       const rail = railRef.current;
       if (rail === null || strip.pxPerSecond <= 0) return null;
       const box = rail.getBoundingClientRect();
-      const stripX = clientX - box.left - offsetRef.current;
+      const stripX = clientX - box.left - offset;
       return Math.min(Math.max(stripX / strip.pxPerSecond, 0), strip.totalPx / strip.pxPerSecond);
     },
-    [strip],
+    [strip, offset],
   );
 
   const releaseScrub = useCallback(() => {
