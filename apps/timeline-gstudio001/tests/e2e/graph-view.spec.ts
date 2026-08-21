@@ -3257,16 +3257,27 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 15000 });
   });
 
-  test("a grid card's play starts THAT card, and its cue only seeks", async ({ page }) => {
-    // The bug this exists for: play wrote the seek and the play flag in one
-    // React batch, and the pane — a controlled player — ignores an incoming
-    // time while it is playing. The seek was dropped, so pressing any card
-    // played from wherever the pane already was; and because the pause state
-    // is derived from "is the playhead inside this clip", the button never
-    // flipped either. One dropped write, two broken controls, and no suite
-    // noticed.
+  test("a grid card has ONE transport button, and which one says where the playhead is", async ({
+    page,
+  }) => {
+    // Two bugs live under this test, and the newer one is the shape of the
+    // control itself.
+    //
+    // There used to be two buttons on every card: play, and a cue that jumped
+    // the playhead to the clip's start. On any given card exactly one of them
+    // was ever the one you wanted — the cue was pointless on the clip already
+    // playing, and play was the long way round on a clip the playhead was
+    // nowhere near. So there is one button now, and it IS the answer to "is
+    // the playhead here": the transport on this clip, the way of getting here
+    // on any other.
+    //
+    // The older bug is still worth its assertions: play wrote the seek and the
+    // play flag in one React batch, and the pane — a controlled player —
+    // ignores an incoming time while it is playing, so the seek was dropped
+    // and playback ran from wherever the pane already was.
     await installGraphApi(page);
-    await page.goto(`${GRAPH_URL}?surface=grid`);
+    await openGraph(page);
+    await surfaceButton(page, "grid").click();
     await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toHaveCount(1);
     await previewToggle(page).click();
     // The buttons wait for the pane to stop moving, like the rails do.
@@ -3279,86 +3290,79 @@ test.describe("graph view E2E", () => {
       const match = text.match(/([\d.]+)\s*s/);
       return match === null ? Number.NaN : Number(match[1]);
     };
+    const cue = (id: string) => page.locator(`[data-grid-cue="${id}"]`);
+    const play = (id: string) => page.locator(`[data-grid-play="${id}"]`);
+    const glyph = (locator: Locator) => locator.locator("svg");
 
+    // ONE BUTTON PER CARD, and never both on the same one. The playhead opens
+    // at zero, which is inside alpha, so alpha is the only card wearing the
+    // transport.
+    await expect(play("alpha")).toBeVisible();
+    await expect(cue("alpha")).toHaveCount(0);
     // BRAVO, not the first card: a clip whose start is not zero is the only
     // one that can tell "went to this clip" apart from "did nothing".
-    const cue = page.locator('[data-grid-cue="bravo"]');
-    const play = page.locator('[data-grid-play="bravo"]');
-    await expect(cue).toBeVisible();
-    await expect(play).toBeVisible();
+    await expect(cue("bravo")).toBeVisible();
+    await expect(play("bravo")).toHaveCount(0);
+    // Ahead of the playhead, so its arrow faces forward. Same icon rotated is
+    // the whole signal, which is why it is asserted rather than trusted.
+    await expect(glyph(cue("bravo"))).not.toHaveClass(/rotate-180/);
 
     // CUE: lands on bravo's start and STAYS there.
-    await cue.click();
+    await cue("bravo").click();
     await expect.poll(clock).toBeGreaterThan(0);
     const start = await clock();
     await page.waitForTimeout(600);
     expect(await clock()).toBe(start);
-    // And having arrived, the cue has nothing left to do — disabled rather
-    // than hidden, so it does not take its own explanation away with it or
-    // shift the button beside it.
-    await expect(cue).toBeDisabled();
+
+    // AND THE TWO CARDS HAVE SWAPPED ROLES. Arriving is what turns a cue into
+    // a transport — there is no "already there, so disabled" state any more,
+    // because a disabled control is a worse answer than the useful one.
+    await expect(play("bravo")).toBeVisible();
+    await expect(cue("bravo")).toHaveCount(0);
+    await expect(cue("alpha")).toBeVisible();
+    // And alpha is behind the playhead now, so its arrow has turned.
+    await expect(glyph(cue("alpha"))).toHaveClass(/rotate-180/);
 
     // MOVE THE PLAYHEAD AWAY FIRST, and this is the step that gives the test
     // its teeth. Written the obvious way — cue bravo, then play bravo — the
     // clock is ALREADY at bravo's start when play is pressed, so a play that
     // drops its seek entirely still plays from the right place and the test
     // passes against the very bug it exists for. Confirmed: it did.
-    await page.locator('[data-grid-cue="alpha"]').click();
+    await cue("alpha").click();
     await expect.poll(clock).toBeLessThan(start);
-    // Moved away, so bravo's cue is live again.
-    await expect(cue).toBeEnabled();
 
-    // AND ITS ARROW SAYS WHICH WAY THE JUMP GOES. The playhead is at alpha
-    // now, so bravo is ahead of it and the glyph faces forward; alpha's own
-    // cue is the one that would fetch the playhead back, and it is turned
-    // around. Same icon, rotated — which is the whole signal, so it is worth
-    // asserting rather than trusting.
-    const glyph = (locator: Locator) => locator.locator("svg");
-    await expect(glyph(cue)).not.toHaveClass(/rotate-180/);
-
-    await play.click();
-    await expect.poll(clock).toBeGreaterThanOrEqual(start);
-    await play.click();
-    // Parked inside bravo, so alpha is behind the playhead and its arrow has
-    // turned.
-    await expect(glyph(page.locator('[data-grid-cue="alpha"]'))).toHaveClass(/rotate-180/);
-
-    // SELECT MODE TAKES THEM AWAY. Picking things and playing things are
-    // different jobs, and a card being picked should not carry two controls
-    // that do something else. Hidden outright, so they leave the tab order
-    // rather than lurking behind an opacity.
+    // SELECT MODE TAKES IT AWAY. Picking things and playing things are
+    // different jobs, and a card being picked should not carry a control that
+    // does something else. Hidden outright, so it leaves the tab order rather
+    // than lurking behind an opacity.
     await page.locator("[data-select-mode-toggle]").click();
-    await expect(play).toBeHidden();
-    await expect(page.locator('[data-grid-cue="alpha"]')).toBeHidden();
-
-    // And they come back when it is switched off.
+    await expect(play("alpha")).toBeHidden();
+    await expect(cue("bravo")).toBeHidden();
     await page.locator("[data-select-mode-toggle]").click();
-    await expect(play).toBeVisible();
+    await expect(play("alpha")).toBeVisible();
 
-    // PLAY: jumps back to bravo's own start — the two controls have to agree
-    // about where a clip begins — and then actually advances.
-    await page.locator('[data-grid-cue="alpha"]').click();
-    await play.click();
+    // PLAY: jumps to bravo's own start and then actually advances.
+    await cue("bravo").click();
+    await play("bravo").click();
     await expect.poll(clock).toBeGreaterThanOrEqual(start);
     // Near it, not somewhere else entirely: a dropped seek leaves the clock
     // back at alpha's start, and a generous window still catches that while
     // tolerating the frames spent getting here.
     expect(await clock()).toBeLessThan(start + 2);
 
-    // While it plays this card offers PAUSE and no cue — the playhead is
-    // already inside it, so "go to its start" would be a rewind nobody asked
-    // for.
+    // While it plays, the same button offers PAUSE.
     // THIS card's button, not any button reading "Pause" — the transport has
     // one too, and matching by role alone finds both.
-    await expect(play).toHaveAttribute("aria-label", /^Pause /);
-    await expect(cue).toHaveCount(0);
+    await expect(play("bravo")).toHaveAttribute("aria-label", /^Pause /);
 
     // Pressing again holds where it is rather than rewinding.
-    await play.click();
+    await play("bravo").click();
     const held = await clock();
     await page.waitForTimeout(500);
     expect(await clock()).toBe(held);
-    await expect(cue).toBeVisible();
+    // Still the transport, because the playhead is still inside bravo — the
+    // button follows the PLAYHEAD, not the running state.
+    await expect(play("bravo")).toBeVisible();
   });
 
   test("a trashed item restores into the timeline you are looking at", async ({ page }) => {
