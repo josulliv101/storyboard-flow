@@ -62,7 +62,7 @@ function LiveEdgeFrame({
   // Quantized to ~25fps so a slow pixel-level drag doesn't issue a seek per
   // pointer event for sub-frame deltas.
   const time = Math.round(edgeSourceTime(node, live) * 25) / 25;
-  const videoRef = useSeekedVideo(time);
+  const { videoRef } = useSeekedVideo(time);
 
   const frameRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
