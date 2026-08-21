@@ -195,3 +195,57 @@ export function nextPlayableTime(
 
   return earliest === null ? duration : clamp(earliest, 0, duration);
 }
+
+/**
+ * The clip whose media should be put in position NOW, or null.
+ *
+ * A cut used to cost a seek: the prefetch window downloaded the next clips but
+ * left their elements paused wherever they happened to be, so the switch could
+ * not show a frame until it had seeked. Measured against a steady 17ms frame
+ * interval, that was 32-46ms at a cut into an untrimmed clip and 90-98ms into
+ * one trimmed 1.7s in — the gap tracked the trim, which is what identified the
+ * seek as the cost.
+ *
+ * `lead` is how far ahead to start. Only the SEEK is moved earlier by the
+ * caller; the clip stays paused and silent, so nothing about when playback
+ * switches changes.
+ *
+ * DISABLED CLIPS ARE SKIPPED, because playback skips them: pre-rolling one
+ * would put an element in position for a cut that never comes, and leave the
+ * clip that IS next still cold.
+ */
+export function clipToPreroll(
+  clips: readonly TimelineClip[],
+  active: TimelineClip,
+  currentTime: number,
+  lead: number,
+): TimelineClip | null {
+  const activeStart = getClipPlaybackStart(active);
+
+  let soonest: TimelineClip | null = null;
+  for (const clip of clips) {
+    if (clip.disabled === true) continue;
+    const start = getClipPlaybackStart(clip);
+    // STRICTLY AFTER the active clip's start, so a clip sharing a start time
+    // with the one on screen — a bed under the picture — is never mistaken for
+    // the thing that follows it.
+    if (start <= activeStart) continue;
+    if (soonest === null || start < getClipPlaybackStart(soonest)) soonest = clip;
+  }
+  if (soonest === null) return null;
+
+  // WHEN THE PICTURE ACTUALLY CHANGES, which is not simply the next clip's
+  // start. A DISABLED span between them is skipped rather than played, so the
+  // switch happens when the playhead leaves the active clip — measuring to the
+  // next clip's start would put the window seconds late and never prepare it,
+  // leaving precisely the cut that jumps furthest still cold. Taking the
+  // EARLIER of the two is safe in the other direction too: across a real gap
+  // the picture holds and this merely prepares early, which costs one seek
+  // nobody is waiting on.
+  const activeEnd = activeStart + getClipPlaybackDuration(active);
+  const switchesNoLaterThan = Math.min(activeEnd, getClipPlaybackStart(soonest));
+  const untilCut = switchesNoLaterThan - currentTime;
+  // A cut already reached is not a cut to prepare for.
+  if (untilCut <= 0 || untilCut > lead) return null;
+  return soonest;
+}

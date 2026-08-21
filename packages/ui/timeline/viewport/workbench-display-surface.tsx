@@ -41,6 +41,7 @@ import type { CollectionTimelineClip, TimelineClip } from "../types";
 import { formatSeconds } from "../utils";
 import {
   clipContainsPlaybackTime,
+  clipToPreroll,
   getClipPlaybackDuration,
   getClipPlaybackStart,
   getLiveLayerClips,
@@ -200,6 +201,21 @@ const BUFFER_WINDOW_SIZE = 4;
  * is headroom for scrubbing back and forth across a join without churning.
  */
 const MEDIA_CACHE_LIMIT = 24;
+
+/**
+ * How far ahead of a cut the incoming clip is seeked into position.
+ *
+ * The prefetch window downloads the next clips but leaves their elements
+ * PAUSED AT THE WRONG POSITION, so the switch at a cut had to pay for a seek
+ * before it could show anything. Measured across four cuts, warm, against a
+ * steady 17ms frame interval: 32-46ms where the incoming clip had no trim, and
+ * 90-98ms where it was trimmed 1.7s in — the gap tracked the trim, which is
+ * what named the seek as the cost. Cold it reached 369ms.
+ *
+ * A second is comfortably longer than the worst seek measured here and short
+ * enough that the playhead rarely crosses into the window and back out again.
+ */
+const PREROLL_LEAD_SECONDS = 1;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
@@ -1515,6 +1531,50 @@ export function WorkbenchDisplaySurface({
     // Only reachable while SCRUBBING: playing snaps the clock out of a
     // disabled span before anything is drawn (see nextPlayableTime).
     activeClipDisabledRef.current = active?.disabled === true;
+
+    // THE NEXT CLIP IS PUT IN POSITION BEFORE IT IS NEEDED.
+    //
+    // Only its SEEK is moved earlier — it stays paused and silent, and nothing
+    // about when playback switches changes. That is deliberate: starting it
+    // rolling early would have it arrive at the cut already past its first
+    // frame, and keeping it in step would mean playing from before the trim,
+    // which a clip trimmed to zero does not have. Seeking early costs nothing
+    // and is the half that was measurably expensive.
+    //
+    // WHILE PLAYING ONLY. Under a scrub the playhead is near a cut constantly
+    // and in both directions, so this would issue seeks against an element the
+    // scrub path is already driving.
+    if (shouldPlay && active) {
+      const next = clipToPreroll(
+        sortedClipsRef.current,
+        active,
+        timelineTime,
+        PREROLL_LEAD_SECONDS,
+      );
+      const nextMedia =
+        next === null
+          ? null
+          : resolveClipMedia(next, getClipPlaybackStart(next), getCollectionClipFramePreview);
+      if (nextMedia !== null) {
+        const cached = ensureCachedMedia(nextMedia);
+        if (isPlayable(cached)) {
+          const element = cached.element;
+          // The whole file, not just metadata: this one is about to play.
+          if (element.preload !== "auto") element.preload = "auto";
+          if (
+            element.readyState >= HTMLMediaElement.HAVE_METADATA &&
+            !element.seeking &&
+            Math.abs(element.currentTime - nextMedia.sourceTime) > 0.05
+          ) {
+            try {
+              element.currentTime = nextMedia.sourceTime;
+            } catch {
+              // Metadata raced away; the next frame retries.
+            }
+          }
+        }
+      }
+    }
 
     // The under-layers playing at this instant, alongside the picture rather
     // than instead of it. Resolved even when the picture is missing: a bed
