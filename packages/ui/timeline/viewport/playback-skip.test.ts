@@ -7,6 +7,7 @@ import {
   getPictureClip,
   getTimelineDuration,
   nextPlayableTime,
+  clipToPreroll,
 } from "./playback-skip";
 
 function image(
@@ -279,5 +280,53 @@ describe("getLiveLayerClips", () => {
     // case — a timeline with no lanes at all — is the kind of per-frame garbage
     // getContainingClip's manual loop exists to avoid.
     expect(getLiveLayerClips(clips, 2)).toBe(getLiveLayerClips(clips, 5));
+  });
+});
+
+describe("clipToPreroll", () => {
+  // a: 0-4, b: 4-8 (disabled), c: 8-12 — the same fixture the rest of this
+  // file uses, so the disabled-clip case is the one already modelled here.
+  const LEAD = 1;
+
+  it("names the next clip once the cut is inside the lead", () => {
+    expect(clipToPreroll(clips, clips[0]!, 3.5, LEAD)?.id).toBe("c");
+  });
+
+  it("is null while the cut is still far off", () => {
+    // Seeking a clip four seconds early buys nothing and takes a decoder off
+    // the one that is playing.
+    expect(clipToPreroll(clips, clips[0]!, 2.5, LEAD)).toBeNull();
+  });
+
+  it("SKIPS A DISABLED CLIP, because playback skips it too", () => {
+    // `b` starts at 4 and would be the next clip by position. Preparing it
+    // would put an element in position for a cut that never comes AND leave
+    // `c` — the clip actually next — still cold, which is the failure this
+    // whole change exists to remove.
+    const at = clipToPreroll(clips, clips[0]!, 3.5, LEAD);
+    expect(at?.id).not.toBe("b");
+  });
+
+  it("ignores a cut already reached", () => {
+    // Exactly on the boundary the clip is the ACTIVE one, not the next one;
+    // returning it here would re-seek the element that is currently playing.
+    expect(clipToPreroll(clips, clips[0]!, 8, LEAD)).toBeNull();
+  });
+
+  it("never looks backwards", () => {
+    // Late in the timeline there is nothing ahead to prepare.
+    expect(clipToPreroll(clips, clips[2]!, 11.5, LEAD)).toBeNull();
+  });
+
+  it("takes the SOONEST cut when several are in the window", () => {
+    const dense = [image("a", 0, 4), image("x", 4.5, 1), image("y", 4.2, 1)];
+    expect(clipToPreroll(dense, dense[0]!, 3.6, LEAD)?.id).toBe("y");
+  });
+
+  it("does not mistake a clip sharing the active clip's start for the next one", () => {
+    // A layered timeline has clips starting together; the one under the
+    // picture is not the thing after it.
+    const layered = [image("pic", 0, 4), image("bed", 0, 4), image("next", 4, 4)];
+    expect(clipToPreroll(layered, layered[0]!, 3.5, LEAD)?.id).toBe("next");
   });
 });
