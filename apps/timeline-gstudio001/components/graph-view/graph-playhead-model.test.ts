@@ -22,6 +22,8 @@ import {
   rulerSubtierCount,
   shouldRetryManifestFetch,
   STRIP_GAP_PX,
+  gridHintMask,
+  stripHintMask,
   type ChildSpan,
   type PreviewCardSpans,
   type RulerTick,
@@ -885,5 +887,52 @@ describe("shouldRetryManifestFetch", () => {
   it("honors a caller-supplied cap", () => {
     expect(shouldRetryManifestFetch(2, 2)).toBe(true);
     expect(shouldRetryManifestFetch(3, 2)).toBe(false);
+  });
+});
+
+describe("stripHintMask", () => {
+  it("covers each card and cuts the gutter between them", () => {
+    const mask = stripHintMask([
+      { startTime: 0, endTime: 4, width: 100 },
+      { startTime: 4, endTime: 8, width: 60 },
+    ]);
+    // Card one 0-100, gutter to 108, card two 108-168.
+    expect(mask).toBe(
+      "linear-gradient(to right, " +
+        "#000 0px 100px, transparent 100px 108px, " +
+        "#000 108px 168px, transparent 168px 176px)",
+    );
+  });
+
+  it("lays segments on the SAME walk as the overlay, so they cannot drift", () => {
+    // The proof that matters: a mask stop has to land where `buildStripOverlay`
+    // says the card is, or the hint sits beside the card it belongs to.
+    const cards = [
+      { startTime: 0, endTime: 4, width: 100 },
+      { startTime: 4, endTime: 8, width: 60, disabled: true },
+    ];
+    const skip = buildStripOverlay(cards).skips[0]!;
+    expect(stripHintMask(cards)).toContain(`#000 ${skip.x}px ${skip.x + skip.width}px`);
+  });
+
+  it("is `none` for an empty strip rather than an empty gradient", () => {
+    // An empty `linear-gradient()` is invalid CSS and would drop the mask
+    // entirely — which paints the hint straight across, the very thing this
+    // removes.
+    expect(stripHintMask([])).toBe("none");
+  });
+});
+
+describe("gridHintMask", () => {
+  it("repeats on the cell pitch, so the string does not grow with the row", () => {
+    expect(gridHintMask(332, 16)).toBe(
+      "repeating-linear-gradient(to right, #000 0 332px, transparent 332px 348px)",
+    );
+  });
+
+  it("is `none` before the grid has been measured", () => {
+    // Cell width arrives from a dataset read that races the first paint; zero
+    // would otherwise emit a mask that hides the hint completely.
+    expect(gridHintMask(0, 16)).toBe("none");
   });
 });

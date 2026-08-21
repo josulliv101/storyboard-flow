@@ -844,3 +844,47 @@ export function buildGridPlayheadMap(
     },
   };
 }
+
+/**
+ * A mask that keeps the rail's hint ON the cards and off the gutters between
+ * them.
+ *
+ * The hint is one continuous element spanning the whole row, which is right
+ * for the HIT area — the rail is grabbable across its full width, gutters
+ * included — and wrong for the line, which drew straight across the gaps and
+ * tied separate cards together with a rule none of them owns.
+ *
+ * A MASK rather than a gradient background, because the hint warms under the
+ * pointer: `background-color` transitions smoothly and `background-image` does
+ * not, so painting the segments as a gradient would make the hover snap. The
+ * colour stays a plain background; this only decides where it survives.
+ *
+ * Laid out by the same walk as `buildStripOverlay` — widths plus the gutter,
+ * accumulated — so a segment can never drift from the card it belongs to.
+ */
+export function stripHintMask(cards: readonly ChildSpan[]): string {
+  if (cards.length === 0) return "none";
+  const stops: string[] = [];
+  let cursor = 0;
+  for (const card of cards) {
+    stops.push(`#000 ${cursor}px ${cursor + card.width}px`);
+    cursor += card.width;
+    // The gutter, cut out. Emitted after every card including the last, where
+    // it simply falls beyond the element and paints nothing.
+    stops.push(`transparent ${cursor}px ${cursor + STRIP_GAP_PX}px`);
+    cursor += STRIP_GAP_PX;
+  }
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/**
+ * The same idea for a GRID row, where every cell is the same width.
+ *
+ * Uniform pitch means one repeating rule instead of two stops per card, so
+ * this stays a fixed-length string however many cards the row holds.
+ */
+export function gridHintMask(cellWidth: number, gap: number): string {
+  if (cellWidth <= 0) return "none";
+  const pitch = cellWidth + gap;
+  return `repeating-linear-gradient(to right, #000 0 ${cellWidth}px, transparent ${cellWidth}px ${pitch}px)`;
+}
