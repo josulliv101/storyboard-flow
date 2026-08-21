@@ -3355,14 +3355,25 @@ test.describe("graph view E2E", () => {
     // one too, and matching by role alone finds both.
     await expect(play("bravo")).toHaveAttribute("aria-label", /^Pause /);
 
+    // THE PAUSE STAYS WHERE IT WAS PRESSED, even once the playhead has run on
+    // out of bravo and into the clip after it.
+    //
+    // It followed the playhead at first, which meant the control you had just
+    // used slid out from under the pointer mid-playback and you had to go
+    // hunting for where "pause" had got to, on a board where every card looks
+    // the same. Asserted after the clock has left bravo's span entirely, which
+    // is the only state that can tell the two rules apart.
+    await expect.poll(clock, { timeout: 10000 }).toBeGreaterThan(start + 3);
+    await expect(play("bravo")).toHaveAttribute("aria-label", /^Pause /);
+    // And it is the ONLY card offering one — the clip the playhead is actually
+    // in does not grow a second pause beside it.
+    await expect(page.locator('[data-grid-play][aria-label^="Pause "]')).toHaveCount(1);
+
     // Pressing again holds where it is rather than rewinding.
     await play("bravo").click();
     const held = await clock();
     await page.waitForTimeout(500);
     expect(await clock()).toBe(held);
-    // Still the transport, because the playhead is still inside bravo — the
-    // button follows the PLAYHEAD, not the running state.
-    await expect(play("bravo")).toBeVisible();
   });
 
   test("a trashed item restores into the timeline you are looking at", async ({ page }) => {
