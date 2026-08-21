@@ -43,6 +43,12 @@ import {
  * run of boxes: a change of colour is a change of collection, and it lands
  * exactly where the row will cross into one.
  *
+ * NESTING IS DRAWN AS BARS ACROSS THE TOP. A clip inside a collection inside
+ * another collection is its own collection's colour, with a thin line above it
+ * in the outer one's — so a run of clips can leave a nested collection and
+ * come back to the one containing it, and the bar shows both the change and
+ * the thing that did not change.
+ *
  * The tints are deliberately MUTED and deliberately not blue. They are
  * grouping, not state — the only saturated thing on this bar should be the
  * box you are on, and the only red should be the playhead.
@@ -78,7 +84,7 @@ const COLLECTION_TINTS = [
 export function SeamStripBar({
   strip,
   centreClipId,
-  tintOf,
+  tintChainOf,
   playheadPx,
   playing,
   onTogglePlay,
@@ -90,8 +96,12 @@ export function SeamStripBar({
   strip: SeamStrip;
   /** The clip to centre — the one under the middle card. */
   centreClipId: string;
-  /** Which collection each clip belongs to, as a tint index. */
-  tintOf: ReadonlyMap<string, number>;
+  /**
+   * The collections each clip sits inside, outermost first, as tint indices.
+   * The last entry is its immediate collection and colours the box; the ones
+   * before it are drawn as thin bars across the top.
+   */
+  tintChainOf: ReadonlyMap<string, readonly number[]>;
 
   /** Where the playhead sits, in absolute strip pixels; null when untouched. */
   playheadPx: number | null;
@@ -284,7 +294,15 @@ export function SeamStripBar({
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;
             const isCentre = segment.clipId === centreClipId;
-            const tint = COLLECTION_TINTS[(tintOf.get(segment.clipId) ?? 0) % COLLECTION_TINTS.length]!;
+            const chain = tintChainOf.get(segment.clipId) ?? [];
+            const tintAt = (index: number) =>
+              COLLECTION_TINTS[index % COLLECTION_TINTS.length]!;
+            const tint = tintAt(chain[chain.length - 1] ?? 0);
+            // The collections ABOVE this clip's own, outermost first. Capped
+            // at two: past that the stripes are taller than the box is and the
+            // nesting stops being readable at the very depth it is meant to
+            // explain.
+            const ancestors = chain.slice(0, -1).slice(-2);
             return (
               <span
                 key={segment.clipId}
@@ -313,6 +331,27 @@ export function SeamStripBar({
                 {/* WHICH ONE YOU ARE ON, as a mark rather than a hue. Hidden
                     on a box too narrow to hold it: a check crushed into 10px
                     is a smudge, and the ring already says the same thing. */}
+                {/* NESTING, as bars across the top. A box is its own
+                    collection's colour; each line above it is a collection
+                    that one sits inside, outermost highest — so "red under
+                    orange" reads as red nested in orange. Absolutely
+                    positioned so they cost the box no height and never move
+                    the check off centre. */}
+                {ancestors.map((ancestor, depth) => (
+                  <span
+                    key={ancestor}
+                    data-seam-segment-ancestor={ancestor}
+                    aria-hidden="true"
+                    style={{ top: depth * 3 }}
+                    className={[
+                      "pointer-events-none absolute inset-x-0 h-[2px]",
+                      tintAt(ancestor),
+                      // Full strength: the tints are already muted, and a
+                      // 2px line at a fraction of that is a smudge.
+                      "opacity-100",
+                    ].join(" ")}
+                  />
+                ))}
                 {isCentre && segment.widthPx >= 16 ? (
                   // HALF STRENGTH. It marks a position on a map you are
                   // scanning, not a control you are hunting for, and at full

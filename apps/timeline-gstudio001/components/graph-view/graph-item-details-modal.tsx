@@ -426,27 +426,50 @@ function DetailsFilmstripModal({
   // scope shrinking to match it.
   // Durations come straight from the graph, so this costs a map lookup per
   // clip and no media at all — the boxes are geometry, not pictures.
-  // WHICH COLLECTION EACH CLIP CAME FROM, as a tint index.
+  // THE COLLECTIONS A CLIP SITS INSIDE, outermost first, as tint indices.
   //
-  // Assigned by ORDER OF FIRST APPEARANCE rather than by hashing the id, so
-  // the run of boxes reads left to right as "this lot, then that lot" and two
-  // adjacent collections are always two adjacent tints. A hash would be stable
-  // across sessions and would happily give neighbouring collections the same
-  // colour, which is the one thing this cannot do.
-  const collectionTintOf = useMemo(() => {
-    const tintByParent = new Map<string, number>();
-    const tint = new Map<string, number>();
+  // A CHAIN rather than one colour, because nesting is the thing being shown.
+  // Take a collection tinted orange holding two clips, then a collection
+  // tinted red holding two more, then two clips back in the first: the four
+  // outer clips are orange and the inner two are red — but the inner two are
+  // ALSO still inside the orange one, and a single colour cannot say that.
+  // The bar draws the last entry as the box and the ones before it as thin
+  // bars across the top, so a red box under an orange line reads as "red,
+  // inside orange".
+  //
+  // THE ROOT IS EXCLUDED. Every clip in the view descends from it, so a stripe
+  // for it would be on every box — a constant, which is not information.
+  //
+  // Indices are assigned by ORDER OF FIRST APPEARANCE, which walking the flat
+  // order gives for free: a parent collection is always met before the
+  // children nested in it, so outer collections take the earlier tints and two
+  // adjacent collections never collide.
+  const tintChainOf = useMemo(() => {
+    const rootId = flatOrderRootId(graph);
+    const indexByCollection = new Map<string, number>();
+    const chains = new Map<string, readonly number[]>();
     for (const id of ids) {
-      const parent = graph.parentById.get(parseNodeId(id));
-      const key = parent === null || parent === undefined ? "" : (parent as string);
-      let index = tintByParent.get(key);
-      if (index === undefined) {
-        index = tintByParent.size;
-        tintByParent.set(key, index);
+      const ancestors: string[] = [];
+      let cursor: string | null =
+        (graph.parentById.get(parseNodeId(id)) as string | null | undefined) ?? null;
+      while (cursor !== null && cursor !== rootId) {
+        ancestors.unshift(cursor);
+        cursor =
+          (graph.parentById.get(parseNodeId(cursor)) as string | null | undefined) ?? null;
       }
-      tint.set(id, index);
+      chains.set(
+        id,
+        ancestors.map((collectionId) => {
+          let index = indexByCollection.get(collectionId);
+          if (index === undefined) {
+            index = indexByCollection.size;
+            indexByCollection.set(collectionId, index);
+          }
+          return index;
+        }),
+      );
     }
-    return tint;
+    return chains;
   }, [ids, graph]);
 
   const strip = useMemo(() => {
@@ -615,7 +638,7 @@ function DetailsFilmstripModal({
             <SeamStripBar
               strip={strip}
               centreClipId={node.id as string}
-              tintOf={collectionTintOf}
+              tintChainOf={tintChainOf}
               playheadPx={playheadPx}
               playing={playing}
               onTogglePlay={() => setPlaying((was) => !was)}
