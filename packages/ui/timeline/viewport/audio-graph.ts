@@ -66,6 +66,22 @@ export type AudioMixer = {
   /** Per-source level, 0..1. This is how the active clip is heard and the
    *  prefetched and disabled ones are held silent. */
   setSourceGain: (element: HTMLMediaElement, volume: number) => void;
+  /**
+   * Let go of an element the caller is discarding.
+   *
+   * The counterpart to `attach`, and the reason eviction is possible at all: a
+   * `MediaElementAudioSourceNode` stays connected to the graph for as long as
+   * nobody disconnects it, and while connected it keeps the element — and its
+   * decoder — alive no matter what the caller does with its own references.
+   * The `WeakMap`s cannot help here, because the audio graph IS the strong
+   * reference.
+   *
+   * ONE-WAY. Web Audio gives an element exactly one source node for the
+   * lifetime of the context, so a released element can never be attached
+   * again. Callers must be finished with it — the surface clears `src` and
+   * drops the element in the same breath.
+   */
+  release: (element: HTMLMediaElement) => void;
   setMasterVolume: (volume: number) => void;
   setMuted: (muted: boolean) => void;
   /** Browsers start the context suspended until a user gesture. Call from the
@@ -183,6 +199,23 @@ export function createAudioMixer(
         return;
       }
       if (fallbackElements.has(element)) applyFallback(element);
+    },
+
+    release(element) {
+      const gain = gains.get(element);
+      if (gain) {
+        // Disconnecting the GAIN detaches this element's whole branch: the
+        // source node upstream has nowhere left to reach, so the graph stops
+        // holding it. `createMediaElementSource` cannot be undone, which is
+        // precisely why the caller must be done with the element.
+        gain.disconnect();
+        gains.delete(element);
+      }
+      levels.delete(element);
+      // A Set, unlike the maps above, is a STRONG reference — an element that
+      // fell back to element-level volume would otherwise be retained here for
+      // the mixer's whole life, which is the one leak in this module.
+      fallbackElements.delete(element);
     },
 
     setMasterVolume(volume) {

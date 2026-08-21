@@ -183,6 +183,23 @@ type WorkbenchDisplaySurfaceProps = {
 };
 
 const BUFFER_WINDOW_SIZE = 4;
+
+/**
+ * How many clips' media may be held at once.
+ *
+ * Every clip the playhead has ever touched used to be kept for the life of the
+ * surface — an element with `preload="auto"` (so the whole file), a decoder,
+ * and a branch of the audio graph, none of which were ever given back. On a
+ * short timeline that is invisible and was measured so: 21 distinct sources,
+ * saturating, heap flat. On a real cut it is one media element per clip in the
+ * project, held because the playhead once passed over it.
+ *
+ * Sized off the prefetch window rather than guessed: the live picture, its
+ * layers, and BUFFER_WINDOW_SIZE clips ahead must all survive a prune or this
+ * would evict exactly the clips the surface just decided to warm up. The rest
+ * is headroom for scrubbing back and forth across a join without churning.
+ */
+const MEDIA_CACHE_LIMIT = 24;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
@@ -733,6 +750,7 @@ export function WorkbenchDisplaySurface({
 }: WorkbenchDisplaySurfaceProps) {
   const { getCollectionClipFramePreview } = useTimelineDocuments();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const surfaceRef = useRef<HTMLElement | null>(null);
   const playbackSurfaceRectRef = useRef<PlaybackSurfaceRect | null>(null);
   const cacheRef = useRef(new Map<string, CachedMedia>());
   // The proxies, keyed the same way as the real elements so the two are always
@@ -740,6 +758,14 @@ export function WorkbenchDisplaySurface({
   // played, never mixed, and never the thing a consumer is watching — they
   // exist only to have a frame ready sooner than the real element can.
   const scrubProxyRef = useRef(new Map<string, HTMLVideoElement>());
+  /**
+   * Cache keys in least-recently-used order.
+   *
+   * A `Set` rather than timestamps because insertion order is already the
+   * answer: touching a key deletes and re-adds it, which moves it to the back,
+   * so the front is always the coldest thing holding a decoder.
+   */
+  const recentKeysRef = useRef(new Set<string>());
   const getScrubProxySrcRef = useRef(getScrubProxySrc);
   getScrubProxySrcRef.current = getScrubProxySrc;
   // Read by the proxies' `seeked` listeners, which outlive any one render.
@@ -891,7 +917,37 @@ export function WorkbenchDisplaySurface({
     sortedClips,
   ]);
 
+  /**
+   * How many clips' media are held right now, as a DOM witness.
+   *
+   * The cache is a ref, so its size is invisible to anything outside this
+   * component — and "did the cap hold" is exactly the question a test, or a
+   * measurement in the running app, needs to ask. Written imperatively rather
+   * than rendered, because a cache eviction is not a reason to re-render the
+   * preview.
+   */
+  const publishCacheSize = useCallback(() => {
+    surfaceRef.current?.setAttribute("data-media-cache-size", String(cacheRef.current.size));
+  }, []);
+
+  // What the prefetch window is currently holding warm, reachable from the
+  // prune without threading it through every caller. Written during render like
+  // `outputAspectRef` above, for the same reason: the readers are callbacks
+  // that must not be rebuilt when this changes.
+  const bufferedKeysRef = useRef<ReadonlySet<string>>(new Set<string>());
+  bufferedKeysRef.current = useMemo(
+    () => new Set(bufferedMedia.map((media) => media.key)),
+    [bufferedMedia],
+  );
+
   const ensureCachedMedia = useCallback((media: DisplayMedia) => {
+    // TOUCHED ON EVERY ACCESS, hit or miss — this is the only place that sees
+    // all of them, and a key that stops being asked for is exactly the one the
+    // prune should take.
+    const recent = recentKeysRef.current;
+    recent.delete(media.key);
+    recent.add(media.key);
+
     const cached = cacheRef.current.get(media.key);
     if (cached) return cached;
 
@@ -915,6 +971,7 @@ export function WorkbenchDisplaySurface({
       getMixer().attach(video);
       const nextCached: CachedMedia = { kind: "video", element: video };
       cacheRef.current.set(media.key, nextCached);
+      publishCacheSize();
       return nextCached;
     }
 
@@ -936,6 +993,7 @@ export function WorkbenchDisplaySurface({
       getMixer().attach(audio);
       const nextCached: CachedMedia = { kind: "audio", element: audio };
       cacheRef.current.set(media.key, nextCached);
+      publishCacheSize();
       return nextCached;
     }
 
@@ -944,8 +1002,9 @@ export function WorkbenchDisplaySurface({
     image.src = media.src;
     const nextCached: CachedMedia = { kind: "image", element: image };
     cacheRef.current.set(media.key, nextCached);
+    publishCacheSize();
     return nextCached;
-  }, [getMixer]);
+  }, [getMixer, publishCacheSize]);
 
   /**
    * The proxy for one video clip, built on first use, or null when there is
@@ -985,6 +1044,62 @@ export function WorkbenchDisplaySurface({
     scrubProxyRef.current.set(media.key, proxy);
     return proxy;
   }, []);
+
+  /**
+   * Give one clip's media back: its element, its decoder, its buffered file and
+   * its branch of the audio graph.
+   *
+   * ORDER MATTERS. The mixer has to let go BEFORE the element is dropped,
+   * because a connected source node keeps it alive regardless of what this
+   * cache does — releasing the reference without disconnecting the graph would
+   * free nothing at all and look exactly like a working eviction.
+   *
+   * `removeAttribute` then `load()` is what actually stops the download and
+   * tears the decoder down; setting `src = ""` re-resolves against the document
+   * URL and has the element fetch the PAGE instead.
+   */
+  const releaseCachedMedia = useCallback((key: string) => {
+    const cached = cacheRef.current.get(key);
+    if (cached && isPlayable(cached)) {
+      cached.element.pause();
+      mixerRef.current?.release(cached.element);
+      cached.element.removeAttribute("src");
+      cached.element.load();
+    }
+    const proxy = scrubProxyRef.current.get(key);
+    if (proxy) {
+      proxy.pause();
+      proxy.removeAttribute("src");
+      proxy.load();
+      scrubProxyRef.current.delete(key);
+    }
+    // Its pending seek listeners would otherwise fire against a torn-down
+    // element and repaint the canvas from nothing.
+    const pending = pendingSeekDrawCleanupRef.current;
+    pending.get(key)?.();
+    pending.delete(key);
+    pictureSeekInFlightRef.current.delete(key);
+    cacheRef.current.delete(key);
+    recentKeysRef.current.delete(key);
+    publishCacheSize();
+  }, [publishCacheSize]);
+
+  /**
+   * Drop the coldest media until the cache is back inside its limit.
+   *
+   * `protectedKeys` is the live picture, its layers, and the prefetch window —
+   * everything the surface has just decided it needs. Anything protected is
+   * skipped rather than counted out, so a moment where more clips are live than
+   * the limit allows simply prunes nothing instead of evicting the picture.
+   */
+  const pruneMediaCache = useCallback((protectedKeys: ReadonlySet<string>) => {
+    if (cacheRef.current.size <= MEDIA_CACHE_LIMIT) return;
+    for (const key of [...recentKeysRef.current]) {
+      if (cacheRef.current.size <= MEDIA_CACHE_LIMIT) return;
+      if (protectedKeys.has(key)) continue;
+      releaseCachedMedia(key);
+    }
+  }, [releaseCachedMedia]);
 
   const drawDrawable = useCallback((drawable: HTMLImageElement | HTMLVideoElement) => {
     const canvas = canvasRef.current;
@@ -1415,6 +1530,12 @@ export function WorkbenchDisplaySurface({
     if (media) liveKeys.add(media.key);
     for (const layer of layers) liveKeys.add(layer.media.key);
     pauseClipsNotLive(liveKeys);
+    // The prefetch window is protected alongside the live set: those clips were
+    // deliberately warmed a moment ago, and evicting them here would have the
+    // surface fighting its own read-ahead.
+    const keepWarm = new Set(liveKeys);
+    for (const key of bufferedKeysRef.current) keepWarm.add(key);
+    pruneMediaCache(keepWarm);
 
     for (const layer of layers) {
       // Never `draws`: a layer does not own the canvas, so it must not trigger
@@ -1740,6 +1861,7 @@ export function WorkbenchDisplaySurface({
 
   useEffect(() => {
     const mediaCache = cacheRef.current;
+    const scrubProxies = scrubProxyRef.current;
     return () => {
       mediaCache.forEach((cached) => {
         if (isPlayable(cached)) {
@@ -1748,6 +1870,13 @@ export function WorkbenchDisplaySurface({
           cached.element.load();
         }
       });
+      // Proxies are not in `mediaCache` and would otherwise outlive it.
+      scrubProxies.forEach((proxy) => {
+        proxy.pause();
+        proxy.removeAttribute("src");
+        proxy.load();
+      });
+      scrubProxies.clear();
       const pending = pendingSeekDrawCleanupRef.current;
       pending.forEach((cleanup) => cleanup());
       pending.clear();
@@ -1807,6 +1936,7 @@ export function WorkbenchDisplaySurface({
 
   return (
     <section
+      ref={surfaceRef}
       aria-label="Workbench display surface"
       // BORDERLESS. The rounded corners, the near-black fill, and the shadow
       // already separate the preview from the page; the outline on top read as

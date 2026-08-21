@@ -1139,3 +1139,59 @@ export const HoveringThePictureHintsAtPlay: Story = {
     await expect(hint).toHaveAttribute("data-hint", "play");
   },
 };
+
+/**
+ * THE MEDIA CACHE IS CAPPED, however far the playhead travels.
+ *
+ * Every clip the playhead touched used to be held for the surface's whole
+ * life — element, decoder, buffered file and a branch of the audio graph — so
+ * the cost of a session was the number of DISTINCT clips visited, not the
+ * number on screen. On a short timeline that is invisible; on a real cut it is
+ * one media element per clip in the project.
+ *
+ * Thirty clips through a cache of twenty-four, so the prune has to run and be
+ * seen to run. `data-media-cache-size` exists because a ref's size cannot be
+ * observed from outside the component, and "did the cap hold" is precisely
+ * what needs asserting.
+ */
+function CappedCacheFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+  const clips = Array.from({ length: 30 }, (_, index) =>
+    laneClip(`clip-${index}`, index, 1, 0),
+  );
+
+  return (
+    <main className="bg-zinc-950 p-4 text-zinc-100">
+      <button type="button" data-testid="advance" onClick={() => setCurrentTime((t) => t + 1)}>
+        Advance
+      </button>
+      <WorkbenchDisplaySurface
+        clips={clips}
+        currentTime={currentTime}
+        onCurrentTimeChange={setCurrentTime}
+        className="h-[240px]"
+      />
+    </main>
+  );
+}
+
+export const TheMediaCacheStopsGrowing: Story = {
+  render: () => <CappedCacheFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const surface = canvas.getByTestId("workbench-display-surface");
+    const advance = canvas.getByTestId("advance");
+    const size = () => Number(surface.getAttribute("data-media-cache-size") ?? "0");
+
+    for (let step = 0; step < 30; step += 1) {
+      await userEvent.click(advance);
+    }
+
+    await waitFor(async () => {
+      // It really did cache along the way — a cap that holds because nothing
+      // was ever cached would pass while proving nothing.
+      await expect(size()).toBeGreaterThan(1);
+    });
+    await expect(size()).toBeLessThanOrEqual(24);
+  },
+};
