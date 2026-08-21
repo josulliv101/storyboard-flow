@@ -43,24 +43,17 @@ import {
  * run of boxes: a change of colour is a change of collection, and it lands
  * exactly where the row will cross into one.
  *
- * NESTING IS DRAWN AS BARS ACROSS THE TOP. A clip inside a collection inside
- * another collection is its own collection's colour, with a thin line above it
- * in the outer one's — so a run of clips can leave a nested collection and
- * come back to the one containing it, and the bar shows both the change and
- * the thing that did not change.
+ * NESTING IS IN THE COLOUR ITSELF. A collection directly under the root takes
+ * a hue far from its neighbours; every level below shifts a little from its
+ * parent and lifts, so a collection inside an orange one is a near-orange.
+ * Depth reads as a family, the top level reads as a difference, and none of it
+ * costs a second channel — an earlier version drew the ancestors as bars
+ * across the top of each box, which was a stripe explaining what the colour
+ * had failed to say.
  *
  * The tints are deliberately MUTED and deliberately not blue. They are
  * grouping, not state — the only saturated thing on this bar should be the
  * box you are on, and the only red should be the playhead.
- */
-/**
- * The collection tints, cycled by order of first appearance.
- *
- * Six, because past that they stop being tellable apart at a box's width and
- * start being decoration. Cycling means two collections eventually share a
- * colour — acceptable, since the confusion would need them to be seven apart
- * on a bar you can only see a slice of, and the alternative is generating
- * colours nobody chose.
  */
 /**
  * How far each box is pulled in from its clip's true extent, per side.
@@ -72,19 +65,20 @@ import {
  */
 const BOX_INSET_PX = 2.5;
 
-const COLLECTION_TINTS = [
-  "bg-zinc-600/70",
-  "bg-teal-700/60",
-  "bg-violet-700/55",
-  "bg-amber-700/55",
-  "bg-rose-800/55",
-  "bg-emerald-800/60",
-] as const;
+/**
+ * How much shorter a box gets per level of nesting.
+ *
+ * Small on purpose: it is a second, quieter statement of what the colour
+ * already says, and the point is that the run of boxes has a SHAPE you can
+ * read at a glance — top-level items standing tallest — not that any one box
+ * is measurably shorter than its neighbour.
+ */
+const DEPTH_STEP_PX = 4;
 
 export function SeamStripBar({
   strip,
   centreClipId,
-  tintChainOf,
+  styleOf,
   playheadPx,
   playing,
   onTogglePlay,
@@ -96,12 +90,9 @@ export function SeamStripBar({
   strip: SeamStrip;
   /** The clip to centre — the one under the middle card. */
   centreClipId: string;
-  /**
-   * The collections each clip sits inside, outermost first, as tint indices.
-   * The last entry is its immediate collection and colours the box; the ones
-   * before it are drawn as thin bars across the top.
-   */
-  tintChainOf: ReadonlyMap<string, readonly number[]>;
+  /** Each clip's box colour and nesting depth, derived from where its
+   *  collection sits in the tree — see `clipStyleOf` in the carousel. */
+  styleOf: ReadonlyMap<string, { colour: string; depth: number }>;
 
   /** Where the playhead sits, in absolute strip pixels; null when untouched. */
   playheadPx: number | null;
@@ -278,10 +269,7 @@ export function SeamStripBar({
         // not have a second earlier. Keyboard focus still gets a visible ring,
         // in blue, from the focus-visible rule.
         //
-        // h-14 rather than h-9: the boxes are the content here, and at 36px a
-        // box was a chip. Taller lets a clip's colour, its nesting bars and
-        // the playhead all have room without stacking on each other.
-        className="relative h-14 flex-1 cursor-ew-resize overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        className="relative h-9 flex-1 cursor-ew-resize overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
         <div
           data-seam-strip
@@ -304,15 +292,12 @@ export function SeamStripBar({
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;
             const isCentre = segment.clipId === centreClipId;
-            const chain = tintChainOf.get(segment.clipId) ?? [];
-            const tintAt = (index: number) =>
-              COLLECTION_TINTS[index % COLLECTION_TINTS.length]!;
-            const tint = tintAt(chain[chain.length - 1] ?? 0);
-            // The collections ABOVE this clip's own, outermost first. Capped
-            // at two: past that the stripes are taller than the box is and the
-            // nesting stops being readable at the very depth it is meant to
-            // explain.
-            const ancestors = chain.slice(0, -1).slice(-2);
+            const style = styleOf.get(segment.clipId) ?? { colour: "hsl(220 8% 34%)", depth: 0 };
+            // SHORTER THE DEEPER IT SITS, sharing a baseline so the tops step
+            // down and the run reads as an outline of the tree. Capped at four
+            // levels: past that a box would be a sliver, and the colour is
+            // already carrying depth as well.
+            const depthInsetPx = Math.min(style.depth, 4) * DEPTH_STEP_PX;
             return (
               <span
                 key={segment.clipId}
@@ -325,10 +310,12 @@ export function SeamStripBar({
                 style={{
                   left: segment.leftPx + BOX_INSET_PX,
                   width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                  backgroundColor: style.colour,
+                  top: depthInsetPx,
+                  bottom: 0,
                 }}
                 className={[
-                  "absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]",
-                  tint,
+                  "absolute flex items-center justify-center overflow-hidden rounded-[3px]",
                   // NO RING. The centred box was outlined as well as checked,
                   // which at a box's width read as two stray white edges
                   // rather than as an outline — the corners round away and
@@ -341,27 +328,6 @@ export function SeamStripBar({
                 {/* WHICH ONE YOU ARE ON, as a mark rather than a hue. Hidden
                     on a box too narrow to hold it: a check crushed into 10px
                     is a smudge, and the ring already says the same thing. */}
-                {/* NESTING, as bars across the top. A box is its own
-                    collection's colour; each line above it is a collection
-                    that one sits inside, outermost highest — so "red under
-                    orange" reads as red nested in orange. Absolutely
-                    positioned so they cost the box no height and never move
-                    the check off centre. */}
-                {ancestors.map((ancestor, depth) => (
-                  <span
-                    key={ancestor}
-                    data-seam-segment-ancestor={ancestor}
-                    aria-hidden="true"
-                    style={{ top: depth * 3 }}
-                    className={[
-                      "pointer-events-none absolute inset-x-0 h-[2px]",
-                      tintAt(ancestor),
-                      // Full strength: the tints are already muted, and a
-                      // 2px line at a fraction of that is a smudge.
-                      "opacity-100",
-                    ].join(" ")}
-                  />
-                ))}
                 {isCentre && segment.widthPx >= 16 ? (
                   // HALF STRENGTH. It marks a position on a map you are
                   // scanning, not a control you are hunting for, and at full

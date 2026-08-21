@@ -426,50 +426,99 @@ function DetailsFilmstripModal({
   // scope shrinking to match it.
   // Durations come straight from the graph, so this costs a map lookup per
   // clip and no media at all — the boxes are geometry, not pictures.
-  // THE COLLECTIONS A CLIP SITS INSIDE, outermost first, as tint indices.
+  // WHAT EACH CLIP'S BOX LOOKS LIKE, derived from WHERE its collection sits.
   //
-  // A CHAIN rather than one colour, because nesting is the thing being shown.
-  // Take a collection tinted orange holding two clips, then a collection
-  // tinted red holding two more, then two clips back in the first: the four
-  // outer clips are orange and the inner two are red — but the inner two are
-  // ALSO still inside the orange one, and a single colour cannot say that.
-  // The bar draws the last entry as the box and the ones before it as thin
-  // bars across the top, so a red box under an orange line reads as "red,
-  // inside orange".
+  // The first version gave every collection the next tint from a flat palette
+  // and drew the ancestors as bars across the top of the box. Both halves were
+  // wrong in the same way: a flat palette makes a nested collection look like
+  // an unrelated one, and the bars were a second channel spent explaining what
+  // the first channel had failed to say.
   //
-  // THE ROOT IS EXCLUDED. Every clip in the view descends from it, so a stripe
-  // for it would be on every box — a constant, which is not information.
-  //
-  // Indices are assigned by ORDER OF FIRST APPEARANCE, which walking the flat
-  // order gives for free: a parent collection is always met before the
-  // children nested in it, so outer collections take the earlier tints and two
-  // adjacent collections never collide.
-  const tintChainOf = useMemo(() => {
+  // Nesting is in the COLOUR now. A collection directly under the root takes a
+  // hue far from its neighbours — those are the big divisions and they should
+  // not be confusable. Every level below shifts a little from its parent and
+  // lifts, so a collection inside an orange one is a near-orange: obviously
+  // its own thing, obviously that thing's child. Depth reads as a family, and
+  // the top level reads as a difference.
+  const clipStyleOf = useMemo(() => {
     const rootId = flatOrderRootId(graph);
-    const indexByCollection = new Map<string, number>();
-    const chains = new Map<string, readonly number[]>();
+
+    // Ordered so that CONSECUTIVE assignments are far apart, and so that no
+    // two are closer than 45 degrees. Both matter: the first is what makes the
+    // top-level divisions read as different at a glance, and the second is
+    // what keeps two families from meeting in the middle once their children
+    // have spread either side of them. An earlier set had 28 and 340 in it —
+    // 48 degrees apart — and with children ranging 14 degrees each way the
+    // orange family's reds and the pink family's reds became the same colour.
+    const TOP_HUES = [30, 210, 120, 300, 165, 345, 75, 255];
+    type Tone = { hue: number; saturation: number; lightness: number };
+    const toneOf = new Map<string, Tone>();
+    const childCount = new Map<string, number>();
+    let topLevelSeen = 0;
+
+    const toneFor = (collectionId: string, parentId: string | null): Tone => {
+      const existing = toneOf.get(collectionId);
+      if (existing !== undefined) return existing;
+      const parentTone = parentId === null ? null : toneOf.get(parentId) ?? null;
+      let tone: Tone;
+      if (parentTone === null) {
+        tone = {
+          hue: TOP_HUES[topLevelSeen % TOP_HUES.length]!,
+          saturation: 52,
+          lightness: 34,
+        };
+        topLevelSeen += 1;
+      } else {
+        // Which child of its parent this is, so siblings separate a little
+        // while staying inside the family.
+        const key = parentId ?? "";
+        const order = childCount.get(key) ?? 0;
+        childCount.set(key, order + 1);
+        // SIBLINGS BARELY MOVE THE HUE. The first version added 13 degrees
+        // per sibling, which accumulated: eight collections under one parent
+        // walked a hundred degrees of the wheel, so the last of them was a
+        // different colour from its own parent rather than a shade of it —
+        // exactly the relationship this is supposed to show. Centred and
+        // cycled instead, so a run of children sits within a few degrees
+        // either side of the family hue.
+        //
+        // DEPTH IS CARRIED BY LIGHTNESS, not hue, for the same reason: it can
+        // go many levels without ever leaving the colour it started from.
+        tone = {
+          hue: parentTone.hue + ((order % 5) - 2) * 5,
+          saturation: Math.max(24, parentTone.saturation - 7),
+          lightness: Math.min(66, parentTone.lightness + 10),
+        };
+      }
+      toneOf.set(collectionId, tone);
+      return tone;
+    };
+
+    const styles = new Map<string, { colour: string; depth: number }>();
     for (const id of ids) {
-      const ancestors: string[] = [];
+      // The chain from just under the root down to the clip's own collection.
+      const chain: string[] = [];
       let cursor: string | null =
         (graph.parentById.get(parseNodeId(id)) as string | null | undefined) ?? null;
       while (cursor !== null && cursor !== rootId) {
-        ancestors.unshift(cursor);
-        cursor =
-          (graph.parentById.get(parseNodeId(cursor)) as string | null | undefined) ?? null;
+        chain.unshift(cursor);
+        cursor = (graph.parentById.get(parseNodeId(cursor)) as string | null | undefined) ?? null;
       }
-      chains.set(
-        id,
-        ancestors.map((collectionId) => {
-          let index = indexByCollection.get(collectionId);
-          if (index === undefined) {
-            index = indexByCollection.size;
-            indexByCollection.set(collectionId, index);
-          }
-          return index;
-        }),
-      );
+      // Walk DOWN it so each level's tone is derived from a parent that
+      // already has one.
+      let tone: Tone | null = null;
+      chain.forEach((collectionId, depth) => {
+        tone = toneFor(collectionId, depth === 0 ? null : chain[depth - 1]!);
+      });
+      const resolved: Tone = tone ?? { hue: 220, saturation: 8, lightness: 34 };
+      styles.set(id, {
+        colour: `hsl(${resolved.hue % 360} ${resolved.saturation}% ${resolved.lightness}%)`,
+        // How far down the tree this clip sits. Zero for one held directly at
+        // the top; the bar shortens a box by this.
+        depth: chain.length,
+      });
     }
-    return chains;
+    return styles;
   }, [ids, graph]);
 
   const strip = useMemo(() => {
@@ -638,7 +687,7 @@ function DetailsFilmstripModal({
             <SeamStripBar
               strip={strip}
               centreClipId={node.id as string}
-              tintChainOf={tintChainOf}
+              styleOf={clipStyleOf}
               playheadPx={playheadPx}
               playing={playing}
               onTogglePlay={() => setPlaying((was) => !was)}
