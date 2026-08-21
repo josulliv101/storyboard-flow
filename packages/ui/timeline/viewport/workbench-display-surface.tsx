@@ -104,6 +104,22 @@ type WorkbenchDisplaySurfaceProps = {
   onCurrentTimeChange: (time: number) => void;
   className?: string;
   preferredClipId?: string | null;
+  /**
+   * A SMALL STAND-IN for a full-res source, seeked alongside it while the
+   * playhead is moving. Return null (or omit the prop entirely) and the
+   * surface scrubs the real element exactly as it always has.
+   *
+   * Seeking a video element is asynchronous and keyframe-bound, and the cost
+   * scales with frame size: measured on this project's own assets, a full-res
+   * clip lands a seek in ~67-128ms while a 480-wide derivative lands in
+   * ~14-20ms. Under a drag that is the difference between roughly eight frame
+   * updates a second and fifty.
+   *
+   * INJECTED, because building one is a delivery-CDN concern and this package
+   * does not know about any CDN. The app maps a source URL to its proxy; the
+   * surface only knows that some sources have a faster twin.
+   */
+  getScrubProxySrc?: (src: string) => string | null;
   /** Controlled playback. When supplied, the surface plays iff this is true and
    *  reports intent through `onPlayingChange` (the play button and the
    *  end-of-timeline auto-stop call it) instead of holding play state itself.
@@ -704,6 +720,7 @@ export function WorkbenchDisplaySurface({
   onCurrentTimeChange,
   className,
   preferredClipId,
+  getScrubProxySrc,
   playing,
   onPlayingChange,
   volume,
@@ -718,6 +735,32 @@ export function WorkbenchDisplaySurface({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const playbackSurfaceRectRef = useRef<PlaybackSurfaceRect | null>(null);
   const cacheRef = useRef(new Map<string, CachedMedia>());
+  // The proxies, keyed the same way as the real elements so the two are always
+  // asked about together. Separate from `cacheRef` on purpose: these are never
+  // played, never mixed, and never the thing a consumer is watching — they
+  // exist only to have a frame ready sooner than the real element can.
+  const scrubProxyRef = useRef(new Map<string, HTMLVideoElement>());
+  const getScrubProxySrcRef = useRef(getScrubProxySrc);
+  getScrubProxySrcRef.current = getScrubProxySrc;
+  // Read by the proxies' `seeked` listeners, which outlive any one render.
+  const drawActiveFrameRef = useRef<(() => void) | null>(null);
+  /**
+   * Which pictures have a seek IN FLIGHT — the one question the elements
+   * cannot be asked directly.
+   *
+   * The obvious test, "is this element already showing the target frame",
+   * cannot be built from the media API. Assigning `currentTime` makes it read
+   * back as the TARGET at once, while the frame on screen is still the old
+   * one, and `seeking` does not reliably flip in the same turn — so an element
+   * that has merely been ASKED for a frame is indistinguishable from one that
+   * HAS it. Measured consequence: the real element claimed to be ready every
+   * time, the proxy was never preferred, and the whole mechanism sat inert
+   * while looking wired up correctly.
+   *
+   * Recording the seek where it is ISSUED, and clearing it where it LANDS,
+   * answers it exactly.
+   */
+  const pictureSeekInFlightRef = useRef(new Map<string, boolean>());
   const activeMediaRef = useRef<DisplayMedia | null>(null);
   const activeClipDisabledRef = useRef(false);
   // The under-layers audible right now. The picture is `activeMediaRef`; these
@@ -903,6 +946,45 @@ export function WorkbenchDisplaySurface({
     cacheRef.current.set(media.key, nextCached);
     return nextCached;
   }, [getMixer]);
+
+  /**
+   * The proxy for one video clip, built on first use, or null when there is
+   * none to build.
+   *
+   * Null is the ordinary answer and costs nothing: a consumer that passes no
+   * `getScrubProxySrc`, a source the app cannot transform (a blob: upload, a
+   * fixture asset), or a proxy URL identical to the original all land here and
+   * leave the existing single-element behaviour untouched.
+   *
+   * NOT ATTACHED TO THE MIXER, unlike every element in `cacheRef`. This one
+   * never plays and must never be audible; attaching it would put a second,
+   * half-second-offset copy of the same dialogue into the graph.
+   */
+  const ensureScrubProxy = useCallback((media: DisplayMedia): HTMLVideoElement | null => {
+    if (media.kind !== "video") return null;
+    const existing = scrubProxyRef.current.get(media.key);
+    if (existing) return existing;
+
+    const proxySrc = getScrubProxySrcRef.current?.(media.src) ?? null;
+    if (proxySrc === null || proxySrc === media.src) return null;
+
+    const proxy = document.createElement("video");
+    proxy.preload = "auto";
+    proxy.playsInline = true;
+    // Belt and braces against ever being heard, on top of not being mixed.
+    proxy.muted = true;
+    if (/^https?:\/\//i.test(proxySrc)) proxy.crossOrigin = "anonymous";
+    proxy.src = proxySrc;
+    proxy.load();
+    // A PERSISTENT listener rather than one per seek. The proxy is seeked
+    // continuously under a drag, and per-seek listeners would mean adding and
+    // removing one fifty times a second; `drawActiveFrame` is already the
+    // thing that decides whether the proxy is what should be on screen, so it
+    // is safe to simply ask it every time one lands.
+    proxy.addEventListener("seeked", () => drawActiveFrameRef.current?.());
+    scrubProxyRef.current.set(media.key, proxy);
+    return proxy;
+  }, []);
 
   const drawDrawable = useCallback((drawable: HTMLImageElement | HTMLVideoElement) => {
     const canvas = canvasRef.current;
@@ -1112,10 +1194,34 @@ export function WorkbenchDisplaySurface({
       return;
     }
 
+    // COARSE, THEN FINE. While the real element's seek is in flight its
+    // picture is stale by however long the decode takes, and under a drag that
+    // is most of the time — so the proxy, which lands far sooner, is simply
+    // what there is to show. A soft frame on time reads as a scrubber that
+    // tracks the hand; a sharp frame three frames late reads as one that
+    // sticks. When the drag stops, the real seek completes, clears the flag
+    // and repaints over it, so what anyone comes to REST on is full
+    // resolution.
+    //
+    // NOT WHILE PLAYING: a playing element runs its own clock and never seeks,
+    // so a flag left over from the last scrub must not put the small copy on
+    // screen for the whole take.
+    const proxy = scrubProxyRef.current.get(media.key);
+    if (
+      proxy !== undefined &&
+      !isPlayingRef.current &&
+      pictureSeekInFlightRef.current.get(media.key) === true &&
+      proxy.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+    ) {
+      drawDrawable(proxy);
+      return;
+    }
+
     if (cached.element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       drawDrawable(cached.element);
     }
   }, [drawAudioFrame, drawDrawable, drawEmptyFrame]);
+  drawActiveFrameRef.current = drawActiveFrame;
 
   const frameOverrideRef = useRef(frameOverride);
 
@@ -1211,6 +1317,7 @@ export function WorkbenchDisplaySurface({
 
         if (draws) {
           const drawAfterSeek = () => {
+            pictureSeekInFlightRef.current.set(media.key, false);
             pending.get(media.key)?.();
             pending.delete(media.key);
             drawActiveFrame();
@@ -1223,6 +1330,26 @@ export function WorkbenchDisplaySurface({
             video.removeEventListener("loadeddata", drawAfterSeek);
           });
         }
+        // The proxy chases the same target — but only for the PICTURE, and
+        // only while it is not playing. A playing element runs its own clock
+        // and never seeks, so a second decode alongside it would be waste; an
+        // under-layer never repaints the canvas, so a proxy for one would
+        // decode frames nobody looks at.
+        if (draws && !shouldPlay) {
+          const proxy = ensureScrubProxy(media);
+          if (
+            proxy !== null &&
+            proxy.readyState >= HTMLMediaElement.HAVE_METADATA &&
+            !proxy.seeking
+          ) {
+            try {
+              proxy.currentTime = targetTime;
+            } catch {
+              // Metadata raced away; the next seek retries.
+            }
+          }
+        }
+        if (draws) pictureSeekInFlightRef.current.set(media.key, true);
         video.currentTime = targetTime;
       }
       if (shouldPlay && video.paused) {
@@ -1247,7 +1374,7 @@ export function WorkbenchDisplaySurface({
 
     video.addEventListener("loadedmetadata", seek, { once: true });
     if (draws) video.addEventListener("loadeddata", drawActiveFrame, { once: true });
-  }, [applyGain, drawActiveFrame, ensureCachedMedia]);
+  }, [applyGain, drawActiveFrame, ensureCachedMedia, ensureScrubProxy]);
 
   const renderFrameAtTime = useCallback((timelineTime: number, shouldPlay: boolean, forceSeek = false) => {
     // An override owns the picture while it is set. Guarding HERE rather than
@@ -1738,6 +1865,40 @@ export function WorkbenchDisplaySurface({
             if (isPointerOverPlaybackSurface(event)) setPlaying(!isPlaying);
           }}
         />
+        {/*
+          A QUIET SIGN OF WHAT THE CLICK WILL DO.
+          The whole picture has been a play/pause target for a while, and
+          nothing said so — the cursor changed and that was all. This says it in
+          the one place the eye is already resting.
+
+          IT MIRRORS THE REAL CONTROL rather than holding an opinion of its own:
+          the glyph is whatever the transport's button is showing, so the two
+          can never disagree about what is happening.
+
+          FAINT ON PURPOSE. It sits on top of the frame being judged, and a
+          confident white triangle over someone's shot is a thing in the shot.
+          One opacity knob drives the whole overlay, so "less noticeable" is a
+          single number rather than a negotiation between fill and stroke.
+
+          POINTER-TRANSPARENT, so it can never eat the click it is advertising —
+          the canvas underneath stays the target, letterbox rules included.
+        */}
+        <div
+          aria-hidden="true"
+          data-testid="workbench-hover-transport-hint"
+          data-hint={isPlaying ? "pause" : "play"}
+          className={cn(
+            "pointer-events-none absolute inset-0 grid place-items-center",
+            "transition-opacity duration-200 ease-out motion-reduce:transition-none",
+            canPlay && previewHovered ? "opacity-[0.10]" : "opacity-0",
+          )}
+        >
+          {isPlaying ? (
+            <Pause className="h-20 w-20 fill-white text-white sm:h-28 sm:w-28" />
+          ) : (
+            <Play className="h-20 w-20 fill-white text-white sm:h-28 sm:w-28" />
+          )}
+        </div>
         <WorkbenchAudioControls
           volume={activeVolume}
           muted={activeMuted}

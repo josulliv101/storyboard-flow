@@ -98,6 +98,7 @@ import {
 } from "@storyboard/ui/timeline/timeline-document-store";
 import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-documents";
 import { formatSeconds } from "@storyboard/ui/timeline/utils";
+import { cloudinaryScrubProxySrc } from "@/lib/cloudinary-scrub-proxy";
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 
 import {
@@ -1238,6 +1239,11 @@ export function PreviewShell({
           enabled ? (
             <WorkbenchDisplaySurface
               clips={clips}
+              // A small twin of each clip, seeked alongside the real element so
+              // the picture keeps up with a dragging playhead. The surface has
+              // no idea what Cloudinary is; it only knows some sources have a
+              // faster one behind them.
+              getScrubProxySrc={cloudinaryScrubProxySrc}
               // So a layered clip's inset lands where the RENDER will put it.
               // Its rectangle is normalized to the output frame, which is a
               // different box from the picture whenever the source's shape

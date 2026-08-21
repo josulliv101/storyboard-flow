@@ -1028,3 +1028,114 @@ export const TheChromeFadesInOnceThePreviewIsOpen: Story = {
     });
   },
 };
+
+/**
+ * A STILL HAS NOTHING TO SEEK, so it must never ask for a scrub proxy.
+ *
+ * The proxy exists because seeking a video element is slow enough to lose a
+ * drag; an image has no seek at all, and minting a second element for one
+ * would be a download and a decoder for a picture already on screen.
+ *
+ * WHAT THIS CAN AND CANNOT COVER. It guards the gate — that the surface only
+ * reaches for a proxy on the video path — and it would fail the moment that
+ * call moved somewhere every clip kind flows through. It deliberately does NOT
+ * claim the proxy paints correctly: stories have only data-URI images, nothing
+ * here decodes real video, and a story asserting the coarse-then-fine handoff
+ * would pass without ever exercising it. That behaviour was verified by
+ * measuring the real app instead (frame updates under a drag went from none to
+ * one per animation frame, still resting on full resolution).
+ */
+function ScrubProxyGateFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+  const [asked, setAsked] = useState<string[]>([]);
+
+  return (
+    <main className="bg-zinc-950 p-4 text-zinc-100">
+      <button type="button" data-testid="jump" onClick={() => setCurrentTime(7)}>
+        Jump
+      </button>
+      <output data-testid="proxy-asks">{asked.length}</output>
+      <WorkbenchDisplaySurface
+        clips={[laneClip("still-a", 0, 5, 0), laneClip("still-b", 5, 5, 0)]}
+        currentTime={currentTime}
+        onCurrentTimeChange={setCurrentTime}
+        getScrubProxySrc={(src) => {
+          setAsked((previous) => [...previous, src]);
+          return null;
+        }}
+        className="h-[320px]"
+      />
+    </main>
+  );
+}
+
+export const StillsNeverAskForAScrubProxy: Story = {
+  render: () => <ScrubProxyGateFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId("jump"));
+    await waitFor(async () => {
+      await expect(canvas.getByTestId("proxy-asks")).toHaveTextContent("0");
+    });
+  },
+};
+
+/**
+ * HOVERING THE PICTURE SAYS WHAT CLICKING IT WILL DO.
+ *
+ * The frame has been a play/pause target for a long time with nothing to say
+ * so. The hint is deliberately near-invisible — it sits on top of the shot
+ * being judged — so what is asserted here is the STATE, not the styling:
+ * that it is hidden at rest, that hovering reveals it, and that the glyph
+ * agrees with the transport rather than tracking anything of its own.
+ */
+function HoverTransportHintFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+
+  return (
+    <main className="bg-zinc-950 p-4 text-zinc-100">
+      <WorkbenchDisplaySurface
+        clips={[laneClip("a", 0, 5, 0), laneClip("b", 5, 5, 0)]}
+        currentTime={currentTime}
+        onCurrentTimeChange={setCurrentTime}
+        className="h-[320px]"
+      />
+    </main>
+  );
+}
+
+export const HoveringThePictureHintsAtPlay: Story = {
+  render: () => <HoverTransportHintFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const hint = canvas.getByTestId("workbench-hover-transport-hint");
+
+    // Hidden until asked for, and never a click target — the canvas beneath
+    // has to keep receiving the press this is advertising.
+    await expect(hint).toHaveAttribute("data-hint", "play");
+    await expect(getComputedStyle(hint).pointerEvents).toBe("none");
+    await expect(getComputedStyle(hint).opacity).toBe("0");
+
+    // HOVER IS RETRIED, because the hint answers for the drawn PICTURE rather
+    // than the element: the surface only counts a pointer as over the picture
+    // once it has drawn one and knows where it landed. A single hover fired
+    // before the first paint lands on a letterbox that is still the whole box.
+    const surface = canvas.getByTestId("workbench-display-canvas");
+    await waitFor(async () => {
+      const box = surface.getBoundingClientRect();
+      const at = {
+        bubbles: true,
+        clientX: box.x + box.width / 2,
+        clientY: box.y + box.height / 2,
+        pointerId: 1,
+        pointerType: "mouse",
+        isPrimary: true,
+      };
+      surface.dispatchEvent(new PointerEvent("pointerover", at));
+      surface.dispatchEvent(new PointerEvent("pointermove", at));
+      await expect(Number(getComputedStyle(hint).opacity)).toBeGreaterThan(0);
+    });
+    // Still the paused glyph: hovering advertises the action, it does not take it.
+    await expect(hint).toHaveAttribute("data-hint", "play");
+  },
+};
