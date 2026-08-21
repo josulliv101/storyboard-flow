@@ -45,7 +45,10 @@ export function ItemDetailsHeader({
   const history = useScopedHistory(centreId);
 
   return (
-    <div className="pointer-events-auto flex items-start justify-between gap-4 px-6 pt-5">
+    <div
+      data-item-details-header
+      className="pointer-events-auto flex items-start justify-between gap-4 px-6 pt-5"
+    >
       <div className="min-w-0">
         <h2 className="truncate text-[15px] font-semibold text-zinc-100" title={title}>
           {title}

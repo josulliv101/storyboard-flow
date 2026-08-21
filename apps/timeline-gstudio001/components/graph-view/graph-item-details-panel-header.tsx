@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
 import { InlineNameEditor } from "./graph-inline-rename";
@@ -47,13 +48,22 @@ export function ItemDetailsPanelHeader({
     cancel: () => void;
   }>;
 }>) {
+  // CONTROLLED, so the menu can close when something in it is used.
+  //
+  // The actions inside are ordinary buttons rather than Radix menu items —
+  // `ItemDisableToggle` is shared with the rail and the anchor menu, and
+  // rewriting it per host would be three renditions of one control. Radix only
+  // auto-closes on its OWN items, so without this a menu stayed open behind
+  // the action you had just taken, wearing a label that had already flipped.
+  const [menuOpen, setMenuOpen] = useState(false);
+
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2">
         <span className="truncate font-mono text-[11px] text-zinc-500">{clipLabel}</span>
         <div className="flex shrink-0 items-center gap-1.5">
           <span className="font-mono text-[11px] tabular-nums text-zinc-400">{trimReadout}</span>
-          <DropdownMenu>
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger
               data-item-details-menu
               aria-label={`More actions for ${name}`}
@@ -63,7 +73,12 @@ export function ItemDetailsPanelHeader({
               <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40 p-1">
-              <ItemDisableToggle nodeId={nodeId} />
+              {/* Any action in here dismisses the menu — one handler on the
+                  container rather than one per action, so a control added
+                  later inherits it. */}
+              <div onClick={() => setMenuOpen(false)}>
+                <ItemDisableToggle nodeId={nodeId} />
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

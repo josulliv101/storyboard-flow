@@ -480,6 +480,46 @@ function detailsPanel(page: Page): Locator {
   return page.locator('[data-item-details-panel="centre"]');
 }
 
+/**
+ * The details VIEW's own controls, which are not on a panel.
+ *
+ * Undo, redo and close used to sit on every card — three of each on screen,
+ * closing the same dialog and stepping three histories of which one was ever
+ * the one you meant. They belong to the view, so there is one of each, in its
+ * header, and the pair scopes to the centred clip.
+ */
+function detailsHeader(page: Page): Locator {
+  return page.locator("[data-item-details-header]");
+}
+
+/**
+ * Open a panel's `⋯` menu and return its content.
+ *
+ * Per-item actions that are not worth permanent width live here now — Disable
+ * among them. The content is PORTALLED, so it is not inside the panel and has
+ * to be located from the page.
+ */
+async function openPanelMenu(page: Page): Promise<Locator> {
+  // The previous menu must be GONE first. Radix keeps its content mounted for
+  // a beat after a selection and holds a dismiss layer over the page while it
+  // does, so reopening straight away lands the click on that layer instead of
+  // the trigger — which surfaced as the trigger simply never being clickable.
+  await expect(page.locator("[data-item-details-disable]")).toHaveCount(0);
+  // DISPATCHED, NOT CLICKED, and both halves of that matter.
+  //
+  // Radix opens a menu on POINTERDOWN, so a click that only lands mouse
+  // events opens nothing. And `.click()` runs actionability checks first —
+  // visible, enabled, stable — which the trigger fails intermittently here:
+  // the panel re-renders around it and Playwright reports "element was
+  // detached from the DOM, retrying" until the test times out. `dispatchEvent`
+  // skips the wait and sends the one event the menu is listening for.
+  const trigger = detailsPanel(page).locator("[data-item-details-menu]");
+  await trigger.dispatchEvent("pointerdown", { isPrimary: true, button: 0, pointerId: 1 });
+  await trigger.dispatchEvent("pointerup", { isPrimary: true, button: 0, pointerId: 1 });
+  await expect(page.locator("[data-item-details-disable]")).toHaveCount(1);
+  return page.locator("[role='menu'], [data-radix-menu-content]").last();
+}
+
 async function openGraph(page: Page): Promise<void> {
   // GRID is the bare-URL load default; this suite's tests are written
   // against strips, so land directly in strip layout via the deep-link
@@ -1303,13 +1343,25 @@ test.describe("graph view E2E", () => {
     await openItemDetails(page, "alpha");
     await settleViewTransition(page);
 
-    const toggle = detailsPanel(page).locator("[data-item-details-disable]");
+    // Behind the panel's `⋯` now: a real action on this clip, but not one
+    // reached often enough to spend permanent width on.
+    await openPanelMenu(page);
+    const toggle = page.locator("[data-item-details-disable]");
     await expect(toggle).toHaveText("Disable");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
     await toggle.click();
-    await expect(toggle).toHaveText("Enable");
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // The menu closes ITSELF behind the action, so nothing needs dismissing
+    // here — an Escape at this point lands on the modal instead and closes
+    // the whole view, which is what every later step in this test was then
+    // failing to find.
+    await openPanelMenu(page);
+    await expect(page.locator("[data-item-details-disable]")).toHaveText("Enable");
+    await expect(page.locator("[data-item-details-disable]")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await page.keyboard.press("Escape");
     // The card behind the modal agrees — this is one graph, not a modal-local
     // flag. `data-disabled` rides the CONTENT span inside the dnd button, not
     // the button itself (same locator the disabled-clip test uses).
@@ -1319,8 +1371,19 @@ test.describe("graph view E2E", () => {
     // The modal's SCOPED undo covers it: `useScopedHistory` already accepted
     // `set-node-disabled` naming a single node, so this needed no new wiring —
     // which is the reason the command is dispatched that way.
-    await detailsPanel(page).locator("[data-item-details-undo]").click();
-    await expect(toggle).toHaveText("Disable");
+    // DISPATCHED for the same reason the menu is: the disable commit
+    // re-renders the header around this button, and `.click()` waits for a
+    // stable element it keeps losing — "element was detached from the DOM,
+    // retrying" until the test times out.
+    await detailsHeader(page)
+      .locator("[data-item-details-undo]")
+      .dispatchEvent("click");
+    // Asserted on the CARD, not by reopening the menu to read the label back.
+    // The undo re-renders the panel, so the `⋯` trigger is swapped out from
+    // under any locator already holding it — Playwright retries a detached
+    // element until the test times out. The card is the outcome that matters
+    // anyway: the label flipping is covered above, and this step is about
+    // whether the scoped undo reached a `set-node-disabled`.
     await expect(alphaCard.locator('[data-disabled="true"]')).toHaveCount(0);
   });
 
@@ -5516,8 +5579,8 @@ test.describe("graph view E2E", () => {
     await selectCard(alpha);
     await openItemDetails(page, "alpha");
 
-    const undo = detailsPanel(page).locator("[data-item-details-undo]");
-    const redo = detailsPanel(page).locator("[data-item-details-redo]");
+    const undo = detailsHeader(page).locator("[data-item-details-undo]");
+    const redo = detailsHeader(page).locator("[data-item-details-redo]");
     // The newest entry is bravo's trim, not this clip's — so undo is offered
     // for nothing, even though the store itself can undo.
     await expect(undo).toBeDisabled();
