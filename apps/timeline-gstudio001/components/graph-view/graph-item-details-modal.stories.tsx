@@ -315,13 +315,23 @@ function scrubToFraction(fraction: number): void {
 async function settleStrip(): Promise<void> {
   const strip = document.querySelector<HTMLElement>("[data-seam-strip]");
   expect(strip).not.toBeNull();
+  // PAST THE TRANSITION FIRST, then confirm. Watching alone is not enough
+  // under load: the poll can take two readings before the animation has even
+  // started, agree with itself, and report a strip that is about to move as
+  // settled. That is exactly how these passed alone and failed in the full
+  // run. The dwell clears the 260ms transition; the watch below then covers a
+  // machine slow enough for that not to be sufficient.
+  await new Promise((resolve) => setTimeout(resolve, 320));
   let previous = Number.NaN;
-  await waitFor(() => {
-    const now = strip!.getBoundingClientRect().left;
-    const settled = Math.abs(now - previous) < 0.5;
-    previous = now;
-    expect(settled).toBe(true);
-  });
+  await waitFor(
+    () => {
+      const now = strip!.getBoundingClientRect().left;
+      const settled = Math.abs(now - previous) < 0.5;
+      previous = now;
+      expect(settled).toBe(true);
+    },
+    { timeout: 3000 },
+  );
 }
 
 /**
