@@ -412,6 +412,38 @@ Everything semantic happens in `core/`.
   dimmed; the `DragOverlay` ghost carries a "+N" badge. The reducer sorts
   the set into document order and prunes ids whose ancestor is also moving.
 
+## Pointer arbitration on a pannable surface
+
+A `VirtualStrip` with `panToScroll` on has three gestures competing for one
+horizontal drag, and the rule between them is that **panning is the default
+and everything else has to declare itself**:
+
+- **Item drag.** From a grip bar it activates on distance; from a card body
+  in `itemDragActivation="hold"` it needs a still press of 250ms, and a fast
+  move cancels the pending activation and hands the press to the pan
+  (`CollectionsPointerSensor`).
+- **Trim.** A press on a handle publishes its zero-delta preview at once — it
+  shows a frame, which is not the same as beginning an edit — but does not
+  become an edit until it has settled for `TRIM_ARM_DELAY_MS` (200ms). Move
+  past `HOLD_DRAG_TOLERANCE_PX` first and the trim drops itself and the pan
+  takes over, one pixel later at `PAN_START_SLOP_PX`; those two constants are
+  defined one apart so the handoff can never leave both live or neither.
+  Arming sets `data-trim-armed` on the pressed element (content styles off it
+  through the hit zone's `group/trim`) and claims the pointer, which the pan
+  reads through `isGestureClaimed` and stands down for.
+- **Pan.** Anything else, past the slop.
+
+The dwell exists because trim handles are 8px at each clip edge and always on
+with a mouse, so in a strip where clips sit flush every cut carries a 16px
+band where a pan silently became an edit — the first thing that shipped here
+that could destroy work by accident. Which surfaces owe the dwell is asked of
+the DOM (`PAN_SURFACE_ATTR`, written by the view that installs the pan hook),
+not passed down: a handle in a panel or a grid has nothing to arbitrate
+against and keeps instant trims, and so does the overview panel, which floats
+outside the scroller. Coverage is
+`GestureArbitration.stories.tsx` plus a trusted-mouse e2e test, since the
+handoff runs across two independent listener sets and a real pointer capture.
+
 ## Click arbitration and the interaction policy
 
 A card's `onClick` only ever sees the residue the gesture pipeline leaves

@@ -15,6 +15,11 @@ import {
 } from "../core/graph";
 import { type MediaUpdate } from "../core/commands";
 import { useCollectionsStore } from "./collections-store";
+import {
+  HOLD_DRAG_TOLERANCE_PX,
+  PAN_SURFACE_ATTR,
+  TRIM_ARM_DELAY_MS,
+} from "./gesture-thresholds";
 import { useLiveTrimPublisher } from "./live-trim";
 import { useTrimPreview, type LiveTrim } from "./trim-preview-context";
 
@@ -29,6 +34,37 @@ export type TrimSide = "left" | "right";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max));
+}
+
+/**
+ * Whether a trim currently OWNS the pointer, for the pan hook's
+ * `isGestureClaimed`.
+ *
+ * Module-scoped for the reason `interaction-policy`'s pending selection is:
+ * pointer gestures are serial. One primary pointer produces one press at a
+ * time, so there is never a second armed trim to track, and keeping the flag
+ * here means the pan can ask without either side holding a reference to the
+ * other.
+ */
+let armedTrimGesture = false;
+
+export function isTrimGestureArmed(): boolean {
+  return armedTrimGesture;
+}
+
+/**
+ * The dwell this press owes before it may trim: the full delay on a surface
+ * that pans, nothing anywhere else.
+ *
+ * Asked of the pressed element rather than passed in by each handle, so every
+ * trim surface — the card's edge handles, the overview's window grips, a
+ * consumer's own `CollectionItem.TrimHandle` — inherits the same law from
+ * where it is MOUNTED. A handle inside a pannable strip dwells; the same
+ * component in a panel or a grid stays instant, because there is no competing
+ * gesture there to protect.
+ */
+function trimArmDelayFor(target: Element): number {
+  return target.closest(`[${PAN_SURFACE_ATTR}]`) === null ? 0 : TRIM_ARM_DELAY_MS;
 }
 
 // Pointer trims capture CONTINUOUS pixels ((clientX - startX) / pps), so a raw
@@ -133,6 +169,15 @@ export function resolveMove(
  * delta-seconds to the update + live split; `onLive` is an optional hook for
  * local UI (e.g. the card's readout pill), called with the live split per
  * move and `null` on end.
+ *
+ * On a surface that PANS (see `trimArmDelayFor`) the press does not begin an
+ * edit until it has settled for `TRIM_ARM_DELAY_MS`: an early move drops the
+ * trim and lets the pan have the pointer, and arming publishes
+ * `data-trim-armed` on the pressed element so content can show that the next
+ * pull will trim. Arming is also where the zero-delta preview goes out, so a
+ * press that turns out to be a pan never sends the preview pane to an edge
+ * frame and back — nothing at all happens until the gesture has said what it
+ * is. Off a pannable surface arming is immediate and none of this is visible.
  */
 export function useTrimPointerDrag(
   node: MediaNode
@@ -170,19 +215,87 @@ export function useTrimPointerDrag(
       )
         return;
       activeCleanupRef.current?.();
-      // Keep the gesture off dnd-kit's item drag, the strip's pan, and (for
-      // an overview grip) the overview's own move handler.
+      // Keep the gesture off dnd-kit's item drag and (for an overview grip)
+      // the overview's own move handler. NOT off the pan: that listener is
+      // native and sits on the scroll container, an ancestor React dispatches
+      // BELOW, so it has already run by the time this does — which is exactly
+      // what the arbitration below needs. Both presses arm; only one survives.
+      //
+      // preventDefault stays unconditional and stays HERE, on the down. It is
+      // what suppresses the compatibility click, and so what keeps a trim from
+      // also opening the card it trimmed — and a click cannot be prevented
+      // after the fact, so deferring it until the gesture arms would be too
+      // late. A press that ends up a pan loses a click the pan would have
+      // squashed anyway.
       event.preventDefault();
       event.stopPropagation();
-      const startX = event.clientX;
       const pointerId = event.pointerId;
       const pointerTarget = event.currentTarget;
+      // The arm marker is written imperatively rather than through state: it
+      // lives for one press, and re-rendering the pressed card mid-gesture to
+      // paint it would cost more than it shows. Content styles off it (see
+      // `group/trim` on the hit zone in trim-handles.tsx).
+      const armTarget = pointerTarget instanceof HTMLElement ? pointerTarget : null;
+      const armDelayMs = trimArmDelayFor(pointerTarget);
+      const downX = event.clientX;
+      const downY = event.clientY;
+      // Where the trim measures its delta FROM. Re-baselined at arm time so a
+      // press that drifted inside the tolerance does not open with a jump.
+      let startX = downX;
+      let lastX = downX;
+      let armed = false;
+      let armTimer = 0;
       let pending: MediaUpdate | null = null;
       let finished = false;
-      try {
-        pointerTarget.setPointerCapture(pointerId);
-      } catch {
-        /* untrusted pointer (tests) — window listeners below suffice */
+
+      function arm() {
+        if (armed || finished) return;
+        armed = true;
+        if (armTimer) window.clearTimeout(armTimer);
+        armTimer = 0;
+        startX = lastX;
+        armedTrimGesture = true;
+        if (armTarget) armTarget.dataset.trimArmed = "true";
+        try {
+          pointerTarget.setPointerCapture(pointerId);
+        } catch {
+          /* untrusted pointer (tests) — window listeners below suffice */
+        }
+
+        // Publish the edge's CURRENT split at zero delta, so anything showing
+        // the live frame has something to show from the moment the gesture
+        // begins rather than from the first move.
+        //
+        // It matters most where it is least visible: the preview pane seeks to
+        // this frame, and a cold seek near the out point can take the better
+        // part of a second. Starting it here spends the pause while the user
+        // is still deciding where to drag, rather than at the start of the
+        // drag itself.
+        //
+        // ARMING, NOT THE PRESS, is where this belongs. It fired on
+        // pointerdown back when a press could only mean a trim — but a press
+        // that turns out to be a PAN would send the pane off to the edge frame
+        // and straight back, a visible flinch from a gesture that never
+        // touched the clip. The dwell is the moment the press says what it is,
+        // and the warm-up is worth just as much from here, because the drag
+        // still has not started.
+        //
+        // `pending` stays null deliberately. A press with no movement
+        // therefore still takes onUp's no-op branch — nothing dispatches, and
+        // the live preview clears on release exactly as an aborted gesture
+        // does. This shows a frame; it does not begin an edit.
+        const initial = resolve(0);
+        onLive?.(initial.live);
+        publishLive(node.id, initial.live);
+        trimPreview.previewTrim(node.id, initial.live);
+      }
+
+      function disarm() {
+        if (armTimer) window.clearTimeout(armTimer);
+        armTimer = 0;
+        armed = false;
+        armedTrimGesture = false;
+        if (armTarget) delete armTarget.dataset.trimArmed;
       }
 
       function removeListeners() {
@@ -208,6 +321,7 @@ export function useTrimPointerDrag(
       function abortGesture() {
         if (finished) return;
         finished = true;
+        disarm();
         removeListeners();
         releasePointerCapture();
         clearActiveCleanup(abortGesture);
@@ -223,6 +337,21 @@ export function useTrimPointerDrag(
       function onMove(moveEvent: PointerEvent) {
         // Ignore every pointer but the one that started this gesture.
         if (finished || moveEvent.pointerId !== pointerId) return;
+        if (!armed) {
+          // Still deciding. Movement past normal jitter means the hand was
+          // already travelling when it landed — a pan, not an aim — so the
+          // trim stands down and the pan (armed on the same press, one pixel
+          // further out) takes it. Distance, not axis: a diagonal press is
+          // not a trim either, and erring toward the pan is the safe way to
+          // be wrong.
+          if (Math.hypot(moveEvent.clientX - downX, moveEvent.clientY - downY) >
+            HOLD_DRAG_TOLERANCE_PX) {
+            abortGesture();
+            return;
+          }
+          lastX = moveEvent.clientX;
+          return;
+        }
         const { update, live } = resolve((moveEvent.clientX - startX) / pixelsPerSecond);
         pending = update;
         onLive?.(live);
@@ -234,6 +363,7 @@ export function useTrimPointerDrag(
         // A different pointer's release/cancel must not end this gesture.
         if (finished || upEvent.pointerId !== pointerId) return;
         finished = true;
+        disarm();
         removeListeners();
         releasePointerCapture();
         clearActiveCleanup(abortGesture);
@@ -259,29 +389,17 @@ export function useTrimPointerDrag(
         if (!dispatched.ok) trimPreview.previewTrim(node.id, null);
       }
 
-      // Publish the edge's CURRENT split immediately, at zero delta, so
-      // anything showing the live frame has something to show from the press
-      // rather than from the first move.
-      //
-      // It matters most where it is least visible: the preview pane seeks to
-      // this frame, and a cold seek near the out point can take the better
-      // part of a second. Starting that on pointerdown spends the pause while
-      // the user is still deciding where to drag, instead of at the start of
-      // the drag itself.
-      //
-      // `pending` stays null deliberately. A press with no movement therefore
-      // still takes onUp's no-op branch — nothing dispatches, and the live
-      // preview clears on release exactly as an aborted gesture does. This
-      // shows a frame; it does not begin an edit.
-      const initial = resolve(0);
-      onLive?.(initial.live);
-      publishLive(node.id, initial.live);
-      trimPreview.previewTrim(node.id, initial.live);
-
       activeCleanupRef.current = abortGesture;
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
+
+      // Off a pannable surface there is nothing to arbitrate against, so the
+      // press owns the pointer from the first pixel — the behaviour every trim
+      // surface had before the strip learned to pan. On one, it has to settle
+      // first; `onMove` above is what ends the wait early.
+      if (armDelayMs <= 0) arm();
+      else armTimer = window.setTimeout(arm, armDelayMs);
     },
     [node, store, trimPreview, publishLive]
   );

@@ -2736,6 +2736,15 @@ export function GraphBoard({
                 // the visible width whatever the content does.
                 className={[
                   "rounded-none border-0 p-0",
+                  // pb-1.5: the cards sat directly ON the horizontal
+                  // scrollbar. Bottom padding on a horizontal scroller is part
+                  // of the scrollable area and lands ABOVE the bar, so this is
+                  // a gap between the filmstrip and its scrollbar rather than
+                  // one under the whole strip. Small on purpose — the strip's
+                  // height is the picture's, and every pixel here is a pixel
+                  // the frames do not get. Must follow `p-0`: twMerge keeps
+                  // the later of two conflicting spacing utilities.
+                  "pb-1.5",
                   GRAPH_STRIP_TRACK_CLASS,
                   // Same 16px, same wait, same one-step landing as the grid's
                   // — see the note there. Ruler and waveform have no reveal to

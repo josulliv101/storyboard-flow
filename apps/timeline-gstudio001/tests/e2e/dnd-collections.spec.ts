@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { at } from "../../lib/test-support/at";
+import { TRIM_ARM_DELAY_MS } from "@storyboard/ui/dnd-collections/react/gesture-thresholds";
 
 // E2E coverage for packages/ui/dnd-collections, driven with REAL mouse input
 // against the Storybook iframe (the vitest story tests dispatch synthetic
@@ -8,6 +9,25 @@ import { at } from "../../lib/test-support/at";
 //   panel-a: [alpha, bravo, charlie, folder-f(f1), delta]
 //   panel-b: [xray, yankee]
 // with folder-f also mounted as its own panel.
+
+
+/**
+ * Press a trim handle and hold until the trim ARMS.
+ *
+ * On a VirtualStrip the surface pans, so a press on a handle does not begin an
+ * edit until it has settled — move first and the press is handed to the pan,
+ * which is the point (scrolling must not change a clip's duration). The
+ * threshold is the package's `TRIM_ARM_DELAY_MS`; this waits it out with room
+ * for a loaded CI machine.
+ *
+ * Panel and grid stories need no dwell: nothing pans there, so their trims stay
+ * instant — see `trimArmDelayFor`.
+ */
+async function pressTrimHandle(page: Page, x: number, y: number): Promise<void> {
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(TRIM_ARM_DELAY_MS + 160);
+}
 
 const storyPath = (storyId: string) => `/iframe.html?id=${storyId}&viewMode=story`;
 const PLAYGROUND = 'ui-dndcollections--playground';
@@ -303,8 +323,7 @@ test.describe('DndCollections E2E', () => {
     const startX = handleBox!.x + handleBox!.width / 2;
     const startY = handleBox!.y + handleBox!.height / 2;
 
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
+    await pressTrimHandle(page, startX, startY);
     await page.mouse.move(startX + 48, startY, { steps: 12 });
     await page.waitForTimeout(150); // dwell: let the live preview settle
 
@@ -460,8 +479,7 @@ test.describe('DndCollections E2E', () => {
     const startX = hb.x + hb.width / 2;
     const startY = hb.y + hb.height / 2;
 
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
+    await pressTrimHandle(page, startX, startY);
     await page.mouse.move(startX - 48, startY, { steps: 12 }); // trim-in 3s -> 1s
     await page.waitForTimeout(150); // dwell
 
@@ -515,8 +533,7 @@ test.describe('DndCollections E2E', () => {
     const startX = hb.x + hb.width / 2;
     const startY = hb.y + hb.height / 2;
 
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
+    await pressTrimHandle(page, startX, startY);
     await page.mouse.move(startX + 48, startY, { steps: 12 }); // trim-in 3s -> 5s
     await page.waitForTimeout(150);
 
@@ -603,8 +620,7 @@ test.describe('DndCollections E2E', () => {
     const handleBox = (await leftHandle.boundingBox())!;
     const startX = handleBox.x + handleBox.width / 2;
     const startY = handleBox.y + handleBox.height / 2;
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
+    await pressTrimHandle(page, startX, startY);
     await page.mouse.move(startX - 48, startY, { steps: 10 });
 
     await expect.poll(async () => Math.round((await video.boundingBox())!.width)).toBe(240);
