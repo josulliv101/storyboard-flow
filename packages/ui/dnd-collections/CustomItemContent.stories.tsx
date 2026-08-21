@@ -31,6 +31,7 @@ import {
   rectCenter,
   rectPoint,
   releaseAt,
+  TRIM_ARM_SETTLE_MS,
   waitForLayout,
 } from "./stories-helpers";
 
@@ -763,7 +764,7 @@ export const LiveTrimReadout: Story = {
       .querySelector<HTMLElement>('[data-trim-handle="right"]')!;
     const start = rectCenter(handle);
     await dispatchPointerSequence([
-      { element: handle, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: handle, type: "pointerdown", clientX: start.x, clientY: start.y, delayAfterMs: TRIM_ARM_SETTLE_MS },
       { element: document, type: "pointermove", clientX: start.x - 24, clientY: start.y, delayAfterMs: 30 },
       { element: document, type: "pointermove", clientX: start.x - 48, clientY: start.y, delayAfterMs: 30 },
     ]);

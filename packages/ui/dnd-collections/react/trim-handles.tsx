@@ -34,10 +34,14 @@ export const DefaultTrimHandleContent = memo(function DefaultTrimHandleContent({
     <span
       className={[
         "flex h-full w-full items-center justify-center bg-blue-500 opacity-70 transition-opacity hover:opacity-100 group-hover:opacity-100",
+        // Armed: the press settled and the next pull trims. Full opacity is
+        // the smallest thing that reads as a state change without moving any
+        // geometry — the handle must not resize under the finger holding it.
+        "group-data-[trim-armed=true]/trim:opacity-100",
         side === "left" ? "rounded-l-md" : "rounded-r-md",
       ].join(" ")}
     >
-      <span className="h-4 w-0.5 rounded bg-black/45" />
+      <span className="h-4 w-0.5 rounded bg-black/45 transition-[height] group-data-[trim-armed=true]/trim:h-full" />
     </span>
   );
 });
@@ -56,7 +60,13 @@ export const DefaultTrimHandleContent = memo(function DefaultTrimHandleContent({
  * disagreeing about which one the touch meant.
  */
 const HIT_ZONE_CLASS =
-  "absolute inset-y-0 z-20 w-2 cursor-ew-resize " +
+  // `group/trim` is the seam for the ARMED state. On a pannable surface a
+  // press does not trim until it settles (see `trimArmDelayFor`), and the
+  // gesture writes `data-trim-armed` here when it does; content reads it as
+  // `group-data-[trim-armed=true]/trim:…`. Named so it cannot be confused with
+  // the card-level group content already uses for hover. Still shell-only —
+  // the shell publishes the state, content decides what it looks like.
+  "group/trim absolute inset-y-0 z-20 w-2 cursor-ew-resize " +
   "after:absolute after:inset-y-0 after:w-2 after:content-[''] " +
   "[@media(pointer:coarse)]:after:w-11";
 

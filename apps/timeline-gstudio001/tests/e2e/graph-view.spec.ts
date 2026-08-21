@@ -3,6 +3,10 @@ import { at } from "../../lib/test-support/at";
 import { compilePlaybackManifest } from "@storyboard/timeline-domain";
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import { deriveClosureSummaries } from "../../lib/derive-collection-summaries";
+// Deep subpath, not the UI barrel: a file of plain numeric constants with no
+// React in it, so the spec can share the gesture thresholds it has to wait out
+// without pulling the component tree into the Playwright process.
+import { TRIM_ARM_DELAY_MS } from "@storyboard/ui/dnd-collections/react/gesture-thresholds";
 
 // E2E for the graph project view (/timeline/[projectId]/graph) — the REAL
 // Next app driven with real mouse input. The server surface the view touches
@@ -701,6 +705,28 @@ async function holdDragToPoint(
   await page.waitForTimeout(150); // dwell: let collision/intent settle
   await page.mouse.up();
   await page.waitForTimeout(80); // outlast dnd-kit's click suppressor
+}
+
+/**
+ * Press a trim handle and hold until the trim ARMS.
+ *
+ * On the strip the surface pans, so a press on a handle does not begin an edit
+ * until it has settled — move first and the press is handed to the pan, which
+ * is the whole point (a clip's duration must not change because someone
+ * scrolled). Real mouse input makes this the honest place to prove it: these
+ * are trusted events on the actual app, and the trim tests below would all be
+ * measuring the pan without this dwell.
+ *
+ * The wait DERIVES from the package's own threshold rather than repeating a
+ * number: it is being tuned by hand, and a settle frozen at an old value would
+ * quietly turn every trim assertion below into a scroll one. Trims through the
+ * OVERVIEW grips need no dwell — that panel floats outside the pannable
+ * surface and keeps instant trims.
+ */
+async function pressTrimHandle(page: Page, x: number, y: number): Promise<void> {
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(TRIM_ARM_DELAY_MS + 160);
 }
 
 const undoButton = (page: Page): Locator => page.getByRole("button", { name: /undo/i });
@@ -1457,7 +1483,19 @@ test.describe("graph view E2E", () => {
       right: gutterBox.right - Number.parseFloat(gutterBox.padding[1]!),
     };
     const stripBox = await boxStyles(`[data-virtual-strip="${PROJECT_ID}"]`);
-    expect(stripBox.padding).toEqual(["0px", "0px", "0px", "0px"]);
+    // Top, right and left only. The BOTTOM edge carries a deliberate 6px
+    // (`pb-1.5` in graph-board): on a horizontal scroller, bottom padding is
+    // part of the scrollable area and lands above the scrollbar, so it is the
+    // gap between the filmstrip and its own bar — the cards used to sit
+    // directly on it. It cannot touch what this test is about, which is the
+    // HORIZONTAL claim that the surface's edges are the panel's gutter and
+    // nothing of its own insets them; the two `toBeCloseTo` checks below are
+    // that claim, and the zeroes here are how it is kept true.
+    expect([stripBox.padding[0], stripBox.padding[1], stripBox.padding[3]]).toEqual([
+      "0px",
+      "0px",
+      "0px",
+    ]);
     expect(stripBox.border).toEqual(["0px", "0px", "0px", "0px"]);
     expect(stripBox.left).toBeCloseTo(gutter.left, 1);
     expect(stripBox.right).toBeCloseTo(gutter.right, 1);
@@ -5381,8 +5419,7 @@ test.describe("graph view E2E", () => {
     await selectCard(alpha);
     const handle = wrapper.locator("[data-trim-handle]").last();
     const handleBox = (await handle.boundingBox())!;
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-    await page.mouse.down();
+    await pressTrimHandle(page, handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
     await page.mouse.move(handleBox.x - 30, handleBox.y + handleBox.height / 2, { steps: 6 });
     await page.mouse.up();
 
@@ -5436,8 +5473,7 @@ test.describe("graph view E2E", () => {
     // Trim the out edge in, which commits on release.
     const handle = wrapper.locator("[data-trim-handle]").last();
     const handleBox = (await handle.boundingBox())!;
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-    await page.mouse.down();
+    await pressTrimHandle(page, handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
     await page.mouse.move(handleBox.x - 40, handleBox.y + handleBox.height / 2, { steps: 6 });
     await page.mouse.up();
     await expect.poll(widthNow).toBeLessThan(original - 10);
@@ -5471,8 +5507,7 @@ test.describe("graph view E2E", () => {
     await selectCard(bravo);
     const bravoHandle = bravoWrapper.locator("[data-trim-handle]").last();
     const bravoBox = (await bravoHandle.boundingBox())!;
-    await page.mouse.move(bravoBox.x + bravoBox.width / 2, bravoBox.y + bravoBox.height / 2);
-    await page.mouse.down();
+    await pressTrimHandle(page, bravoBox.x + bravoBox.width / 2, bravoBox.y + bravoBox.height / 2);
     await page.mouse.move(bravoBox.x - 30, bravoBox.y + bravoBox.height / 2, { steps: 6 });
     await page.mouse.up();
     const bravoWidth = (await bravo.boundingBox())!.width;
@@ -5604,8 +5639,7 @@ test.describe("graph view E2E", () => {
 
     const handle = wrapper.locator("[data-trim-handle]").last();
     const box = (await handle.boundingBox())!;
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
+    await pressTrimHandle(page, box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.move(box.x - 24, box.y + box.height / 2, { steps: 6 });
 
     // The PANE was asked for the frame, and the floating panel stood down.
@@ -5693,6 +5727,59 @@ test.describe("graph view E2E", () => {
     expect(api.patchesFor(PROJECT_ID).length).toBe(patchesBefore);
   });
 
+  test("panning the strip from a trim handle scrolls instead of trimming", async ({ page }) => {
+    // THE REPORTED BUG, with the input that produced it: a real mouse, on the
+    // real strip, panning from a press that happened to land on a clip edge.
+    //
+    // Trim handles are 8px and always on with a mouse, so in a strip where
+    // clips sit flush every cut carries a 16px band. Panning is a plain drag
+    // anywhere on the surface. Those two were the same gesture on the same
+    // pixels, and the edge won every time — so scrolling the timeline silently
+    // shortened whichever clip you happened to start on.
+    //
+    // Only a trusted mouse proves this. The pan hook takes a real pointer
+    // capture and the handoff runs across two independent listener sets
+    // (native on the scroller, window from the gesture); a synthetic sequence
+    // exercises a different path through both.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const stripEl = strip(page, PROJECT_ID);
+    const alpha = stripEl.locator('[data-node-id="alpha"]');
+    const wrapper = stripEl.locator('[data-node-wrapper="alpha"]');
+    await selectCard(alpha);
+
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const handleBox = (await handle.boundingBox())!;
+    const widthBefore = (await alpha.boundingBox())!.width;
+    const scrollLeft = () => stripEl.evaluate((el: HTMLElement) => el.scrollLeft);
+    // The premise, stated so a fixture that stops overflowing fails HERE with
+    // a reason rather than below as a mysteriously unscrolled strip.
+    expect(
+      await stripEl.evaluate((el: HTMLElement) => el.scrollWidth - el.clientWidth),
+    ).toBeGreaterThan(80);
+    expect(await scrollLeft()).toBe(0);
+
+    // Press and GO — no dwell. This is the hand that was already moving.
+    const y = handleBox.y + handleBox.height / 2;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x - 80, y, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(80); // outlast dnd-kit's click suppressor
+
+    // It scrolled, and it did not edit. The width is the assertion that
+    // matters: the card MOVED with the scroll, so position proves nothing,
+    // but only a trim can change how wide it is.
+    expect(await scrollLeft()).toBeGreaterThan(0);
+    expect((await alpha.boundingBox())!.width).toBeCloseTo(widthBefore, 0);
+    await expect(handle).not.toHaveAttribute("data-trim-armed", "true");
+
+    // And the pan did not open the clip on the way past either — the press
+    // began on a handle, whose preventDefault swallows the trailing click.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {
     // PL10-005/007. The live frame is its own small surface: sized to the
     // breadcrumb row (a size reference, not a location — it follows the CLIP,
@@ -5710,8 +5797,7 @@ test.describe("graph view E2E", () => {
     // edge (the first is the front/in edge).
     const handle = wrapper.locator("[data-trim-handle]").last();
     const handleBox = (await handle.boundingBox())!;
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-    await page.mouse.down();
+    await pressTrimHandle(page, handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
     await page.mouse.move(handleBox.x - 24, handleBox.y + handleBox.height / 2, { steps: 6 });
 
     const frame = page.locator('[data-trim-edge-frame="right"]');
@@ -8935,8 +9021,7 @@ test.describe("graph view E2E", () => {
       // Left shortens by dragging RIGHT, right by dragging left.
       const dir = side === "left" ? 1 : -1;
 
-      await page.mouse.move(hb.x + hb.width / 2, y);
-      await page.mouse.down();
+      await pressTrimHandle(page, hb.x + hb.width / 2, y);
       const widths: number[] = [];
       for (const step of [20, 40]) {
         await page.mouse.move(hb.x + hb.width / 2 + dir * step, y, { steps: 3 });

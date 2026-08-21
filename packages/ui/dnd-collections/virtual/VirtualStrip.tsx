@@ -39,6 +39,8 @@ import {
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { findNodeElement, isEditableKeyboardTarget } from "../react/node-dom";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
+import { PAN_SURFACE_ATTR } from "../react/gesture-thresholds";
+import { isTrimGestureArmed } from "../react/trim-gesture";
 import { TrimOverviewStrip } from "../react/trim-overview";
 import { TrimPreviewContext, type LiveTrim, type TrimPreview } from "../react/trim-preview-context";
 import { useBackgroundSelectionClear } from "../react/use-background-clear";
@@ -124,8 +126,15 @@ function resolveStripIndex(key: string, current: number, count: number): number 
 // editable/opted-out targets the keyboard delegation defers to (inputs,
 // contenteditable, and anything marked data-collections-keyboard-ignore —
 // e.g. the graph's drill button) own their pointer gestures too.
+//
+// TRIM HANDLES PAN TOO, and that is the whole point of them being here. They
+// used to be excluded alongside the grip bars, which made an 8px band at every
+// clip edge — 16px at every cut, where two clips sit flush — a place where a
+// pan silently became an edit. Now both gestures arm on the same press and the
+// trim yields unless it settles (see `trimArmDelayFor`); the pan learns the
+// outcome through `isGestureClaimed` below.
 const isPannableStripSurface = (target: Element): boolean =>
-  !target.closest("[data-drag-handle], [data-trim-handle], [data-trim-overview]") &&
+  !target.closest("[data-drag-handle], [data-trim-overview]") &&
   !isEditableKeyboardTarget(target);
 const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
@@ -1019,8 +1028,11 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         panToScroll
           ? {
               shouldStartPan: isPannableStripSurface,
-              // Hold-to-drag can claim a press mid-slop; the pan stands down.
-              isGestureClaimed: () => store.getSnapshot().interaction.isDragging,
+              // Hold-to-drag can claim a press mid-slop; so can a trim handle
+              // that settled long enough to arm. Either way the pan stands
+              // down — it is the gesture that costs nothing to lose.
+              isGestureClaimed: () =>
+                store.getSnapshot().interaction.isDragging || isTrimGestureArmed(),
             }
           : STRIP_PAN_DISABLED,
       [panToScroll, store]
@@ -1426,6 +1438,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
           <div
             ref={setContainerRef}
             data-virtual-strip={collectionId}
+            // Tells the trim gesture that a plain press here means PAN unless
+            // it settles. Keyed off the same flag that installs the pan hook,
+            // so a strip with panning off keeps instant trims.
+            {...(panToScroll ? { [PAN_SURFACE_ATTR]: "" } : {})}
             // One-row grid: arrow keys rove across columns, and aria-colcount /
             // aria-colindex expose the true position ("column 500 of 1000") even
             // though only a handful of cells are mounted.

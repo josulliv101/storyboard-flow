@@ -27,6 +27,7 @@ import {
   nodeHandle,
   rectCenter,
   releaseAt,
+  TRIM_ARM_SETTLE_MS,
   waitForLayout,
 } from "./stories-helpers";
 
@@ -1167,7 +1168,7 @@ export const TrimMediaWithHandles: Story = {
       const y = r.top + r.height / 2;
       const x = r.left + r.width / 2;
       await dispatchPointerSequence([
-        { element: el, type: "pointerdown", clientX: x, clientY: y },
+        { element: el, type: "pointerdown", clientX: x, clientY: y, delayAfterMs: TRIM_ARM_SETTLE_MS },
         { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 30 },
       ]);
     };
@@ -1538,7 +1539,7 @@ export const LeftHandleGrowsLeft: Story = {
       const y = r.top + r.height / 2;
       const x = r.left + r.width / 2;
       await dispatchPointerSequence([
-        { element: el, type: "pointerdown", clientX: x, clientY: y },
+        { element: el, type: "pointerdown", clientX: x, clientY: y, delayAfterMs: TRIM_ARM_SETTLE_MS },
         { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 40 },
       ]);
     };
@@ -1622,7 +1623,7 @@ export const LeftHandleShrinkStaysAnchored: Story = {
       const y = r.top + r.height / 2;
       const x = r.left + r.width / 2;
       await dispatchPointerSequence([
-        { element: el, type: "pointerdown", clientX: x, clientY: y },
+        { element: el, type: "pointerdown", clientX: x, clientY: y, delayAfterMs: TRIM_ARM_SETTLE_MS },
         { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 40 },
       ]);
     };
@@ -1943,7 +1944,7 @@ export const PixelsPerSecondSizing: Story = {
       .querySelector<HTMLElement>('[data-trim-handle="right"]')!;
     const start = rectCenter(handleEl);
     await dispatchPointerSequence([
-      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y, delayAfterMs: TRIM_ARM_SETTLE_MS },
       { element: document, type: "pointermove", clientX: start.x - 48, clientY: start.y, delayAfterMs: 30 },
     ]);
     await waitFor(() => expect(width("vid")).toBe(192));
@@ -2081,7 +2082,7 @@ export const ConsumerFloorLivePreview: Story = {
     // Over-drag far past the floor and HOLD: the LIVE width clamps at the
     // consumer's 60px, not the package's 12px minimum.
     await dispatchPointerSequence([
-      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y, delayAfterMs: TRIM_ARM_SETTLE_MS },
       { element: document, type: "pointermove", clientX: start.x - 600, clientY: start.y, delayAfterMs: 30 },
     ]);
     await waitFor(() => expect(width()).toBe(60));
@@ -2192,7 +2193,7 @@ export const OverlayRidesLeftTrimTransform: Story = {
     // Grow left by 48px (trim-in 3s -> 1s): the content layer translates
     // -48 to anchor the right edge, and the playhead rides it.
     await dispatchPointerSequence([
-      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y, delayAfterMs: TRIM_ARM_SETTLE_MS },
       { element: document, type: "pointermove", clientX: start.x - 48, clientY: start.y, delayAfterMs: 40 },
     ]);
     await waitFor(() => expect(vidWidth()).toBe(9 * 24));

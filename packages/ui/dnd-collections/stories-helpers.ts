@@ -1,5 +1,7 @@
 import { expect, waitFor } from "storybook/test";
 
+import { TRIM_ARM_DELAY_MS } from "./react/gesture-thresholds";
+
 // Pointer simulation for dnd-kit's PointerSensor. `isPrimary: true` is
 // load-bearing: PointerSensor ignores non-primary pointers entirely, and
 // PointerEventInit defaults it to false — a sequence without it dispatches
@@ -43,6 +45,25 @@ export async function dispatchPointerSequence(steps: readonly PointerStep[]): Pr
     }
   }
 }
+
+/**
+ * How long a story must HOLD a trim-handle press before the trim arms.
+ *
+ * On a surface that PANS — any VirtualStrip with `panToScroll` on — a trim does
+ * not begin on the pointerdown. The press has to settle for
+ * `TRIM_ARM_DELAY_MS` or it is handed to the pan, because otherwise the two
+ * are the same horizontal drag on the same 8px of screen and the strip cannot
+ * tell which one was meant. A story that moves straight off a handle is
+ * therefore exercising the PAN — see
+ * `GestureArbitration.stories.tsx` › MovingOffATrimHandlePansInstead, which
+ * does exactly that on purpose.
+ *
+ * DERIVED, not typed out: the threshold is being tuned by hand, and a settle
+ * frozen at an old value would quietly turn every trim assertion into a scroll
+ * one. The margin is for a loaded machine, which must not be able to land
+ * inside the window.
+ */
+export const TRIM_ARM_SETTLE_MS = TRIM_ARM_DELAY_MS + 160;
 
 export async function waitForLayout(element: HTMLElement): Promise<void> {
   await waitFor(() => {

@@ -117,17 +117,33 @@ export const GraphTrimHandle = memo(function GraphTrimHandle({
         // which faded the ink across the 8px and put its bright mass against
         // the outer edge — so the grip below, at a measured 50%, still read as
         // off-centre. The bar was never the problem; the field around it was.
-        "bg-white/85",
-        // WHITE, because it is the one highlight that is not already a state.
-        // Blue is selection everywhere on this board — the ring, the check,
-        // the count — so a handle on every clip would spend the colour that
-        // already had a job; amber was tried and reads as a third accent.
+        //
+        // QUIET AT REST, and the armed state below is what pays for it. This
+        // was a solid `white/85` — what an affordance looks like when it has
+        // to announce itself unaided, on every clip, forever. It no longer
+        // does: a press on the strip has to settle before it trims (the same
+        // drag is how the strip pans), so the handle now has a MOMENT to speak
+        // at, and at rest it can recede into the clip instead of sitting on
+        // six edges shouting. GREY rather than a dimmer white because it has
+        // to hold against a bright frame as well as a dark one, and because
+        // grey is the one value here that is not already a state — blue is
+        // selection everywhere on this board (the ring, the check, the count)
+        // and amber reads as a third accent.
+        "bg-zinc-400/45",
+        // ARMED: the press settled, and the next pull edits rather than
+        // scrolls. Those two outcomes are far enough apart that the handle has
+        // to say which one it is holding — the one moment it goes full
+        // strength. Colour only, no geometry: it must not move under the
+        // finger already on it.
+        "transition-colors group-data-[trim-armed=true]/trim:bg-white/95",
         side === "left" ? "rounded-l-md" : "rounded-r-md",
       ].join(" ")}
     >
       {/* The grip, centred in a now-uniform field. Taller on a coarse pointer
-          for the same reason the target is wider there. */}
-      <span className="h-5 w-0.5 rounded-full bg-black/70 [@media(pointer:coarse)]:h-7" />
+          for the same reason the target is wider there — and full-height and
+          darker once armed, the one geometry change allowed here because it
+          happens INSIDE the handle rather than to it. */}
+      <span className="h-5 w-0.5 rounded-full bg-black/45 transition-[height,background-color] group-data-[trim-armed=true]/trim:h-full group-data-[trim-armed=true]/trim:bg-black/70 [@media(pointer:coarse)]:h-7" />
     </span>
   );
 });
