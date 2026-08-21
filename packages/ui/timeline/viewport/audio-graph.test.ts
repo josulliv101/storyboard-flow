@@ -14,6 +14,7 @@ import { at } from "../../test-support/at";
  *  `createMediaElementSource` throws on a second call for one element. */
 function createFakeContext() {
   const gains: MinimalGainNode[] = [];
+  const disconnected: MinimalGainNode[] = [];
   const sourceCalls: HTMLMediaElement[] = [];
   let state = "suspended";
   let closed = false;
@@ -27,7 +28,9 @@ function createFakeContext() {
       const node: MinimalGainNode = {
         gain: { value: 1 },
         connect: () => undefined,
-        disconnect: () => undefined,
+        disconnect: () => {
+          disconnected.push(node);
+        },
       };
       gains.push(node);
       return node;
@@ -50,6 +53,7 @@ function createFakeContext() {
   return {
     context,
     gains,
+    disconnected,
     sourceCalls,
     isClosed: () => closed,
     getState: () => state,
@@ -214,5 +218,65 @@ describe("createAudioMixer", () => {
     mixer.dispose();
 
     expect(fake.isClosed()).toBe(true);
+  });
+});
+
+describe("release", () => {
+  it("DISCONNECTS the element's branch, which is what actually frees it", () => {
+    // The WeakMaps above never held the element strongly; the AUDIO GRAPH did.
+    // A source node stays connected until someone disconnects it, and keeps
+    // the element and its decoder alive for as long as it is — so dropping the
+    // caller's reference without this frees nothing and still looks correct.
+    const fake = createFakeContext();
+    const mixer = createAudioMixer(() => fake.context);
+    const element = fakeElement();
+
+    mixer.attach(element);
+    expect(fake.disconnected).toHaveLength(0);
+
+    mixer.release(element);
+    expect(fake.disconnected).toHaveLength(1);
+  });
+
+  it("stops steering a released element's level", () => {
+    const fake = createFakeContext();
+    const mixer = createAudioMixer(() => fake.context);
+    const element = fakeElement();
+    mixer.attach(element);
+    const gain = at(fake.gains, 0);
+
+    mixer.release(element);
+    gain.gain.value = 0.42;
+    mixer.setSourceGain(element, 1);
+
+    // Untouched: the mixer has forgotten this element rather than holding a
+    // gain node it can still write through.
+    expect(gain.gain.value).toBe(0.42);
+  });
+
+  it("drops a FALLBACK element — the module's one strong reference", () => {
+    // Elements on the fallback path live in a Set, not a WeakMap, so without
+    // this they are retained for the mixer's whole life.
+    const mixer = createAudioMixer(() => null);
+    const element = fakeElement();
+    mixer.attach(element);
+
+    mixer.setSourceGain(element, 1);
+    mixer.setMasterVolume(1);
+    const heldVolume = element.volume;
+    expect(heldVolume).toBeGreaterThan(0);
+
+    mixer.release(element);
+    element.volume = 0.33;
+    mixer.setMasterVolume(0.1);
+
+    // A still-tracked element would have been re-levelled by that master move.
+    expect(element.volume).toBe(0.33);
+  });
+
+  it("is safe on an element that was never attached", () => {
+    const fake = createFakeContext();
+    const mixer = createAudioMixer(() => fake.context);
+    expect(() => mixer.release(fakeElement())).not.toThrow();
   });
 });
