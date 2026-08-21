@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Keeps a preview media element seeked to `time`, one in-flight seek at a time
@@ -27,16 +27,74 @@ import { useCallback, useEffect, useRef } from "react";
  * element at all — so opening the details view spun a 60fps loop checking a
  * null ref for as long as it stayed open.
  */
-export function useSeekedVideo(time: number, enabled = true, playing = false) {
+export function useSeekedVideo(
+  time: number,
+  enabled = true,
+  playing = false,
+  scrub: Readonly<{ proxySrc?: string | null; scrubbing?: boolean }> = {},
+) {
+  const { proxySrc = null, scrubbing = false } = scrub;
   const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const proxyElementRef = useRef<HTMLVideoElement | null>(null);
   const targetRef = useRef(time);
+  const scrubbingRef = useRef(scrubbing);
+  const hasProxy = proxySrc !== null;
+
+  /**
+   * WHICH ELEMENT IS ON SCREEN.
+   *
+   * Mostly derived: while a scrub is running the answer is simply "the proxy".
+   * The only thing that needs remembering is the tail — after the hand stops,
+   * the proxy has to stay up until the real element has actually caught up, or
+   * the swap reveals whatever frame it was left on when the drag STARTED.
+   *
+   * Adjusted during render rather than in an effect. Setting state from an
+   * effect for this is a lint error in this repo and deserves to be: it renders
+   * the wrong element first and corrects it on a second pass, which for one
+   * frame is exactly the stale picture this exists to avoid.
+   */
+  const [heldAfterScrub, setHeldAfterScrub] = useState(false);
+  const [previousScrubbing, setPreviousScrubbing] = useState(scrubbing);
+  const [previousProxySrc, setPreviousProxySrc] = useState(proxySrc);
+  const heldRef = useRef(false);
+
+  if (previousScrubbing !== scrubbing) {
+    setPreviousScrubbing(scrubbing);
+    // Entering a scrub needs no flag — `scrubbing` itself answers. LEAVING one
+    // does: this is the hand-back, and it is not finished until the real
+    // element lands.
+    if (!scrubbing) setHeldAfterScrub(true);
+  }
+  if (previousProxySrc !== proxySrc) {
+    setPreviousProxySrc(proxySrc);
+    // A proxy for a source that has since changed is a picture of another clip.
+    setHeldAfterScrub(false);
+  }
+
+  const showProxy = hasProxy && (scrubbing || heldAfterScrub);
 
   useEffect(() => {
     targetRef.current = time;
   }, [time]);
 
+  useEffect(() => {
+    scrubbingRef.current = scrubbing;
+  }, [scrubbing]);
+
+  // Mirrored for the settle loop, which must not be rebuilt when this flips —
+  // and written in an EFFECT for the same reason `targetRef` above is: a ref
+  // assignment during render is a side effect in a function React may call
+  // speculatively and discard.
+  useEffect(() => {
+    heldRef.current = heldAfterScrub;
+  }, [heldAfterScrub]);
+
   const attachVideo = useCallback((media: HTMLMediaElement | null) => {
     mediaRef.current = media;
+  }, []);
+
+  const attachProxy = useCallback((element: HTMLVideoElement | null) => {
+    proxyElementRef.current = element;
   }, []);
 
   useEffect(() => {
@@ -75,12 +133,49 @@ export function useSeekedVideo(time: number, enabled = true, playing = false) {
           }
         } else {
           if (!media.paused) media.pause();
+          const proxy = proxyElementRef.current;
+
+          if (scrubbingRef.current && proxy !== null) {
+            // ONLY THE PROXY MOVES UNDER A DRAG. Seeking both would put two
+            // decodes per frame on the same GPU for every panel that is a
+            // video — and this view mounts one element PER PANEL, so at nine
+            // up that is the difference between a handful of decoders and
+            // twenty. The real element is left exactly where it was; it
+            // catches up once the hand stops.
+            if (
+              proxy.readyState >= 1 &&
+              !proxy.seeking &&
+              Math.abs(proxy.currentTime - targetRef.current) > 0.03
+            ) {
+              try {
+                proxy.currentTime = targetRef.current;
+              } catch {
+                // metadata raced away; next frame retries
+              }
+            }
+            raf = requestAnimationFrame(tick);
+            return;
+          }
+
           if (!media.seeking && Math.abs(media.currentTime - targetRef.current) > 0.03) {
             try {
               media.currentTime = targetRef.current;
             } catch {
               // metadata raced away; next frame retries
             }
+          } else if (
+            heldRef.current &&
+            !media.seeking &&
+            media.readyState >= 2 &&
+            Math.abs(media.currentTime - targetRef.current) <= 0.03
+          ) {
+            // THE HANDOVER, and the reason it waits: swapping back the moment
+            // the drag ends would reveal whatever frame the real element was
+            // left on, which is wherever the scrub STARTED. It stays on the
+            // proxy until the real one is genuinely showing the frame that was
+            // landed on.
+            heldRef.current = false;
+            setHeldAfterScrub(false);
           }
         }
       }
@@ -94,10 +189,11 @@ export function useSeekedVideo(time: number, enabled = true, playing = false) {
       // mid-play, and an element nobody can see is still an element making
       // noise.
       mediaRef.current?.pause();
+      proxyElementRef.current?.pause();
     };
   }, [enabled, playing]);
 
-  return attachVideo;
+  return { videoRef: attachVideo, proxyRef: attachProxy, showProxy };
 }
 
 /**

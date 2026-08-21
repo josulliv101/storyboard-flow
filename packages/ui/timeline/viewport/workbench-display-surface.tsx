@@ -1674,15 +1674,43 @@ export function WorkbenchDisplaySurface({
       const cached = cacheRef.current.get(media.key);
       if (!isPlayable(cached)) return;
       const video = cached.element;
-      if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.seeking) return;
+      if (video.readyState < HTMLMediaElement.HAVE_METADATA) return;
 
       const maxTime = Number.isFinite(video.duration)
         ? Math.max(0, video.duration - 0.001)
         : media.sourceTime;
       const target = clamp(media.sourceTime, 0, maxTime);
+
+      // THE PROXY CHASES EVEN WHILE THE REAL ELEMENT IS BUSY, which matters
+      // more here than anywhere else. The comment above this loop describes a
+      // cold trim seek taking the better part of a second — that is a second
+      // with no new frame, on the one gesture whose entire purpose is choosing
+      // a frame. The proxy is not subject to the wait, so the handle has
+      // something to show the whole way down.
+      //
+      // Deliberately BEFORE the `seeking` bail below: gating it on the real
+      // element being idle would silence it during exactly the long seeks it
+      // exists to cover.
+      const proxy = ensureScrubProxy(media);
+      if (
+        proxy !== null &&
+        proxy.readyState >= HTMLMediaElement.HAVE_METADATA &&
+        !proxy.seeking &&
+        Math.abs(proxy.currentTime - target) > 0.03
+      ) {
+        try {
+          proxy.currentTime = target;
+        } catch {
+          // Metadata raced away; the next frame retries.
+        }
+      }
+
+      if (video.seeking) return;
+
       // `currentTime` reads back as the seek TARGET mid-seek, so this does not
       // re-issue while the browser is still decoding.
       if (Math.abs(video.currentTime - target) > 0.03) {
+        pictureSeekInFlightRef.current.set(media.key, true);
         try {
           video.currentTime = target;
         } catch {
@@ -1690,11 +1718,13 @@ export function WorkbenchDisplaySurface({
         }
         return;
       }
+      // Landed: the real frame is the one to show again.
+      pictureSeekInFlightRef.current.set(media.key, false);
       if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) drawActiveFrame();
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [overrideActive, drawActiveFrame]);
+  }, [overrideActive, drawActiveFrame, ensureScrubProxy]);
 
   useEffect(() => {
     bufferedMedia.forEach((media) => {

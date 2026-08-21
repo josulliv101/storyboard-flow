@@ -22,6 +22,7 @@ import {
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
+import { cloudinaryScrubProxySrc } from "@/lib/cloudinary-scrub-proxy";
 import { useFrameCrossfade } from "@/hooks/use-frame-crossfade";
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
@@ -370,6 +371,7 @@ function DetailsPanel({
   onPlayFromStart = null,
   live: onScreen = false,
   magnified = false,
+  scrubbing = false,
   swipe,
   seamLabel = null,
   width,
@@ -455,6 +457,10 @@ function DetailsPanel({
    * stops being one of three pictures and becomes the only one that matters.
    */
   magnified?: boolean;
+  /** True while this panel is the one the seam clock is driving AND the bar is
+   *  being dragged — the only moment a panel seeks fast enough to need the
+   *  small copy. A resting neighbour holds one still frame and never seeks. */
+  scrubbing?: boolean;
   /**
    * Pointer handlers for dragging the whole strip, spread onto the PICTURE.
    *
@@ -553,10 +559,15 @@ function DetailsPanel({
   // Gated on `video`: an image has no source window and no element to seek, so
   // the settle loop had nothing to do but spin for as long as the modal stayed
   // open.
-  const videoRef = useSeekedVideo(
+  // Null for anything not served as a Cloudinary video — a fixture, an upload
+  // still in flight — and the hook simply scrubs the real element then, which
+  // is what it always did.
+  const scrubProxySrc = shownVideo?.src ? cloudinaryScrubProxySrc(shownVideo.src) : null;
+  const { videoRef, proxyRef, showProxy } = useSeekedVideo(
     Math.round(rawTime * 25) / 25,
     shownVideo !== null || shownAudio !== null,
     audible,
+    { proxySrc: scrubProxySrc, scrubbing },
   );
   // A panel crossing the centre swaps which end of its clip it rests on, and
   // the two frames are seconds of story apart — cut between them and the eye
@@ -950,6 +961,36 @@ function DetailsPanel({
               // reads as the page misbehaving even when the swipe does work.
               draggable={false}
               className="h-full w-full bg-black object-contain select-none"
+            />
+          )}
+          {/* THE SMALL COPY, shown only while the bar is being dragged.
+              A full-res seek costs 67-128ms on these sources and this view
+              mounts an element PER PANEL, so a nine-up strip of video was
+              asking for nine of them at once — measured at 714ms a seek, which
+              is a picture that changes about once a second under a hand moving
+              far faster than that.
+
+              ABSOLUTE, AFTER the real element in the DOM, so it paints over it
+              without either one moving: same box, same `object-contain`, so
+              the swap is a change of sharpness and nothing else. It sits UNDER
+              the crossfade canvas below, which must stay on top to cover a cut.
+
+              No `poster`: a poster would flash the clip's first frame at the
+              start of every drag, which is precisely the wrong frame. */}
+          {shownVideo && scrubProxySrc !== null && (
+            <video
+              key={`scrub-proxy:${scrubProxySrc}`}
+              ref={proxyRef}
+              src={scrubProxySrc}
+              aria-hidden="true"
+              muted
+              playsInline
+              preload="auto"
+              draggable={false}
+              className={[
+                "pointer-events-none absolute inset-0 h-full w-full bg-black object-contain select-none",
+                showProxy ? "opacity-100" : "opacity-0",
+              ].join(" ")}
             />
           )}
           {/* THE OUTGOING FRAME, held over the picture while the incoming one
@@ -1649,6 +1690,7 @@ function DetailsFilmstripModal({
               // dragged: the neighbours are context, and enlarging them would
               // be enlarging the thing you are trying to look past.
               magnified={index === centre && scrubbing}
+              scrubbing={index === centre && scrubbing}
               swipe={swipe}
               width={panelWidth}
               // Engaged, and not the one being watched. Uses the same gate as
