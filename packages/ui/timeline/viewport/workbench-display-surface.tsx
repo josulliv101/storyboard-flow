@@ -1792,8 +1792,17 @@ export function WorkbenchDisplaySurface({
       if (cached.kind === "image" && !cached.element.complete) {
         cached.element.addEventListener("load", drawActiveFrame, { once: true });
       }
+      // THE SMALL COPY IS BUILT HERE TOO, not on the first seek that wants it.
+      //
+      // Built lazily, a proxy is created mid-drag and spends the rest of that
+      // gesture loading — so the FIRST scrub over any clip got nothing from it,
+      // which is the pass where the full-res element is coldest and the picture
+      // needs it most. This is the same window that already decides which clips
+      // are worth downloading ahead; a proxy is a fraction of the file it sits
+      // beside, and it is now ready before the hand arrives.
+      ensureScrubProxy(media);
     });
-  }, [bufferedMedia, drawActiveFrame, ensureCachedMedia]);
+  }, [bufferedMedia, drawActiveFrame, ensureCachedMedia, ensureScrubProxy]);
 
   // Repaint on a new CLIP LIST as well as a new time. `renderFrameAtTime`
   // reads the clips through a ref (so playback doesn't re-create it every
