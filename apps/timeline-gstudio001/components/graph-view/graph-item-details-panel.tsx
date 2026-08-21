@@ -63,7 +63,6 @@ export function DetailsPanel({
   magnified = false,
   scrubbing = false,
   swipe,
-  seamLabel = null,
   width,
   dimmed = false,
   clipLabel,
@@ -173,7 +172,6 @@ export function DetailsPanel({
    * about it. The neighbours are exactly one frame each, and WHICH frame is
    * the entire reason they are on screen.
    */
-  seamLabel?: { text: string; side: "left" | "right" } | null;
   /** Set by the strip, which owns how many panels are on screen. */
   width: string;
   /**
@@ -419,28 +417,6 @@ export function DetailsPanel({
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        {seamLabel === null ? null : (
-          <span
-            data-item-details-seam-label
-            aria-hidden="true"
-            // HUGGING THE SEAM. The clip before the cut carries its label on
-            // its RIGHT and the clip after carries its on the LEFT, so both
-            // sit against the join they describe rather than at the far
-            // outside edges of the strip — where they would read as titles for
-            // the panels instead of as facts about the cut between them.
-            //
-            // Above the card, not inside it: the panel's own top row is the
-            // clip's name and its controls, and this is neither. Decorative
-            // for AT — the centre panel's dialog label already says what is
-            // open, and a neighbour resting on a frame is a visual aid.
-            className={[
-              "pointer-events-none absolute -top-6 font-mono text-[10px] tracking-wide text-zinc-500 uppercase",
-              seamLabel.side === "right" ? "right-1" : "left-1",
-            ].join(" ")}
-          >
-            {seamLabel.text}
-          </span>
-        )}
         <ItemDetailsPanelHeader
           name={node.name}
           clipLabel={clipLabel ?? null}

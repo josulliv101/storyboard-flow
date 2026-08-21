@@ -28,46 +28,36 @@ import {
  * them travel; and the clips that arrive slide in from the edge rather than
  * appearing there.
  *
- * ── BRIGHT AND DIM ───────────────────────────────────────────────────────
+ * ── ONE BOX IS LIT ───────────────────────────────────────────────────────
  *
- * The strip covers the whole collection, but the CLOCK covers a window of it
- * — playing and scrubbing only ever reach the clips the carousel has on
- * screen. Rather than hide that, the bar states it: the clips inside the
- * window are lit and scrubbable, the rest are context you can see coming.
- * Pressing a dim one is not a scrub with nowhere to go; it advances the
- * carousel to that clip, which is the thing you were asking for.
+ * The centred clip, and only that one. It briefly lit every clip with a card
+ * on screen, which made the bar answer a question nobody was asking — you can
+ * already see which cards are up by looking at them — and spent the blue on a
+ * band of three or five boxes, so the one box that says WHERE YOU ARE had
+ * nothing to distinguish it. One lit box is a position; a lit band is a
+ * region, and the region was never the point.
+ *
+ * It is a look, not a limit: the clock covers the whole collection, so every
+ * box scrubs and the monitor shows whatever you land on, lit or not.
  */
 export function SeamStripBar({
   strip,
   centreClipId,
-  liveClipIds,
   playheadPx,
   playing,
-  dragShiftPx,
   onTogglePlay,
   onScrubTo,
-  onOpenClip,
   onScrubbingChange,
 }: Readonly<{
   strip: SeamStrip;
   /** The clip to centre — the one under the middle card. */
   centreClipId: string;
-  /** The clips the clock can currently reach. */
-  liveClipIds: ReadonlySet<string>;
+
   /** Where the playhead sits, in absolute strip pixels; null when untouched. */
   playheadPx: number | null;
   playing: boolean;
-  /** Live coupling with a swipe in progress — see the carousel. */
-  dragShiftPx: number;
   onTogglePlay: () => void;
   onScrubTo: (clipId: string, secondsIntoClip: number) => void;
-  /**
-   * Bring a clip to the middle. Currently UNUSED: it only steps one clip at a
-   * time, and the bar's reach is the whole collection. Wiring the two together
-   * needs the clock to span the collection too — the real fix for scrubbing
-   * past what is on screen — rather than a jump the row cannot follow.
-   */
-  onOpenClip: (clipId: string) => void;
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
   onScrubbingChange?: (active: boolean) => void;
@@ -122,9 +112,7 @@ export function SeamStripBar({
   // `stripCentreOffset` centres within a container, so it is handed twice the
   // distance to the target — the one container width whose middle is exactly
   // where the card is.
-  const offset =
-    stripCentreOffset(strip, centreClipId, centreAtPx > 0 ? centreAtPx * 2 : trackWidth) +
-    dragShiftPx;
+  const offset = stripCentreOffset(strip, centreClipId, centreAtPx > 0 ? centreAtPx * 2 : trackWidth);
 
   const resolve = useCallback(
     (clientX: number) => {
@@ -141,16 +129,10 @@ export function SeamStripBar({
       if (!event.isPrimary || event.button !== 0) return;
       const at = resolve(event.clientX);
       if (at === null) return;
-      // A dim clip is INERT for now, and this is a known gap rather than a
-      // decision — see the note on `onOpenClip`.
-      //
-      // It used to jump the carousel to whatever was pressed, which broke
-      // badly: `onOpenClip` advances by ONE, so a press five clips away moved
-      // the subject five steps while the row animated one, leaving the cards
-      // strewn across the viewport. A bar DRAG starts with a press, and a
-      // press very often lands on a dim clip, so scrubbing routinely threw the
-      // layout apart.
-      if (!liveClipIds.has(at.clipId)) return;
+      // EVERY box scrubs, including the ones with no card on screen — the
+      // clock covers the whole collection now, so there is nowhere on this bar
+      // that means nothing. The monitor shows whatever you land on; the row
+      // stays where it is.
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
@@ -164,20 +146,17 @@ export function SeamStripBar({
       onScrubbingChange?.(true);
       onScrubTo(at.clipId, at.secondsIntoClip);
     },
-    [resolve, liveClipIds, onOpenClip, onScrubTo, onScrubbingChange],
+    [resolve, onScrubTo, onScrubbingChange],
   );
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (!dragging) return;
       const at = resolve(event.clientX);
-      // Dragging ACROSS a dim clip does not advance the carousel — that would
-      // move the ground under a gesture in progress. It simply stops tracking
-      // until the pointer comes back over something the clock can reach.
-      if (at === null || !liveClipIds.has(at.clipId)) return;
+      if (at === null) return;
       onScrubTo(at.clipId, at.secondsIntoClip);
     },
-    [dragging, resolve, liveClipIds, onScrubTo],
+    [dragging, resolve, onScrubTo],
   );
 
   const endDrag = useCallback(() => {
@@ -227,20 +206,26 @@ export function SeamStripBar({
           style={{
             transform: `translateX(${offset}px)`,
             width: strip.totalPx,
-            // NO TRANSITION WHILE A FINGER IS ON IT. During a swipe the shift
-            // is already following the hand frame by frame; easing it too
-            // would put the bar behind the cards it is supposed to move with.
-            transition: dragShiftPx === 0 ? "transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1)" : "none",
+            // ONE MOVE PER CLIP, and none at all while the hand is down.
+            //
+            // The first version followed the drag frame by frame, spending the
+            // same fraction of a step the row spent. It was faithful and it
+            // read badly: the bar twitched under a gesture that had not
+            // decided anything yet, and a swipe that fell short left it easing
+            // back from nowhere. The bar answers "which clip am I on", which
+            // is a question with no answer mid-drag — so it waits for the
+            // commit and then makes one smooth move to centred.
+            transition: "transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1)",
           }}
         >
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;
-            const live = liveClipIds.has(segment.clipId);
+            const isCentre = segment.clipId === centreClipId;
             return (
               <span
                 key={segment.clipId}
                 data-seam-segment={segment.clipId}
-                data-seam-segment-live={live ? "" : undefined}
+                data-seam-segment-live={isCentre ? "" : undefined}
                 aria-hidden="true"
                 // Inset from BOTH sides, so the gap between boxes costs a
                 // pixel either end and leaves the middle exactly where the
@@ -248,7 +233,7 @@ export function SeamStripBar({
                 style={{ left: segment.leftPx + 1, width: Math.max(1, segment.widthPx - 2) }}
                 className={[
                   "absolute inset-y-0 rounded-[3px]",
-                  live ? "bg-blue-500/70" : "bg-zinc-700/70",
+                  isCentre ? "bg-blue-500/80" : "bg-zinc-700/70",
                 ].join(" ")}
               />
             );

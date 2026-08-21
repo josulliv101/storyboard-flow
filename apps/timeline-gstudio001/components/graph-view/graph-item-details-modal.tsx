@@ -36,7 +36,7 @@ import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
 import { SeamStripBar } from "./graph-seam-strip-bar";
-import { buildSeamStrip, segmentFor, stripXFor } from "./graph-seam-strip";
+import { buildSeamStrip, stripXFor } from "./graph-seam-strip";
 import {
   buildSeamTimeline,
   seamAt,
@@ -57,10 +57,6 @@ import {
   rememberViewCount,
   type ViewCount,
 } from "./graph-item-details-view-count";
-
-/** How much of each neighbour the bar reaches into. Long enough to hear a cut
- *  land, short enough that the centre clip keeps most of the bar's scale. */
-const SEAM_LEAD_SECONDS = 2;
 
 /**
  * How many pixels a second of clip is worth ON THE BAR.
@@ -308,16 +304,42 @@ function DetailsFilmstripModal({
     (clip) => centreClip !== null && clip.id === centreClip.id,
   );
 
-  const timeline = useMemo(
+  // ── THE CLOCK COVERS THE WHOLE COLLECTION ────────────────────────────────
+  //
+  // It used to cover the three clips on screen plus a two-second lead into
+  // each neighbour, which made the bar's reach and the row's reach the same
+  // thing. That is exactly what stopped you scrubbing to a shot you could see
+  // coming: the boxes were drawn for the whole collection, but only the lit
+  // ones meant anything, and a press on the rest had nowhere to go.
+  //
+  // NO LEADS ANY MORE, and they are not missing so much as subsumed. A lead
+  // existed because the window's neighbours were only PARTLY on the bar — you
+  // got the approach to the cut and no more. With every clip present in full
+  // there is no partial neighbour to lead into; the run-up to any cut is just
+  // the clip before it, which is now on the bar in its entirety.
+  const collectionSeamClips = useMemo(
     () =>
-      buildSeamTimeline(
-        seamClipOf(edgeBefore),
-        wholeClips.map((clip) => seamClipOf(clip)!).filter(Boolean),
-        seamClipOf(edgeAfter),
-        SEAM_LEAD_SECONDS,
-        Math.max(0, subjectIndex),
-      ),
-    [edgeBefore, edgeAfter, wholeClips, subjectIndex],
+      place.clipIds
+        .map((id) => {
+          const found = graph.nodesById.get(parseNodeId(id));
+          return found && found.kind === "media" ? seamClipOf(found as MediaNode) : null;
+        })
+        .filter((clip): clip is SeamClip => clip !== null),
+    [place.clipIds, graph],
+  );
+
+  // WHERE THE BAR RESTS, as an index into what `buildSeamTimeline` will
+  // actually lay out. It drops zero-length clips, so counting the subject's
+  // place in the unfiltered list would put the rest position one clip out for
+  // every fully-trimmed clip before it.
+  const subjectSeamIndex = useMemo(() => {
+    const playable = collectionSeamClips.filter((clip) => clip.showingSeconds > 0);
+    return Math.max(0, playable.findIndex((clip) => clip.id === (node.id as string)));
+  }, [collectionSeamClips, node.id]);
+
+  const timeline = useMemo(
+    () => buildSeamTimeline(null, collectionSeamClips, null, 0, subjectSeamIndex),
+    [collectionSeamClips, subjectSeamIndex],
   );
 
   // ADVANCING RESETS THE CLOCK TO THIS CLIP'S START, because the bar is rebuilt
@@ -358,12 +380,19 @@ function DetailsFilmstripModal({
   // ANY clip the bar covers, not just the three it used to. With nine panels
   // the playhead can be inside a clip four along, and the monitor still has to
   // be able to paint it.
-  const monitorNode =
-    position === null
-      ? null
-      : [edgeBefore, ...wholeClips, edgeAfter].find(
-          (candidate) => candidate !== null && (candidate.id as string) === position.clipId,
-        ) ?? null;
+  // WHATEVER THE PLAYHEAD IS ON, mounted or not.
+  //
+  // This used to search the panels on screen, which was the same window the
+  // clock covered — so it could never be asked for anything else. Now the bar
+  // reaches the whole collection, and scrubbing onto a shot that is four cards
+  // away has to show you that shot: that is what "preview items that aren't
+  // even displayed" means. The row does NOT follow; the monitor does the
+  // travelling, which is the cheap half and the half you asked for.
+  const monitorNode = (() => {
+    if (position === null) return null;
+    const found = graph.nodesById.get(parseNodeId(position.clipId));
+    return found && found.kind === "media" ? (found as MediaNode) : null;
+  })();
 
   const panelWidth = panelWidthFor(viewCount);
 
@@ -406,18 +435,6 @@ function DetailsFilmstripModal({
     return buildSeamStrip(clips, BAR_PIXELS_PER_SECOND);
   }, [place.clipIds, graph]);
 
-  // The clips the CLOCK can reach — lit on the bar, and the only ones a scrub
-  // can land on. Everything else is context that slides past.
-  const liveClipIds = useMemo(
-    () =>
-      new Set(
-        [edgeBefore, ...wholeClips, edgeAfter]
-          .filter((clip): clip is MediaNode => clip !== null)
-          .map((clip) => clip.id as string),
-      ),
-    [edgeBefore, wholeClips, edgeAfter],
-  );
-
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
   // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
@@ -428,11 +445,6 @@ function DetailsFilmstripModal({
   const hasPrevious = centre > 0;
   const hasNext = centre >= 0 && centre < ids.length - 1;
   const [dragPx, setDragPx] = useState(0);
-  // The pressed panel's width, captured when a swipe starts. It is what turns
-  // a drag in pixels into a FRACTION of a step, which is the only way the bar
-  // and the row can move together: they take the same journey, but a card's
-  // step is a fixed panel width and a clip's step is its own duration.
-  const [dragPanelPx, setDragPanelPx] = useState(0);
   // Not state: this changes on nearly every pointer move and only the ROW's
   // transform cares. A re-render per move to store a start coordinate would
   // re-render three live panels — video elements included — sixty times a
@@ -464,7 +476,6 @@ function DetailsFilmstripModal({
           width: event.currentTarget.getBoundingClientRect().width,
           committed: false,
         };
-        setDragPanelPx(event.currentTarget.getBoundingClientRect().width);
       },
       onPointerMove: (event) => {
         const drag = dragRef.current;
@@ -520,29 +531,6 @@ function DetailsFilmstripModal({
     }),
     [centre, hasNext, hasPrevious, ids, onOpenNeighbour],
   );
-
-  // HOW FAR THE BAR MOVES WHILE THE HAND IS DOWN.
-  //
-  // The row and the bar make the same journey and take different distances to
-  // do it: a card's step is one panel width, a clip's step is the gap between
-  // its box's middle and its neighbour's, which is its own duration. So the
-  // drag is converted to a FRACTION of a step on the row, and that fraction is
-  // spent on the bar's own step.
-  //
-  // The sign falls out of it. Translate is `containerCentre - clipCentre`, so
-  // moving to a later clip lowers it and moving to an earlier one raises it —
-  // multiply the signed drag by the unsigned distance and both directions come
-  // out right without a branch.
-  const dragShiftPx = (() => {
-    if (dragPx === 0 || dragPanelPx <= 0 || centre < 0) return 0;
-    const here = segmentFor(strip, ids[centre] ?? "");
-    const target = segmentFor(strip, (dragPx < 0 ? ids[centre + 1] : ids[centre - 1]) ?? "");
-    if (here === null || target === null) return 0;
-    const distance = Math.abs(
-      target.leftPx + target.widthPx / 2 - (here.leftPx + here.widthPx / 2),
-    );
-    return (dragPx / dragPanelPx) * distance;
-  })();
 
   // WHERE THE PLAYHEAD IS, read across from the clock. The clock says "this
   // clip, this far in"; the strip says where that clip begins. Neither has to
@@ -601,12 +589,9 @@ function DetailsFilmstripModal({
             <SeamStripBar
               strip={strip}
               centreClipId={node.id as string}
-              liveClipIds={liveClipIds}
               playheadPx={playheadPx}
               playing={playing}
-              dragShiftPx={dragShiftPx}
               onTogglePlay={() => setPlaying((was) => !was)}
-              onOpenClip={onOpenNeighbour}
               onScrubbingChange={setScrubbing}
               onScrubTo={(clipId, secondsIntoClip) => {
                 // Back across the seam the other way: the bar reports a clip
@@ -731,7 +716,12 @@ function DetailsFilmstripModal({
                   ? { node: monitorNode, seconds: position.clipSeconds }
                   : null
               }
-              restingFrame={index < centre ? "last" : "first"}
+              // EVERY panel rests on its own first frame, the one before the
+              // centre included. It used to show that one's LAST frame, on the
+              // reasoning that the clip before a cut is best represented by
+              // what it hands over — which turned out to read as the wrong
+              // picture: a card is the SHOT, and a shot is what it opens on.
+              restingFrame="first"
               // Only the monitor makes sound: it is the panel showing what the
               // clock says is on screen, so it is the only one whose audio
               // could be in sync with anything.
@@ -748,13 +738,6 @@ function DetailsFilmstripModal({
               // the playhead lines and the ring, so the whole view agrees on
               // when the clock is running.
               dimmed={scrubbed && index !== centre}
-              seamLabel={
-                index === centre - 1
-                  ? { text: "Last frame", side: "right" }
-                  : index === centre + 1
-                    ? { text: "First frame", side: "left" }
-                    : null
-              }
               playhead={
                 scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
               }
