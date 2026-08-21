@@ -1,0 +1,161 @@
+"use client";
+
+import { useCallback, useState } from "react";
+
+import {
+  TrimOverviewStrip,
+  type AudioMediaNode,
+  type MediaNode,
+  type VideoMediaNode,
+} from "@storyboard/ui/dnd-collections";
+
+import { formatSeconds } from "@/lib/format-duration";
+import { TrimNumbers } from "./graph-item-details-trim-fields";
+
+/**
+ * THE SOURCE, THE WINDOW ON IT, AND THE TWO EDGES AS NUMBERS.
+ *
+ * Everything about a clip's DURATION, which is a different subject from the
+ * picture above it: the whole source as a filmstrip, the showing window with
+ * its grips, and the typed in/out points that reach an exact frame a pointer
+ * cannot. Lifted out of the panel with the width measurement it depends on,
+ * because that measurement exists only to size the strip.
+ */
+export function ItemDetailsTrimStrip({
+  node,
+  windowed,
+  video,
+  trimIn,
+  trimOut,
+  showing,
+  live,
+  playhead,
+}: Readonly<{
+  node: MediaNode;
+  /** The clip when it windows into a longer source — video and audio both. */
+  windowed: VideoMediaNode | AudioMediaNode | null;
+  /** Video only: the strip draws frames, and audio has none to draw. */
+  video: VideoMediaNode | null;
+  trimIn: number;
+  trimOut: number;
+  showing: number;
+  /** Non-null while an edge is being dragged, which disables the fields. */
+  live: unknown;
+  /** Where the seam clock sits inside this clip, 0..1, or null when it is
+   *  somewhere else entirely. */
+  playhead: number | null;
+}>) {
+  // HOW WIDE THE STRIP MAY DRAW, measured from the slot it lands in rather
+  // than assumed: the panel's width is a container query away from this file,
+  // and the strip needs a NUMBER to lay frames out with.
+  const [stripWidth, setStripWidth] = useState(0);
+  const stripSlot = useCallback((element: HTMLElement | null) => {
+    setStripWidth(element === null ? 0 : element.getBoundingClientRect().width);
+  }, []);
+
+  /* The whole source, with the showing window and its grips — the trim
+        handles, at a width the board could never give them.
+
+        THE FIRST THING TO GO WHEN THE PANEL NARROWS, and by some distance
+        the biggest: a filmstrip, a draggable window, two grips and a pair
+        of number fields. Below about 26rem they stop being controls and
+        become texture — the grips are a few pixels apart, the fields
+        collide — and at that width the panel is there to show you a frame
+        beside its neighbours, which is the thing you came for. Trimming
+        stays available on the board and in a wider view. */
+  return (
+    <div className="flex flex-col gap-2">
+    {windowed ? (
+      <>
+        {/* FRAMES, so video only — an audio clip has a source window but
+            nothing to paint in it. Its numbers below are the same. */}
+        {/* THE FILMSTRIP IS WHAT GOES, NOT TRIMMING ITSELF.
+            A source map with two grips and forty poster frames needs the
+            width. But dropping the whole block took the ability to trim
+            with it, and a panel you cannot trim from is a panel you have
+            to leave to do the work — the numbers below stay at every width
+            for exactly that reason. They are two fields and an arrow, they
+            fit, and typing an exact in and out was always the more precise
+            of the two routes anyway.
+
+            THE GATE IS 18rem, NOT 30. Thirty was chosen while nine-up
+            existed, where a panel really is a column; with five as the
+            widest view a panel is 19.2rem on a 1357px window — under the
+            old gate, so the filmstrip vanished at the exact density the
+            view is now for, and the grips went with it. Measured rather
+            than guessed: five-up is the density that has to keep them, so
+            the gate sits below it and a genuinely tiny panel still sheds
+            the strip. */}
+        {video && (
+          <div ref={stripSlot} className="hidden w-full @min-[18rem]:block">
+            {stripWidth > 0 ? (
+              <div className="relative">
+                <TrimOverviewStrip
+                  node={video}
+                  width={stripWidth}
+                  trimInSeconds={trimIn}
+                  trimOutSeconds={trimOut}
+                />
+                {/* WHERE PLAY IS, in this clip. Absent — not parked at an
+                    edge — when the playhead is in another clip: a line at
+                    0% reads as "playing here, from the very start", which
+                    is a different and wrong claim from "not playing here".
+                    Its position is measured against the whole trimmed
+                    clip, so the run-up into the previous clip puts the
+                    line near this strip's right-hand END. */}
+                {playhead !== null && (
+                  <span
+                    data-seam-playhead-line
+                    aria-hidden="true"
+                    style={{ left: `${playhead * 100}%` }}
+                    className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-red-500"
+                  />
+                )}
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {/* TYPED in/out (PL11-006). Dragging resolves to whatever a pixel
+            is worth — ~0.11s here, and coarser on the board — so an exact
+            edge was simply unreachable by pointer. These are the same
+            `update-media` command the grips dispatch, so undo, the live
+            channel and the write path all behave identically. */}
+        <TrimNumbers
+          node={windowed}
+          trimIn={trimIn}
+          trimOut={trimOut}
+          disabled={live !== null}
+          durationLabel={formatSeconds(showing)}
+        />
+        {/* THE INSTRUCTIONS ARE GONE, and they were the single biggest
+            thing making this end of the panel unreadable: a full sentence
+            of prose — "drag the amber edges to trim, the film to move the
+            window" — sitting under every panel. At three that is three
+            copies of it on screen; at nine it is nine, and none of them is
+            telling you anything the visible grips and the resize cursor
+            are not. A hint you have read once is furniture from then on.
+
+            What it also carried is kept: a voiceover has to say it is one,
+            since a waveformless black card and a still look alike. That is
+            two words now, on the row that was already there. */}
+        {!video && (
+          <span className="font-mono text-[11px] text-blue-300/90">
+            sound · {formatSeconds(showing)} long
+          </span>
+        )}
+      </>
+    ) : (
+      // This branch is everything that is NOT video, which is images AND
+      // audio — so it cannot say "still" for both. A voiceover is not a
+      // still, and calling it one is the kind of wrong label nobody
+      // reports and everybody notices.
+      <span className="font-mono text-[11px] text-blue-300/90">
+        {node.mediaKind === "audio"
+          ? `sound · ${formatSeconds(showing)} long`
+          : `still · ${formatSeconds(showing)} on screen`}
+      </span>
+    )}
+    </div>
+  );
+}
