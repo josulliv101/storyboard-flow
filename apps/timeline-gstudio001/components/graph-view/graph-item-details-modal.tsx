@@ -828,12 +828,6 @@ function DetailsFilmstripModal({
                   ? { node: monitorNode, seconds: position.clipSeconds }
                   : null
               }
-              // EVERY panel rests on its own first frame, the one before the
-              // centre included. It used to show that one's LAST frame, on the
-              // reasoning that the clip before a cut is best represented by
-              // what it hands over — which turned out to read as the wrong
-              // picture: a card is the SHOT, and a shot is what it opens on.
-              restingFrame="first"
               // Only the monitor makes sound: it is the panel showing what the
               // clock says is on screen, so it is the only one whose audio
               // could be in sync with anything.
