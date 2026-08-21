@@ -160,6 +160,31 @@ const LONG_SCENE: GraphNodeSpec = {
   })),
 };
 
+/**
+ * A collection whose TIMELINE IS WIDER THAN THE BAR THAT DRAWS IT.
+ *
+ * `LONG_SCENE` has plenty of clips but only ~63s of them, and the bar draws at
+ * a fixed 9px a second — so its whole strip fits inside the track with room to
+ * spare, and both ends of the rail already point past the end of the footage.
+ * Nothing about running out of track can be shown on it.
+ *
+ * 30 clips of 8s is 240s, or ~2160px of strip against a track of well under a
+ * thousand — so most of the order is off the side at any moment, which is the
+ * only condition under which "hold the ball at the edge" means anything.
+ */
+const OVERFLOWING_SCENE: GraphNodeSpec = {
+  kind: "collection",
+  id: "root",
+  name: "Root",
+  children: Array.from({ length: 30 }, (_, index) => ({
+    kind: "media" as const,
+    id: index === 15 ? "subject" : `clip-${index}`,
+    name: index === 15 ? "Subject" : `Clip ${index}`,
+    src: plate(String(index), `hsl(${index * 11}, 60%, 70%)`),
+    durationSeconds: 8,
+  })),
+};
+
 function graphOfRoot(root: GraphNodeSpec): CollectionsGraph {
   const result = buildGraph([root]);
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -1465,5 +1490,102 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     );
     expect(at()).toBeGreaterThanOrEqual(6);
     expect(playOf(panels()[2]!).getAttribute("aria-label")).toMatch(/^Play /);
+  },
+};
+
+/**
+ * HOLDING THE BALL AT AN EDGE RUNS THE STRIP UNDER IT.
+ *
+ * The rail spans what is ON SCREEN, not what exists: on a collection longer
+ * than the bar, the end of the rail was the end of the timeline you could
+ * reach, and the rest of the order sat an inch off the side of the track with
+ * no way to scrub into it. You could step to it with the arrows or push the
+ * boxes there by hand first, both of which mean abandoning the drag you are
+ * in the middle of.
+ *
+ * So the two ends of the rail are a throttle. Hold the ball inside 40px of
+ * the right edge and the strip travels forward underneath it; hold it at the
+ * left and it reverses. THE HAND DOES NOT MOVE during any of that, which is
+ * why this is a frame loop and not something hung off pointermove — an
+ * implementation reading the moves travels only while the hand jitters.
+ *
+ * Four claims, and the last two are the ones that make it a control rather
+ * than a hazard: the middle of the rail does nothing, and letting go stops it.
+ */
+export const HoldingTheBallAtAnEdgeRunsTheStrip: Story = {
+  render: () => <SeamHarness scene={OVERFLOWING_SCENE} />,
+  play: async () => {
+    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
+    const stripLeft = () =>
+      document.querySelector<HTMLElement>("[data-seam-strip]")!.getBoundingClientRect().left;
+
+    const press = (clientX: number) => {
+      const rail = seamRail();
+      const box = rail.getBoundingClientRect();
+      fireEvent.pointerDown(rail, {
+        clientX,
+        clientY: box.top + box.height / 2,
+        isPrimary: true,
+        pointerId: 1,
+        button: 0,
+      });
+    };
+    const release = () => {
+      const rail = seamRail();
+      const box = rail.getBoundingClientRect();
+      fireEvent.pointerUp(rail, {
+        clientX: box.left + box.width / 2,
+        clientY: box.top + box.height / 2,
+        isPrimary: true,
+        pointerId: 1,
+        button: 0,
+      });
+    };
+    const rest = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+
+    // THE PRECONDITION THIS STORY IS ABOUT. If the strip fitted in the track
+    // there would be nothing off the side to reach, and every assertion below
+    // would pass for the wrong reason.
+    const railWidth = seamRail().getBoundingClientRect().width;
+    const totalPx = Number(seamTrack().getAttribute("aria-valuemax")) * 9;
+    expect(totalPx).toBeGreaterThan(railWidth * 1.5);
+
+    // ── THE MIDDLE OF THE RAIL IS AN ORDINARY SCRUBBER ────────────────────
+    const railBox = seamRail().getBoundingClientRect();
+    press(railBox.left + railBox.width / 2);
+    const middleT = at();
+    const middleX = stripLeft();
+    await rest(300);
+    expect(at()).toBe(middleT);
+    expect(stripLeft()).toBe(middleX);
+    release();
+
+    // ── THE RIGHT EDGE RUNS FORWARD ───────────────────────────────────────
+    press(railBox.right - 12);
+    const startedAt = at();
+    const startedX = stripLeft();
+    await waitFor(() => expect(at()).toBeGreaterThan(startedAt + 2), { timeout: 2000 });
+    // The clock advanced BECAUSE THE STRIP MOVED, not because the press
+    // landed further along: the boxes travelled left under a stationary hand.
+    expect(stripLeft()).toBeLessThan(startedX - 20);
+
+    // ── LETTING GO STOPS IT ───────────────────────────────────────────────
+    release();
+    const stoppedAt = at();
+    const stoppedX = stripLeft();
+    await rest(300);
+    expect(at()).toBe(stoppedAt);
+    expect(stripLeft()).toBe(stoppedX);
+
+    // ── AND THE LEFT EDGE REVERSES ────────────────────────────────────────
+    press(railBox.left + 12);
+    const backFrom = at();
+    const backFromX = stripLeft();
+    await waitFor(() => expect(at()).toBeLessThan(backFrom - 2), { timeout: 2000 });
+    expect(stripLeft()).toBeGreaterThan(backFromX + 20);
+    release();
   },
 };

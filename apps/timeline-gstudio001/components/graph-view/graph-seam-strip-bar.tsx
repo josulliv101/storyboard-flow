@@ -68,6 +68,36 @@ const BOX_INSET_PX = 2.5;
 /** Travel that turns a press on the boxes from a click into a pan. */
 const CLICK_SLOP_PX = 4;
 
+/**
+ * How near an end of the track the ball has to get before the strip starts
+ * travelling under it, and how fast it goes when it does.
+ *
+ * The speed ramps with depth into the zone rather than being a constant, so
+ * the edge is a throttle and not a switch: a ball resting just inside it
+ * creeps along at a readable pace, one pushed hard against the very end runs
+ * at `MAX`, and the two are the same gesture at different depths. At a flat
+ * speed the only way to travel a little would be to touch the edge and
+ * immediately back off, which is a flinch rather than a control.
+ */
+const EDGE_PAN_ZONE_PX = 40;
+const EDGE_PAN_MAX_PX_PER_FRAME = 16;
+const EDGE_PAN_GAIN = 0.4;
+
+/**
+ * How fast the strip should travel for a ball at `clientX`, in px per frame.
+ *
+ * Positive means the strip moves LEFT — later clips come in from the right,
+ * which is the direction the ball is being pushed. Zero anywhere but the two
+ * zones, so the ordinary middle of the rail is an ordinary scrubber.
+ */
+function edgePanVelocity(clientX: number, rail: DOMRect): number {
+  const intoLeft = rail.left + EDGE_PAN_ZONE_PX - clientX;
+  if (intoLeft > 0) return -Math.min(EDGE_PAN_MAX_PX_PER_FRAME, intoLeft * EDGE_PAN_GAIN);
+  const intoRight = clientX - (rail.right - EDGE_PAN_ZONE_PX);
+  if (intoRight > 0) return Math.min(EDGE_PAN_MAX_PX_PER_FRAME, intoRight * EDGE_PAN_GAIN);
+  return 0;
+}
+
 export function SeamStripBar({
   strip,
   centreClipId,
@@ -106,7 +136,6 @@ export function SeamStripBar({
 }>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [trackWidth, setTrackWidth] = useState(0);
-  const [dragging, setDragging] = useState(false);
 
   // The container's width is half the centring arithmetic, so it has to be
   // measured rather than assumed — and re-measured, because the view count
@@ -250,6 +279,10 @@ export function SeamStripBar({
 
   const [scrubbing, setScrubbing] = useState(false);
 
+  // Read out as primitives: the loop below depends on them, and `strip` is
+  // rebuilt by the view on every render.
+  const { totalPx, pxPerSecond } = strip;
+
   // THE RAIL SHARES THE STRIP'S COORDINATES, which is what makes the ball sit
   // under the playhead.
   //
@@ -271,6 +304,63 @@ export function SeamStripBar({
     },
     [strip, offset],
   );
+
+  // Where the ball was last seen, so the frame loop below can keep working a
+  // hand that has stopped moving.
+  const scrubXRef = useRef(0);
+
+  // MIRRORS, so the frame loop can read live values without listing them as
+  // dependencies and restarting itself. `onScrubSeconds` is an inline arrow in
+  // the view, so it is a new function on every render — depending on it would
+  // tear down and re-arm the loop between every pair of frames.
+  const panPxRef = useRef<number | null>(null);
+  const centredOffsetRef = useRef(0);
+  const onScrubSecondsRef = useRef(onScrubSeconds);
+  useEffect(() => {
+    panPxRef.current = panPx;
+    centredOffsetRef.current = centredOffset;
+    onScrubSecondsRef.current = onScrubSeconds;
+  });
+
+  // ── HOLDING THE BALL AT AN EDGE RUNS THE STRIP UNDER IT ─────────────────
+  //
+  // The rail only spans what is on screen, so without this the end of the
+  // rail is the end of the timeline you can reach: push the ball against the
+  // right edge and the scrub simply stops, with the rest of the order sitting
+  // an inch off the side of the track. Now holding it there pulls the strip
+  // along underneath — forward at the right edge, back at the left — and the
+  // seek follows the clips that arrive, so one gesture crosses the whole
+  // collection instead of the window you happened to open on.
+  //
+  // A FRAME LOOP RATHER THAN THE POINTER MOVES, because the hand is STILL.
+  // The gesture is holding the ball against an edge, which fires no further
+  // pointermove events at all — an implementation hung off the moves would
+  // travel only while the hand jittered, which is precisely the wrong feel.
+  useEffect(() => {
+    if (!scrubbing || pxPerSecond <= 0) return;
+    let frame = requestAnimationFrame(function tick() {
+      frame = requestAnimationFrame(tick);
+      const rail = railRef.current;
+      if (rail === null) return;
+      const box = rail.getBoundingClientRect();
+      const velocity = edgePanVelocity(scrubXRef.current, box);
+      if (velocity === 0) return;
+
+      const next = (panPxRef.current ?? centredOffsetRef.current) - velocity;
+      // IT STOPS AT THE ENDS BY ASKING WHERE THE BALL NOW POINTS, not by
+      // clamping the transform. The offset that puts the last clip under the
+      // ball is a function of the pan, the track width and the scale, and the
+      // one number that actually has to stay in range is the time being
+      // scrubbed to — so that is the number the guard is written against.
+      const stripX = scrubXRef.current - box.left - next;
+      if (stripX < 0 || stripX > totalPx) return;
+
+      panPxRef.current = next;
+      setPanPx(next);
+      onScrubSecondsRef.current(stripX / pxPerSecond);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrubbing, pxPerSecond, totalPx]);
 
   const releaseScrub = useCallback(() => {
     setScrubbing(false);
@@ -366,7 +456,11 @@ export function SeamStripBar({
             // pointer move started a 260ms animation toward a target the next
             // move replaced, so the strip lagged the hand and — measured — a
             // second shove inside that window looked like no movement at all.
-            transition: panning ? "none" : "transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1)",
+            // Off for a scrub as well as a pan: the edge loop moves the strip
+            // every frame, and a 260ms ease toward a target the next frame
+            // replaces is the same lag the pan had, one gesture over.
+            transition:
+              panning || scrubbing ? "none" : "transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1)",
           }}
         >
           {strip.segments.map((segment) => {
@@ -454,6 +548,7 @@ export function SeamStripBar({
             } catch {
               /* untrusted pointer (stories) — the moves still arrive here */
             }
+            scrubXRef.current = event.clientX;
             setScrubbing(true);
             onScrubbingChange?.(true);
             const at = secondsAt(event.clientX);
@@ -461,6 +556,9 @@ export function SeamStripBar({
           }}
           onPointerMove={(event) => {
             if (!scrubbing) return;
+            // Recorded on every move so the frame loop keeps travelling after
+            // the hand stops — the edge gesture is a HOLD, not a drag.
+            scrubXRef.current = event.clientX;
             const at = secondsAt(event.clientX);
             if (at !== null) onScrubSeconds(at);
           }}
