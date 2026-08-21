@@ -44,6 +44,7 @@ import {
 } from "./graph-seam-scrub";
 import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
 import { DetailsPanel } from "./graph-item-details-panel";
+import { ItemDetailsHeader } from "./graph-item-details-header";
 import { HERO, PANEL_GAP, cardElement } from "./graph-item-details-shared";
 import { useScopedHistory } from "./graph-item-details-history";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
@@ -176,6 +177,32 @@ function DetailsFilmstripModal({
     () => detailsWindow(graph, flatOrderRootId(graph), node.id as string),
     [graph, node.id],
   );
+
+  // THE NAME OF THE PLACE, for the header's second line. The row walks one
+  // flat order and that order belongs to a collection, so "Van Interior" is
+  // the answer to "where am I" that the cropped row itself cannot give.
+  // WHERE THIS CLIP LIVES, which is not the same question as how far the row
+  // reaches. The row walks the whole project in playback order and crosses
+  // collection edges on purpose, so "of 56" would be true and useless — it
+  // tells you nothing about the sequence you are actually working on. The
+  // clip's own collection and its place inside it is the orientation the
+  // cropped row cannot give: this is the fifth of the thirteen shots in Van
+  // Interior, whatever the row happens to be able to reach.
+  const place = useMemo(() => {
+    const subject = parseNodeId(node.id as string);
+    const parentId = graph.parentById.get(subject) ?? null;
+    if (parentId === null) return { name: null, index: 0, total: 0 };
+    const parent = graph.nodesById.get(parentId);
+    const siblings = (graph.childrenById.get(parentId) ?? []).filter((id) => {
+      const child = graph.nodesById.get(id);
+      return child !== undefined && child.kind === "media";
+    });
+    return {
+      name: parent?.name ?? null,
+      index: siblings.indexOf(subject) + 1,
+      total: siblings.length,
+    };
+  }, [graph, node.id]);
 
   // OFFSET FROM THE ROW'S MIDDLE, because the scrim centres the row and not its
   // first panel. With every clip holding a position, the row's own middle is
@@ -467,9 +494,25 @@ function DetailsFilmstripModal({
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
           bar that slid with it would be measuring from a moving origin. */}
+      {/* THE TOP BLOCK: what this view is, then where playback is in it. One
+          absolutely-positioned column so the header and the bar move together
+          and the row below is free to be cropped by the scrim. */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-10"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <ItemDetailsHeader
+          title={node.name}
+          collectionName={place.name}
+          index={place.index}
+          total={place.total}
+          centreId={node.id as string}
+          onClose={onClose}
+        />
+      </div>
       {timeline.totalSeconds > 0 && (
         <div
-          className="pointer-events-auto absolute inset-x-0 top-0 z-10 px-6 pt-4"
+          className="pointer-events-auto absolute inset-x-0 top-16 z-10 px-6 pt-4"
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="mx-auto w-full max-w-5xl">
@@ -571,6 +614,7 @@ function DetailsFilmstripModal({
               key={id}
               node={media}
               centre={index === centre}
+              clipLabel={`clip ${index + 1}`}
               playingHere={playingHere}
               onPlayFromStart={
                 span === null

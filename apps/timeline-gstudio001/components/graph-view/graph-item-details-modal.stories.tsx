@@ -283,7 +283,13 @@ export const AudioHasNoInsetPicker: Story = {
     // rendered, which is exactly how it passed the first time it was written.
     // Gated on the clip's NAME rather than the duration line, so this stays a
     // test about the picker even if that wording changes.
-    await waitFor(() => expect(canvas.getByText("Tension drone — bed")).toBeInTheDocument());
+    //
+    // getAllByText, because the name is now on screen TWICE for the clip in
+    // the middle: once in the view's header, which says what you are looking
+    // at, and once on the card itself, which says which of the cards it is.
+    // That is the design; a getByText here would fail on the duplicate and
+    // report it as a missing element.
+    await waitFor(() => expect(canvas.getAllByText("Tension drone — bed").length).toBeGreaterThan(0));
     expect(canvas.queryByText("Inset")).toBeNull();
   },
 };
@@ -815,11 +821,6 @@ export const TheCountChangesHowManyClipsAreOnScreen: Story = {
     await waitFor(() => expect(onScreen()).toBe(5));
     expect(centreOffset()).toBeLessThan(2);
 
-    await press("9");
-    await waitFor(() => expect(onScreen()).toBe(9));
-    // Still centred at every count, which is what the odd numbers buy.
-    expect(centreOffset()).toBeLessThan(2);
-
     await press("3");
     await waitFor(() => expect(onScreen()).toBe(3));
     expect(centreOffset()).toBeLessThan(2);
@@ -922,12 +923,6 @@ export const WiderViewsScrubEveryWholeClip: Story = {
     // have grown by the two clips that became fully visible.
     await press("5");
     await waitFor(() => expect(barMax()).toBeGreaterThan(atThree));
-    const atFive = barMax();
-
-    // Nine up: seven whole clips. Longer again.
-    await press("9");
-    await waitFor(() => expect(barMax()).toBeGreaterThan(atFive));
-
     // And back down, exactly — the wider views add clips, they do not rescale.
     await press("3");
     await waitFor(() => expect(barMax()).toBe(atThree));
@@ -1034,8 +1029,8 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
     // And every frame occupies exactly the same box.
     await waitFor(() => expect(new Set(geometry()).size).toBe(1));
 
-    // Nine up is narrow on any viewport this runs at: the controls go.
-    await press("9");
+    // Five up is the narrow end now: the controls go.
+    await press("5");
     await waitFor(() => expect(visible("[data-trim-overview]")).toBe(false));
     expect(visible("[data-tag-editor]")).toBe(false);
     expect(visible("[data-item-details-undo]")).toBe(false);
@@ -1110,11 +1105,12 @@ export const TheMonitorGrowsWhileScrubbing: Story = {
       expect(found).not.toBeNull();
       return found!;
     });
-    const nine = Array.from(picker.querySelectorAll("button")).find(
-      (b) => b.textContent?.trim() === "9",
-    )!;
-    fireEvent.click(nine);
-    await waitFor(() => expect(nine.getAttribute("aria-pressed")).toBe("true"));
+    // The WIDEST count, read off the picker rather than typed: this story is
+    // about the monitor growing out of a small panel, so it wants whatever the
+    // narrowest panel currently is, not a number that was once the maximum.
+    const widest = Array.from(picker.querySelectorAll("button")).at(-1)!;
+    fireEvent.click(widest);
+    await waitFor(() => expect(widest.getAttribute("aria-pressed")).toBe("true"));
 
     const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
     const track = document.querySelector<HTMLElement>("[data-seam-track]")!;
@@ -1221,15 +1217,19 @@ export const EveryPanelOffersPlayFromItsOwnStart: Story = {
         .querySelector("button[aria-label='Play across the cut']"),
     ).not.toBeNull();
 
-    // NINE UP: the narrowest the strip goes, and where the panel's other
+    // FIVE UP: the narrowest the strip goes, and where the panel's other
     // controls are gone.
-    await press("9");
-    await waitFor(() => expect(onScreenPanels().length).toBe(9));
+    //
+    // The undo pair is no longer part of this claim, and the assertion for it
+    // was deleted rather than left to pass: it now lives in the view's own
+    // header, so a panel never contains one at any count and querying for it
+    // here would be true for a reason that has nothing to do with width.
+    await press("5");
+    await waitFor(() => expect(onScreenPanels().length).toBe(5));
     const narrow = onScreenPanels();
     const showing = (panel: HTMLElement, selector: string) =>
       (panel.querySelector(selector)?.getBoundingClientRect().height ?? 0) > 0;
     expect(narrow.some((panel) => showing(panel, "[data-trim-overview]"))).toBe(false);
-    expect(narrow.some((panel) => showing(panel, "[data-item-details-undo]"))).toBe(false);
     for (const panel of narrow) {
       const play = panel.querySelector<HTMLButtonElement>("[data-item-details-play]");
       expect(play).not.toBeNull();

@@ -39,6 +39,7 @@ export function TrimNumbers({
   trimIn,
   trimOut,
   disabled,
+  durationLabel,
 }: Readonly<{
   /** Any WINDOWED node. The overview strip above this is video-only because it
    *  paints frames; these are numbers, and a source window is a source window
@@ -47,6 +48,8 @@ export function TrimNumbers({
   trimIn: number;
   trimOut: number;
   disabled: boolean;
+  /** The showing duration, drawn at the row's far end. */
+  durationLabel?: string;
 }>) {
   const store = useCollectionsStore();
   const full = node.fullDurationSeconds;
@@ -84,6 +87,15 @@ export function TrimNumbers({
         →
       </span>
       <SecondsField label="out" value={outPoint} disabled={disabled} onCommit={(raw) => commit("out", raw)} />
+      {/* WHAT THE TWO EDGES ADD UP TO, pushed to the far end of the row.
+          It reads as the result of the pair beside it — set an edge, watch
+          this change — which is a different job from the header's
+          `7.83 / 10.13s`, where the same number is one half of "how much of
+          the source is in play". Same value, two questions; `ml-auto` rather
+          than a spacer so it stays put when the fields resize. */}
+      {durationLabel === undefined ? null : (
+        <span className="ml-auto tabular-nums text-zinc-300">{durationLabel}</span>
+      )}
       {/* "of 12.00s" used to trail this row. The panel's own header already
           reads "4.00s of 12.00s", two inches above and in the same units, so
           it was the same fact twice on one panel — and N times over on a strip

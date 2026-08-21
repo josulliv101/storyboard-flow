@@ -2,7 +2,7 @@
 // Its own module because the count is a layout decision two components
 // share — the carousel that lays the row out and the picker that sets it.
 
-export const VIEW_COUNTS = [3, 5, 9] as const;
+export const VIEW_COUNTS = [3, 5] as const;
 export type ViewCount = (typeof VIEW_COUNTS)[number];
 
 /**
@@ -46,11 +46,12 @@ export function rememberViewCount(count: ViewCount): void {
  * The 48rem cap survives so a very wide monitor does not hand the middle panel
  * half a metre of screen; below that the count drives the layout.
  *
- * The trade at the top end is worth stating: nine panels on a 1600px screen is
- * about 185px each — narrow, but still a picture you can read a cut from and
- * controls you can hit. Fifteen was tried first and came out at 95px, which is
- * a column rather than a panel; nine is where reach across the timeline and a
- * usable panel still overlap.
+ * WHY THE TOP END IS FIVE. Nine shipped for a while and fifteen was tried
+ * before it: at 1600px those are about 185px and 95px a panel, which is a
+ * column rather than a panel at fifteen and, at nine, a picture you can read
+ * but a row of controls you cannot comfortably hit. Five keeps every panel
+ * wide enough to work in, and the reach across the timeline that nine bought
+ * is what the bar above is for.
  */
 export function panelWidthFor(count: ViewCount): string {
   // 3rem is the modal's own padding (p-6 either side); the gaps are one rem

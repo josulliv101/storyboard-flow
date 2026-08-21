@@ -21,11 +21,11 @@ import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { cloudinaryScrubProxySrc } from "@/lib/cloudinary-scrub-proxy";
 import { useFrameCrossfade } from "@/hooks/use-frame-crossfade";
 import { formatSeconds } from "@/lib/format-duration";
-import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
+import { useInlineRename } from "./graph-inline-rename";
+import { ItemDetailsPanelHeader } from "./graph-item-details-panel-header";
 import { useClipDetail } from "./graph-details-context";
 import { LayerFramePicker } from "./graph-layer-frame-picker";
 import { TagEditor } from "./graph-tag-editor";
-import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { seamStripProgress } from "./graph-seam-scrub";
 import { useScopedHistory } from "./graph-item-details-history";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
@@ -66,6 +66,7 @@ export function DetailsPanel({
   seamLabel = null,
   width,
   dimmed = false,
+  clipLabel,
   restingFrame,
   onClose,
   onAdvance,
@@ -202,6 +203,9 @@ export function DetailsPanel({
    * the two frames either side of a cut, which is the comparison the whole
    * layout exists to make.
    */
+  /** `clip 4` — its place in playback order, supplied by the carousel
+   *  because only the row knows the order this panel is part of. */
+  clipLabel?: string;
   restingFrame: "first" | "last";
   onClose: () => void;
   /** Pull the strip one position, so this clip becomes the centre. */
@@ -437,116 +441,17 @@ export function DetailsPanel({
             {seamLabel.text}
           </span>
         )}
-        <div className="flex items-center justify-between gap-3">
-          {/* The clip's name, editable here (PL10-010) — the same hook the
-              collection card, breadcrumb and sub-row rename through. Enter
-              commits, Escape cancels, blur commits. For MEDIA the name is the
-              stored `alt`, which the persistence bridge updates on this patch.
-
-              Opens on a SINGLE click (PL14-010), adopting the breadcrumb
-              crumb's treatment wholesale: a real button wearing `cursor-text`
-              and a hover tint, labelled `Rename …`. A double click with no
-              hover feedback is undiscoverable — nothing on screen said the
-              title was a field.
-
-              Why single click is available HERE and not on the cards: click
-              already means select on a card, so rename has to be the double
-              click there (and PL13-001 was rejected partly for adding a second
-              affordance around that conflict). Neither the current crumb nor
-              this title has a competing click meaning, so the cheaper gesture
-              is free. The card and sub-row keep their double click.
-
-              A <button> rather than the old <span> also puts rename in the tab
-              order, which is how it becomes reachable without the F2 shortcut
-              (still handled in capture above, and still the only route while
-              the dialog's focus sits elsewhere). */}
-          {rename.editing ? (
-            <InlineNameEditor
-              initialValue={node.name}
-              onInput={rename.setDraft}
-              onCommit={rename.commit}
-              onCancel={rename.cancel}
-              ariaLabel="Clip name"
-              className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-blue-500/70"
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={rename.begin}
-              aria-label={`Rename ${node.name}`}
-              title={`Rename ${node.name}`}
-              className={[
-                "min-w-0 flex-1 cursor-text truncate rounded-md px-1.5 py-1 text-left",
-                "text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-800/70",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
-              ].join(" ")}
-            >
-              {node.name}
-            </button>
-          )}
-          <div className="flex items-center gap-3">
-            {/* PROGRESSIVE, BY THE PANEL'S OWN WIDTH. Each of these earns its
-                place only when there is room for it, and the order they leave
-                in is the order they matter least: the duration is on the trim
-                strip's own label, Disable and the history pair are reachable
-                from the board, and the name is the one thing a panel cannot do
-                without — it is what tells you which clip you are looking at.
-
-                ONE BREAKPOINT, at 30rem, so the panel has two honest states
-                rather than five half-dressed ones: a working panel, or a frame
-                with a name on it. Staggering the thresholds looked tidier in
-                the abstract and worse in practice — controls vanishing one at
-                a time as the count goes up reads as things breaking.
-
-                Container queries rather than a count, because five panels on a
-                large monitor have more room each than three on an iPad and a
-                rule counting panels gets that backwards. On a 1920 screen this
-                lands at: three panels 768px (everything), five 452px (frame
-                and name), nine 218px (frame and name). On a wider desktop five
-                clears 30rem and keeps its controls, which is the point. */}
-            <span className="hidden font-mono text-[11px] tabular-nums text-zinc-400 @min-[30rem]:inline">
-              {video ? `${formatSeconds(showing)} of ${formatSeconds(fullDuration)}` : formatSeconds(showing)}
-            </span>
-            <span className="hidden @min-[30rem]:contents">
-              <ItemDisableToggle nodeId={node.id as string} />
-            </span>
-            {/* Scoped to this clip's own trims — see useScopedHistory. Each
-                release is one commit, so these step through the adjustments
-                one at a time. */}
-            <div className="hidden items-center gap-1 @min-[30rem]:flex">
-              <button
-                type="button"
-                data-item-details-undo
-                disabled={!history.undoableHere}
-                onClick={history.undo}
-                aria-label="Undo the last change"
-                title="Undo the last change to this item"
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
-              >
-                <Undo2 aria-hidden="true" className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                data-item-details-redo
-                disabled={!history.redoableHere}
-                onClick={history.redo}
-                aria-label="Redo the last change"
-                title="Redo the last change to this item"
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
-              >
-                <Redo2 aria-hidden="true" className="h-4 w-4" />
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close the details view"
-              className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            >
-              <X aria-hidden="true" className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+        <ItemDetailsPanelHeader
+          name={node.name}
+          clipLabel={clipLabel ?? null}
+          trimReadout={
+            video
+              ? `${formatSeconds(showing)} / ${formatSeconds(fullDuration)}`
+              : formatSeconds(showing)
+          }
+          nodeId={node.id as string}
+          rename={rename}
+        />
 
         {/* The hero: this is what the card morphs INTO — and, on a neighbour,
             the thing you click to pull the strip along by one.
@@ -839,6 +744,7 @@ export function DetailsPanel({
               trimIn={trimIn}
               trimOut={trimOut}
               disabled={live !== null}
+              durationLabel={formatSeconds(showing)}
             />
             {/* THE INSTRUCTIONS ARE GONE, and they were the single biggest
                 thing making this end of the panel unreadable: a full sentence
