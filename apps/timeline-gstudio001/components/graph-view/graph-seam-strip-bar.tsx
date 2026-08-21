@@ -65,6 +65,9 @@ import {
  */
 const BOX_INSET_PX = 2.5;
 
+/** Travel that turns a press on the boxes from a click into a pan. */
+const CLICK_SLOP_PX = 4;
+
 export function SeamStripBar({
   strip,
   centreClipId,
@@ -75,6 +78,7 @@ export function SeamStripBar({
   onStepBack,
   onStepForward,
   onScrubSeconds,
+  onCommitClip,
   onScrubbingChange,
 }: Readonly<{
   strip: SeamStrip;
@@ -93,6 +97,8 @@ export function SeamStripBar({
   onStepForward: (() => void) | null;
   /** Scrub to an absolute point on the timeline, in seconds. */
   onScrubSeconds: (seconds: number) => void;
+  /** A box was CLICKED — make that clip the centred one. */
+  onCommitClip: (clipId: string) => void;
 
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
@@ -147,7 +153,7 @@ export function SeamStripBar({
 
   const [panPx, setPanPx] = useState<number | null>(null);
   const [panning, setPanning] = useState(false);
-  const panRef = useRef<{ pointerId: number; x: number; from: number } | null>(null);
+  const panRef = useRef<{ pointerId: number; x: number; from: number; moved: boolean } | null>(null);
 
   const onBoxesPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -157,7 +163,12 @@ export function SeamStripBar({
       } catch {
         /* untrusted pointer (stories) — moves still arrive on the element */
       }
-      panRef.current = { pointerId: event.pointerId, x: event.clientX, from: offsetRef.current };
+      panRef.current = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        from: offsetRef.current,
+        moved: false,
+      };
       setPanning(true);
     },
     [],
@@ -166,13 +177,31 @@ export function SeamStripBar({
   const onBoxesPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const pan = panRef.current;
     if (pan === null || event.pointerId !== pan.pointerId) return;
-    setPanPx(pan.from + (event.clientX - pan.x));
+    const travel = event.clientX - pan.x;
+    if (Math.abs(travel) > CLICK_SLOP_PX) pan.moved = true;
+    setPanPx(pan.from + travel);
   }, []);
 
-  const endPan = useCallback(() => {
-    panRef.current = null;
-    setPanning(false);
-  }, []);
+  const endPan = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const pan = panRef.current;
+      panRef.current = null;
+      setPanning(false);
+      if (pan === null || pan.moved) return;
+      // A PRESS THAT DID NOT TRAVEL IS A CLICK, and a click on a box makes
+      // that clip active — the third way into the same position, alongside
+      // letting go of the scrubber over it and stepping with the arrows.
+      // Distinguished by travel rather than by timing, because the surface's
+      // other job is a pan and a slow deliberate push must not also count as
+      // a tap on wherever it started.
+      const rail = railRef.current;
+      if (rail === null) return;
+      const stripX = event.clientX - rail.getBoundingClientRect().left - offsetRef.current;
+      const landedOn = stripPositionAt(strip, stripX)?.clipId ?? null;
+      if (landedOn !== null && landedOn !== centreClipId) onCommitClip(landedOn);
+    },
+    [strip, centreClipId, onCommitClip],
+  );
 
   // `stripCentreOffset` centres within a container, so it is handed twice the
   // distance to the target — the one container width whose middle is exactly
@@ -188,12 +217,18 @@ export function SeamStripBar({
   const offsetRef = useRef(offset);
   offsetRef.current = offset;
 
-  // A NEW SUBJECT RE-CENTRES, and drops whatever pan was in force: the clip
-  // you just moved to has to be on screen, and leaving the strip where a
-  // previous shove put it could open the view with the subject off the end.
+  // PARKED ONCE, THEN LEFT ALONE.
+  //
+  // It used to re-centre on every change of subject, which sounds helpful and
+  // is not: the bar jumped under the hand every time the cards moved, and a
+  // strip you had just pushed somewhere useful threw your position away. The
+  // active clip does not need to be in the middle — it is MARKED, which is
+  // what makes it findable — so the strip only has to be parked somewhere
+  // sensible to begin with.
   useEffect(() => {
-    setPanPx(null);
-  }, [centreClipId]);
+    if (panPx !== null || trackWidth <= 0 || strip.totalPx <= 0) return;
+    setPanPx(centredOffset);
+  }, [panPx, trackWidth, strip.totalPx, centredOffset]);
 
   // ── THE BOXES ARE PUSHED, NOT STEPPED ──────────────────────────────────
   //
@@ -214,6 +249,7 @@ export function SeamStripBar({
   // clip, so a fraction of the rail is a fraction of the running time and
   // needs none of the strip's transform arithmetic.
   const railRef = useRef<HTMLDivElement | null>(null);
+
   const [scrubbing, setScrubbing] = useState(false);
 
   // THE RAIL SHARES THE STRIP'S COORDINATES, which is what makes the ball sit
@@ -237,6 +273,17 @@ export function SeamStripBar({
     },
     [strip],
   );
+
+  const releaseScrub = useCallback(() => {
+    setScrubbing(false);
+    onScrubbingChange?.(false);
+    // LETTING GO CHOOSES NOTHING. It briefly made whatever the scrub landed on
+    // the active clip, which put a decision on the end of a gesture whose
+    // whole purpose is to look around: you could not check what was coming up
+    // and then go back to what you were doing, because looking had already
+    // moved you. Scrubbing is a look; a CLICK on a box is how you commit to
+    // one, and the arrows are how you step.
+  }, [onScrubbingChange]);
 
 
   if (strip.totalPx <= 0) return null;
@@ -419,14 +466,8 @@ export function SeamStripBar({
             const at = secondsAt(event.clientX);
             if (at !== null) onScrubSeconds(at);
           }}
-          onPointerUp={() => {
-            setScrubbing(false);
-            onScrubbingChange?.(false);
-          }}
-          onPointerCancel={() => {
-            setScrubbing(false);
-            onScrubbingChange?.(false);
-          }}
+          onPointerUp={releaseScrub}
+          onPointerCancel={releaseScrub}
           className="relative mt-1.5 flex h-4 cursor-ew-resize items-center"
         >
           <span aria-hidden="true" className="absolute inset-x-0 h-0.5 rounded-full bg-white/20" />

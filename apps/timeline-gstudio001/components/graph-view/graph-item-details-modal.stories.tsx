@@ -302,13 +302,51 @@ function scrubToFraction(fraction: number): void {
   fireEvent.pointerUp(rail, args);
 }
 
-/** Scrub to a point inside `box`, `within` of the way across that clip. */
-function scrubIntoBox(box: HTMLElement, within = 0.5): void {
+/**
+ * Wait until the strip has stopped moving.
+ *
+ * The strip eases to a new position over 260ms whenever the subject changes,
+ * and `scrubIntoBox` reads a box's position ON SCREEN while the rail converts
+ * through the strip's FINAL offset. Measure mid-animation and those two
+ * disagree by however far the strip still has to travel — which showed up as
+ * scrubs landing at zero, because the mismatch pushed the target off the
+ * front of the timeline and the clamp caught it.
+ */
+async function settleStrip(): Promise<void> {
   const strip = document.querySelector<HTMLElement>("[data-seam-strip]");
   expect(strip).not.toBeNull();
-  const stripBox = strip!.getBoundingClientRect();
+  let previous = Number.NaN;
+  await waitFor(() => {
+    const now = strip!.getBoundingClientRect().left;
+    const settled = Math.abs(now - previous) < 0.5;
+    previous = now;
+    expect(settled).toBe(true);
+  });
+}
+
+/**
+ * Scrub to a point inside `box`, `within` of the way across that clip.
+ *
+ * Press the rail at the BOX'S OWN x. The rail reads through the strip's
+ * transform — that is what makes the ball sit under the playhead — so the two
+ * share a horizontal coordinate space and a clip is at the same x on both. An
+ * earlier version converted to a fraction of the timeline and pressed there,
+ * which was right while the rail was a proportional slider and silently
+ * scrubbed to the wrong clip once it stopped being one.
+ */
+function scrubIntoBox(box: HTMLElement, within = 0.5): void {
+  const rail = seamRail();
+  const railBox = rail.getBoundingClientRect();
   const target = box.getBoundingClientRect();
-  scrubToFraction((target.left + target.width * within - stripBox.left) / stripBox.width);
+  const args = {
+    clientX: target.left + target.width * within,
+    clientY: railBox.top + railBox.height / 2,
+    isPrimary: true,
+    pointerId: 1,
+    button: 0,
+  };
+  fireEvent.pointerDown(rail, args);
+  fireEvent.pointerUp(rail, args);
 }
 
 /** Swipe the boxes, which moves the carousel three clips at a time. */
@@ -557,6 +595,7 @@ export const PlayheadStaysInsideTheTrim: Story = {
     // its own BOX, which is what "across the centre clip" means now that the
     // bar carries the whole collection.
     for (const ratio of [0.35, 0.5, 0.65]) {
+      await settleStrip();
       scrubIntoBox(centreBox(), ratio);
 
       const centre = document.querySelector('[data-item-details-panel="centre"]')!;
@@ -614,6 +653,7 @@ export const TheRingMarksWhoseFramesAreUp: Story = {
     const boxes = seamBoxes();
     const centreIndex = boxes.indexOf(centreBox());
     expect(centreIndex).toBeGreaterThan(0);
+    await settleStrip();
     scrubIntoBox(boxes[centreIndex - 1]!);
     await waitFor(() =>
       expect(seamTrack().getAttribute("aria-valuenow")).not.toBe(null),
@@ -651,6 +691,7 @@ export const OnlyTheLiveClipIsMarked: Story = {
 
     // And the sky-blue ring that used to follow the playhead is gone from
     // both — a colour this view no longer spends here.
+    await settleStrip();
     scrubIntoBox(centreBox());
     await waitFor(() => expect(seamTrack()).not.toBeNull());
     expect(getComputedStyle(centre).boxShadow).not.toMatch(/56, 189, 248/);
@@ -906,6 +947,7 @@ export const TheNeighboursFadeBackDuringPlayback: Story = {
     expect(getComputedStyle(frameOf("neighbour")).opacity).toBe("1");
     expect(getComputedStyle(frameOf("centre")).opacity).toBe("1");
 
+    await settleStrip();
     scrubIntoBox(centreBox());
 
     // Scrubbed: the neighbours pull back, in both opacity and colour…
@@ -975,6 +1017,7 @@ export const WiderViewsScrubEveryWholeClip: Story = {
 
     // The LAST clip — as far from the middle as this collection goes, and
     // certainly without a card at three up.
+    await settleStrip();
     scrubIntoBox(seamBoxes()[boxCount - 1]!, 0.5);
     await waitFor(() => expect(at()).toBeGreaterThan(atThree * 0.6));
 
@@ -984,6 +1027,7 @@ export const WiderViewsScrubEveryWholeClip: Story = {
     expect(seamBoxes().length).toBe(boxCount);
 
     // And the far end still answers.
+    await settleStrip();
     scrubIntoBox(seamBoxes()[boxCount - 1]!, 0.2);
     await waitFor(() => expect(at()).toBeGreaterThan(atThree * 0.5));
   },
@@ -1106,41 +1150,48 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
 };
 
 /**
- * EACH SECTION OF THE BAR CARRIES ITS OWN FRAME.
+ * THE BAR IS ONE BOX PER CLIP, SIZED AND COLOURED BY WHAT IT IS.
  *
- * The bar divides into one span per clip, and a hairline was all that told
- * them apart — you could see THAT the run of time was three clips without
- * seeing WHICH. A still says it at a glance.
+ * It used to tuck a poster frame into the right-hand end of each section, so
+ * you could tell the clips apart by picture rather than by a hairline. That
+ * made sense while the bar covered three clips and two leads. It covers the
+ * whole playback order now — dozens of boxes, most of them narrower than a
+ * thumbnail — and a picture per section became a row of stamps you could not
+ * read.
  *
- * At the section's right-hand end, because that is where it meets its cut: the
- * frame sits against the seam it is about to hand over at, which is the thing
- * the bar exists to let you judge.
+ * What tells them apart instead: WIDTH, which is the clip's duration at a
+ * fixed scale, and COLOUR, which is the collection it belongs to. Both are
+ * asserted here, because either alone would pass on a bar that had lost the
+ * other.
  */
 export const TheBarLabelsItsSectionsWithFrames: Story = {
-  render: () => <SeamHarness />,
+  render: () => <SeamHarness scene={LONG_SCENE} />,
   play: async () => {
-    const track = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-seam-track]");
-      expect(found).not.toBeNull();
-      return found!;
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const boxes = await waitFor(() => {
+      const found = seamBoxes();
+      expect(found.length).toBeGreaterThan(2);
+      return found;
     });
-    const thumbs = () =>
-      Array.from(track.querySelectorAll<HTMLImageElement>("[data-seam-thumb]"));
 
-    await waitFor(() => expect(thumbs().length).toBeGreaterThan(0));
+    // The frames are gone, and staying gone is the point of asserting it.
+    expect(document.querySelectorAll("[data-seam-thumb]").length).toBe(0);
 
-    const trackBox = track.getBoundingClientRect();
-    for (const thumb of thumbs()) {
-      const box = thumb.getBoundingClientRect();
-      // Inside the bar, and each one showing something.
-      expect(box.left).toBeGreaterThanOrEqual(trackBox.left - 1);
-      expect(box.right).toBeLessThanOrEqual(trackBox.right + 1);
-      expect(thumb.getAttribute("src")).toBeTruthy();
-      // Decorative: the bar is already labelled, and a frame is not a caption.
-      expect(thumb.getAttribute("aria-hidden")).toBe("true");
-      // A native image drag inside a scrub bar would eat the gesture.
-      expect(thumb.draggable).toBe(false);
-    }
+    // WIDTH IS DURATION. The scene's clips differ in length, so their boxes
+    // must differ in width — a bar drawing equal boxes would be a list, not a
+    // timeline.
+    const widths = boxes.map((box) => Math.round(box.getBoundingClientRect().width));
+    expect(new Set(widths).size).toBeGreaterThan(1);
+
+    // COLOUR IS COLLECTION. Every box is painted, and clips sharing a
+    // collection share a colour.
+    const colours = boxes.map((box) => box.style.backgroundColor);
+    expect(colours.every((colour) => colour.length > 0)).toBe(true);
+    expect(new Set(colours).size).toBeLessThan(boxes.length);
+
+    // And exactly one box is marked as the one in the middle.
+    expect(document.querySelectorAll("[data-seam-segment-live]").length).toBe(1);
+    expect(centreBox().querySelector("[data-seam-marker]")).not.toBeNull();
   },
 };
 
@@ -1355,6 +1406,7 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     // Park the clock inside the SUBJECT first. Without this the assertion
     // below cannot tell "jumped to this clip" from "happened to already be
     // there" — the bar rests at the subject's own first frame.
+    await settleStrip();
     scrubIntoBox(centreBox(), 0.5);
     await waitFor(() => expect(at()).toBeGreaterThan(3));
 

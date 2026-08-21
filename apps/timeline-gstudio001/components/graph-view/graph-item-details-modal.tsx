@@ -696,6 +696,13 @@ function DetailsFilmstripModal({
               onScrubbingChange={setScrubbing}
               // The clock spans every clip, so a point on the rail IS a point
               // on the clock and needs no conversion.
+              // The other direction of the same binding: the cards follow the
+              // scrubber when it is let go, and the scrubber follows the cards
+              // whenever the subject changes (the clock resets to that clip's
+              // own start — see `clockFor` above).
+              onCommitClip={(clipId) => {
+                if (clipId !== (node.id as string)) onOpenNeighbour(clipId);
+              }}
               onScrubSeconds={(seconds) => {
                 setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
