@@ -248,6 +248,135 @@ const meta: Meta<typeof GraphItemDetailsModal> = {
 export default meta;
 type Story = StoryObj<typeof GraphItemDetailsModal>;
 
+/**
+ * ── AIMING AT THE BAR ─────────────────────────────────────────────────────
+ *
+ * The bar has two surfaces and they do different things, which is why these
+ * helpers exist rather than a single "click the bar".
+ *
+ * The BOXES are a filmstrip you push: a swipe there moves the carousel three
+ * clips. Pressing one does nothing at all — it used to scrub, and several of
+ * the stories below were written against that.
+ *
+ * The RAIL underneath is the scrubber. It spans the whole timeline linearly,
+ * and so does the strip of boxes, so a clip's position is the SAME fraction of
+ * both — which is what lets `scrubIntoBox` say "scrub to that clip" while
+ * driving the control that actually scrubs.
+ */
+function seamTrack(): HTMLElement {
+  const found = document.querySelector<HTMLElement>("[data-seam-track]");
+  expect(found).not.toBeNull();
+  return found!;
+}
+
+function seamRail(): HTMLElement {
+  const found = document.querySelector<HTMLElement>("[data-seam-rail]");
+  expect(found).not.toBeNull();
+  return found!;
+}
+
+/** Every clip's box, in timeline order. */
+function seamBoxes(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-seam-segment]"));
+}
+
+/** The marked box — the centred clip, and the only one the bar marks. */
+function centreBox(): HTMLElement {
+  const found = document.querySelector<HTMLElement>("[data-seam-segment-live]");
+  expect(found).not.toBeNull();
+  return found!;
+}
+
+/** Press the rail at `fraction` of the way along the timeline. */
+function scrubToFraction(fraction: number): void {
+  const rail = seamRail();
+  const box = rail.getBoundingClientRect();
+  const args = {
+    clientX: box.left + box.width * Math.min(Math.max(fraction, 0), 1),
+    clientY: box.top + box.height / 2,
+    isPrimary: true,
+    pointerId: 1,
+    button: 0,
+  };
+  fireEvent.pointerDown(rail, args);
+  fireEvent.pointerUp(rail, args);
+}
+
+/**
+ * Wait until the strip has stopped moving.
+ *
+ * The strip eases to a new position over 260ms whenever the subject changes,
+ * and `scrubIntoBox` reads a box's position ON SCREEN while the rail converts
+ * through the strip's FINAL offset. Measure mid-animation and those two
+ * disagree by however far the strip still has to travel — which showed up as
+ * scrubs landing at zero, because the mismatch pushed the target off the
+ * front of the timeline and the clamp caught it.
+ */
+async function settleStrip(): Promise<void> {
+  const strip = document.querySelector<HTMLElement>("[data-seam-strip]");
+  expect(strip).not.toBeNull();
+  // PAST THE TRANSITION FIRST, then confirm. Watching alone is not enough
+  // under load: the poll can take two readings before the animation has even
+  // started, agree with itself, and report a strip that is about to move as
+  // settled. That is exactly how these passed alone and failed in the full
+  // run. The dwell clears the 260ms transition; the watch below then covers a
+  // machine slow enough for that not to be sufficient.
+  await new Promise((resolve) => setTimeout(resolve, 320));
+  let previous = Number.NaN;
+  await waitFor(
+    () => {
+      const now = strip!.getBoundingClientRect().left;
+      const settled = Math.abs(now - previous) < 0.5;
+      previous = now;
+      expect(settled).toBe(true);
+    },
+    { timeout: 3000 },
+  );
+}
+
+/**
+ * Scrub to a point inside `box`, `within` of the way across that clip.
+ *
+ * Press the rail at the BOX'S OWN x. The rail reads through the strip's
+ * transform — that is what makes the ball sit under the playhead — so the two
+ * share a horizontal coordinate space and a clip is at the same x on both. An
+ * earlier version converted to a fraction of the timeline and pressed there,
+ * which was right while the rail was a proportional slider and silently
+ * scrubbed to the wrong clip once it stopped being one.
+ */
+function scrubIntoBox(box: HTMLElement, within = 0.5): void {
+  const rail = seamRail();
+  const railBox = rail.getBoundingClientRect();
+  const target = box.getBoundingClientRect();
+  const args = {
+    clientX: target.left + target.width * within,
+    clientY: railBox.top + railBox.height / 2,
+    isPrimary: true,
+    pointerId: 1,
+    button: 0,
+  };
+  fireEvent.pointerDown(rail, args);
+  fireEvent.pointerUp(rail, args);
+}
+
+/** Swipe the boxes, which moves the carousel three clips at a time. */
+function swipeBoxes(direction: "forward" | "back"): void {
+  const boxes = document.querySelector<HTMLElement>("[data-seam-boxes]");
+  expect(boxes).not.toBeNull();
+  const box = boxes!.getBoundingClientRect();
+  const from = box.left + box.width / 2;
+  const travel = direction === "forward" ? -90 : 90;
+  const at = (x: number) => ({
+    clientX: x,
+    clientY: box.top + box.height / 2,
+    isPrimary: true,
+    pointerId: 1,
+    button: 0,
+  });
+  fireEvent.pointerDown(boxes!, at(from));
+  fireEvent.pointerUp(boxes!, at(from + travel));
+}
+
 /** A SOUND is not a still. The duration line shares a branch with images, and
  *  called a voiceover a "still on screen" until this pinned it. */
 export const AudioReadsAsSound: Story = {
@@ -283,7 +412,13 @@ export const AudioHasNoInsetPicker: Story = {
     // rendered, which is exactly how it passed the first time it was written.
     // Gated on the clip's NAME rather than the duration line, so this stays a
     // test about the picker even if that wording changes.
-    await waitFor(() => expect(canvas.getByText("Tension drone — bed")).toBeInTheDocument());
+    //
+    // getAllByText, because the name is now on screen TWICE for the clip in
+    // the middle: once in the view's header, which says what you are looking
+    // at, and once on the card itself, which says which of the cards it is.
+    // That is the design; a getByText here would fail on the duplicate and
+    // report it as a missing element.
+    await waitFor(() => expect(canvas.getAllByText("Tension drone — bed").length).toBeGreaterThan(0));
     expect(canvas.queryByText("Inset")).toBeNull();
   },
 };
@@ -465,18 +600,13 @@ export const PlayheadStaysInsideTheTrim: Story = {
     await waitFor(() =>
       expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
     );
-    const track = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-seam-track]");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-
-    // Scrub to a few points across the centre clip and check every one.
-    const box = track.getBoundingClientRect();
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    // Scrub to a few points across the centre clip and check every one — into
+    // its own BOX, which is what "across the centre clip" means now that the
+    // bar carries the whole collection.
     for (const ratio of [0.35, 0.5, 0.65]) {
-      const x = box.left + box.width * ratio;
-      fireEvent.pointerDown(track, { clientX: x, clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 });
-      fireEvent.pointerUp(track, { clientX: x, clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 });
+      await settleStrip();
+      scrubIntoBox(centreBox(), ratio);
 
       const centre = document.querySelector('[data-item-details-panel="centre"]')!;
       const line = await waitFor(() => {
@@ -499,47 +629,83 @@ export const PlayheadStaysInsideTheTrim: Story = {
 };
 
 /**
- * THE RING FOLLOWS THE PLAYHEAD ACROSS THE SEAM.
+ * THE RING SAYS WHICH PANEL IS THE SUBJECT, AND NEVER MOVES.
  *
- * The middle picture is a monitor, so during the run-up it is showing frames
- * that belong to the clip on the LEFT — and until this, nothing on screen said
- * so. The ring marks whose frames are up, which is why it has to be able to sit
- * on a panel that is not the centre one; a marker pinned to the middle would be
- * decoration, since the middle is where the picture always is.
+ * It used to follow the playhead: whichever clip's frames were on the monitor
+ * wore the ring, so during a run-up it sat on a neighbour. The idea was to tie
+ * the line moving through the bar to the panel it belonged to.
+ *
+ * In use it read as flicker — a halo hopping between panels as the clock
+ * crossed a seam, drawing the eye to the frame it was meant to be quietly
+ * identifying. The bar has a playhead and a marked box for saying where
+ * playback is, and two answers to one question is one too many.
+ *
+ * So the ring answers the simpler question it is well shaped for, constantly:
+ * which of these panels is the one you opened. Asserted as an INVARIANT rather
+ * than a transition — it must not move when the clock does, which is the whole
+ * change.
  */
 export const TheRingMarksWhoseFramesAreUp: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
-    const track = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-seam-track]");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-    const box = track.getBoundingClientRect();
-    const scrub = (ratio: number) => {
-      const x = box.left + box.width * ratio;
-      const args = { clientX: x, clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 };
-      fireEvent.pointerDown(track, args);
-      fireEvent.pointerUp(track, args);
-    };
-    const liveLabel = () => {
-      const live = document.querySelector("[data-item-details-live]");
-      return live?.getAttribute("data-item-details-panel") ?? null;
-    };
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
+    const neighbours = () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-item-details-panel="neighbour"]'));
+    const ringed = (panel: HTMLElement) =>
+      getComputedStyle(panel).boxShadow.includes("255, 255, 255");
 
-    // Nothing engaged yet: no ring anywhere, so it cannot be mistaken for a
-    // selection.
-    expect(liveLabel()).toBeNull();
+    expect(ringed(centre())).toBe(true);
+    expect(neighbours().some(ringed)).toBe(false);
 
-    // The very start of the bar is the RUN-UP — the previous clip's last
-    // seconds — so the ring belongs to a neighbour even though the picture
-    // being watched is the middle one.
-    scrub(0.01);
-    await waitFor(() => expect(liveLabel()).toBe("neighbour"));
+    // Move the clock right across a seam and onto another clip's frames. The
+    // monitor changes; the ring does not.
+    const boxes = seamBoxes();
+    const centreIndex = boxes.indexOf(centreBox());
+    expect(centreIndex).toBeGreaterThan(0);
+    await settleStrip();
+    scrubIntoBox(boxes[centreIndex - 1]!);
+    await waitFor(() =>
+      expect(seamTrack().getAttribute("aria-valuenow")).not.toBe(null),
+    );
+    expect(ringed(centre())).toBe(true);
+    expect(neighbours().some(ringed)).toBe(false);
+  },
+};
 
-    // Halfway is inside the centre clip.
-    scrub(0.5);
-    await waitFor(() => expect(liveLabel()).toBe("centre"));
+/**
+ * ONE MARK, AND IT DOES NOT COMPETE WITH THE PICTURES.
+ *
+ * Panels are identical but for the ring on the subject. The opened clip wore a
+ * heavy white border for a while — the loudest mark on the screen, spent on
+ * the one fact the layout already tells you — and then two pixels of sky with
+ * a 36px halo, which had to shout because it was moving. Standing still, a
+ * hairline is enough.
+ *
+ * Geometry is untouched by it either way: a box-shadow paints outside the box,
+ * so the panel that wears one is exactly as wide as the ones that do not.
+ */
+export const OnlyTheLiveClipIsMarked: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const centre = document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
+    const neighbour = document.querySelector<HTMLElement>('[data-item-details-panel="neighbour"]')!;
+
+    // Same box, different shadow: the ring costs no width.
+    expect(getComputedStyle(centre).borderTopWidth).toBe(
+      getComputedStyle(neighbour).borderTopWidth,
+    );
+    expect(getComputedStyle(centre).boxShadow).toMatch(/255, 255, 255/);
+    expect(getComputedStyle(neighbour).boxShadow).not.toMatch(/255, 255, 255/);
+
+    // And the sky-blue ring that used to follow the playhead is gone from
+    // both — a colour this view no longer spends here.
+    await settleStrip();
+    scrubIntoBox(centreBox());
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    expect(getComputedStyle(centre).boxShadow).not.toMatch(/56, 189, 248/);
+    expect(getComputedStyle(neighbour).boxShadow).not.toMatch(/56, 189, 248/);
   },
 };
 
@@ -661,15 +827,23 @@ export const ADragDownTheScreenIsNotASwipe: Story = {
 };
 
 /**
- * THE NEIGHBOURS SAY WHICH FRAME THEY ARE SHOWING, and the labels hug the cut.
+ * EVERY PANEL SHOWS ITS OWN FIRST FRAME, AND NOTHING LABELS IT.
  *
- * Each flanking panel is exactly one frame, and which frame is the whole
- * reason it is on screen: the clip before the cut shows its LAST, the clip
- * after shows its FIRST, and those two frames are the cut. The labels sit on
- * the inside edges — right on the left-hand panel, left on the right-hand one
- * — so they read as facts about the join rather than as titles for the panels.
+ * This used to be the opposite claim. The clip before the centre rested on its
+ * LAST frame and the one after on its first, each with a small caption —
+ * "Last frame", "First frame" — hugging the seam it described, on the
+ * reasoning that a clip before a cut is best represented by what it hands
+ * over.
  *
- * The centre gets none: it is not resting on an end.
+ * Both went. The last frame read as simply the wrong picture: a card is the
+ * SHOT, and a shot is what it opens on, so a card resting on its final frame
+ * is a card showing you the least characteristic moment it has. And once every
+ * panel rests the same way there is nothing for a caption to disambiguate —
+ * two words per neighbour, on every strip, saying what the pictures already
+ * agreed on.
+ *
+ * Asserted as an absence, deliberately: the captions are the thing that must
+ * not come back, and their DOM hook is the only durable trace they left.
  */
 export const TheNeighboursSayWhichFrameTheyShow: Story = {
   render: () => <SeamHarness />,
@@ -677,84 +851,17 @@ export const TheNeighboursSayWhichFrameTheyShow: Story = {
     await waitFor(() =>
       expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3),
     );
+    expect(document.querySelectorAll("[data-item-details-seam-label]").length).toBe(0);
+
+    // And the flanking panels are treated identically — the asymmetry the
+    // captions existed to explain is gone from the pictures too.
     const panels = Array.from(
       document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
     );
-    const labelOf = (panel: HTMLElement) =>
-      panel.querySelector<HTMLElement>("[data-item-details-seam-label]");
-
-    const [before, centre, after] = panels;
-    expect(labelOf(before!)?.textContent).toBe("Last frame");
-    expect(labelOf(centre!)).toBeNull();
-    expect(labelOf(after!)?.textContent).toBe("First frame");
-
-    // Inside edges: each label is nearer the centre panel than its own panel's
-    // outer edge. Measured rather than asserted on a class, because the claim
-    // is about where they LAND.
-    const centreBox = centre!.getBoundingClientRect();
-    const beforeLabel = labelOf(before!)!.getBoundingClientRect();
-    const afterLabel = labelOf(after!)!.getBoundingClientRect();
-    expect(beforeLabel.left - before!.getBoundingClientRect().left).toBeGreaterThan(
-      centreBox.left - beforeLabel.right,
-    );
-    expect(after!.getBoundingClientRect().right - afterLabel.right).toBeGreaterThan(
-      afterLabel.left - centreBox.right,
-    );
-  },
-};
-
-/**
- * ONE MARK, AND IT SAYS SOMETHING THAT CHANGES.
- *
- * Panels are identical until the clock runs; then whichever clip's frames are
- * on screen wears the red. "Which clip did I open" needs no mark at all — it
- * is the one in the middle, with the rename field and the close button — and
- * the heavy white border that used to say it was both the loudest thing on the
- * screen and a pixel of stolen geometry.
- */
-export const OnlyTheLiveClipIsMarked: Story = {
-  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
-  play: async () => {
-    const track = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-seam-track]");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-    const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
-    const ringOf = (panel: HTMLElement) => getComputedStyle(panel).boxShadow;
-
-    const neighbour = () =>
-      document.querySelector<HTMLElement>('[data-item-details-panel="neighbour"]')!;
-
-    // EVERY PANEL LOOKS THE SAME UNTIL SOMETHING IS TRUE OF IT. The opened
-    // clip wore a heavy white border for a while; it was the loudest mark on
-    // the screen, spent on the one fact the layout already tells you — the
-    // centre panel is in the centre — and it cost a pixel of geometry to say
-    // it. Identical borders AND identical shadows, until the clock runs.
-    expect(getComputedStyle(centre()).borderTopWidth).toBe(
-      getComputedStyle(neighbour()).borderTopWidth,
-    );
-    expect(getComputedStyle(centre()).boxShadow).toBe(
-      getComputedStyle(neighbour()).boxShadow,
-    );
-
-    // Nothing engaged: no red anywhere.
-    expect(ringOf(centre())).not.toMatch(/56, 189, 248/);
-
-    const box = track.getBoundingClientRect();
-    const args = { clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 };
-    const x = box.left + box.width * 0.5;
-    fireEvent.pointerDown(track, { ...args, clientX: x });
-    fireEvent.pointerUp(track, { ...args, clientX: x });
-
-    // Scrubbed into the centre clip: red joins the white, rather than
-    // replacing it.
-    await waitFor(() => expect(ringOf(centre())).toMatch(/56, 189, 248/));
-    // Scrubbed into the centre clip: the red mark appears, and the geometry
-    // is untouched by it — a box-shadow is painted outside the box.
-    const both = getComputedStyle(centre());
-    expect(both.borderTopWidth).toBe(getComputedStyle(neighbour()).borderTopWidth);
-    expect(both.boxShadow).toMatch(/56, 189, 248/);
+    const [before, , after] = panels;
+    const frameOf = (panel: HTMLElement) =>
+      panel.querySelector<HTMLElement>("[data-item-details-frame]")!;
+    expect(frameOf(before!).className).toBe(frameOf(after!).className);
   },
 };
 
@@ -815,11 +922,6 @@ export const TheCountChangesHowManyClipsAreOnScreen: Story = {
     await waitFor(() => expect(onScreen()).toBe(5));
     expect(centreOffset()).toBeLessThan(2);
 
-    await press("9");
-    await waitFor(() => expect(onScreen()).toBe(9));
-    // Still centred at every count, which is what the odd numbers buy.
-    expect(centreOffset()).toBeLessThan(2);
-
     await press("3");
     await waitFor(() => expect(onScreen()).toBe(3));
     expect(centreOffset()).toBeLessThan(2);
@@ -855,11 +957,8 @@ export const TheNeighboursFadeBackDuringPlayback: Story = {
     expect(getComputedStyle(frameOf("neighbour")).opacity).toBe("1");
     expect(getComputedStyle(frameOf("centre")).opacity).toBe("1");
 
-    const box = track.getBoundingClientRect();
-    const args = { clientY: box.top + box.height / 2, isPrimary: true, pointerId: 1, button: 0 };
-    const x = box.left + box.width * 0.5;
-    fireEvent.pointerDown(track, { ...args, clientX: x });
-    fireEvent.pointerUp(track, { ...args, clientX: x });
+    await settleStrip();
+    scrubIntoBox(centreBox());
 
     // Scrubbed: the neighbours pull back, in both opacity and colour…
     // Scrubbed: the neighbours pull back, in both opacity and colour.
@@ -885,16 +984,21 @@ export const TheNeighboursFadeBackDuringPlayback: Story = {
 };
 
 /**
- * A CLIP YOU CAN SEE ALL OF IS A CLIP YOU CAN SCRUB ALL OF.
+ * EVERY CLIP IS SCRUBBABLE, AND THE COUNT HAS NOTHING TO DO WITH IT.
  *
- * With three panels up the bar is one whole clip between two short leads, and
- * that was hard-coded rather than derived: at five it still gave one whole
- * clip, so two panels sat fully on screen with only a couple of seconds of
- * them reachable. The bar disagreed with the picture.
+ * This used to assert the opposite arithmetic: the bar covered the clips ON
+ * SCREEN plus a lead into each neighbour, so widening the view lengthened the
+ * run of time it reached, and the test measured that growth.
  *
- * Measured through the bar's own total length, because that is the claim —
- * widening the view has to lengthen the run of time it covers, and by the
- * duration of the clips it just took in.
+ * That coupling was the bug. It meant the only clips you could scrub were the
+ * ones you could already see, and a shot four cards away — visible on the bar,
+ * plainly a box — did nothing when pressed. The clock covers the whole
+ * collection now, so the bar's length is a property of the COLLECTION and the
+ * count changes only how many cards are under it.
+ *
+ * Both halves are asserted, because either alone would pass for the wrong
+ * reason: the total does not move when the count does, AND the far end of the
+ * bar still scrubs at either count.
  */
 export const WiderViewsScrubEveryWholeClip: Story = {
   render: () => <SeamHarness scene={LONG_SCENE} />,
@@ -904,8 +1008,8 @@ export const WiderViewsScrubEveryWholeClip: Story = {
       expect(found).not.toBeNull();
       return found!;
     });
-    const barMax = () =>
-      Number(document.querySelector("[data-seam-track]")!.getAttribute("aria-valuemax"));
+    const barMax = () => Number(seamTrack().getAttribute("aria-valuemax"));
+    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
     const press = async (label: string) => {
       const button = Array.from(picker.querySelectorAll("button")).find(
         (b) => b.textContent?.trim() === label,
@@ -914,23 +1018,28 @@ export const WiderViewsScrubEveryWholeClip: Story = {
       await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
     };
 
-    // Three up: one whole clip plus the two leads.
+    await press("3");
     const atThree = barMax();
     expect(atThree).toBeGreaterThan(0);
+    // Every clip has a box, whatever is on screen.
+    const boxCount = seamBoxes().length;
+    expect(boxCount).toBeGreaterThan(3);
 
-    // Five up: three whole clips plus the same two leads, so the bar has to
-    // have grown by the two clips that became fully visible.
+    // The LAST clip — as far from the middle as this collection goes, and
+    // certainly without a card at three up.
+    await settleStrip();
+    scrubIntoBox(seamBoxes()[boxCount - 1]!, 0.5);
+    await waitFor(() => expect(at()).toBeGreaterThan(atThree * 0.6));
+
+    // Five up: more cards, same timeline.
     await press("5");
-    await waitFor(() => expect(barMax()).toBeGreaterThan(atThree));
-    const atFive = barMax();
+    expect(barMax()).toBe(atThree);
+    expect(seamBoxes().length).toBe(boxCount);
 
-    // Nine up: seven whole clips. Longer again.
-    await press("9");
-    await waitFor(() => expect(barMax()).toBeGreaterThan(atFive));
-
-    // And back down, exactly — the wider views add clips, they do not rescale.
-    await press("3");
-    await waitFor(() => expect(barMax()).toBe(atThree));
+    // And the far end still answers.
+    await settleStrip();
+    scrubIntoBox(seamBoxes()[boxCount - 1]!, 0.2);
+    await waitFor(() => expect(at()).toBeGreaterThan(atThree * 0.5));
   },
 };
 
@@ -1034,8 +1143,8 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
     // And every frame occupies exactly the same box.
     await waitFor(() => expect(new Set(geometry()).size).toBe(1));
 
-    // Nine up is narrow on any viewport this runs at: the controls go.
-    await press("9");
+    // Five up is the narrow end now: the controls go.
+    await press("5");
     await waitFor(() => expect(visible("[data-trim-overview]")).toBe(false));
     expect(visible("[data-tag-editor]")).toBe(false);
     expect(visible("[data-item-details-undo]")).toBe(false);
@@ -1051,41 +1160,48 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
 };
 
 /**
- * EACH SECTION OF THE BAR CARRIES ITS OWN FRAME.
+ * THE BAR IS ONE BOX PER CLIP, SIZED AND COLOURED BY WHAT IT IS.
  *
- * The bar divides into one span per clip, and a hairline was all that told
- * them apart — you could see THAT the run of time was three clips without
- * seeing WHICH. A still says it at a glance.
+ * It used to tuck a poster frame into the right-hand end of each section, so
+ * you could tell the clips apart by picture rather than by a hairline. That
+ * made sense while the bar covered three clips and two leads. It covers the
+ * whole playback order now — dozens of boxes, most of them narrower than a
+ * thumbnail — and a picture per section became a row of stamps you could not
+ * read.
  *
- * At the section's right-hand end, because that is where it meets its cut: the
- * frame sits against the seam it is about to hand over at, which is the thing
- * the bar exists to let you judge.
+ * What tells them apart instead: WIDTH, which is the clip's duration at a
+ * fixed scale, and COLOUR, which is the collection it belongs to. Both are
+ * asserted here, because either alone would pass on a bar that had lost the
+ * other.
  */
 export const TheBarLabelsItsSectionsWithFrames: Story = {
-  render: () => <SeamHarness />,
+  render: () => <SeamHarness scene={LONG_SCENE} />,
   play: async () => {
-    const track = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-seam-track]");
-      expect(found).not.toBeNull();
-      return found!;
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const boxes = await waitFor(() => {
+      const found = seamBoxes();
+      expect(found.length).toBeGreaterThan(2);
+      return found;
     });
-    const thumbs = () =>
-      Array.from(track.querySelectorAll<HTMLImageElement>("[data-seam-thumb]"));
 
-    await waitFor(() => expect(thumbs().length).toBeGreaterThan(0));
+    // The frames are gone, and staying gone is the point of asserting it.
+    expect(document.querySelectorAll("[data-seam-thumb]").length).toBe(0);
 
-    const trackBox = track.getBoundingClientRect();
-    for (const thumb of thumbs()) {
-      const box = thumb.getBoundingClientRect();
-      // Inside the bar, and each one showing something.
-      expect(box.left).toBeGreaterThanOrEqual(trackBox.left - 1);
-      expect(box.right).toBeLessThanOrEqual(trackBox.right + 1);
-      expect(thumb.getAttribute("src")).toBeTruthy();
-      // Decorative: the bar is already labelled, and a frame is not a caption.
-      expect(thumb.getAttribute("aria-hidden")).toBe("true");
-      // A native image drag inside a scrub bar would eat the gesture.
-      expect(thumb.draggable).toBe(false);
-    }
+    // WIDTH IS DURATION. The scene's clips differ in length, so their boxes
+    // must differ in width — a bar drawing equal boxes would be a list, not a
+    // timeline.
+    const widths = boxes.map((box) => Math.round(box.getBoundingClientRect().width));
+    expect(new Set(widths).size).toBeGreaterThan(1);
+
+    // COLOUR IS COLLECTION. Every box is painted, and clips sharing a
+    // collection share a colour.
+    const colours = boxes.map((box) => box.style.backgroundColor);
+    expect(colours.every((colour) => colour.length > 0)).toBe(true);
+    expect(new Set(colours).size).toBeLessThan(boxes.length);
+
+    // And exactly one box is marked as the one in the middle.
+    expect(document.querySelectorAll("[data-seam-segment-live]").length).toBe(1);
+    expect(centreBox().querySelector("[data-seam-marker]")).not.toBeNull();
   },
 };
 
@@ -1110,20 +1226,21 @@ export const TheMonitorGrowsWhileScrubbing: Story = {
       expect(found).not.toBeNull();
       return found!;
     });
-    const nine = Array.from(picker.querySelectorAll("button")).find(
-      (b) => b.textContent?.trim() === "9",
-    )!;
-    fireEvent.click(nine);
-    await waitFor(() => expect(nine.getAttribute("aria-pressed")).toBe("true"));
+    // The WIDEST count, read off the picker rather than typed: this story is
+    // about the monitor growing out of a small panel, so it wants whatever the
+    // narrowest panel currently is, not a number that was once the maximum.
+    const widest = Array.from(picker.querySelectorAll("button")).at(-1)!;
+    fireEvent.click(widest);
+    await waitFor(() => expect(widest.getAttribute("aria-pressed")).toBe("true"));
 
     const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
-    const track = document.querySelector<HTMLElement>("[data-seam-track]")!;
+    const rail = seamRail();
     const width = () => Math.round(centre().getBoundingClientRect().width);
 
     const resting = width();
     expect(centre().hasAttribute("data-item-details-magnified")).toBe(false);
 
-    const box = track.getBoundingClientRect();
+    const box = rail.getBoundingClientRect();
     const args = {
       clientX: box.left + box.width * 0.5,
       clientY: box.top + box.height / 2,
@@ -1131,14 +1248,14 @@ export const TheMonitorGrowsWhileScrubbing: Story = {
       pointerId: 1,
       button: 0,
     };
-    fireEvent.pointerDown(track, args);
+    fireEvent.pointerDown(rail, args);
 
     // Bigger, and marked as such.
     await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
     await waitFor(() => expect(width()).toBeGreaterThan(resting + 10));
 
     // And back down when the drag ends — this is the gesture, not a mode.
-    fireEvent.pointerUp(track, args);
+    fireEvent.pointerUp(rail, args);
     await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(false));
     await waitFor(() => expect(width()).toBe(resting));
 
@@ -1146,10 +1263,10 @@ export const TheMonitorGrowsWhileScrubbing: Story = {
     const neighbours = Array.from(
       document.querySelectorAll('[data-item-details-panel="neighbour"]'),
     );
-    fireEvent.pointerDown(track, args);
+    fireEvent.pointerDown(rail, args);
     await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
     expect(neighbours.some((n) => n.hasAttribute("data-item-details-magnified"))).toBe(false);
-    fireEvent.pointerUp(track, args);
+    fireEvent.pointerUp(rail, args);
   },
 };
 
@@ -1221,15 +1338,19 @@ export const EveryPanelOffersPlayFromItsOwnStart: Story = {
         .querySelector("button[aria-label='Play across the cut']"),
     ).not.toBeNull();
 
-    // NINE UP: the narrowest the strip goes, and where the panel's other
+    // FIVE UP: the narrowest the strip goes, and where the panel's other
     // controls are gone.
-    await press("9");
-    await waitFor(() => expect(onScreenPanels().length).toBe(9));
+    //
+    // The undo pair is no longer part of this claim, and the assertion for it
+    // was deleted rather than left to pass: it now lives in the view's own
+    // header, so a panel never contains one at any count and querying for it
+    // here would be true for a reason that has nothing to do with width.
+    await press("5");
+    await waitFor(() => expect(onScreenPanels().length).toBe(5));
     const narrow = onScreenPanels();
     const showing = (panel: HTMLElement, selector: string) =>
       (panel.querySelector(selector)?.getBoundingClientRect().height ?? 0) > 0;
     expect(narrow.some((panel) => showing(panel, "[data-trim-overview]"))).toBe(false);
-    expect(narrow.some((panel) => showing(panel, "[data-item-details-undo]"))).toBe(false);
     for (const panel of narrow) {
       const play = panel.querySelector<HTMLButtonElement>("[data-item-details-play]");
       expect(play).not.toBeNull();
@@ -1274,8 +1395,8 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     fireEvent.click(three);
     await waitFor(() => expect(three.getAttribute("aria-pressed")).toBe("true"));
 
-    const track = document.querySelector<HTMLElement>("[data-seam-track]")!;
-    const at = () => Number(track.getAttribute("aria-valuenow"));
+    const rail = seamRail();
+    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
     const panels = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
     const centreName = () =>
@@ -1294,21 +1415,19 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
 
     // Park the clock inside the SUBJECT first. Without this the assertion
     // below cannot tell "jumped to this clip" from "happened to already be
-    // there" — and zero, where the bar rests, is inside the run-up.
-    const box = track.getBoundingClientRect();
-    const scrubArgs = {
-      clientX: box.left + box.width * 0.5,
-      clientY: box.top + box.height / 2,
-      isPrimary: true,
-      pointerId: 1,
-      button: 0,
-    };
-    fireEvent.pointerDown(track, scrubArgs);
-    fireEvent.pointerUp(track, scrubArgs);
+    // there" — the bar rests at the subject's own first frame.
+    await settleStrip();
+    scrubIntoBox(centreBox(), 0.5);
     await waitFor(() => expect(at()).toBeGreaterThan(3));
 
-    // The RIGHT-hand panel: "After". Its stretch of the bar starts at 6s — a
-    // two-second run-up into "Before" (3s long), then "Subject" whole (4s).
+    // The RIGHT-hand panel: "After". Its stretch of the bar starts at 7s —
+    // "Before" whole (3s), then "Subject" whole (4s).
+    //
+    // It used to be 6s, back when the bar carried a two-second run-up into
+    // "Before" instead of the clip itself. The leads went when the clock grew
+    // to cover the whole order: there is no partial neighbour to lead into any
+    // more, so every clip contributes its full length and the seams land on
+    // round sums of them.
     fireEvent.click(playOf(panels()[2]!));
 
     // Landed on that clip's first frame in bar time, rather than staying where
@@ -1324,8 +1443,8 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     // says nothing about why.
     const stayedCentred = centreName();
     expect(stayedCentred).toBe("Rename Subject");
-    expect(jumped).toBeGreaterThanOrEqual(6);
-    expect(jumped).toBeLessThan(6.5);
+    expect(jumped).toBeGreaterThanOrEqual(7);
+    expect(jumped).toBeLessThan(7.5);
 
     // One clip is playing, and it is the one whose button was pressed.
     const playing = Array.from(

@@ -34,7 +34,9 @@ import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
-import { SeamBar, useSeamTransport } from "./graph-seam-bar";
+import { useSeamTransport } from "./graph-seam-bar";
+import { SeamStripBar } from "./graph-seam-strip-bar";
+import { buildSeamStrip, stripXFor } from "./graph-seam-strip";
 import {
   buildSeamTimeline,
   seamAt,
@@ -43,10 +45,29 @@ import {
   type SeamClip,
 } from "./graph-seam-scrub";
 import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
+import { DetailsPanel } from "./graph-item-details-panel";
+import { ItemDetailsHeader } from "./graph-item-details-header";
+import { HERO, PANEL_GAP, cardElement } from "./graph-item-details-shared";
+import { useScopedHistory } from "./graph-item-details-history";
+import { TrimNumbers } from "./graph-item-details-trim-fields";
+import {
+  VIEW_COUNTS,
+  lastViewCount,
+  panelWidthFor,
+  rememberViewCount,
+  type ViewCount,
+} from "./graph-item-details-view-count";
 
-/** How much of each neighbour the bar reaches into. Long enough to hear a cut
- *  land, short enough that the centre clip keeps most of the bar's scale. */
-const SEAM_LEAD_SECONDS = 2;
+/**
+ * How many pixels a second of clip is worth ON THE BAR.
+ *
+ * Fixed, which is the whole point: it is what makes a box the size of its
+ * clip rather than a share of whatever else happens to be on screen, so the
+ * same shot is the same width whether three cards are up or five. At 9px a
+ * ten-second shot is 90px — long enough to aim a pointer at, short enough
+ * that a minute and a half of material still reads as a shape.
+ */
+const BAR_PIXELS_PER_SECOND = 9;
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -63,205 +84,17 @@ const SEAM_LEAD_SECONDS = 2;
 /** The one name shared by the card and the modal's frame. Only ONE element
  *  may carry it at a time — two would make the browser skip the morph — so it
  *  is handed over inside the transition callback, never held by both. */
-const HERO = "trim-subject";
 
 // `withViewTransition` moved to lib/view-transition.ts when the trash drawer
 // became a second caller. It is the same function: the root flag it sets is
 // what the e2e's `settleViewTransition` waits on, and two copies would be two
 // chances to forget it.
 
-function cardElement(id: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
-}
 
 /** The moving edge's time in SOURCE seconds, or the in-point at rest. */
-function previewTime(node: VideoMediaNode, trimIn: number, trimOut: number, side: string | null) {
-  return side === "right"
-    ? Math.max(0, node.fullDurationSeconds - trimOut)
-    : Math.max(0, trimIn);
-}
 
 
-/**
- * Undo/redo SCOPED to this clip's trims (PL10-009).
- *
- * History is global and linear, so a bare undo button in a modal would reach
- * past what the scrim is covering — three presses could revert a delete made
- * on the board before the modal opened, invisibly. Undo is therefore offered
- * only while the next entry to be undone is an `update-media` on THIS node:
- * it steps back through the trims you made in here and then greys out at the
- * boundary of them, which teaches the limit without a word of copy.
- *
- * Redo is counted rather than inspected, because `historyEntries` is the
- * APPLIED log — the redo branch isn't in it. Every scoped undo adds one, every
- * redo spends one, and any fresh commit clears the branch (canRedo goes false)
- * which zeroes the count.
- */
-function useScopedHistory(nodeId: string) {
-  const store = useCollectionsStore();
-  const canRedo = useCollectionsSelector((s) => s.canRedo);
-  const undoableHere = useCollectionsSelector((s) => {
-    if (!s.canUndo) return false;
-    const last = s.historyEntries[s.historyEntries.length - 1];
-    if (!last) return false;
-    // Whatever this ITEM can do to itself: trim (media), rename (either), or
-    // a disable toggle. Structural commands name a parent and a set of moved
-    // nodes rather than "this item", so they stay out of reach here — which
-    // is the point of scoping.
-    const command = last.command;
-    if (command.type === "update-media" || command.type === "rename-node") {
-      return command.nodeId === nodeId;
-    }
-    if (command.type === "set-node-disabled") {
-      return command.nodeIds.length === 1 && command.nodeIds[0] === nodeId;
-    }
-    return false;
-  });
-  const [undoneHere, setUndoneHere] = useState(0);
-  const redoableHere = canRedo && undoneHere > 0;
-  // A commit from anywhere else drops the redo branch; the count has to follow
-  // it down or the button would offer a redo the store no longer has.
-  if (!canRedo && undoneHere !== 0) setUndoneHere(0);
 
-  return {
-    undoableHere,
-    redoableHere,
-    undo: () => {
-      if (!undoableHere) return;
-      if (store.undo()) setUndoneHere((n) => n + 1);
-    },
-    redo: () => {
-      if (!redoableHere) return;
-      if (store.redo()) setUndoneHere((n) => Math.max(0, n - 1));
-    },
-  };
-}
-
-/** Two decimals, and never NaN — a half-typed field must not dispatch. */
-function parseSeconds(raw: string): number | null {
-  const value = Number.parseFloat(raw);
-  if (!Number.isFinite(value)) return null;
-  return Math.round(value * 100) / 100;
-}
-
-/**
- * Typed in/out points for a video (PL11-006).
- *
- * Each field commits on blur or Enter, as ONE `update-media` — the same
- * command the grips dispatch, so this is a second input method for one
- * behaviour rather than a second path into the model. Escape reverts the
- * field to the committed value.
- *
- * Clamping is deliberate rather than validating-and-refusing: an out point
- * before the in point (or past the source) is a typo, and snapping to the
- * nearest legal value is faster to correct than an error message. The 0.05s
- * floor keeps a clip from being trimmed to nothing by a stray keystroke.
- */
-function TrimNumbers({
-  node,
-  trimIn,
-  trimOut,
-  disabled,
-}: Readonly<{
-  /** Any WINDOWED node. The overview strip above this is video-only because it
-   *  paints frames; these are numbers, and a source window is a source window
-   *  whether or not it has a picture. */
-  node: VideoMediaNode | AudioMediaNode;
-  trimIn: number;
-  trimOut: number;
-  disabled: boolean;
-}>) {
-  const store = useCollectionsStore();
-  const full = node.fullDurationSeconds;
-  const inPoint = trimIn;
-  const outPoint = full - trimOut;
-
-  const commit = (side: "in" | "out", raw: string) => {
-    const typed = parseSeconds(raw);
-    if (typed === null) return;
-    const next =
-      side === "in"
-        ? {
-            trimInSeconds: Math.min(Math.max(0, typed), Math.max(0, outPoint - MIN_SHOWING_SECONDS)),
-            trimOutSeconds: trimOut,
-          }
-        : {
-            trimInSeconds: trimIn,
-            trimOutSeconds: Math.min(
-              Math.max(0, full - typed),
-              Math.max(0, full - inPoint - MIN_SHOWING_SECONDS),
-            ),
-          };
-    if (next.trimInSeconds === trimIn && next.trimOutSeconds === trimOut) return;
-    store.dispatch({
-      type: "update-media",
-      nodeId: node.id,
-      update: { mediaKind: node.mediaKind, ...next },
-    });
-  };
-
-  return (
-    <div className="flex items-center gap-3 font-mono text-[11px] text-zinc-400">
-      <SecondsField label="in" value={inPoint} disabled={disabled} onCommit={(raw) => commit("in", raw)} />
-      <span aria-hidden="true" className="text-zinc-600">
-        →
-      </span>
-      <SecondsField label="out" value={outPoint} disabled={disabled} onCommit={(raw) => commit("out", raw)} />
-      {/* "of 12.00s" used to trail this row. The panel's own header already
-          reads "4.00s of 12.00s", two inches above and in the same units, so
-          it was the same fact twice on one panel — and N times over on a strip
-          of them. The per-field "s" went for the same reason: the row is
-          seconds from end to end and nothing in it could be anything else. */}
-    </div>
-  );
-}
-
-/** The smallest clip a typed edge may leave behind. */
-const MIN_SHOWING_SECONDS = 0.05;
-
-function SecondsField({
-  label,
-  value,
-  disabled,
-  onCommit,
-}: Readonly<{
-  label: string;
-  value: number;
-  disabled: boolean;
-  onCommit: (raw: string) => void;
-}>) {
-  // Uncontrolled between commits, keyed by the committed value: a controlled
-  // input would fight the caret while typing "1" on the way to "12.5", and
-  // the key makes it re-seed whenever the value changes underneath (a grip
-  // drag, an undo).
-  return (
-    <label className="flex items-center gap-1.5">
-      <span className="text-zinc-500">{label}</span>
-      <input
-        key={value}
-        type="text"
-        inputMode="decimal"
-        aria-label={`${label} point, seconds`}
-        data-trim-field={label}
-        defaultValue={value.toFixed(2)}
-        disabled={disabled}
-        onKeyDown={(event) => {
-          event.stopPropagation();
-          if (event.key === "Enter") {
-            onCommit((event.target as HTMLInputElement).value);
-            (event.target as HTMLInputElement).blur();
-          } else if (event.key === "Escape") {
-            (event.target as HTMLInputElement).value = value.toFixed(2);
-            (event.target as HTMLInputElement).blur();
-          }
-        }}
-        onBlur={(event) => onCommit(event.target.value)}
-        className="w-14 rounded-sm bg-zinc-900 px-1.5 py-0.5 text-right tabular-nums text-blue-300/90 outline-none ring-1 ring-zinc-700 focus:ring-blue-500/70 disabled:opacity-40"
-      />
-
-    </label>
-  );
-}
 
 /**
  * The collection half of the view. Split into its own module because the
@@ -286,7 +119,6 @@ function CollectionDetails({
  * subpixel that accumulates over a few clicks. The row's transform is written
  * in `calc()` against these, so the panel width IS the step by construction.
  */
-const PANEL_GAP = "1rem";
 
 /**
  * How many clips the strip shows at once, centre included.
@@ -303,919 +135,10 @@ const PANEL_GAP = "1rem";
  * and short of "fills the screen" — the neighbours either side are still the
  * context that makes the frame mean something.
  */
-const MONITOR_TARGET_PX = 620;
 /** Beyond this a magnified panel is soft rather than large: everything in it
  *  is scaled type and scaled borders. */
-const MAX_MAGNIFICATION = 2.2;
 
-const VIEW_COUNTS = [3, 5, 9] as const;
-type ViewCount = (typeof VIEW_COUNTS)[number];
 
-/**
- * The last count chosen, kept at module scope.
- *
- * Deliberately NOT persisted to storage: it is a working posture for a
- * session, not a preference, and a board reopened tomorrow should start at the
- * close reading rather than at whatever the last question happened to need.
- */
-let rememberedViewCount: ViewCount = 3;
-
-/**
- * A panel's width for a given count, chosen so that exactly `count` panels are
- * ON SCREEN with the middle one centred.
- *
- * THE TWO OUTER PANELS ARE HALF VISIBLE, which is both what makes the
- * arithmetic close and what makes the count mean what it says: `count - 2`
- * panels sit fully in view, the two at the edges show half of themselves, and
- * the widths add up to exactly one viewport.
- *
- *   (count - 2) x W  +  2 x W/2  =  (count - 1) x W  =  viewport - padding - gaps
- *
- * The first attempt scaled the width BY the count — three-fifths for five, a
- * fifth for fifteen — which made the panels narrower without making more of
- * them fit, so five showed the same three it always had. Fitting N panels is a
- * different question from making N panels thinner, and only one of them is
- * what "show five" means.
- *
- * The 48rem cap survives so a very wide monitor does not hand the middle panel
- * half a metre of screen; below that the count drives the layout.
- *
- * The trade at the top end is worth stating: nine panels on a 1600px screen is
- * about 185px each — narrow, but still a picture you can read a cut from and
- * controls you can hit. Fifteen was tried first and came out at 95px, which is
- * a column rather than a panel; nine is where reach across the timeline and a
- * usable panel still overlap.
- */
-function panelWidthFor(count: ViewCount): string {
-  // 3rem is the modal's own padding (p-6 either side); the gaps are one rem
-  // apiece, and there are `count - 1` of them between `count` panels.
-  return `min(48rem, (100vw - 3rem - ${count - 1}rem) / ${count - 1})`;
-}
-
-/**
- * ONE panel — the whole details view for one clip.
- *
- * Rendered three times side by side (see `ModalBody`): the clip you opened in
- * the middle and its playback neighbours either side, each a complete copy of
- * this rather than a thumbnail of it. Everything per-clip lives here, which is
- * what lets the flanking copies be the same component instead of a second,
- * drifting rendition of the same chrome.
- */
-function DetailsPanel({
-  node,
-  centre,
-  monitor,
-  playhead,
-  playing = false,
-  playingHere = false,
-  onPlayFromStart = null,
-  live: onScreen = false,
-  magnified = false,
-  scrubbing = false,
-  swipe,
-  seamLabel = null,
-  width,
-  dimmed = false,
-  restingFrame,
-  onClose,
-  onAdvance,
-}: Readonly<{
-  node: MediaNode;
-  /**
-   * Whether this is the panel the modal was OPENED on.
-   *
-   * It does NOT mean "the working one" — all three panels work, which is the
-   * point of them being copies rather than previews. It marks the two things
-   * that are singular no matter how many panels there are: the focus wiring,
-   * and the `view-transition-name` the card morphs into. A neighbour carrying
-   * either would steal the keyboard, or land the open animation on the wrong
-   * picture.
-   */
-  centre: boolean;
-  /**
-   * What the CENTRE panel's picture should be showing, when the seam clock is
-   * driving it: a clip and a time inside it. Null means "show your own clip",
-   * which is every panel that is not the centre and the centre itself before
-   * anything has been scrubbed.
-   *
-   * THE CENTRE IS A MONITOR, not a window onto its own clip. Playing across a
-   * cut means the frame changes clip halfway through, and it has to change in
-   * ONE place or there is nothing to watch — an eye that has to move from panel
-   * to panel at the moment of the cut is an eye that misses the cut.
-   */
-  monitor: Readonly<{ node: MediaNode; seconds: number }> | null;
-  /**
-   * How far through this clip's own trimmed range the playhead is, 0-1, or null
-   * when the playhead is not inside this clip at all. Drawn as a line on the
-   * trim strip below.
-   */
-  playhead: number | null;
-  /**
-   * Whether the transport is running. Only the monitoring panel is ever told
-   * yes: two elements playing the same seconds is two soundtracks, and the
-   * neighbours are showing stills of a moment, not playing one.
-   */
-  playing?: boolean;
-  /**
-   * Whether the transport is running AND this clip is the one on screen — so
-   * the panel's own play button should be offering PAUSE.
-   *
-   * A third playing-ish flag, and the three are genuinely different questions:
-   * `playing` is "are you the one making the sound" (the monitor, always the
-   * centre), `live` is "are your frames up" (any panel the playhead is inside),
-   * and this is the two together. Collapsing them would put a pause icon on
-   * nine panels at once, or on the centre panel while a neighbour's frames are
-   * the ones actually running.
-   */
-  playingHere?: boolean;
-  /**
-   * Play this clip FROM ITS FIRST FRAME on the monitor, or pause when it is
-   * already the one running. Null when this clip has no stretch of bar at all,
-   * which is every panel mounted past the visible edge — offering to play a
-   * clip the clock cannot reach would be a button that does nothing.
-   *
-   * The panel does not play IN PLACE, and that is the point rather than a
-   * limitation: the monitor is where a cut is judged, and nine panels each able
-   * to run their own clip would be nine clocks with no shared "now". Pressing
-   * play here moves the ONE clock to this clip's head; the picture appears in
-   * the middle, where it always does.
-   */
-  onPlayFromStart?: (() => void) | null;
-  /**
-   * Whether THIS clip is the one currently on screen — the clip the playhead
-   * is inside, which during a run-up or a run-out is a neighbour rather than
-   * the centre. Distinct from `playing`, which says who is making the sound.
-   */
-  live?: boolean;
-  /**
-   * Grow, because someone is scrubbing and this panel is the monitor.
-   *
-   * At three panels the middle one is already most of the screen and this does
-   * nothing. At five and nine it is a few hundred pixels wide — fine as a
-   * frame beside its neighbours, useless as the thing you are watching while
-   * you drag a playhead through a cut. Scrubbing is exactly when the monitor
-   * stops being one of three pictures and becomes the only one that matters.
-   */
-  magnified?: boolean;
-  /** True while this panel is the one the seam clock is driving AND the bar is
-   *  being dragged — the only moment a panel seeks fast enough to need the
-   *  small copy. A resting neighbour holds one still frame and never seeks. */
-  scrubbing?: boolean;
-  /**
-   * Pointer handlers for dragging the whole strip, spread onto the PICTURE.
-   *
-   * The picture and nothing else: every other large surface in a panel is
-   * already a gesture. The filmstrip drags the source window, the grips trim,
-   * the bar scrubs, the title is a text field — a swipe layered over any of
-   * them would be two meanings competing for one drag, and the loser would be
-   * whichever the user actually meant. The picture is the one big area with
-   * only a tap on it, which is why the tap is already "bring this one to the
-   * middle"; the swipe is the same instruction, held.
-   */
-  swipe?: React.ComponentProps<"div">;
-  /**
-   * Which end of this clip is on show, labelled above the panel — set only on
-   * the two flanking it.
-   *
-   * The centre gets none: it is not resting on an end, it is the clip being
-   * worked on, and a label there would be answering a question nobody asked
-   * about it. The neighbours are exactly one frame each, and WHICH frame is
-   * the entire reason they are on screen.
-   */
-  seamLabel?: { text: string; side: "left" | "right" } | null;
-  /** Set by the strip, which owns how many panels are on screen. */
-  width: string;
-  /**
-   * Pull this panel's picture back, because the clock is running and it is not
-   * the one being watched.
-   *
-   * Only ever set on the NEIGHBOURS. Once playback is engaged the middle
-   * picture is the monitor — it is showing whatever is on screen at that
-   * instant, including a neighbour's frames — so two bright pictures either
-   * side of it are competing with the one thing the view is for. Dimming them
-   * is not decoration: it is the difference between watching a cut and reading
-   * three stills at once.
-   */
-  dimmed?: boolean;
-  /**
-   * Which end of this clip its picture rests on when nothing is playing.
-   *
-   * THE CLIP BEFORE THE CUT SHOWS ITS LAST FRAME, not its first. Those two
-   * frames — the last of the outgoing clip and the first of the incoming one —
-   * are the cut. A panel resting on its own first frame shows the moment its
-   * shot BEGAN, which for the clip on the left is several seconds before
-   * anything being judged here, and puts a picture next to the seam that has
-   * nothing to do with it.
-   *
-   * The clip after the cut keeps its first frame for the same reason: that IS
-   * its edge of the seam. So the two frames either side of the centre panel are
-   * the two frames either side of a cut, which is the comparison the whole
-   * layout exists to make.
-   */
-  restingFrame: "first" | "last";
-  onClose: () => void;
-  /** Pull the strip one position, so this clip becomes the centre. */
-  onAdvance: (id: string) => void;
-}>) {
-  const live = useLiveTrim(node.id);
-  // For the inset picker: the clip's shape decides the inset's height, and
-  // therefore which preset a stored rectangle came from.
-  const detail = useClipDetail(node.id as string);
-  const history = useScopedHistory(node.id);
-  const rename = useInlineRename(node.id, node.name, "item-details");
-  // A still has no source window to map, so the trim half of this view belongs
-  // to WINDOWED media — video and audio both. `video` stays a separate,
-  // narrower question because the filmstrip and the frame readout need actual
-  // frames; the numbers do not.
-  const windowed = hasSourceWindow(node) ? node : null;
-  const video = node.mediaKind === "video" ? node : null;
-  const trimIn = live ? live.trimInSeconds : (windowed?.trimInSeconds ?? 0);
-  const trimOut = live ? live.trimOutSeconds : (windowed?.trimOutSeconds ?? 0);
-  const fullDuration = windowed ? windowed.fullDurationSeconds : mediaDurationSeconds(node);
-  const showing = Math.max(0, fullDuration - trimIn - trimOut);
-  // WHAT THIS PANEL IS PAINTING. Normally its own clip; while the seam clock
-  // is running, the centre panel paints whatever that clock says is on screen,
-  // which may belong to a neighbour.
-  const shown = monitor ? monitor.node : node;
-  const shownVideo = shown.mediaKind === "video" ? shown : null;
-  const shownAudio = shown.mediaKind === "audio" ? shown : null;
-  // Sound belongs to the panel that is MONITORING, and only while the clock
-  // runs. A resting neighbour is a still frame; a paused monitor is too.
-  const audible = playing;
-  const rawTime = monitor
-    ? // The clock's time is measured inside the clip's SHOWING range, and a
-      // video element seeks in SOURCE time — so the trim-in has to be added
-      // back or every frame is early by however much was trimmed off the head.
-      (hasSourceWindow(shown) ? shown.trimInSeconds : 0) + monitor.seconds
-    : video
-      ? restingFrame === "last"
-        ? // ONE FRAME BACK from the trim-out, not the trim-out itself: a video
-          // element seeked exactly to its end has no frame to show and paints
-          // black, which would read as a missing clip rather than as the last
-          // thing before the cut.
-          Math.max(trimIn, trimIn + showing - 1 / 25)
-        : previewTime(video, trimIn, trimOut, live?.side ?? null)
-      : 0;
-  // Gated on `video`: an image has no source window and no element to seek, so
-  // the settle loop had nothing to do but spin for as long as the modal stayed
-  // open.
-  // Null for anything not served as a Cloudinary video — a fixture, an upload
-  // still in flight — and the hook simply scrubs the real element then, which
-  // is what it always did.
-  const scrubProxySrc = shownVideo?.src ? cloudinaryScrubProxySrc(shownVideo.src) : null;
-  const { videoRef, proxyRef, showProxy } = useSeekedVideo(
-    Math.round(rawTime * 25) / 25,
-    shownVideo !== null || shownAudio !== null,
-    audible,
-    { proxySrc: scrubProxySrc, scrubbing },
-  );
-  // A panel crossing the centre swaps which end of its clip it rests on, and
-  // the two frames are seconds of story apart — cut between them and the eye
-  // takes it as a glitch rather than as the same shot from its other end.
-  // Keyed on the resting end alone: every other seek here is a scrub or a
-  // playhead, where a cut IS the answer and a fade would be a smear.
-  const { videoRef: crossfadeVideoRef, canvasRef } = useFrameCrossfade(restingFrame);
-
-  // HOW BIG THIS PANEL ACTUALLY IS, so magnifying it can aim at a size rather
-  // than multiply by a guess. A fixed factor is wrong at both ends: 1.5x is
-  // nothing at nine panels on a laptop and far too much at three on a
-  // monitor.
-  const [panelWidthPx, setPanelWidthPx] = useState(0);
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const element = panelRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const measure = () => setPanelWidthPx(element.getBoundingClientRect().width);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  // Capped, because a panel blown up more than this is soft rather than big —
-  // everything in it is scaled type and scaled borders.
-  const magnification =
-    magnified && panelWidthPx > 0
-      ? Math.min(MAX_MAGNIFICATION, Math.max(1, MONITOR_TARGET_PX / panelWidthPx))
-      : 1;
-
-  const [stripWidth, setStripWidth] = useState(0);
-  const stripSlot = useCallback((element: HTMLElement | null) => {
-    if (!element) return;
-    setStripWidth(element.getBoundingClientRect().width);
-  }, []);
-
-  // `aria-modal="true"` above is a promise about the rest of the page; this is
-  // what keeps it. Focus moves in, Tab cycles here, the board goes inert, and
-  // the card this was opened from gets focus back on close.
-  const { dialogProps } = useDialogFocus<HTMLDivElement>();
-
-  // Escape closes and F2 renames. Both listen in CAPTURE, which is what makes
-  // the editable guard load-bearing rather than defensive: a capture listener
-  // on the document runs BEFORE the rename input's own keydown, so without it
-  // Escape would close the whole modal instead of cancelling the edit — the
-  // input's stopPropagation never gets the chance to speak.
-  const beginRename = rename.begin;
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableKeyboardTarget(event.target)) return;
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key === "F2") {
-        event.preventDefault();
-        event.stopPropagation();
-        beginRename();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose, beginRename]);
-
-  // THE CONTAINER IS A WRAPPER, not the panel itself, because an element
-  // cannot query its own width — and the panel needs to change its own HEIGHT
-  // when it gets narrow, not merely what it puts inside itself. The wrapper
-  // carries the width and nothing else.
-  return (
-      <div ref={panelRef} className="@container shrink-0" style={{ width }}>
-      <div
-        // FOCUS WIRING ON THE CENTRE ONLY. Every panel is fully live — the
-        // grips trim, the title renames, the video seeks — but "which dialog
-        // has the keyboard" is singular by definition, so the roving focus,
-        // the Escape handling and the initial focus target stay with the clip
-        // that was opened. The neighbours are working panels, not focus traps.
-        {...(centre ? dialogProps : {})}
-        data-item-details-panel={centre ? "centre" : "neighbour"}
-        data-item-details-magnified={magnification > 1 ? "" : undefined}
-        style={{
-          // A TRANSFORM, not a width. The strip's slide is computed from a
-          // uniform panel width, so a centre panel that actually got wider
-          // would move every landing off by the difference. Scaling paints
-          // bigger and leaves the geometry alone — the row still knows exactly
-          // where everything is.
-          transform: magnification > 1 ? `scale(${magnification})` : undefined,
-          zIndex: magnification > 1 ? 20 : undefined,
-        }}
-        data-item-details-live={onScreen ? "" : undefined}
-        // WHICH CLIP IS ON SCREEN, marked on the whole panel. The monitor is
-        // always the middle picture, so during a run-up the frames on show
-        // belong to a clip whose own panel is off to one side — and nothing
-        // said which. A ring in the playhead's own red ties the two together:
-        // the line moving through a strip and the ring around that strip are
-        // one statement about where playback is.
-        //
-        // Only ever drawn while the clock is engaged. A ring sitting on the
-        // centre panel of a modal nobody has touched would read as a selection
-        // rather than as a position.
-        className={[
-          // gap-2, not gap-3: with the prose and the headings gone the rows
-          // below the strip are short and closely related, and twelve pixels
-          // between each of them was reading as four separate regions rather
-          // than one foot to the panel.
-          //
-          // `@container`, so what the panel shows depends on how wide the panel
-          // actually IS rather than on how many there are. Five panels on a
-          // large monitor have more room each than three on an iPad, and a
-          // rule counting panels gets that backwards.
-          "relative flex w-full flex-col gap-2 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
-          "transition-[box-shadow,border-color,transform] duration-200 ease-out motion-reduce:transition-none",
-          // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
-          //
-          // It carried a heavier white one for a while, on the reasoning that
-          // the opened clip should be marked. Two things were wrong with that.
-          // It was loud — a thick white edge is the strongest mark on a dark
-          // screen and it was spent on the least useful fact, since the centre
-          // panel is already identifiable by being IN THE CENTRE, and by being
-          // the one with a rename field and a close button. And it cost
-          // layout: 2px against the neighbours' 1px pushed its picture down a
-          // pixel and shortened it by two, which matters precisely because
-          // comparing frames across panels is what this view is for.
-          //
-          // The one mark that survives is the red one, and it earns its place
-          // by saying something that changes: whose frames are on screen right
-          // now. It is a box-shadow, so it costs no layout either.
-          "border border-zinc-700",
-          // ONE shadow utility per state, both spelled out. Layering a glow on
-          // top of `shadow-2xl` would mean two classes setting `box-shadow`,
-          // and which one wins is a question about stylesheet order rather
-          // than about the order they appear in this string — so the drop
-          // shadow is written into both branches and the glow is simply a
-          // second layer of the live one.
-          // SKY, AND THINNER. It was red and 3px, which tied it to the
-          // playhead — a nice idea that read as an alarm: red is the loudest
-          // thing on a dark screen and a heavy red edge around the panel you
-          // are watching says something has gone wrong rather than something
-          // is playing. Two pixels of the accent already used for selection
-          // and trim, with a soft halo behind it, says "this one" without
-          // shouting. The playhead stays red; it is a hairline, and being the
-          // one urgent-coloured thing on screen is what makes it findable.
-          onScreen
-            ? "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_2px_rgba(56,189,248,0.8),0_0_36px_8px_rgba(56,189,248,0.3)]"
-            : "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
-          // A FIXED 68vh WHILE THE PANEL IS FULL, and fitted to its picture
-          // once it is not. Stripped of its controls a panel is a frame and a
-          // name, and holding it at two thirds of the screen leaves most of it
-          // black — tall empty columns either side of the one you are looking
-          // at, which is the "weird" in a five-up view rather than the
-          // controls being gone. Every panel is the same width and the same
-          // aspect, so fitting them keeps them identical to each other, which
-          // is the property that matters.
-          "@min-[30rem]:h-[68vh] @min-[30rem]:max-h-full h-auto",
-        ].join(" ")}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        {seamLabel === null ? null : (
-          <span
-            data-item-details-seam-label
-            aria-hidden="true"
-            // HUGGING THE SEAM. The clip before the cut carries its label on
-            // its RIGHT and the clip after carries its on the LEFT, so both
-            // sit against the join they describe rather than at the far
-            // outside edges of the strip — where they would read as titles for
-            // the panels instead of as facts about the cut between them.
-            //
-            // Above the card, not inside it: the panel's own top row is the
-            // clip's name and its controls, and this is neither. Decorative
-            // for AT — the centre panel's dialog label already says what is
-            // open, and a neighbour resting on a frame is a visual aid.
-            className={[
-              "pointer-events-none absolute -top-6 font-mono text-[10px] tracking-wide text-zinc-500 uppercase",
-              seamLabel.side === "right" ? "right-1" : "left-1",
-            ].join(" ")}
-          >
-            {seamLabel.text}
-          </span>
-        )}
-        <div className="flex items-center justify-between gap-3">
-          {/* The clip's name, editable here (PL10-010) — the same hook the
-              collection card, breadcrumb and sub-row rename through. Enter
-              commits, Escape cancels, blur commits. For MEDIA the name is the
-              stored `alt`, which the persistence bridge updates on this patch.
-
-              Opens on a SINGLE click (PL14-010), adopting the breadcrumb
-              crumb's treatment wholesale: a real button wearing `cursor-text`
-              and a hover tint, labelled `Rename …`. A double click with no
-              hover feedback is undiscoverable — nothing on screen said the
-              title was a field.
-
-              Why single click is available HERE and not on the cards: click
-              already means select on a card, so rename has to be the double
-              click there (and PL13-001 was rejected partly for adding a second
-              affordance around that conflict). Neither the current crumb nor
-              this title has a competing click meaning, so the cheaper gesture
-              is free. The card and sub-row keep their double click.
-
-              A <button> rather than the old <span> also puts rename in the tab
-              order, which is how it becomes reachable without the F2 shortcut
-              (still handled in capture above, and still the only route while
-              the dialog's focus sits elsewhere). */}
-          {rename.editing ? (
-            <InlineNameEditor
-              initialValue={node.name}
-              onInput={rename.setDraft}
-              onCommit={rename.commit}
-              onCancel={rename.cancel}
-              ariaLabel="Clip name"
-              className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-blue-500/70"
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={rename.begin}
-              aria-label={`Rename ${node.name}`}
-              title={`Rename ${node.name}`}
-              className={[
-                "min-w-0 flex-1 cursor-text truncate rounded-md px-1.5 py-1 text-left",
-                "text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-800/70",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
-              ].join(" ")}
-            >
-              {node.name}
-            </button>
-          )}
-          <div className="flex items-center gap-3">
-            {/* PROGRESSIVE, BY THE PANEL'S OWN WIDTH. Each of these earns its
-                place only when there is room for it, and the order they leave
-                in is the order they matter least: the duration is on the trim
-                strip's own label, Disable and the history pair are reachable
-                from the board, and the name is the one thing a panel cannot do
-                without — it is what tells you which clip you are looking at.
-
-                ONE BREAKPOINT, at 30rem, so the panel has two honest states
-                rather than five half-dressed ones: a working panel, or a frame
-                with a name on it. Staggering the thresholds looked tidier in
-                the abstract and worse in practice — controls vanishing one at
-                a time as the count goes up reads as things breaking.
-
-                Container queries rather than a count, because five panels on a
-                large monitor have more room each than three on an iPad and a
-                rule counting panels gets that backwards. On a 1920 screen this
-                lands at: three panels 768px (everything), five 452px (frame
-                and name), nine 218px (frame and name). On a wider desktop five
-                clears 30rem and keeps its controls, which is the point. */}
-            <span className="hidden font-mono text-[11px] tabular-nums text-zinc-400 @min-[30rem]:inline">
-              {video ? `${formatSeconds(showing)} of ${formatSeconds(fullDuration)}` : formatSeconds(showing)}
-            </span>
-            <span className="hidden @min-[30rem]:contents">
-              <ItemDisableToggle nodeId={node.id as string} />
-            </span>
-            {/* Scoped to this clip's own trims — see useScopedHistory. Each
-                release is one commit, so these step through the adjustments
-                one at a time. */}
-            <div className="hidden items-center gap-1 @min-[30rem]:flex">
-              <button
-                type="button"
-                data-item-details-undo
-                disabled={!history.undoableHere}
-                onClick={history.undo}
-                aria-label="Undo the last change"
-                title="Undo the last change to this item"
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
-              >
-                <Undo2 aria-hidden="true" className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                data-item-details-redo
-                disabled={!history.redoableHere}
-                onClick={history.redo}
-                aria-label="Redo the last change"
-                title="Redo the last change to this item"
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
-              >
-                <Redo2 aria-hidden="true" className="h-4 w-4" />
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close the details view"
-              className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            >
-              <X aria-hidden="true" className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* The hero: this is what the card morphs INTO — and, on a neighbour,
-            the thing you click to pull the strip along by one.
-
-            THE PICTURE IS THE TARGET, deliberately. Every panel is fully live
-            now, so a click anywhere else has a job already: the grips trim, the
-            title renames, the tag field types. The picture is the one large
-            surface in a neighbour with nothing else to do, which is what makes
-            it safe to spend on advancing.
-
-            `HERO` stays on the opened panel only: it is the card's morph
-            target, and the slide below is a plain transform rather than a view
-            transition, so the two never contend for the same element. */}
-        <div
-          data-item-details-frame
-          {...swipe}
-          style={{
-            ...(centre ? { viewTransitionName: HERO } : {}),
-            // `pan-y`, not `none`: the browser keeps vertical panning (so a
-            // page or panel that scrolls still can) while horizontal drags
-            // reach us as pointer events instead of being eaten as a scroll.
-            // Without this a swipe on a touchscreen is silently the browser's.
-            touchAction: "pan-y",
-          }}
-          onClick={centre ? undefined : () => onAdvance(node.id as string)}
-          className={[
-            "relative overflow-hidden rounded-md bg-black",
-            // `flex-1` only makes sense against a fixed panel height. Once the
-            // panel fits its content there is nothing to fill, so the picture
-            // states its own shape instead.
-            "aspect-video w-full @min-[30rem]:aspect-auto @min-[30rem]:w-auto",
-            DETAILS_HERO_FILL_CLASS,
-            centre ? "" : "cursor-pointer",
-            // FADED, AND THE COLOUR GOES WITH IT. Opacity alone still leaves a
-            // recognisable picture competing for the eye; draining the colour
-            // as well puts the neighbours firmly in the past tense while the
-            // monitor keeps its own. Both transition, so engaging the clock
-            // reads as attention moving rather than as two panels blinking.
-            "transition-[opacity,filter] duration-300 ease-out motion-reduce:transition-none",
-            dimmed ? "opacity-25 grayscale" : "opacity-100 grayscale-0",
-          ].join(" ")}
-        >
-          {shownVideo ? (
-            <video
-              // KEYED BY SOURCE. Swapping `src` on one element at a cut leaves
-              // the outgoing frame on screen until the incoming file has
-              // decoded — the cut would land late, and late is the one thing
-              // this view exists to measure. A key gives each clip its own
-              // element, so the change is a swap rather than a reload.
-              key={shownVideo.src}
-              ref={(element) => {
-                videoRef(element);
-                crossfadeVideoRef.current = element;
-              }}
-              src={shownVideo.src}
-              poster={shownVideo.posterSrcs?.[0]}
-              // UNMUTED WHILE PLAYING. Judging a cut is not only a picture
-              // problem — a line landing across the join, or music that
-              // stops dead on it, is the thing being looked for as often as
-              // the frame is.
-              muted={!audible}
-              playsInline
-              preload="auto"
-              className="h-full w-full bg-black object-contain"
-            />
-          ) : shownAudio ? (
-            // AUDIO HAS NO PICTURE, and pointing an <img> at a .wav paints a
-            // broken-image icon — which is what this did, because the flat
-            // order contains every media node and a bed is one of them. It
-            // gets a card that says what it is, and an element that can
-            // actually play it.
-            <div className="flex h-full w-full items-center justify-center bg-black text-zinc-400">
-              {/* NO LABEL. The panel's title is this clip's name, directly
-                  above, and the row beneath already says "sound · 8.0s" — a
-                  third copy in the middle of the card says nothing new and
-                  makes the name ambiguous to anything looking for it. */}
-              <AudioLines aria-hidden="true" className="h-8 w-8 text-blue-300/80" />
-              <audio
-                key={shownAudio.src}
-                ref={videoRef}
-                src={shownAudio.src}
-                muted={!audible}
-                preload="auto"
-                className="sr-only"
-              />
-            </div>
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={shown.src}
-              alt={shown.name}
-              // NOT DRAGGABLE, which is what made the swipe work on video
-              // panels and not on stills. An `<img>` is draggable by DEFAULT
-              // and a `<video>` is not, so on a still the browser took the
-              // gesture as a native image drag the moment the pointer moved:
-              // it swallowed the rest of the sequence, no pointermove ever
-              // arrived, and the strip sat there. The gesture was never
-              // reaching the code that decides whether it is a swipe.
-              //
-              // `select-none` for the same reason at the other end — a drag
-              // across a picture that starts selecting whatever is behind it
-              // reads as the page misbehaving even when the swipe does work.
-              draggable={false}
-              className="h-full w-full bg-black object-contain select-none"
-            />
-          )}
-          {/* THE SMALL COPY, shown only while the bar is being dragged.
-              A full-res seek costs 67-128ms on these sources and this view
-              mounts an element PER PANEL, so a nine-up strip of video was
-              asking for nine of them at once — measured at 714ms a seek, which
-              is a picture that changes about once a second under a hand moving
-              far faster than that.
-
-              ABSOLUTE, AFTER the real element in the DOM, so it paints over it
-              without either one moving: same box, same `object-contain`, so
-              the swap is a change of sharpness and nothing else. It sits UNDER
-              the crossfade canvas below, which must stay on top to cover a cut.
-
-              No `poster`: a poster would flash the clip's first frame at the
-              start of every drag, which is precisely the wrong frame. */}
-          {shownVideo && scrubProxySrc !== null && (
-            <video
-              key={`scrub-proxy:${scrubProxySrc}`}
-              ref={proxyRef}
-              src={scrubProxySrc}
-              aria-hidden="true"
-              muted
-              playsInline
-              preload="auto"
-              draggable={false}
-              className={[
-                "pointer-events-none absolute inset-0 h-full w-full bg-black object-contain select-none",
-                showProxy ? "opacity-100" : "opacity-0",
-              ].join(" ")}
-            />
-          )}
-          {/* THE OUTGOING FRAME, held over the picture while the incoming one
-              seeks, then faded out. Sized and fitted exactly like the video
-              under it so the two are the same picture in the same place —
-              anything else and the fade doubles as a nudge. Starts and ends at
-              zero opacity: it is only ever visible for the length of a swap. */}
-          {shownVideo && (
-            <canvas
-              ref={canvasRef}
-              aria-hidden="true"
-              style={{ opacity: 0 }}
-              className="pointer-events-none absolute inset-0 h-full w-full object-contain"
-            />
-          )}
-          {/* PLAY THIS ONE, from every panel.
-              The bar's own play button starts wherever the playhead happens to
-              be, which is the right default for judging the cut in front of
-              you and useless for "let me see that shot". This is the second
-              question, asked at the clip rather than at the clock: it moves the
-              playhead to this clip's first frame and runs.
-
-              BOTTOM-LEFT, NOT CENTRED. A centred disc is the film convention
-              and it was the first thing tried, but this view exists to compare
-              frames ACROSS panels — a circle parked over the middle of nine
-              pictures covers exactly the part being compared, and at nine up it
-              covers most of the subject. The corner is out of the way of the
-              frame while still being on it; bottom-RIGHT is spoken for by the
-              time readout on video panels.
-
-              SMALL ENOUGH FOR THE NARROWEST PANEL, and sized in absolute units
-              rather than by container query on purpose: at 218px the picture is
-              about 122px tall, so 28px is a comfortable target that still
-              leaves the frame readable, and one size at every width means the
-              control does not move or resize as the count changes. It is
-              deliberately NOT behind the 30rem breakpoint that hides the trim
-              strip and the tags — those are editing controls you can leave the
-              panel to reach, and this is the reason the wide views exist.
-
-              It dims with the picture on a neighbour while the clock runs,
-              because it is inside the frame that dims. Accepted rather than
-              worked around: undoing a parent's opacity is impossible from a
-              child, and hoisting the dim onto the media alone would put the
-              grayscale on a different element from the one the view's own
-              fade is written against. A 25% button is still legible and still
-              clickable, and the state it is in — something else is playing —
-              is exactly when reaching for it is the less common move. */}
-          {onPlayFromStart !== null && (
-            <button
-              type="button"
-              data-item-details-play={playingHere ? "playing" : "paused"}
-              aria-label={playingHere ? `Pause ${node.name}` : `Play ${node.name} from the start`}
-              title={playingHere ? "Pause" : "Play from the start of this clip"}
-              // BOTH STOPPED, and for two different handlers. The click would
-              // otherwise reach the picture's own click, which on a neighbour
-              // means "bring this one to the middle" — pressing play would
-              // silently advance the strip as well. The pointerdown would arm
-              // the swipe, so a press that wobbles a few pixels would fling the
-              // film to the next clip instead of starting this one.
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                onPlayFromStart();
-              }}
-              className={[
-                "absolute bottom-2 left-2 grid h-7 w-7 place-items-center rounded-full",
-                "bg-black/70 text-zinc-100 ring-1 ring-white/25 backdrop-blur-sm",
-                "transition-colors hover:bg-black/90 hover:text-white",
-                "focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none",
-              ].join(" ")}
-            >
-              {playingHere ? (
-                <Pause aria-hidden="true" className="h-3.5 w-3.5" />
-              ) : (
-                <Play aria-hidden="true" className="h-3.5 w-3.5" />
-              )}
-            </button>
-          )}
-          {live !== null && (
-            <span
-              data-item-details-edge={live.side === "right" ? "right" : "left"}
-              className={[
-                "absolute inset-y-0 w-1.5 bg-blue-500",
-                live.side === "right" ? "right-0" : "left-0",
-              ].join(" ")}
-            />
-          )}
-          {video && (
-            <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-blue-300">
-              {formatSeconds(rawTime)}
-            </span>
-          )}
-        </div>
-
-        {/* The whole source, with the showing window and its grips — the trim
-            handles, at a width the board could never give them.
-
-            THE FIRST THING TO GO WHEN THE PANEL NARROWS, and by some distance
-            the biggest: a filmstrip, a draggable window, two grips and a pair
-            of number fields. Below about 26rem they stop being controls and
-            become texture — the grips are a few pixels apart, the fields
-            collide — and at that width the panel is there to show you a frame
-            beside its neighbours, which is the thing you came for. Trimming
-            stays available on the board and in a wider view. */}
-        <div className="flex flex-col gap-2">
-        {windowed ? (
-          <>
-            {/* FRAMES, so video only — an audio clip has a source window but
-                nothing to paint in it. Its numbers below are the same. */}
-            {/* THE FILMSTRIP IS WHAT GOES, NOT TRIMMING ITSELF.
-                A source map with two grips and forty poster frames needs the
-                width; below 30rem the grips are a few pixels apart and it is
-                texture rather than a control. But dropping the whole block
-                took the ability to trim with it, and a panel you cannot trim
-                from is a panel you have to leave to do the work — the numbers
-                below stay at every width for exactly that reason. They are two
-                fields and an arrow, they fit, and typing an exact in and out
-                was always the more precise of the two routes anyway. */}
-            {video && (
-              <div ref={stripSlot} className="hidden w-full @min-[30rem]:block">
-                {stripWidth > 0 ? (
-                  <div className="relative">
-                    <TrimOverviewStrip
-                      node={video}
-                      width={stripWidth}
-                      trimInSeconds={trimIn}
-                      trimOutSeconds={trimOut}
-                    />
-                    {/* WHERE PLAY IS, in this clip. Absent — not parked at an
-                        edge — when the playhead is in another clip: a line at
-                        0% reads as "playing here, from the very start", which
-                        is a different and wrong claim from "not playing here".
-                        Its position is measured against the whole trimmed
-                        clip, so the run-up into the previous clip puts the
-                        line near this strip's right-hand END. */}
-                    {playhead !== null && (
-                      <span
-                        data-seam-playhead-line
-                        aria-hidden="true"
-                        style={{ left: `${playhead * 100}%` }}
-                        className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-red-500"
-                      />
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            )}
-
-            {/* TYPED in/out (PL11-006). Dragging resolves to whatever a pixel
-                is worth — ~0.11s here, and coarser on the board — so an exact
-                edge was simply unreachable by pointer. These are the same
-                `update-media` command the grips dispatch, so undo, the live
-                channel and the write path all behave identically. */}
-            <TrimNumbers
-              node={windowed}
-              trimIn={trimIn}
-              trimOut={trimOut}
-              disabled={live !== null}
-            />
-            {/* THE INSTRUCTIONS ARE GONE, and they were the single biggest
-                thing making this end of the panel unreadable: a full sentence
-                of prose — "drag the amber edges to trim, the film to move the
-                window" — sitting under every panel. At three that is three
-                copies of it on screen; at nine it is nine, and none of them is
-                telling you anything the visible grips and the resize cursor
-                are not. A hint you have read once is furniture from then on.
-
-                What it also carried is kept: a voiceover has to say it is one,
-                since a waveformless black card and a still look alike. That is
-                two words now, on the row that was already there. */}
-            {!video && (
-              <span className="font-mono text-[11px] text-blue-300/90">
-                sound · {formatSeconds(showing)} long
-              </span>
-            )}
-          </>
-        ) : (
-          // This branch is everything that is NOT video, which is images AND
-          // audio — so it cannot say "still" for both. A voiceover is not a
-          // still, and calling it one is the kind of wrong label nobody
-          // reports and everybody notices.
-          <span className="font-mono text-[11px] text-blue-300/90">
-            {node.mediaKind === "audio"
-              ? `sound · ${formatSeconds(showing)} long`
-              : `still · ${formatSeconds(showing)} on screen`}
-          </span>
-        )}
-        </div>
-
-        {/* WHERE IT DRAWS, for a clip that is under the picture. Only shown
-            when it is actually on a lane and actually has a picture: the
-            control describes a rectangle inside the frame, and neither the
-            picture itself nor a voiceover has one.
-
-            The first FORM control for a placement field — lane and placed
-            start are drag-only. It exists because the write path stamps a
-            default corner when a clip lands on a lane, and a default nobody
-            can move is worse than no default at all. Dispatches
-            `set-node-placement`, so unlike the tag editor below it IS
-            undoable. */}
-        {(node.trackIndex ?? 0) > 0 && node.mediaKind !== "audio" && (
-          <div className="hidden @min-[30rem]:block">
-            <LayerFramePicker node={node} aspect={detail?.aspect} disabled={live !== null} />
-          </div>
-        )}
-
-        {/* Tags. Here rather than on the card because the card's content
-            renders inside a <button>, where these remove buttons and the text
-            field would be invalid HTML — the card shows them, this edits them.
-
-            No undo: a tag change writes the detail side-table directly and
-            emits no patch, so `useScopedHistory` above never sees it. See
-            graph-tag-editor.tsx for why that is the deliberate trade. */}
-        {/* NO "TAGS" HEADING. It cost a whole line to label a row of tag
-            chips and a field that says "add a tag" in its own placeholder —
-            the control describes itself, and at nine panels the heading was
-            nine lines of the word. One hairline stays, because the panel still
-            needs a foot to sit on. */}
-        <div className="hidden border-t border-white/10 pt-2 @min-[30rem]:block">
-          <TagEditor nodeId={node.id} />
-        </div>
-      </div>
-      </div>
-  );
-}
 
 /**
  * Opens when the toolbar's details toggle is on and a media item is selected.
@@ -1264,6 +187,33 @@ function DetailsFilmstripModal({
     [graph, node.id],
   );
 
+  // THE NAME OF THE PLACE, for the header's second line. The row walks one
+  // flat order and that order belongs to a collection, so "Van Interior" is
+  // the answer to "where am I" that the cropped row itself cannot give.
+  // WHERE THIS CLIP LIVES, which is not the same question as how far the row
+  // reaches. The row walks the whole project in playback order and crosses
+  // collection edges on purpose, so "of 56" would be true and useless — it
+  // tells you nothing about the sequence you are actually working on. The
+  // clip's own collection and its place inside it is the orientation the
+  // cropped row cannot give: this is the fifth of the thirteen shots in Van
+  // Interior, whatever the row happens to be able to reach.
+  const place = useMemo(() => {
+    const subject = parseNodeId(node.id as string);
+    const parentId = graph.parentById.get(subject) ?? null;
+    if (parentId === null) return { name: null, index: 0, total: 0, clipIds: [] as string[] };
+    const parent = graph.nodesById.get(parentId);
+    const siblings = (graph.childrenById.get(parentId) ?? []).filter((id) => {
+      const child = graph.nodesById.get(id);
+      return child !== undefined && child.kind === "media";
+    });
+    return {
+      name: parent?.name ?? null,
+      index: siblings.indexOf(subject) + 1,
+      total: siblings.length,
+      clipIds: siblings.map((id) => id as string),
+    };
+  }, [graph, node.id]);
+
   // OFFSET FROM THE ROW'S MIDDLE, because the scrim centres the row and not its
   // first panel. With every clip holding a position, the row's own middle is
   // clip (N-1)/2 — so a fifty-clip timeline would sit on clip twenty-five with
@@ -1292,7 +242,7 @@ function DetailsFilmstripModal({
   // sequence — and having it snap back to three every time you open a clip
   // would make the wider views something you re-choose rather than something
   // you use.
-  const [viewCount, setViewCount] = useState<ViewCount>(rememberedViewCount);
+  const [viewCount, setViewCount] = useState<ViewCount>(lastViewCount());
 
   const clipAt = useCallback(
     (index: number): MediaNode | null => {
@@ -1354,16 +304,42 @@ function DetailsFilmstripModal({
     (clip) => centreClip !== null && clip.id === centreClip.id,
   );
 
-  const timeline = useMemo(
+  // ── THE CLOCK COVERS THE WHOLE COLLECTION ────────────────────────────────
+  //
+  // It used to cover the three clips on screen plus a two-second lead into
+  // each neighbour, which made the bar's reach and the row's reach the same
+  // thing. That is exactly what stopped you scrubbing to a shot you could see
+  // coming: the boxes were drawn for the whole collection, but only the lit
+  // ones meant anything, and a press on the rest had nowhere to go.
+  //
+  // NO LEADS ANY MORE, and they are not missing so much as subsumed. A lead
+  // existed because the window's neighbours were only PARTLY on the bar — you
+  // got the approach to the cut and no more. With every clip present in full
+  // there is no partial neighbour to lead into; the run-up to any cut is just
+  // the clip before it, which is now on the bar in its entirety.
+  const collectionSeamClips = useMemo(
     () =>
-      buildSeamTimeline(
-        seamClipOf(edgeBefore),
-        wholeClips.map((clip) => seamClipOf(clip)!).filter(Boolean),
-        seamClipOf(edgeAfter),
-        SEAM_LEAD_SECONDS,
-        Math.max(0, subjectIndex),
-      ),
-    [edgeBefore, edgeAfter, wholeClips, subjectIndex],
+      ids
+        .map((id) => {
+          const found = graph.nodesById.get(parseNodeId(id));
+          return found && found.kind === "media" ? seamClipOf(found as MediaNode) : null;
+        })
+        .filter((clip): clip is SeamClip => clip !== null),
+    [ids, graph],
+  );
+
+  // WHERE THE BAR RESTS, as an index into what `buildSeamTimeline` will
+  // actually lay out. It drops zero-length clips, so counting the subject's
+  // place in the unfiltered list would put the rest position one clip out for
+  // every fully-trimmed clip before it.
+  const subjectSeamIndex = useMemo(() => {
+    const playable = collectionSeamClips.filter((clip) => clip.showingSeconds > 0);
+    return Math.max(0, playable.findIndex((clip) => clip.id === (node.id as string)));
+  }, [collectionSeamClips, node.id]);
+
+  const timeline = useMemo(
+    () => buildSeamTimeline(null, collectionSeamClips, null, 0, subjectSeamIndex),
+    [collectionSeamClips, subjectSeamIndex],
   );
 
   // ADVANCING RESETS THE CLOCK TO THIS CLIP'S START, because the bar is rebuilt
@@ -1404,12 +380,19 @@ function DetailsFilmstripModal({
   // ANY clip the bar covers, not just the three it used to. With nine panels
   // the playhead can be inside a clip four along, and the monitor still has to
   // be able to paint it.
-  const monitorNode =
-    position === null
-      ? null
-      : [edgeBefore, ...wholeClips, edgeAfter].find(
-          (candidate) => candidate !== null && (candidate.id as string) === position.clipId,
-        ) ?? null;
+  // WHATEVER THE PLAYHEAD IS ON, mounted or not.
+  //
+  // This used to search the panels on screen, which was the same window the
+  // clock covered — so it could never be asked for anything else. Now the bar
+  // reaches the whole collection, and scrubbing onto a shot that is four cards
+  // away has to show you that shot: that is what "preview items that aren't
+  // even displayed" means. The row does NOT follow; the monitor does the
+  // travelling, which is the cheap half and the half you asked for.
+  const monitorNode = (() => {
+    if (position === null) return null;
+    const found = graph.nodesById.get(parseNodeId(position.clipId));
+    return found && found.kind === "media" ? (found as MediaNode) : null;
+  })();
 
   const panelWidth = panelWidthFor(viewCount);
 
@@ -1431,9 +414,123 @@ function DetailsFilmstripModal({
   const MOUNTED_RADIUS = Math.floor(viewCount / 2) + 1;
 
   const chooseViewCount = useCallback((next: ViewCount) => {
-    rememberedViewCount = next;
+    rememberViewCount(next);
     setViewCount(next);
   }, []);
+  // THE BAR'S OWN LAYOUT, over the WHOLE playback order — every clip the row
+  // can reach, in the order it plays, collection boundaries included. The row
+  // already walks straight through them; a bar that stopped at the current
+  // collection could not show you what was coming next, which is most of what
+  // a bar is for. Which collection a clip belongs to is said in COLOUR
+  // instead (see `collectionTintOf`), so the grouping survives without the
+  // scope shrinking to match it.
+  // Durations come straight from the graph, so this costs a map lookup per
+  // clip and no media at all — the boxes are geometry, not pictures.
+  // WHAT COLOUR EACH CLIP'S BOX IS, derived from WHERE its collection sits.
+  //
+  // The first version gave every collection the next tint from a flat palette
+  // and drew the ancestors as bars across the top of the box. Both halves were
+  // wrong in the same way: a flat palette makes a nested collection look like
+  // an unrelated one, and the bars were a second channel spent explaining what
+  // the first channel had failed to say.
+  //
+  // Nesting is in the COLOUR now. A collection directly under the root takes a
+  // hue far from its neighbours — those are the big divisions and they should
+  // not be confusable. Every level below shifts a little from its parent and
+  // lifts, so a collection inside an orange one is a near-orange: obviously
+  // its own thing, obviously that thing's child. Depth reads as a family, and
+  // the top level reads as a difference.
+  const clipColourOf = useMemo(() => {
+    const rootId = flatOrderRootId(graph);
+
+    // Ordered so that CONSECUTIVE assignments are far apart, and so that no
+    // two are closer than 45 degrees. Both matter: the first is what makes the
+    // top-level divisions read as different at a glance, and the second is
+    // what keeps two families from meeting in the middle once their children
+    // have spread either side of them. An earlier set had 28 and 340 in it —
+    // 48 degrees apart — and with children ranging 14 degrees each way the
+    // orange family's reds and the pink family's reds became the same colour.
+    const TOP_HUES = [30, 210, 120, 300, 165, 345, 75, 255];
+    type Tone = { hue: number; saturation: number; lightness: number };
+    const toneOf = new Map<string, Tone>();
+    const childCount = new Map<string, number>();
+    let topLevelSeen = 0;
+
+    const toneFor = (collectionId: string, parentId: string | null): Tone => {
+      const existing = toneOf.get(collectionId);
+      if (existing !== undefined) return existing;
+      const parentTone = parentId === null ? null : toneOf.get(parentId) ?? null;
+      let tone: Tone;
+      if (parentTone === null) {
+        tone = {
+          hue: TOP_HUES[topLevelSeen % TOP_HUES.length]!,
+          saturation: 52,
+          lightness: 34,
+        };
+        topLevelSeen += 1;
+      } else {
+        // Which child of its parent this is, so siblings separate a little
+        // while staying inside the family.
+        const key = parentId ?? "";
+        const order = childCount.get(key) ?? 0;
+        childCount.set(key, order + 1);
+        // SIBLINGS BARELY MOVE THE HUE. The first version added 13 degrees
+        // per sibling, which accumulated: eight collections under one parent
+        // walked a hundred degrees of the wheel, so the last of them was a
+        // different colour from its own parent rather than a shade of it —
+        // exactly the relationship this is supposed to show. Centred and
+        // cycled instead, so a run of children sits within a few degrees
+        // either side of the family hue.
+        //
+        // DEPTH IS CARRIED BY LIGHTNESS, not hue, for the same reason: it can
+        // go many levels without ever leaving the colour it started from.
+        tone = {
+          hue: parentTone.hue + ((order % 5) - 2) * 5,
+          saturation: Math.max(24, parentTone.saturation - 7),
+          lightness: Math.min(66, parentTone.lightness + 10),
+        };
+      }
+      toneOf.set(collectionId, tone);
+      return tone;
+    };
+
+    const colours = new Map<string, string>();
+    for (const id of ids) {
+      // The chain from just under the root down to the clip's own collection.
+      const chain: string[] = [];
+      let cursor: string | null =
+        (graph.parentById.get(parseNodeId(id)) as string | null | undefined) ?? null;
+      while (cursor !== null && cursor !== rootId) {
+        chain.unshift(cursor);
+        cursor = (graph.parentById.get(parseNodeId(cursor)) as string | null | undefined) ?? null;
+      }
+      // Walk DOWN it so each level's tone is derived from a parent that
+      // already has one.
+      let tone: Tone | null = null;
+      chain.forEach((collectionId, depth) => {
+        tone = toneFor(collectionId, depth === 0 ? null : chain[depth - 1]!);
+      });
+      const resolved: Tone = tone ?? { hue: 220, saturation: 8, lightness: 34 };
+      colours.set(
+        id,
+        `hsl(${resolved.hue % 360} ${resolved.saturation}% ${resolved.lightness}%)`,
+      );
+    }
+    return colours;
+  }, [ids, graph]);
+
+  const strip = useMemo(() => {
+    const clips = ids.map((id) => {
+      const found = graph.nodesById.get(parseNodeId(id));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      return {
+        id,
+        showingSeconds: media === null ? 0 : mediaDurationSeconds(media),
+      };
+    });
+    return buildSeamStrip(clips, BAR_PIXELS_PER_SECOND);
+  }, [ids, graph]);
+
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
   // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
@@ -1531,6 +628,15 @@ function DetailsFilmstripModal({
     [centre, hasNext, hasPrevious, ids, onOpenNeighbour],
   );
 
+  // WHERE THE PLAYHEAD IS, read across from the clock. The clock says "this
+  // clip, this far in"; the strip says where that clip begins. Neither has to
+  // know the other's coordinates, and there is still only one answer.
+  const playheadPx = (() => {
+    const at = position ?? (centreClip === null ? null : { clipId: centreClip.id as string, clipSeconds: 0 });
+    if (at === null) return null;
+    return stripXFor(strip, at.clipId, at.clipSeconds);
+  })();
+
   const rowTransform =
     `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + ${dragPx}px))`;
 
@@ -1554,22 +660,53 @@ function DetailsFilmstripModal({
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
           bar that slid with it would be measuring from a moving origin. */}
+      {/* THE TOP BLOCK: what this view is, then where playback is in it. One
+          absolutely-positioned column so the header and the bar move together
+          and the row below is free to be cropped by the scrim. */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-20"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <ItemDetailsHeader
+          title={node.name}
+          collectionName={place.name}
+          index={place.index}
+          total={place.total}
+          centreId={node.id as string}
+          onClose={onClose}
+        />
+      </div>
       {timeline.totalSeconds > 0 && (
         <div
-          className="pointer-events-auto absolute inset-x-0 top-0 z-10 px-6 pt-4"
+          className="pointer-events-auto absolute inset-x-0 top-16 z-20 px-6 pt-4"
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="mx-auto w-full max-w-5xl">
-            <SeamBar
-              timeline={timeline}
-              seconds={shownSeconds}
+            <SeamStripBar
+              strip={strip}
+              centreClipId={node.id as string}
+              colourOf={clipColourOf}
+              playheadPx={playheadPx}
               playing={playing}
-              onScrub={(next) => {
-                setPlaying(false);
-                setBarSeconds(next);
-              }}
               onTogglePlay={() => setPlaying((was) => !was)}
+              // The same step the swipe and the neighbour-click make, so all
+              // three land in one place and cannot drift apart.
+              onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
+              onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
               onScrubbingChange={setScrubbing}
+              // The clock spans every clip, so a point on the rail IS a point
+              // on the clock and needs no conversion.
+              // The other direction of the same binding: the cards follow the
+              // scrubber when it is let go, and the scrubber follows the cards
+              // whenever the subject changes (the clock resets to that clip's
+              // own start — see `clockFor` above).
+              onCommitClip={(clipId) => {
+                if (clipId !== (node.id as string)) onOpenNeighbour(clipId);
+              }}
+              onScrubSeconds={(seconds) => {
+                setPlaying(false);
+                setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
+              }}
             />
           </div>
         </div>
@@ -1584,7 +721,14 @@ function DetailsFilmstripModal({
         data-details-view-count
         role="group"
         aria-label="Clips on screen"
-        className="pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm"
+        className={[
+          "pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1",
+          "rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm",
+          // Out of the way while the clock is being dragged: how many cards
+          // are up is not a question anyone is asking mid-scrub.
+          "transition-opacity duration-200",
+          scrubbing ? "opacity-20" : "opacity-100",
+        ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
         {VIEW_COUNTS.map((count) => (
@@ -1658,6 +802,10 @@ function DetailsFilmstripModal({
               key={id}
               node={media}
               centre={index === centre}
+              // Everything but the picture goes out while the clock is being
+              // dragged — see `scrubFocus`.
+              scrubFocus={scrubbing && index === centre}
+              clipLabel={`clip ${index + 1}`}
               playingHere={playingHere}
               onPlayFromStart={
                 span === null
@@ -1680,7 +828,12 @@ function DetailsFilmstripModal({
                   ? { node: monitorNode, seconds: position.clipSeconds }
                   : null
               }
-              restingFrame={index < centre ? "last" : "first"}
+              // EVERY panel rests on its own first frame, the one before the
+              // centre included. It used to show that one's LAST frame, on the
+              // reasoning that the clip before a cut is best represented by
+              // what it hands over — which turned out to read as the wrong
+              // picture: a card is the SHOT, and a shot is what it opens on.
+              restingFrame="first"
               // Only the monitor makes sound: it is the panel showing what the
               // clock says is on screen, so it is the only one whose audio
               // could be in sync with anything.
@@ -1697,13 +850,6 @@ function DetailsFilmstripModal({
               // the playhead lines and the ring, so the whole view agrees on
               // when the clock is running.
               dimmed={scrubbed && index !== centre}
-              seamLabel={
-                index === centre - 1
-                  ? { text: "Last frame", side: "right" }
-                  : index === centre + 1
-                    ? { text: "First frame", side: "left" }
-                    : null
-              }
               playhead={
                 scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
               }
