@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 
 import {
   stripCentreOffset,
@@ -341,11 +341,18 @@ export function SeamStripBar({
                     on a box too narrow to hold it: a check crushed into 10px
                     is a smudge, and the ring already says the same thing. */}
                 {isCentre && segment.widthPx >= 16 ? (
-                  // HALF STRENGTH. It marks a position on a map you are
-                  // scanning, not a control you are hunting for, and at full
-                  // white it was the brightest thing on the bar — louder than
-                  // the playhead, which is the mark that actually moves.
-                  <Check className="h-3 w-3 text-white/50" strokeWidth={2.5} />
+                  // A DISC, NOT A GLYPH. A check said "done" — a state this
+                  // clip is not in — and being white it was the brightest
+                  // thing on the bar, louder than the playhead, which is the
+                  // mark that actually moves. A hole punched in the box reads
+                  // as "this one" without introducing a second shape or a
+                  // second colour: it is black at half strength, so the clip's
+                  // own colour comes through it and the disc stays a shade of
+                  // the box rather than a mark laid on top of it.
+                  <span
+                    data-seam-marker
+                    className="h-3 w-3 rounded-full bg-black/50"
+                  />
                 ) : null}
               </span>
             );
