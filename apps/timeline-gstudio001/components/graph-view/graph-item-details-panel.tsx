@@ -65,6 +65,7 @@ export function DetailsPanel({
   swipe,
   width,
   dimmed = false,
+  scrubFocus = false,
   clipLabel,
   restingFrame,
   onClose,
@@ -186,6 +187,17 @@ export function DetailsPanel({
    * three stills at once.
    */
   dimmed?: boolean;
+  /**
+   * Mid-scrub, and this is the panel being watched: put this panel's own
+   * chrome out and leave the picture at full strength.
+   *
+   * Done by dimming the parts rather than by covering the view with a scrim.
+   * A scrim cannot work here: the row carries a `transform`, which makes it a
+   * stacking context, so nothing inside a panel can be raised above an
+   * overlay that is a sibling of the row — the preview went dark along with
+   * everything else, which is the opposite of the point.
+   */
+  scrubFocus?: boolean;
   /**
    * Which end of this clip its picture rests on when nothing is playing.
    *
@@ -339,6 +351,7 @@ export function DetailsPanel({
         // that was opened. The neighbours are working panels, not focus traps.
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
+        data-item-details-scrub-focus={scrubFocus ? "" : undefined}
         data-item-details-magnified={magnification > 1 ? "" : undefined}
         style={{
           // A TRANSFORM, not a width. The strip's slide is computed from a
@@ -350,17 +363,29 @@ export function DetailsPanel({
           zIndex: magnification > 1 ? 20 : undefined,
         }}
         data-item-details-live={onScreen ? "" : undefined}
-        // WHICH CLIP IS ON SCREEN, marked on the whole panel. The monitor is
-        // always the middle picture, so during a run-up the frames on show
-        // belong to a clip whose own panel is off to one side — and nothing
-        // said which. A ring in the playhead's own red ties the two together:
-        // the line moving through a strip and the ring around that strip are
-        // one statement about where playback is.
+        // THE HIGHLIGHT IS ON THE MIDDLE PANEL, ALWAYS, AND SAYS NOTHING ABOUT
+        // PLAYBACK.
         //
-        // Only ever drawn while the clock is engaged. A ring sitting on the
-        // centre panel of a modal nobody has touched would read as a selection
-        // rather than as a position.
+        // It used to follow the playhead: whichever clip's frames were up wore
+        // the ring, so during a run-up it sat on a neighbour. The idea was to
+        // tie the line moving through the bar to the panel it belonged to —
+        // and in use it read as flicker, a halo hopping between panels as the
+        // clock crossed a seam, competing with the picture it surrounded.
+        //
+        // The bar already says where playback is; it has a playhead and a
+        // marked box for the purpose. So the ring goes back to answering the
+        // simpler question it is well shaped for — which panel is the subject
+        // — and answers it constantly, which means it never moves and never
+        // pulls the eye.
         className={[
+          // MID-SCRUB, EVERYTHING BUT THE PICTURE GOES OUT. The frame excludes
+          // itself by name, so the one thing being judged keeps full strength
+          // while the header, the strip, the numbers and the tags recede. A
+          // child-selector rather than a wrapper because these are siblings
+          // and wrapping them would change the panel's own layout to say
+          // something about its lighting.
+          "[&>*:not([data-item-details-frame])]:transition-opacity [&>*:not([data-item-details-frame])]:duration-200",
+          scrubFocus ? "[&>*:not([data-item-details-frame])]:opacity-15" : "",
           // gap-2, not gap-3: with the prose and the headings gone the rows
           // below the strip are short and closely related, and twelve pixels
           // between each of them was reading as four separate regions rather
@@ -394,16 +419,14 @@ export function DetailsPanel({
           // than about the order they appear in this string — so the drop
           // shadow is written into both branches and the glow is simply a
           // second layer of the live one.
-          // SKY, AND THINNER. It was red and 3px, which tied it to the
-          // playhead — a nice idea that read as an alarm: red is the loudest
-          // thing on a dark screen and a heavy red edge around the panel you
-          // are watching says something has gone wrong rather than something
-          // is playing. Two pixels of the accent already used for selection
-          // and trim, with a soft halo behind it, says "this one" without
-          // shouting. The playhead stays red; it is a hairline, and being the
-          // one urgent-coloured thing on screen is what makes it findable.
-          onScreen
-            ? "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_2px_rgba(56,189,248,0.8),0_0_36px_8px_rgba(56,189,248,0.3)]"
+          // QUIETER THAN THE ONE IT REPLACES. The playhead-following version
+          // was two pixels of sky plus a 36px halo, which had to shout because
+          // it was competing to be noticed as it moved. A stationary mark does
+          // not: one hairline of white at low opacity is enough to say which
+          // panel is the subject, and it leaves the pictures to be the bright
+          // things on screen.
+          centre
+            ? "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.22)]"
             : "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
           // A FIXED 68vh WHILE THE PANEL IS FULL, and fitted to its picture
           // once it is not. Stripped of its controls a panel is a frame and a

@@ -319,13 +319,13 @@ function DetailsFilmstripModal({
   // the clip before it, which is now on the bar in its entirety.
   const collectionSeamClips = useMemo(
     () =>
-      place.clipIds
+      ids
         .map((id) => {
           const found = graph.nodesById.get(parseNodeId(id));
           return found && found.kind === "media" ? seamClipOf(found as MediaNode) : null;
         })
         .filter((clip): clip is SeamClip => clip !== null),
-    [place.clipIds, graph],
+    [ids, graph],
   );
 
   // WHERE THE BAR RESTS, as an index into what `buildSeamTimeline` will
@@ -417,14 +417,40 @@ function DetailsFilmstripModal({
     rememberViewCount(next);
     setViewCount(next);
   }, []);
-  // THE BAR'S OWN LAYOUT, over the clip's own COLLECTION rather than the
-  // clock's window — the same scope the header counts in, so "clip 5 of 13"
-  // and thirteen boxes are one statement rather than two. The ROW can swipe
-  // past the collection edge, and when it does the bar re-scopes with it.
+  // THE BAR'S OWN LAYOUT, over the WHOLE playback order — every clip the row
+  // can reach, in the order it plays, collection boundaries included. The row
+  // already walks straight through them; a bar that stopped at the current
+  // collection could not show you what was coming next, which is most of what
+  // a bar is for. Which collection a clip belongs to is said in COLOUR
+  // instead (see `collectionTintOf`), so the grouping survives without the
+  // scope shrinking to match it.
   // Durations come straight from the graph, so this costs a map lookup per
   // clip and no media at all — the boxes are geometry, not pictures.
+  // WHICH COLLECTION EACH CLIP CAME FROM, as a tint index.
+  //
+  // Assigned by ORDER OF FIRST APPEARANCE rather than by hashing the id, so
+  // the run of boxes reads left to right as "this lot, then that lot" and two
+  // adjacent collections are always two adjacent tints. A hash would be stable
+  // across sessions and would happily give neighbouring collections the same
+  // colour, which is the one thing this cannot do.
+  const collectionTintOf = useMemo(() => {
+    const tintByParent = new Map<string, number>();
+    const tint = new Map<string, number>();
+    for (const id of ids) {
+      const parent = graph.parentById.get(parseNodeId(id));
+      const key = parent === null || parent === undefined ? "" : (parent as string);
+      let index = tintByParent.get(key);
+      if (index === undefined) {
+        index = tintByParent.size;
+        tintByParent.set(key, index);
+      }
+      tint.set(id, index);
+    }
+    return tint;
+  }, [ids, graph]);
+
   const strip = useMemo(() => {
-    const clips = place.clipIds.map((id) => {
+    const clips = ids.map((id) => {
       const found = graph.nodesById.get(parseNodeId(id));
       const media = found && found.kind === "media" ? (found as MediaNode) : null;
       return {
@@ -433,7 +459,7 @@ function DetailsFilmstripModal({
       };
     });
     return buildSeamStrip(clips, BAR_PIXELS_PER_SECOND);
-  }, [place.clipIds, graph]);
+  }, [ids, graph]);
 
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
@@ -568,7 +594,7 @@ function DetailsFilmstripModal({
           absolutely-positioned column so the header and the bar move together
           and the row below is free to be cropped by the scrim. */}
       <div
-        className="pointer-events-none absolute inset-x-0 top-0 z-10"
+        className="pointer-events-none absolute inset-x-0 top-0 z-20"
         onPointerDown={(event) => event.stopPropagation()}
       >
         <ItemDetailsHeader
@@ -582,16 +608,21 @@ function DetailsFilmstripModal({
       </div>
       {timeline.totalSeconds > 0 && (
         <div
-          className="pointer-events-auto absolute inset-x-0 top-16 z-10 px-6 pt-4"
+          className="pointer-events-auto absolute inset-x-0 top-16 z-20 px-6 pt-4"
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="mx-auto w-full max-w-5xl">
             <SeamStripBar
               strip={strip}
               centreClipId={node.id as string}
+              tintOf={collectionTintOf}
               playheadPx={playheadPx}
               playing={playing}
               onTogglePlay={() => setPlaying((was) => !was)}
+              // The same step the swipe and the neighbour-click make, so all
+              // three land in one place and cannot drift apart.
+              onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
+              onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
               onScrubbingChange={setScrubbing}
               onScrubTo={(clipId, secondsIntoClip) => {
                 // Back across the seam the other way: the bar reports a clip
@@ -619,7 +650,14 @@ function DetailsFilmstripModal({
         data-details-view-count
         role="group"
         aria-label="Clips on screen"
-        className="pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm"
+        className={[
+          "pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1",
+          "rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm",
+          // Out of the way while the clock is being dragged: how many cards
+          // are up is not a question anyone is asking mid-scrub.
+          "transition-opacity duration-200",
+          scrubbing ? "opacity-20" : "opacity-100",
+        ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
         {VIEW_COUNTS.map((count) => (
@@ -693,6 +731,9 @@ function DetailsFilmstripModal({
               key={id}
               node={media}
               centre={index === centre}
+              // Everything but the picture goes out while the clock is being
+              // dragged — see `scrubFocus`.
+              scrubFocus={scrubbing && index === centre}
               clipLabel={`clip ${index + 1}`}
               playingHere={playingHere}
               onPlayFromStart={

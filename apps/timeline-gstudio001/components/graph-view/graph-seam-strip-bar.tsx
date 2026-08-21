@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pause, Play } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 
 import {
   stripCentreOffset,
@@ -28,35 +28,78 @@ import {
  * them travel; and the clips that arrive slide in from the edge rather than
  * appearing there.
  *
- * ── ONE BOX IS LIT ───────────────────────────────────────────────────────
+ * ── ONE BOX IS LIT, AND THE REST ARE TINTED BY COLLECTION ────────────────
  *
- * The centred clip, and only that one. It briefly lit every clip with a card
- * on screen, which made the bar answer a question nobody was asking — you can
- * already see which cards are up by looking at them — and spent the blue on a
- * band of three or five boxes, so the one box that says WHERE YOU ARE had
- * nothing to distinguish it. One lit box is a position; a lit band is a
- * region, and the region was never the point.
+ * MARKED means centred — one box, the clip under the middle card, wearing a
+ * check and a thin ring. It is not a colour, and that is the point: colour is
+ * spoken for by the collection tints, so spending blue on "you are here" would
+ * make one channel carry two meanings and quietly break the grouping. An
+ * earlier version did exactly that, and before it lit every clip with a card
+ * on screen — which answered a question nobody was asking, since you can see
+ * which cards are up by looking at them.
  *
- * It is a look, not a limit: the clock covers the whole collection, so every
- * box scrubs and the monitor shows whatever you land on, lit or not.
+ * Everything else is tinted by the collection it came from, which is how the
+ * bar can span the whole playback order without becoming an undifferentiated
+ * run of boxes: a change of colour is a change of collection, and it lands
+ * exactly where the row will cross into one.
+ *
+ * The tints are deliberately MUTED and deliberately not blue. They are
+ * grouping, not state — the only saturated thing on this bar should be the
+ * box you are on, and the only red should be the playhead.
  */
+/**
+ * The collection tints, cycled by order of first appearance.
+ *
+ * Six, because past that they stop being tellable apart at a box's width and
+ * start being decoration. Cycling means two collections eventually share a
+ * colour — acceptable, since the confusion would need them to be seven apart
+ * on a bar you can only see a slice of, and the alternative is generating
+ * colours nobody chose.
+ */
+/**
+ * How far each box is pulled in from its clip's true extent, per side.
+ *
+ * The gap between two boxes is therefore twice this. It is an inset rather
+ * than a margin because the box's MIDDLE has to stay exactly on the clip's
+ * middle — that is what the centring arithmetic aligns to the card below —
+ * and trimming only the width would shift it by half the gap.
+ */
+const BOX_INSET_PX = 2.5;
+
+const COLLECTION_TINTS = [
+  "bg-zinc-600/70",
+  "bg-teal-700/60",
+  "bg-violet-700/55",
+  "bg-amber-700/55",
+  "bg-rose-800/55",
+  "bg-emerald-800/60",
+] as const;
+
 export function SeamStripBar({
   strip,
   centreClipId,
+  tintOf,
   playheadPx,
   playing,
   onTogglePlay,
+  onStepBack,
+  onStepForward,
   onScrubTo,
   onScrubbingChange,
 }: Readonly<{
   strip: SeamStrip;
   /** The clip to centre — the one under the middle card. */
   centreClipId: string;
+  /** Which collection each clip belongs to, as a tint index. */
+  tintOf: ReadonlyMap<string, number>;
 
   /** Where the playhead sits, in absolute strip pixels; null when untouched. */
   playheadPx: number | null;
   playing: boolean;
   onTogglePlay: () => void;
+  /** Step the carousel one clip. Null at the end it cannot go. */
+  onStepBack: (() => void) | null;
+  onStepForward: (() => void) | null;
   onScrubTo: (clipId: string, secondsIntoClip: number) => void;
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
@@ -184,6 +227,26 @@ export function SeamStripBar({
         )}
       </button>
 
+      {/* STEP ONE CLIP, either way.
+          The bar is a map of the whole order and the cards move by gesture —
+          swipe, or click a neighbour — which is fine when the next clip is on
+          screen and awkward when you just want the next one. Two arrows are
+          the plainest possible statement of "one forward, one back", and they
+          bracket the thing they move.
+          Disabled rather than hidden at the ends: a control that vanishes
+          takes its own position with it and shifts the bar sideways. */}
+      <button
+        type="button"
+        data-seam-step="back"
+        disabled={onStepBack === null}
+        onClick={() => onStepBack?.()}
+        aria-label="Previous clip"
+        title="Previous clip"
+        className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-25 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+      >
+        <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+      </button>
+
       <div
         ref={trackRef}
         data-seam-track
@@ -221,21 +284,43 @@ export function SeamStripBar({
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;
             const isCentre = segment.clipId === centreClipId;
+            const tint = COLLECTION_TINTS[(tintOf.get(segment.clipId) ?? 0) % COLLECTION_TINTS.length]!;
             return (
               <span
                 key={segment.clipId}
                 data-seam-segment={segment.clipId}
                 data-seam-segment-live={isCentre ? "" : undefined}
                 aria-hidden="true"
-                // Inset from BOTH sides, so the gap between boxes costs a
-                // pixel either end and leaves the middle exactly where the
-                // clip's middle is. Shrinking the width alone moved it.
-                style={{ left: segment.leftPx + 1, width: Math.max(1, segment.widthPx - 2) }}
+                // Inset from BOTH sides — see BOX_INSET_PX. The floor keeps a
+                // very short clip as a visible sliver rather than letting the
+                // gap eat it.
+                style={{
+                  left: segment.leftPx + BOX_INSET_PX,
+                  width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                }}
                 className={[
-                  "absolute inset-y-0 rounded-[3px]",
-                  isCentre ? "bg-blue-500/80" : "bg-zinc-700/70",
+                  "absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]",
+                  tint,
+                  // NO RING. The centred box was outlined as well as checked,
+                  // which at a box's width read as two stray white edges
+                  // rather than as an outline — the corners round away and
+                  // only the left and right sides survive. The check alone
+                  // says it, and the box keeps its collection's colour because
+                  // colour is spoken for: it says which collection a clip
+                  // belongs to, and one channel cannot carry two meanings.
                 ].join(" ")}
-              />
+              >
+                {/* WHICH ONE YOU ARE ON, as a mark rather than a hue. Hidden
+                    on a box too narrow to hold it: a check crushed into 10px
+                    is a smudge, and the ring already says the same thing. */}
+                {isCentre && segment.widthPx >= 16 ? (
+                  // HALF STRENGTH. It marks a position on a map you are
+                  // scanning, not a control you are hunting for, and at full
+                  // white it was the brightest thing on the bar — louder than
+                  // the playhead, which is the mark that actually moves.
+                  <Check className="h-3 w-3 text-white/50" strokeWidth={2.5} />
+                ) : null}
+              </span>
             );
           })}
         </div>
@@ -245,14 +330,30 @@ export function SeamStripBar({
             data-seam-playhead
             aria-hidden="true"
             style={{ transform: `translateX(${playheadPx + offset}px)` }}
-            className="absolute inset-y-0 left-0 w-0.5 -translate-x-1/2 bg-red-500"
+            // A HAIRLINE. One physical pixel wherever the display allows it:
+            // the playhead's job is to name an instant, and a 2px line spans
+            // two of them at this scale. `w-px` rather than a fraction of a
+            // rem so it does not thicken with the type scale.
+            className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-red-500"
           >
             {/* The head of the line, so the playhead reads as a position that
                 was put there rather than a border between two boxes. */}
-            <span className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-red-500" />
+            <span className="absolute -top-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500" />
           </span>
         )}
       </div>
+
+      <button
+        type="button"
+        data-seam-step="forward"
+        disabled={onStepForward === null}
+        onClick={() => onStepForward?.()}
+        aria-label="Next clip"
+        title="Next clip"
+        className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-25 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+      >
+        <ChevronRight aria-hidden="true" className="h-4 w-4" />
+      </button>
 
       <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400">
         <span className="text-blue-300">{(atSeconds ?? 0).toFixed(2)}s</span>
