@@ -44,6 +44,25 @@ type CardStart = Readonly<{ start: number; end: number; disabled: boolean }>;
 
 const ClipStartsContext = createContext<ReadonlyMap<string, CardStart> | null>(null);
 
+/**
+ * WHICH CARD'S PLAY BUTTON STARTED THE PLAYBACK THAT IS RUNNING.
+ *
+ * The pause belongs to the button you pressed, and stays there until you press
+ * it again — even once the playhead has run on into later clips. It followed
+ * the playhead first, which meant the control you had just used slid out from
+ * under the pointer and you had to go looking for where "pause" had got to,
+ * on a board where every card looks the same.
+ *
+ * Only ever consulted WHILE PLAYING, which is what saves it from needing to be
+ * cleared. A stale id sits harmlessly in a paused view, and the next press
+ * overwrites it. If playback was started somewhere else entirely — the pane's
+ * own transport — this is null and the pause falls back to the card the
+ * playhead is in, which is the best guess available.
+ */
+type PlayInitiator = Readonly<{ id: string | null; claim: (id: string | null) => void }>;
+
+const PlayInitiatorContext = createContext<PlayInitiator>({ id: null, claim: () => {} });
+
 export function GridPlayStarts({
   focusedId,
   pixelsPerSecond,
@@ -79,7 +98,17 @@ export function GridPlayStarts({
     return map;
   }, [graph, details, spans, focusedId, pixelsPerSecond]);
 
-  return <ClipStartsContext.Provider value={starts}>{children}</ClipStartsContext.Provider>;
+  return (
+    <ClipStartsContext.Provider value={starts}>
+      <PlayInitiatorProvider>{children}</PlayInitiatorProvider>
+    </ClipStartsContext.Provider>
+  );
+}
+
+function PlayInitiatorProvider({ children }: Readonly<{ children: ReactNode }>) {
+  const [id, setId] = useState<string | null>(null);
+  const value = useMemo<PlayInitiator>(() => ({ id, claim: setId }), [id]);
+  return <PlayInitiatorContext.Provider value={value}>{children}</PlayInitiatorContext.Provider>;
 }
 
 /**
@@ -130,23 +159,37 @@ export function GraphGridPlayButton({
       };
     },
     () => {
-      if (card === undefined) return "forward";
+      if (card === undefined) return "paused-forward";
       const now = channel.get();
+      // BOTH FACTS IN ONE STRING. The zone answers "where is the playhead
+      // relative to this card"; the prefix answers "is anything playing at
+      // all", which the pause now needs even on a card the playhead has left.
+      // One subscription, and React still bails out unless this card's own
+      // answer changes.
+      const running = channel.isPlaying() ? "playing" : "paused";
       // INSIDE THIS CLIP AT ALL, not merely parked on its first frame. That
       // was the old test, and it is the wrong one for a single control: a
       // playhead three seconds into a shot is plainly ON that shot, and
       // offering to "go to its start" there is a rewind nobody asked for.
-      if (now >= card.start && now < card.end) {
-        return channel.isPlaying() ? "playing" : "here";
-      }
-      return card.start < now ? "back" : "forward";
+      if (now >= card.start && now < card.end) return `${running}-here` as const;
+      return `${running}-${card.start < now ? "back" : "forward"}` as const;
     },
-    () => "forward",
+    () => "paused-forward" as const,
   );
-  const playingHere = cardState === "playing";
+  const running = cardState.startsWith("playing");
+  const zone = cardState.slice(cardState.indexOf("-") + 1);
+  const initiator = useContext(PlayInitiatorContext);
+
+  // THE PAUSE STAYS WHERE IT WAS PRESSED. While something is playing, the
+  // card that started it wears the pause — wherever the playhead has since
+  // travelled — so the control does not move out from under the pointer that
+  // just used it. With no initiator (the pane's own transport started this),
+  // it falls back to the card the playhead is in.
+  const playingHere =
+    running && (initiator.id !== null ? initiator.id === (nodeId as string) : zone === "here");
   // WHICH CONTROL THIS IS. On the clip the playhead is sitting in, the button
   // is a transport control; anywhere else it is a way of getting there.
-  const onThisClip = cardState === "playing" || cardState === "here";
+  const onThisClip = playingHere || zone === "here";
 
   // WHICH WAY THE ARROW POINTS: forward for a card ahead of the playhead,
   // turned around for one behind it — the same glyph saying "fetch the
@@ -157,7 +200,7 @@ export function GraphGridPlayButton({
   // "at-start" with no direction of its own and a recomputed arrow would snap
   // round at the moment it went quiet. Arriving now makes the button a PLAY
   // control, so there is no arrow left to contradict the trip you just watched.
-  const pointsBack = cardState === "back";
+  const pointsBack = zone === "back";
   const node = useCollectionsSelector((snapshot) => snapshot.graph.nodesById.get(nodeId) ?? null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -294,6 +337,7 @@ export function GraphGridPlayButton({
             // selects it — or, held a moment, starts a reorder drag.
             event.stopPropagation();
             if (playingHere) {
+              initiator.claim(null);
               // Pause where it is, rather than rewinding: stopping to look at
               // a frame and being thrown back to the clip's start would make
               // the button useless for the thing you stop for.
@@ -317,6 +361,7 @@ export function GraphGridPlayButton({
             // from wherever the pane already was: measured, pressing the third
             // card played from 0.0s instead of its 16.5s start. Letting the
             // seek land while the pane is still paused fixes it.
+            initiator.claim(nodeId as string);
             channel.set(card.start);
             requestAnimationFrame(() => channel.setPlaying(true));
           }}
