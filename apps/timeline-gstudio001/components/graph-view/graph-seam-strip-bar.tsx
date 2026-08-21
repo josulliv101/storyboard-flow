@@ -228,7 +228,7 @@ export function SeamStripBar({
         type="button"
         onClick={onTogglePlay}
         aria-label={playing ? "Pause" : "Play across the cut"}
-        className="shrink-0 rounded-full p-1.5 text-zinc-300 ring-1 ring-white/15 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+        className="shrink-0 rounded-full p-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
         {playing ? (
           <Pause aria-hidden="true" className="h-4 w-4" />
@@ -271,7 +271,17 @@ export function SeamStripBar({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        className="relative h-9 flex-1 cursor-ew-resize overflow-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+        // `outline-none` on the BASE, not only on focus-visible. It is a
+        // role="slider" with a tabIndex, so pressing it focuses it — and the
+        // browser's own focus ring was drawing a pale outline around the whole
+        // track the moment you touched it, which read as a border the bar did
+        // not have a second earlier. Keyboard focus still gets a visible ring,
+        // in blue, from the focus-visible rule.
+        //
+        // h-14 rather than h-9: the boxes are the content here, and at 36px a
+        // box was a chip. Taller lets a clip's colour, its nesting bars and
+        // the playhead all have room without stacking on each other.
+        className="relative h-14 flex-1 cursor-ew-resize overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
         <div
           data-seam-strip
