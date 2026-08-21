@@ -34,7 +34,9 @@ import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
-import { SeamBar, useSeamTransport } from "./graph-seam-bar";
+import { useSeamTransport } from "./graph-seam-bar";
+import { SeamStripBar } from "./graph-seam-strip-bar";
+import { buildSeamStrip, segmentFor, stripXFor } from "./graph-seam-strip";
 import {
   buildSeamTimeline,
   seamAt,
@@ -59,6 +61,17 @@ import {
 /** How much of each neighbour the bar reaches into. Long enough to hear a cut
  *  land, short enough that the centre clip keeps most of the bar's scale. */
 const SEAM_LEAD_SECONDS = 2;
+
+/**
+ * How many pixels a second of clip is worth ON THE BAR.
+ *
+ * Fixed, which is the whole point: it is what makes a box the size of its
+ * clip rather than a share of whatever else happens to be on screen, so the
+ * same shot is the same width whether three cards are up or five. At 9px a
+ * ten-second shot is 90px — long enough to aim a pointer at, short enough
+ * that a minute and a half of material still reads as a shape.
+ */
+const BAR_PIXELS_PER_SECOND = 9;
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -191,7 +204,7 @@ function DetailsFilmstripModal({
   const place = useMemo(() => {
     const subject = parseNodeId(node.id as string);
     const parentId = graph.parentById.get(subject) ?? null;
-    if (parentId === null) return { name: null, index: 0, total: 0 };
+    if (parentId === null) return { name: null, index: 0, total: 0, clipIds: [] as string[] };
     const parent = graph.nodesById.get(parentId);
     const siblings = (graph.childrenById.get(parentId) ?? []).filter((id) => {
       const child = graph.nodesById.get(id);
@@ -201,6 +214,7 @@ function DetailsFilmstripModal({
       name: parent?.name ?? null,
       index: siblings.indexOf(subject) + 1,
       total: siblings.length,
+      clipIds: siblings.map((id) => id as string),
     };
   }, [graph, node.id]);
 
@@ -374,6 +388,36 @@ function DetailsFilmstripModal({
     rememberViewCount(next);
     setViewCount(next);
   }, []);
+  // THE BAR'S OWN LAYOUT, over the clip's own COLLECTION rather than the
+  // clock's window — the same scope the header counts in, so "clip 5 of 13"
+  // and thirteen boxes are one statement rather than two. The ROW can swipe
+  // past the collection edge, and when it does the bar re-scopes with it.
+  // Durations come straight from the graph, so this costs a map lookup per
+  // clip and no media at all — the boxes are geometry, not pictures.
+  const strip = useMemo(() => {
+    const clips = place.clipIds.map((id) => {
+      const found = graph.nodesById.get(parseNodeId(id));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      return {
+        id,
+        showingSeconds: media === null ? 0 : mediaDurationSeconds(media),
+      };
+    });
+    return buildSeamStrip(clips, BAR_PIXELS_PER_SECOND);
+  }, [place.clipIds, graph]);
+
+  // The clips the CLOCK can reach — lit on the bar, and the only ones a scrub
+  // can land on. Everything else is context that slides past.
+  const liveClipIds = useMemo(
+    () =>
+      new Set(
+        [edgeBefore, ...wholeClips, edgeAfter]
+          .filter((clip): clip is MediaNode => clip !== null)
+          .map((clip) => clip.id as string),
+      ),
+    [edgeBefore, wholeClips, edgeAfter],
+  );
+
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
   // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
@@ -384,6 +428,11 @@ function DetailsFilmstripModal({
   const hasPrevious = centre > 0;
   const hasNext = centre >= 0 && centre < ids.length - 1;
   const [dragPx, setDragPx] = useState(0);
+  // The pressed panel's width, captured when a swipe starts. It is what turns
+  // a drag in pixels into a FRACTION of a step, which is the only way the bar
+  // and the row can move together: they take the same journey, but a card's
+  // step is a fixed panel width and a clip's step is its own duration.
+  const [dragPanelPx, setDragPanelPx] = useState(0);
   // Not state: this changes on nearly every pointer move and only the ROW's
   // transform cares. A re-render per move to store a start coordinate would
   // re-render three live panels — video elements included — sixty times a
@@ -415,6 +464,7 @@ function DetailsFilmstripModal({
           width: event.currentTarget.getBoundingClientRect().width,
           committed: false,
         };
+        setDragPanelPx(event.currentTarget.getBoundingClientRect().width);
       },
       onPointerMove: (event) => {
         const drag = dragRef.current;
@@ -471,6 +521,38 @@ function DetailsFilmstripModal({
     [centre, hasNext, hasPrevious, ids, onOpenNeighbour],
   );
 
+  // HOW FAR THE BAR MOVES WHILE THE HAND IS DOWN.
+  //
+  // The row and the bar make the same journey and take different distances to
+  // do it: a card's step is one panel width, a clip's step is the gap between
+  // its box's middle and its neighbour's, which is its own duration. So the
+  // drag is converted to a FRACTION of a step on the row, and that fraction is
+  // spent on the bar's own step.
+  //
+  // The sign falls out of it. Translate is `containerCentre - clipCentre`, so
+  // moving to a later clip lowers it and moving to an earlier one raises it —
+  // multiply the signed drag by the unsigned distance and both directions come
+  // out right without a branch.
+  const dragShiftPx = (() => {
+    if (dragPx === 0 || dragPanelPx <= 0 || centre < 0) return 0;
+    const here = segmentFor(strip, ids[centre] ?? "");
+    const target = segmentFor(strip, (dragPx < 0 ? ids[centre + 1] : ids[centre - 1]) ?? "");
+    if (here === null || target === null) return 0;
+    const distance = Math.abs(
+      target.leftPx + target.widthPx / 2 - (here.leftPx + here.widthPx / 2),
+    );
+    return (dragPx / dragPanelPx) * distance;
+  })();
+
+  // WHERE THE PLAYHEAD IS, read across from the clock. The clock says "this
+  // clip, this far in"; the strip says where that clip begins. Neither has to
+  // know the other's coordinates, and there is still only one answer.
+  const playheadPx = (() => {
+    const at = position ?? (centreClip === null ? null : { clipId: centreClip.id as string, clipSeconds: 0 });
+    if (at === null) return null;
+    return stripXFor(strip, at.clipId, at.clipSeconds);
+  })();
+
   const rowTransform =
     `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + ${dragPx}px))`;
 
@@ -516,16 +598,28 @@ function DetailsFilmstripModal({
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="mx-auto w-full max-w-5xl">
-            <SeamBar
-              timeline={timeline}
-              seconds={shownSeconds}
+            <SeamStripBar
+              strip={strip}
+              centreClipId={node.id as string}
+              liveClipIds={liveClipIds}
+              playheadPx={playheadPx}
               playing={playing}
-              onScrub={(next) => {
-                setPlaying(false);
-                setBarSeconds(next);
-              }}
+              dragShiftPx={dragShiftPx}
               onTogglePlay={() => setPlaying((was) => !was)}
+              onOpenClip={onOpenNeighbour}
               onScrubbingChange={setScrubbing}
+              onScrubTo={(clipId, secondsIntoClip) => {
+                // Back across the seam the other way: the bar reports a clip
+                // and an offset into it, and the clock wants bar seconds. The
+                // span carries `sourceOffset` because a run-up joins its clip
+                // partway through, so the two only line up once it is taken
+                // off.
+                const span = seamSpanFor(timeline, clipId);
+                if (span === null) return;
+                const next = span.from + Math.max(0, secondsIntoClip - span.sourceOffset);
+                setPlaying(false);
+                setBarSeconds(Math.min(Math.max(next, span.from), span.to));
+              }}
             />
           </div>
         </div>
