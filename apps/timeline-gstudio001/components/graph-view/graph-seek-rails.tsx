@@ -38,6 +38,8 @@ import {
   buildGridPlayheadMap,
   buildPlayheadMap,
   buildStripOverlay,
+  gridHintMask,
+  stripHintMask,
   childSpans,
   type ChildSpan,
   type GridPlayheadMap,
@@ -323,8 +325,17 @@ function SeekRailRow({
           hovering anywhere over the band lights it. */}
       <div
         aria-hidden="true"
-        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-white/15 transition-colors group-hover:bg-sky-300/70"
-        style={{ height: SEEK_RAIL_GROOVE_PX }}
+        className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-white/15 transition-colors group-hover:bg-sky-300/70"
+        // MASKED TO THE CELLS, so the line stops at each card instead of ruling
+        // straight across the gutters and tying separate cards together. The
+        // HIT area is untouched — the whole band, gutters included, still
+        // grabs — which is the point of doing this with a mask rather than by
+        // splitting the element.
+        style={{
+          height: SEEK_RAIL_GROOVE_PX,
+          maskImage: gridHintMask(cellWidth, GRID_GAP),
+          WebkitMaskImage: gridHintMask(cellWidth, GRID_GAP),
+        }}
       />
       {/* NO FILL AND NO TICKS — what the rail shows is the hairline above and
           its thumb, and nothing else.
@@ -657,6 +668,11 @@ export function GraphStripSeekRail({
     [cards, tickWindow],
   );
 
+  // Rebuilt only when the CARDS change, not on scroll: the mask lives in
+  // content space and travels with the layer it is painted on, so panning does
+  // not move it relative to anything.
+  const hintMask = useMemo(() => stripHintMask(cards), [cards]);
+
   // Window geometry over the scroller's padding band, measured like the
   // grid rails' (ResizeObserver; the strip has no dataset race — the map is
   // ours, not the virtualizer's).
@@ -937,11 +953,6 @@ export function GraphStripSeekRail({
           not have — and it warms under the pointer, which is where "this is
           draggable" is actually learned. The whole rail is the hit target, so
           hovering anywhere over the band lights it. */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-white/15 transition-colors group-hover:bg-sky-300/70"
-        style={{ height: SEEK_RAIL_GROOVE_PX }}
-      />
       {/* NO FILL HERE EITHER — see the grid rail above for why the fill
           element survives while its background does not: the paint loop bails
           if the fill is missing and would take the thumb with it.
@@ -952,6 +963,21 @@ export function GraphStripSeekRail({
           positions it is the same machinery the thumb's own maths reads. */}
       <div aria-hidden="true" className="absolute inset-0 overflow-hidden rounded-full">
         <div ref={innerRef} className="relative h-full" style={{ width: extent }}>
+          {/* THE HINT, in CONTENT space rather than the viewport's.
+              The cards here are duration-proportional and the strip scrolls
+              under the rail, so a hint pinned to the pill would slide out of
+              register with the cards the moment anything moved. Inside the
+              translated layer it rides with them, and the mask cuts the
+              gutters out where the strip's own gaps are. */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-white/15 transition-colors group-hover:bg-sky-300/70"
+            style={{
+              height: SEEK_RAIL_GROOVE_PX,
+              maskImage: hintMask,
+              WebkitMaskImage: hintMask,
+            }}
+          />
           <div ref={fillRef} data-rail-fill aria-hidden="true" className="absolute inset-y-0 left-0" />
         </div>
       </div>
