@@ -697,15 +697,23 @@ export function DetailsPanel({
                 nothing to paint in it. Its numbers below are the same. */}
             {/* THE FILMSTRIP IS WHAT GOES, NOT TRIMMING ITSELF.
                 A source map with two grips and forty poster frames needs the
-                width; below 30rem the grips are a few pixels apart and it is
-                texture rather than a control. But dropping the whole block
-                took the ability to trim with it, and a panel you cannot trim
-                from is a panel you have to leave to do the work — the numbers
-                below stay at every width for exactly that reason. They are two
-                fields and an arrow, they fit, and typing an exact in and out
-                was always the more precise of the two routes anyway. */}
+                width. But dropping the whole block took the ability to trim
+                with it, and a panel you cannot trim from is a panel you have
+                to leave to do the work — the numbers below stay at every width
+                for exactly that reason. They are two fields and an arrow, they
+                fit, and typing an exact in and out was always the more precise
+                of the two routes anyway.
+
+                THE GATE IS 18rem, NOT 30. Thirty was chosen while nine-up
+                existed, where a panel really is a column; with five as the
+                widest view a panel is 19.2rem on a 1357px window — under the
+                old gate, so the filmstrip vanished at the exact density the
+                view is now for, and the grips went with it. Measured rather
+                than guessed: five-up is the density that has to keep them, so
+                the gate sits below it and a genuinely tiny panel still sheds
+                the strip. */}
             {video && (
-              <div ref={stripSlot} className="hidden w-full @min-[30rem]:block">
+              <div ref={stripSlot} className="hidden w-full @min-[18rem]:block">
                 {stripWidth > 0 ? (
                   <div className="relative">
                     <TrimOverviewStrip
