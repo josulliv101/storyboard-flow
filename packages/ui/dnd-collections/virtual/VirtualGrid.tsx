@@ -100,6 +100,20 @@ export type VirtualGridProps = Readonly<{
    * a tab stop; it only lengthens the row spacer when it starts a new row.
    */
   trailingSlot?: ReactNode;
+  /**
+   * Rendered inside each cell, as a SIBLING of the item.
+   *
+   * A card's shell is a `<button>`, so anything interactive a consumer wants
+   * on a card cannot live in its content — nested interactive content is
+   * invalid, and this package already refuses it. The cell is the nearest
+   * place that is both valid and card-shaped: it knows exactly where one card
+   * is, without anyone measuring anything.
+   *
+   * The cell is `position: relative` for this, which is safe because the drop
+   * indicator positions against the ITEM rather than the cell (it hangs on a
+   * negative offset outside its own relative ancestor inside `node-views`).
+   */
+  cellOverlay?: (id: NodeId) => ReactNode;
   className?: string;
 }>;
 
@@ -123,6 +137,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       itemDragActivation = "body",
       overlay,
       trailingSlot,
+      cellOverlay,
       className,
     },
     ref
@@ -473,6 +488,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                       onFocus={() => onItemFocus(id)}
                       style={
                         {
+                          position: "relative",
                           width: fillCellWidth,
                           height: cellHeight,
                           // A row-EDGE boundary is the grid's own edge, not the
@@ -499,6 +515,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                         itemContent={itemContent}
                         dragActivation={itemDragActivation}
                       />
+                      {cellOverlay?.(id)}
                     </div>
                   );
                 })}

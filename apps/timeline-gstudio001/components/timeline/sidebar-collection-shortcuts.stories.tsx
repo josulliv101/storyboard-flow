@@ -259,3 +259,43 @@ export const NoCollectionsDrawsNothing: Story = {
     expect(canvasElement.querySelector("[data-sidebar-collection-shortcuts]")).toBeNull();
   },
 };
+
+/**
+ * HOME IS THE FIRST ENTRY, and the group survives on it alone.
+ *
+ * The group used to vanish when a project had no top-level collections, on the
+ * reasoning that a heading with nothing under it reads as something that
+ * failed to load. That reasoning still holds — but "nothing" changed meaning
+ * when Home moved inside: a project with no collections still has a root to go
+ * back to, so there IS something under the heading.
+ *
+ * First, because the root is what contains the rest: a list of a project's
+ * collections that does not begin with the project reads as a list of
+ * unrelated places.
+ */
+export const HomeLeadsTheGroup: Story = {
+  render: () => (
+    <CollectionShortcutsGroup shortcuts={[]} onOpen={() => {}} projectId="project-1" />
+  ),
+  play: async ({ canvasElement }) => {
+    const group = canvasElement.querySelector("[data-sidebar-collection-shortcuts]");
+    await expect(group).not.toBeNull();
+
+    const home = canvasElement.querySelector("[data-sidebar-project-home]");
+    await expect(home).not.toBeNull();
+    // FIRST, not merely present.
+    await expect(group!.firstElementChild).toBe(home);
+    // A route, so the back button understands it.
+    await expect(home!.getAttribute("href")).toBe("/timeline/project-1/graph");
+  },
+};
+
+/** With no project there is no root to go to, and the empty group disappears
+ *  exactly as it always did. */
+export const NoProjectMeansNoGroup: Story = {
+  render: () => <CollectionShortcutsGroup shortcuts={[]} onOpen={() => {}} />,
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-sidebar-collection-shortcuts]")).toBeNull();
+    await expect(canvasElement.querySelector("[data-sidebar-project-home]")).toBeNull();
+  },
+};

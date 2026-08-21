@@ -182,6 +182,12 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         <span
           data-disabled-visuals={disabledVisualsAttr(disabledVisuals)}
           data-filter-miss={filterMiss ? "true" : undefined}
+          // The SAME artwork marker the media card carries, so the grid's play
+          // button lands on the picture here too. Without it the button fell
+          // back to the cell's bottom, which on a collection is under the
+          // name-and-count row — a play control sitting below the card it
+          // belongs to.
+          data-clip-artwork
           // `relative`, so the checkbox below anchors to the PREVIEW FRAMES
           // rather than to the whole card. Anchored to the card it landed on
           // the name-and-count row underneath and truncated it ("51.8s / 5

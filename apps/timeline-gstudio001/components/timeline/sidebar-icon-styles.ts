@@ -133,5 +133,35 @@ export const SIDEBAR_GLYPH =
  *  still for the same reason. */
 export const SIDEBAR_AVATAR_INSET = "[.rail_&]:ml-5";
 
+/**
+ * The active tile: an INDICATOR BAR at the rail's edge, over a quietly lifted
+ * pill.
+ *
+ * This is the nav treatment. The rail answers "where am I", and a bar riding
+ * the edge reads as a POSITION in a list — the same signal a browser tab or an
+ * IDE gutter uses — where a filled tile only reads as a button someone pressed.
+ *
+ * It replaces a full inversion (near-white pill, near-black glyph). That was
+ * legible, but it made the active tile the brightest object on the screen,
+ * competing with the board it was only labelling; with several toggles lit at
+ * once the rail became the loudest thing in the app. The bar is louder in the
+ * only way that matters — position — while the tile itself stays quiet.
+ *
+ * The bar is anchored to the TILE edge, not the pill: it belongs to the rail's
+ * left boundary, so it stays put while the pill floats inset from it.
+ *
+ * No `translate-y-px`: a pressed tile nudging down by a pixel opened a hairline
+ * seam above it and read as misalignment rather than as a press.
+ *
+ * `h-9` (36px) against the 56px pill: long enough to read as a bar rather than
+ * a tick, short enough that it still marks a position instead of drawing a
+ * second edge down the rail.
+ */
+export const SIDEBAR_ICON_PRESSED = [
+  "text-zinc-50 before:bg-zinc-800",
+  "after:absolute after:left-0 after:top-1/2 after:h-9 after:w-[3px]",
+  "after:-translate-y-1/2 after:rounded-r-full after:bg-sky-300 after:content-['']",
+].join(" ");
+
 export const SIDEBAR_ICON_IDLE =
   "text-zinc-400 before:bg-zinc-900/40 hover:text-zinc-100 hover:before:bg-zinc-800/80";

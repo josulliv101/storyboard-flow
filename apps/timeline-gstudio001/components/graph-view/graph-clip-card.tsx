@@ -235,7 +235,18 @@ export const GraphClipContent = memo(function GraphClipContent({
           frame to opacity-30, and a checkbox that went with it would make the
           selection unreadable exactly while someone is picking through a
           filtered board. */}
-      <span className="relative flex h-full min-h-0 w-full overflow-hidden rounded-sm [[data-virtual-grid]_&]:flex-1">
+      <span
+        // NAMED so a layer OUTSIDE the card can measure this box. The grid's
+        // play buttons ride the bottom-left of the picture, and they cannot be
+        // children of the card (its shell is a `<button>`), so they are an
+        // overlay that computes cell positions arithmetically — which needs one
+        // real answer to "where does the picture end inside a cell". The
+        // caption's top would give the same number by coincidence; this says it
+        // on purpose, and only media cards carry it, which is the only kind
+        // those buttons appear on.
+        data-clip-artwork
+        className="relative flex h-full min-h-0 w-full overflow-hidden rounded-sm [[data-virtual-grid]_&]:flex-1"
+      >
         <span
           data-disabled-visuals={disabledVisualsAttr(disabledVisuals)}
           data-filter-miss={filterMiss ? "true" : undefined}

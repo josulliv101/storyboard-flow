@@ -83,7 +83,19 @@ export const SEEK_RAIL_BAND_INSET_PX = 0;
  *  thickens behind the thumb. The HIT TARGET is unchanged — the whole
  *  SEEK_RAIL_TRACK_PX-tall box stays grabbable; only this visible line is
  *  slim. */
-const SEEK_RAIL_GROOVE_PX = 2;
+/**
+ * The hairline that says the rail is there at all.
+ *
+ * ONE PIXEL, against the old groove's two-plus-ring-plus-inset-shadow. The
+ * track went because it duplicated the playhead line and cost a 16px band to
+ * live in; what it also carried, and what went with it, was the only sign that
+ * this strip of the card does anything. A dot that appears where you last left
+ * it does not advertise that the space around it is draggable.
+ *
+ * The HIT AREA is unchanged at `SEEK_RAIL_TRACK_PX` — eight times this. What
+ * you can see is a hint; what you can hit is a control.
+ */
+const SEEK_RAIL_GROOVE_PX = 1;
 
 type SeekRailGeometry = Readonly<{
   columns: number;
@@ -304,8 +316,18 @@ function SeekRailRow({
         height: SEEK_RAIL_TRACK_PX,
       }}
     >
-      {/* NO GROOVE, NO FILL, NO TICKS — the rail is invisible and only its
-          thumb shows.
+      {/* THE HINT. Barely present at rest — it rides the top edge of the
+          artwork, and anything stronger would read as a border the cards do
+          not have — and it warms under the pointer, which is where "this is
+          draggable" is actually learned. The whole rail is the hit target, so
+          hovering anywhere over the band lights it. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-white/15 transition-colors group-hover:bg-sky-300/70"
+        style={{ height: SEEK_RAIL_GROOVE_PX }}
+      />
+      {/* NO FILL AND NO TICKS — what the rail shows is the hairline above and
+          its thumb, and nothing else.
           A track drawn across every row was a lot of furniture for a control
           that is used occasionally, and it duplicated what the playhead line
           already says: where you are. The dot is the part that carries
@@ -910,7 +932,17 @@ export function GraphStripSeekRail({
           : { left: 9, top: 1 + SEEK_RAIL_BAND_INSET_PX, right: 9, height: SEEK_RAIL_TRACK_PX }
       }
     >
-      {/* NO TRACK HERE EITHER — see the grid rail above for why the fill
+      {/* THE HINT. Barely present at rest — it rides the top edge of the
+          artwork, and anything stronger would read as a border the cards do
+          not have — and it warms under the pointer, which is where "this is
+          draggable" is actually learned. The whole rail is the hit target, so
+          hovering anywhere over the band lights it. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-white/15 transition-colors group-hover:bg-sky-300/70"
+        style={{ height: SEEK_RAIL_GROOVE_PX }}
+      />
+      {/* NO FILL HERE EITHER — see the grid rail above for why the fill
           element survives while its background does not: the paint loop bails
           if the fill is missing and would take the thumb with it.
 

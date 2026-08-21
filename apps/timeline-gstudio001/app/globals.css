@@ -99,6 +99,34 @@ body {
   opacity: 1;
 }
 
+/* THE SCROLL LOCK MUST NOT ALSO COMPENSATE, because the gutter above already did.
+ *
+ * Radix menus and dialogs lock the page with react-remove-scroll, which sets
+ * `overflow: hidden` on BODY and then adds a margin equal to the scrollbar it
+ * just removed — the standard trick for keeping content still while a modal is
+ * open. It is correct on a normal page and wrong on this one: the gutter holds
+ * that space permanently, so nothing was lost to give back, and the margin is
+ * pure double-count. Right-clicking a card pulled the whole board 15px left.
+ *
+ * IT ALSO COSTS THE GUTTER ITSELF. `overflow` propagates to the viewport from
+ * BODY once body's value stops being `visible`, and body carries no gutter, so
+ * the lock takes the reserved strip away at the same moment it compensates for
+ * it. That is the second half of the jump, and it is why setting the gutter on
+ * `body` as well fixes nothing — measured, it moved the shift not one pixel.
+ *
+ * SPECIFICITY, DELIBERATELY. Their rule is `!important` and is injected into
+ * the head WHEN THE MENU OPENS, so it lands after this stylesheet and wins any
+ * tie on order; `html body[...]` outranks it regardless of who got there first.
+ * A matching-specificity `!important` was tried and lost exactly this way.
+ *
+ * Only the gap is cancelled — `overflow: hidden` is untouched, so the page is
+ * still locked behind the menu. Measured: board shift on right-click 15px -> 0.
+ */
+html body[data-scroll-locked] {
+  margin-right: 0 !important;
+  padding-right: 0 !important;
+}
+
 [data-testid="timeline-scroll-viewport"] {
   color-scheme: dark;
   scrollbar-color: #52525b #09090b;
