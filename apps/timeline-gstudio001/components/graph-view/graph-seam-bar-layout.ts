@@ -159,8 +159,24 @@ export type SeamTick = Readonly<{
  */
 const TICK_LADDER = [1, 2, 5, 10, 15, 30, 60, 120, 300] as const;
 const MIN_TICK_GAP_PX = 46;
-/** How close a time tick may come to a collection label before it gives way. */
+/** How close a time tick may come to a collection tick's own mark. */
 const TICK_CLASH_PX = 26;
+/**
+ * Roughly how wide a collection label renders, per character, at the ruler's
+ * 9px type — and the ceiling the label is truncated at.
+ *
+ * An estimate, because this is arithmetic and the text is not measurable from
+ * here. It only has to be close: the label is LEFT-ALIGNED on its tick, so a
+ * long name like "Loading Dock" reaches ~70px to the right of a mark whose
+ * clash zone was 26, and the first time tick past that zone printed its "75s"
+ * straight through the end of the word. Over-reserving costs one time tick on
+ * a ruler that has a dozen; under-reserving costs the collection name, which
+ * is the label that cannot be worked out from anything else on screen.
+ */
+const LABEL_PX_PER_CHAR = 5.6;
+const LABEL_MAX_PX = 128;
+/** The breathing room a time tick keeps past the end of a name. */
+const LABEL_TAIL_PX = 8;
 
 export function tickStepSeconds(pxPerSecond: number): number {
   if (!Number.isFinite(pxPerSecond) || pxPerSecond <= 0) return TICK_LADDER.at(-1)!;
@@ -192,11 +208,18 @@ export function seamRulerTicks(params: {
     collectionTicks.push({ x: segment.leftPx, label: clip.collectionName, kind: "collection" });
   }
 
+  // The span each collection tick claims: its mark, plus the width its name
+  // takes up to the right of it.
+  const claimed = collectionTicks.map((tick) => ({
+    from: tick.x - TICK_CLASH_PX,
+    to: tick.x + Math.min(LABEL_MAX_PX, tick.label.length * LABEL_PX_PER_CHAR) + LABEL_TAIL_PX,
+  }));
+
   const step = tickStepSeconds(strip.pxPerSecond);
   const timeTicks: SeamTick[] = [];
   for (let seconds = step; seconds * strip.pxPerSecond <= strip.totalPx; seconds += step) {
     const x = seconds * strip.pxPerSecond;
-    if (collectionTicks.some((tick) => Math.abs(tick.x - x) < TICK_CLASH_PX)) continue;
+    if (claimed.some((span) => x > span.from && x < span.to)) continue;
     timeTicks.push({ x, label: `${Math.round(seconds)}s`, kind: "time" });
   }
 

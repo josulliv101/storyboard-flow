@@ -1995,3 +1995,67 @@ export const TheBarTakesTheKeyboard: Story = {
     await waitFor(() => expect(subject()).not.toBe(startedOn));
   },
 };
+
+/**
+ * THE BAR IS GREY, AND THE SEAMS STILL SHOW.
+ *
+ * The collection tint is parked behind `NEXT_PUBLIC_GSTUDIO_BAR_COLOURS`, off
+ * by default, so every box on the strip and every segment of the minimap draws
+ * in one neutral. This is the DEFAULT that is pinned here — the tinted path
+ * cannot be exercised from a story, because the flag is a compile-time
+ * constant; turn it on and this is the story that should fail.
+ *
+ * THE SECOND HALF IS THE POINT. A bar in which every clip looks alike is only
+ * acceptable because the structure it used to carry in colour is carried
+ * elsewhere: a dashed divider on the strip, a named tick on the ruler, and a
+ * real gap in the minimap. So this asserts the greyness AND the three
+ * landmarks together — losing either half is what would make the flag a
+ * regression rather than a parking space.
+ */
+export const TheBarIsGreyUntilTheTintIsSwitchedOn: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+
+    const colours = (selector: string) =>
+      new Set(
+        Array.from(document.querySelectorAll<HTMLElement>(selector)).map(
+          (el) => el.style.backgroundColor,
+        ),
+      );
+
+    // ONE colour across two collections, on both rows.
+    const boxColours = colours("[data-seam-segment]");
+    expect(boxColours.size).toBe(1);
+    const miniColours = colours("[data-seam-mini-segment]");
+    expect(miniColours.size).toBe(1);
+    // And the SAME one, so the strip and the map read as one object.
+    expect([...miniColours]).toEqual([...boxColours]);
+
+    // GREY rather than merely uniform: one saturated hue for everything would
+    // pass the count above while being exactly what the flag withholds. The
+    // measure is how far the channels spread — the neutral spans 14 of 255,
+    // and a collection tint at 52% saturation spans about 90, so 24 separates
+    // them with room either side rather than sitting on top of one.
+    const [only] = [...boxColours];
+    const [, r, g, b] = /rgb\((\d+), (\d+), (\d+)\)/.exec(only ?? "") ?? [];
+    const channels = [Number(r), Number(g), Number(b)];
+    expect(Math.max(...channels) - Math.min(...channels)).toBeLessThan(24);
+
+    // THE SEAMS ARE STILL THERE, in the three places that now carry them
+    // alone: the strip, the ruler and the minimap.
+    expect(document.querySelectorAll("[data-seam-divider]").length).toBe(1);
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>('[data-seam-tick="collection"]')).map(
+        (tick) => tick.textContent?.trim(),
+      ),
+    ).toEqual(["Kitchen Interior", "Loading Dock"]);
+    // The minimap's own crossing: a real left margin on the first clip of the
+    // second collection, and on nothing else.
+    const gapped = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-mini-segment]"),
+    ).filter((segment) => Number.parseFloat(segment.style.marginLeft || "0") > 0);
+    expect(gapped.length).toBe(1);
+  },
+};

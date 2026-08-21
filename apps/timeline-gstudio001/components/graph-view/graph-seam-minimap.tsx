@@ -2,6 +2,8 @@
 
 import { useCallback, useRef } from "react";
 
+import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
+
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 
 /**
@@ -103,7 +105,7 @@ export function SeamMinimap({
               data-seam-mini-segment={clip.id}
               style={{
                 flexGrow: clip.showingSeconds,
-                backgroundColor: colourOf.get(clip.id) ?? "hsl(220 8% 34%)",
+                backgroundColor: colourOf.get(clip.id) ?? BAR_NEUTRAL_COLOUR,
                 // A real gap where the collection changes, so the runs read
                 // as runs at a scale far too small for a label.
                 marginLeft: index > 0 && seams.has(index) ? 3 : undefined,
