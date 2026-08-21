@@ -43,7 +43,14 @@ export function volumeToGain(volume: number): number {
 /** The subset of `AudioContext` this module uses — narrow so a test can fake it
  *  without standing up Web Audio, and so no `any` is needed. */
 export type MinimalGainNode = {
-  gain: { value: number };
+  gain: {
+    value: number;
+    /** Present on a real `AudioParam`. Optional here because the type exists to
+     *  be fakeable, and because a param without it still works — see
+     *  `writeGain`, which falls back to assignment. */
+    setTargetAtTime?: (target: number, startTime: number, timeConstant: number) => void;
+    cancelScheduledValues?: (startTime: number) => void;
+  };
   connect: (destination: MinimalGainNode | MinimalAudioDestination) => void;
   disconnect: () => void;
 };
@@ -52,6 +59,9 @@ export type MinimalAudioDestination = { readonly __brand?: "destination" };
 
 export type MinimalAudioContext = {
   readonly state: string;
+  /** The audio clock. Absent on an older fake, which `writeGain` reads as
+   *  "cannot schedule" and handles. */
+  readonly currentTime?: number;
   readonly destination: MinimalAudioDestination;
   createGain: () => MinimalGainNode;
   createMediaElementSource: (element: HTMLMediaElement) => { connect: (node: MinimalGainNode) => void };
@@ -102,6 +112,47 @@ function resolveAudioContextConstructor(): AudioContextConstructor | null {
     webkitAudioContext?: AudioContextConstructor;
   };
   return scope.AudioContext ?? scope.webkitAudioContext ?? null;
+}
+
+/**
+ * How quickly a gain change reaches its target, as `setTargetAtTime`'s time
+ * constant.
+ *
+ * FIVE MILLISECONDS, which is not a fade — it is the shortest ramp that is
+ * still a ramp. A gain assigned outright steps the waveform from one value to
+ * another between two adjacent samples, and a discontinuity is exactly what a
+ * click IS: the ear hears the edge, not the level. That happens here at every
+ * cut (the outgoing clip drops to zero mid-waveform while the incoming one
+ * starts at full), on every mute, and on every step of a volume drag.
+ *
+ * Short enough that a cut still lands on the frame it belongs to — five
+ * milliseconds is an eighth of a frame at 24fps — and long enough that the
+ * transition spans hundreds of samples instead of one.
+ */
+const GAIN_RAMP_SECONDS = 0.005;
+
+/**
+ * Move a gain to a new value without stepping it.
+ *
+ * Falls back to assignment when the param cannot schedule — an old fake, a
+ * context that never came up — so the mixer's behaviour degrades to what it
+ * was rather than throwing.
+ */
+function writeGain(
+  node: MinimalGainNode,
+  target: number,
+  context: MinimalAudioContext | null,
+): void {
+  const param = node.gain;
+  const now = context?.currentTime;
+  if (typeof param.setTargetAtTime === "function" && typeof now === "number") {
+    // Anything still scheduled is a ramp toward a level that is no longer
+    // wanted; leaving it queued would have the new target fight it.
+    param.cancelScheduledValues?.(now);
+    param.setTargetAtTime(target, now, GAIN_RAMP_SECONDS);
+    return;
+  }
+  param.value = target;
 }
 
 /**
@@ -195,7 +246,7 @@ export function createAudioMixer(
       levels.set(element, level);
       const gain = gains.get(element);
       if (gain) {
-        gain.gain.value = volumeToGain(level);
+        writeGain(gain, volumeToGain(level), context);
         return;
       }
       if (fallbackElements.has(element)) applyFallback(element);
@@ -220,13 +271,13 @@ export function createAudioMixer(
 
     setMasterVolume(volume) {
       masterVolume = clampVolume(volume);
-      if (master && !muted) master.gain.value = volumeToGain(masterVolume);
+      if (master && !muted) writeGain(master, volumeToGain(masterVolume), context);
       applyAllFallbacks();
     },
 
     setMuted(next) {
       muted = next;
-      if (master) master.gain.value = next ? 0 : volumeToGain(masterVolume);
+      if (master) writeGain(master, next ? 0 : volumeToGain(masterVolume), context);
       applyAllFallbacks();
     },
 

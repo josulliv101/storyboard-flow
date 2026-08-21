@@ -15,6 +15,10 @@ import { at } from "../../test-support/at";
 function createFakeContext() {
   const gains: MinimalGainNode[] = [];
   const disconnected: MinimalGainNode[] = [];
+  /** Every scheduled gain move. The fake also applies the target immediately so
+   *  assertions about the resulting LEVEL still read naturally; what this adds
+   *  is whether the move was scheduled or stepped. */
+  const ramps: { target: number; timeConstant: number }[] = [];
   const sourceCalls: HTMLMediaElement[] = [];
   let state = "suspended";
   let closed = false;
@@ -23,10 +27,18 @@ function createFakeContext() {
     get state() {
       return state;
     },
+    currentTime: 0,
     destination: {},
     createGain: () => {
       const node: MinimalGainNode = {
-        gain: { value: 1 },
+        gain: {
+          value: 1,
+          setTargetAtTime: (target, _startTime, timeConstant) => {
+            ramps.push({ target, timeConstant });
+            node.gain.value = target;
+          },
+          cancelScheduledValues: () => undefined,
+        },
         connect: () => undefined,
         disconnect: () => {
           disconnected.push(node);
@@ -54,6 +66,7 @@ function createFakeContext() {
     context,
     gains,
     disconnected,
+    ramps,
     sourceCalls,
     isClosed: () => closed,
     getState: () => state,
@@ -243,7 +256,11 @@ describe("release", () => {
     const mixer = createAudioMixer(() => fake.context);
     const element = fakeElement();
     mixer.attach(element);
-    const gain = at(fake.gains, 0);
+    // INDEX 1, not 0: `ensureContext` creates the master gain first, so the
+    // source's node is the second one. Asserting against index 0 tests the
+    // master — which `release` never touches — and passes whether or not the
+    // release worked at all.
+    const gain = at(fake.gains, 1);
 
     mixer.release(element);
     gain.gain.value = 0.42;
@@ -278,5 +295,85 @@ describe("release", () => {
     const fake = createFakeContext();
     const mixer = createAudioMixer(() => fake.context);
     expect(() => mixer.release(fakeElement())).not.toThrow();
+  });
+});
+
+describe("gain ramping", () => {
+  it("SCHEDULES a level change rather than stepping it", () => {
+    // A gain assigned outright moves the waveform between two adjacent samples,
+    // and that discontinuity is what a click IS — the ear hears the edge, not
+    // the level. It fires at every cut: the outgoing clip drops to zero mid
+    // waveform while the incoming one starts at full.
+    const fake = createFakeContext();
+    const mixer = createAudioMixer(() => fake.context);
+    const element = fakeElement();
+    mixer.attach(element);
+    const before = fake.ramps.length;
+
+    mixer.setSourceGain(element, 1);
+
+    expect(fake.ramps.length).toBe(before + 1);
+    expect(at(fake.ramps, fake.ramps.length - 1).target).toBe(1);
+  });
+
+  it("ramps FAST — a cut, not a fade", () => {
+    // Long enough to span hundreds of samples, short enough that the sound
+    // still lands on the frame it belongs to.
+    const fake = createFakeContext();
+    const mixer = createAudioMixer(() => fake.context);
+    const element = fakeElement();
+    mixer.attach(element);
+    mixer.setSourceGain(element, 1);
+
+    const { timeConstant } = at(fake.ramps, fake.ramps.length - 1);
+    expect(timeConstant).toBeGreaterThan(0);
+    expect(timeConstant).toBeLessThanOrEqual(0.02);
+  });
+
+  it("ramps the MASTER too, so mute does not click", () => {
+    const fake = createFakeContext();
+    const mixer = createAudioMixer(() => fake.context);
+    mixer.attach(fakeElement());
+    const before = fake.ramps.length;
+
+    mixer.setMuted(true);
+
+    expect(fake.ramps.length).toBe(before + 1);
+    expect(at(fake.ramps, fake.ramps.length - 1).target).toBe(0);
+  });
+
+  it("still lands on the value, so levels behave exactly as before", () => {
+    const fake = createFakeContext();
+    const mixer = createAudioMixer(() => fake.context);
+    const element = fakeElement();
+    mixer.attach(element);
+
+    // The source's own node — index 1, behind the master. See the note above.
+    mixer.setSourceGain(element, 1);
+    expect(at(fake.gains, 1).gain.value).toBe(volumeToGain(1));
+
+    mixer.setSourceGain(element, 0);
+    expect(at(fake.gains, 1).gain.value).toBe(0);
+  });
+
+  it("falls back to assignment when the param cannot schedule", () => {
+    // An AudioParam without `setTargetAtTime` is not a real one, but the mixer
+    // degrades to its old behaviour rather than throwing at it.
+    const fake = createFakeContext();
+    const stepping = {
+      ...fake.context,
+      createGain: () => ({
+        gain: { value: 1 },
+        connect: () => undefined,
+        disconnect: () => undefined,
+      }),
+    } as MinimalAudioContext;
+    const mixer = createAudioMixer(() => stepping);
+    const element = fakeElement();
+
+    expect(() => {
+      mixer.attach(element);
+      mixer.setSourceGain(element, 1);
+    }).not.toThrow();
   });
 });
