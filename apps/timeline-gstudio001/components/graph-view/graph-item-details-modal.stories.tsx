@@ -185,6 +185,47 @@ const OVERFLOWING_SCENE: GraphNodeSpec = {
   })),
 };
 
+/**
+ * TWO COLLECTIONS, LONG ENOUGH TO NEED A WINDOW.
+ *
+ * Two rooms of twelve six-second shots. The bar opens fitted to the
+ * collection you are in, so 72s across the track puts the other 72 off the
+ * sides — which is the condition every claim about panning, zooming, the
+ * minimap and the edges is actually about. The two names are what the ruler
+ * and the dividers have to find.
+ */
+const TWO_ROOMS_SCENE: GraphNodeSpec = {
+  kind: "collection",
+  id: "root",
+  name: "Root",
+  children: [
+    {
+      kind: "collection",
+      id: "kitchen",
+      name: "Kitchen Interior",
+      children: Array.from({ length: 12 }, (_, index) => ({
+        kind: "media" as const,
+        id: index === 6 ? "subject" : `kitchen-${index}`,
+        name: index === 6 ? "Subject" : `Kitchen ${index}`,
+        src: plate(`K${index}`, `hsl(${index * 13}, 60%, 70%)`),
+        durationSeconds: 6,
+      })),
+    },
+    {
+      kind: "collection",
+      id: "dock",
+      name: "Loading Dock",
+      children: Array.from({ length: 12 }, (_, index) => ({
+        kind: "media" as const,
+        id: `dock-${index}`,
+        name: `Dock ${index}`,
+        src: plate(`D${index}`, `hsl(${180 + index * 13}, 60%, 70%)`),
+        durationSeconds: 6,
+      })),
+    },
+  ],
+};
+
 function graphOfRoot(root: GraphNodeSpec): CollectionsGraph {
   const result = buildGraph([root]);
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -276,17 +317,16 @@ type Story = StoryObj<typeof GraphItemDetailsModal>;
 /**
  * ── AIMING AT THE BAR ─────────────────────────────────────────────────────
  *
- * The bar has two surfaces and they do different things, which is why these
- * helpers exist rather than a single "click the bar".
+ * ONE SURFACE NOW. The boxes ARE the scrubber: a drag across them puts the
+ * playhead where you point, and there is no separate rail underneath. What
+ * were two helpers aimed at two surfaces are now two ways of describing the
+ * same gesture.
  *
- * The BOXES are a filmstrip you push: a swipe there moves the carousel three
- * clips. Pressing one does nothing at all — it used to scrub, and several of
- * the stories below were written against that.
- *
- * The RAIL underneath is the scrubber. It spans the whole timeline linearly,
- * and so does the strip of boxes, so a clip's position is the SAME fraction of
- * both — which is what lets `scrubIntoBox` say "scrub to that clip" while
- * driving the control that actually scrubs.
+ * THE DISTINCTION THAT MATTERS IS TRAVEL, not position. A press that does not
+ * move is a CLICK, and a click commits to a clip; a press that moves more than
+ * a few pixels is a SCRUB, and a scrub commits to nothing. So every scrub
+ * helper here deliberately travels, and a story that wants the click has to
+ * ask for it — see `clickBox`.
  */
 function seamTrack(): HTMLElement {
   const found = document.querySelector<HTMLElement>("[data-seam-track]");
@@ -294,10 +334,51 @@ function seamTrack(): HTMLElement {
   return found!;
 }
 
-function seamRail(): HTMLElement {
-  const found = document.querySelector<HTMLElement>("[data-seam-rail]");
+/** The surface every gesture on the bar lands on. */
+function seamSurface(): HTMLElement {
+  const found = document.querySelector<HTMLElement>("[data-seam-boxes]");
   expect(found).not.toBeNull();
   return found!;
+}
+
+function pointerAt(clientX: number, clientY: number) {
+  return { clientX, clientY, isPrimary: true, pointerId: 1, button: 0 };
+}
+
+/**
+ * Drag the playhead to `clientX`.
+ *
+ * Approaches from `travelFrom` px away so the press registers as a drag: the
+ * bar tells a scrub from a click by distance travelled, and a helper that
+ * pressed and released on one pixel would be asking for the other gesture
+ * entirely. `hold` leaves the pointer down, for the stories about what happens
+ * DURING a drag.
+ */
+function scrubToClientX(clientX: number, options?: { hold?: boolean; travelFrom?: number }): void {
+  const surface = seamSurface();
+  const box = surface.getBoundingClientRect();
+  const y = box.top + box.height / 2;
+  const from = clientX - (options?.travelFrom ?? 12);
+  fireEvent.pointerDown(surface, pointerAt(from, y));
+  fireEvent.pointerMove(surface, pointerAt(clientX, y));
+  if (options?.hold === true) return;
+  fireEvent.pointerUp(surface, pointerAt(clientX, y));
+}
+
+/** Let go of a held scrub, wherever the pointer was left. */
+function releaseScrub(clientX: number): void {
+  const surface = seamSurface();
+  const box = surface.getBoundingClientRect();
+  fireEvent.pointerUp(surface, pointerAt(clientX, box.top + box.height / 2));
+}
+
+/** Press a box WITHOUT travelling, which is how you commit to a clip. */
+function clickBox(box: HTMLElement): void {
+  const surface = seamSurface();
+  const target = box.getBoundingClientRect();
+  const args = pointerAt(target.left + target.width / 2, target.top + target.height / 2);
+  fireEvent.pointerDown(surface, args);
+  fireEvent.pointerUp(surface, args);
 }
 
 /** Every clip's box, in timeline order. */
@@ -312,40 +393,22 @@ function centreBox(): HTMLElement {
   return found!;
 }
 
-/** Press the rail at `fraction` of the way along the timeline. */
-function scrubToFraction(fraction: number): void {
-  const rail = seamRail();
-  const box = rail.getBoundingClientRect();
-  const args = {
-    clientX: box.left + box.width * Math.min(Math.max(fraction, 0), 1),
-    clientY: box.top + box.height / 2,
-    isPrimary: true,
-    pointerId: 1,
-    button: 0,
-  };
-  fireEvent.pointerDown(rail, args);
-  fireEvent.pointerUp(rail, args);
-}
-
 /**
  * Wait until the strip has stopped moving.
  *
- * The strip eases to a new position over 260ms whenever the subject changes,
- * and `scrubIntoBox` reads a box's position ON SCREEN while the rail converts
- * through the strip's FINAL offset. Measure mid-animation and those two
- * disagree by however far the strip still has to travel — which showed up as
- * scrubs landing at zero, because the mismatch pushed the target off the
+ * A change of subject can nudge the bar to bring the new clip into view, and
+ * `scrubIntoBox` reads a box's position ON SCREEN. Measure mid-move and the
+ * two disagree by however far the strip still has to travel — which showed up
+ * as scrubs landing at zero, because the mismatch pushed the target off the
  * front of the timeline and the clamp caught it.
  */
 async function settleStrip(): Promise<void> {
   const strip = document.querySelector<HTMLElement>("[data-seam-strip]");
   expect(strip).not.toBeNull();
-  // PAST THE TRANSITION FIRST, then confirm. Watching alone is not enough
-  // under load: the poll can take two readings before the animation has even
+  // PAST ANY TRANSITION FIRST, then confirm. Watching alone is not enough
+  // under load: the poll can take two readings before the movement has even
   // started, agree with itself, and report a strip that is about to move as
-  // settled. That is exactly how these passed alone and failed in the full
-  // run. The dwell clears the 260ms transition; the watch below then covers a
-  // machine slow enough for that not to be sufficient.
+  // settled. That is exactly how these passed alone and failed in the full run.
   await new Promise((resolve) => setTimeout(resolve, 320));
   let previous = Number.NaN;
   await waitFor(
@@ -362,26 +425,14 @@ async function settleStrip(): Promise<void> {
 /**
  * Scrub to a point inside `box`, `within` of the way across that clip.
  *
- * Press the rail at the BOX'S OWN x. The rail reads through the strip's
- * transform — that is what makes the ball sit under the playhead — so the two
- * share a horizontal coordinate space and a clip is at the same x on both. An
- * earlier version converted to a fraction of the timeline and pressed there,
- * which was right while the rail was a proportional slider and silently
- * scrubbed to the wrong clip once it stopped being one.
+ * Aim at the BOX'S OWN x: the pointer and the boxes share a client coordinate
+ * space, so a clip is at the same place on both and no conversion through the
+ * strip's transform is needed — which is what makes this survive a pan and a
+ * zoom that a fraction-of-the-timeline version would not.
  */
 function scrubIntoBox(box: HTMLElement, within = 0.5): void {
-  const rail = seamRail();
-  const railBox = rail.getBoundingClientRect();
   const target = box.getBoundingClientRect();
-  const args = {
-    clientX: target.left + target.width * within,
-    clientY: railBox.top + railBox.height / 2,
-    isPrimary: true,
-    pointerId: 1,
-    button: 0,
-  };
-  fireEvent.pointerDown(rail, args);
-  fireEvent.pointerUp(rail, args);
+  scrubToClientX(target.left + target.width * within);
 }
 
 /** Swipe the boxes, which moves the carousel three clips at a time. */
@@ -1259,28 +1310,23 @@ export const TheMonitorGrowsWhileScrubbing: Story = {
     await waitFor(() => expect(widest.getAttribute("aria-pressed")).toBe("true"));
 
     const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
-    const rail = seamRail();
     const width = () => Math.round(centre().getBoundingClientRect().width);
 
     const resting = width();
     expect(centre().hasAttribute("data-item-details-magnified")).toBe(false);
 
-    const box = rail.getBoundingClientRect();
-    const args = {
-      clientX: box.left + box.width * 0.5,
-      clientY: box.top + box.height / 2,
-      isPrimary: true,
-      pointerId: 1,
-      button: 0,
-    };
-    fireEvent.pointerDown(rail, args);
+    // The middle of the track, held: the gesture is the drag, so the monitor
+    // has to be up for as long as the pointer is down and not a moment past.
+    const surface = seamSurface().getBoundingClientRect();
+    const middle = surface.left + surface.width * 0.5;
+    scrubToClientX(middle, { hold: true });
 
     // Bigger, and marked as such.
     await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
     await waitFor(() => expect(width()).toBeGreaterThan(resting + 10));
 
     // And back down when the drag ends — this is the gesture, not a mode.
-    fireEvent.pointerUp(rail, args);
+    releaseScrub(middle);
     await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(false));
     await waitFor(() => expect(width()).toBe(resting));
 
@@ -1288,10 +1334,10 @@ export const TheMonitorGrowsWhileScrubbing: Story = {
     const neighbours = Array.from(
       document.querySelectorAll('[data-item-details-panel="neighbour"]'),
     );
-    fireEvent.pointerDown(rail, args);
+    scrubToClientX(middle, { hold: true });
     await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
     expect(neighbours.some((n) => n.hasAttribute("data-item-details-magnified"))).toBe(false);
-    fireEvent.pointerUp(rail, args);
+    releaseScrub(middle);
   },
 };
 
@@ -1420,7 +1466,6 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     fireEvent.click(three);
     await waitFor(() => expect(three.getAttribute("aria-pressed")).toBe("true"));
 
-    const rail = seamRail();
     const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
     const panels = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
@@ -1494,98 +1539,459 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
 };
 
 /**
- * HOLDING THE BALL AT AN EDGE RUNS THE STRIP UNDER IT.
+ * HOLDING AT AN EDGE RUNS THE STRIP UNDER THE POINTER.
  *
- * The rail spans what is ON SCREEN, not what exists: on a collection longer
- * than the bar, the end of the rail was the end of the timeline you could
- * reach, and the rest of the order sat an inch off the side of the track with
- * no way to scrub into it. You could step to it with the arrows or push the
- * boxes there by hand first, both of which mean abandoning the drag you are
+ * The track spans what is ON SCREEN, not what exists: on a project longer than
+ * the bar can draw at the current zoom, the end of the track was the end of
+ * the timeline you could reach in one gesture, with the rest of the order
+ * sitting an inch off the side. You could step to it with the arrows or pan
+ * there with the wheel first, both of which mean abandoning the drag you are
  * in the middle of.
  *
- * So the two ends of the rail are a throttle. Hold the ball inside 40px of
- * the right edge and the strip travels forward underneath it; hold it at the
- * left and it reverses. THE HAND DOES NOT MOVE during any of that, which is
- * why this is a frame loop and not something hung off pointermove — an
- * implementation reading the moves travels only while the hand jitters.
+ * So the two ends of the track are a throttle. Hold inside 40px of the right
+ * edge and the strip travels forward underneath; hold at the left and it
+ * reverses. THE HAND DOES NOT MOVE during any of that, which is why this is a
+ * frame loop and not something hung off pointermove — an implementation
+ * reading the moves travels only while the hand jitters.
  *
- * Four claims, and the last two are the ones that make it a control rather
- * than a hazard: the middle of the rail does nothing, and letting go stops it.
+ * Five claims, and the last three are what make it a control rather than a
+ * hazard: the middle of the track does nothing, letting go stops it, and a
+ * gesture that travelled this far is not mistaken for a tap on whatever
+ * arrived under the finger.
  */
-export const HoldingTheBallAtAnEdgeRunsTheStrip: Story = {
+export const HoldingAtAnEdgeRunsTheStrip: Story = {
   render: () => <SeamHarness scene={OVERFLOWING_SCENE} />,
   play: async () => {
     const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
     const stripLeft = () =>
       document.querySelector<HTMLElement>("[data-seam-strip]")!.getBoundingClientRect().left;
+    const subject = () => centreBox().getAttribute("data-seam-segment");
 
+    // Held presses with NO travel at all, which is the gesture: everything
+    // that moves is moved by the bar, not by the hand.
     const press = (clientX: number) => {
-      const rail = seamRail();
-      const box = rail.getBoundingClientRect();
-      fireEvent.pointerDown(rail, {
-        clientX,
-        clientY: box.top + box.height / 2,
-        isPrimary: true,
-        pointerId: 1,
-        button: 0,
-      });
+      const surface = seamSurface();
+      const box = surface.getBoundingClientRect();
+      fireEvent.pointerDown(surface, pointerAt(clientX, box.top + box.height / 2));
     };
-    const release = () => {
-      const rail = seamRail();
-      const box = rail.getBoundingClientRect();
-      fireEvent.pointerUp(rail, {
-        clientX: box.left + box.width / 2,
-        clientY: box.top + box.height / 2,
-        isPrimary: true,
-        pointerId: 1,
-        button: 0,
-      });
+    const release = (clientX: number) => {
+      const surface = seamSurface();
+      const box = surface.getBoundingClientRect();
+      fireEvent.pointerUp(surface, pointerAt(clientX, box.top + box.height / 2));
     };
     const rest = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
     await settleStrip();
+    const startedOn = subject();
 
     // THE PRECONDITION THIS STORY IS ABOUT. If the strip fitted in the track
     // there would be nothing off the side to reach, and every assertion below
     // would pass for the wrong reason.
-    const railWidth = seamRail().getBoundingClientRect().width;
-    const totalPx = Number(seamTrack().getAttribute("aria-valuemax")) * 9;
-    expect(totalPx).toBeGreaterThan(railWidth * 1.5);
+    const trackWidth = seamSurface().getBoundingClientRect().width;
+    const pps = Number(seamTrack().getAttribute("data-seam-pps"));
+    const totalPx = Number(seamTrack().getAttribute("aria-valuemax")) * pps;
+    expect(totalPx).toBeGreaterThan(trackWidth * 1.5);
 
-    // ── THE MIDDLE OF THE RAIL IS AN ORDINARY SCRUBBER ────────────────────
-    const railBox = seamRail().getBoundingClientRect();
-    press(railBox.left + railBox.width / 2);
+    // ── THE MIDDLE OF THE TRACK IS AN ORDINARY SCRUBBER ───────────────────
+    const box = seamSurface().getBoundingClientRect();
+    press(box.left + box.width / 2);
     const middleT = at();
     const middleX = stripLeft();
     await rest(300);
     expect(at()).toBe(middleT);
     expect(stripLeft()).toBe(middleX);
-    release();
+    release(box.left + box.width / 2);
 
     // ── THE RIGHT EDGE RUNS FORWARD ───────────────────────────────────────
-    press(railBox.right - 12);
-    const startedAt = at();
-    const startedX = stripLeft();
-    await waitFor(() => expect(at()).toBeGreaterThan(startedAt + 2), { timeout: 2000 });
-    // The clock advanced BECAUSE THE STRIP MOVED, not because the press
-    // landed further along: the boxes travelled left under a stationary hand.
-    expect(stripLeft()).toBeLessThan(startedX - 20);
+    press(box.right - 12);
+    const pressedAt = at();
+    await waitFor(() => expect(at()).toBeGreaterThan(pressedAt + 1), { timeout: 2000 });
 
-    // ── LETTING GO STOPS IT ───────────────────────────────────────────────
-    release();
+    // THE CLOCK ADVANCES BECAUSE THE STRIP MOVES, not because the press landed
+    // further along. Measured between two readings taken once the run is
+    // already going, so the press's own snap-to-cut is not inside the window —
+    // and stated as the two AGREEING rather than as a pixel count, so the
+    // claim survives a change of zoom instead of being calibrated to one.
+    const fromAt = at();
+    const fromX = stripLeft();
+    await waitFor(() => expect(at()).toBeGreaterThan(fromAt + 2), { timeout: 2000 });
+    const ranPx = fromX - stripLeft();
+    expect(ranPx).toBeGreaterThan(5);
+    expect(Math.abs(ranPx - (at() - fromAt) * pps)).toBeLessThan(2);
+
+    // ── LETTING GO STOPS IT, AND CHOOSES NOTHING ──────────────────────────
+    release(box.right - 12);
     const stoppedAt = at();
     const stoppedX = stripLeft();
     await rest(300);
     expect(at()).toBe(stoppedAt);
     expect(stripLeft()).toBe(stoppedX);
+    // The hand never moved, so by travel alone this looks like a tap — and a
+    // tap commits to a clip. The edge loop has to declare the drag on the
+    // bar's behalf, or scrubbing across the project ends by opening whatever
+    // shot happened to arrive under a stationary finger.
+    expect(subject()).toBe(startedOn);
 
     // ── AND THE LEFT EDGE REVERSES ────────────────────────────────────────
-    press(railBox.left + 12);
+    press(box.left + 12);
+    const pressedBackAt = at();
+    await waitFor(() => expect(at()).toBeLessThan(pressedBackAt - 1), { timeout: 2000 });
     const backFrom = at();
     const backFromX = stripLeft();
     await waitFor(() => expect(at()).toBeLessThan(backFrom - 2), { timeout: 2000 });
-    expect(stripLeft()).toBeGreaterThan(backFromX + 20);
-    release();
+    const backPx = stripLeft() - backFromX;
+    expect(backPx).toBeGreaterThan(5);
+    expect(Math.abs(backPx - (backFrom - at()) * pps)).toBeLessThan(2);
+    release(box.left + 12);
+  },
+};
+
+/**
+ * ── THE BAR IS A WINDOW ONTO THE WHOLE PROJECT ────────────────────────────
+ *
+ * The stories below are about what follows from that, and none of them were
+ * possible while the bar drew everything at one fixed scale.
+ */
+
+/**
+ * THE WHEEL PANS; ⌘ OR CTRL AND THE WHEEL ZOOMS ABOUT THE POINTER.
+ *
+ * Two gestures on the same input, and the second is the one that matters: at
+ * a single fixed scale a bar is either a smear of a long project or a keyhole
+ * onto a short one, and which you get depends on nothing but how much footage
+ * happens to exist.
+ *
+ * ZOOMING ABOUT THE POINTER IS THE WHOLE CLAIM. A zoom that scaled about the
+ * left edge would throw away the thing you were looking at every time you
+ * pushed in, which makes it a control you have to undo rather than one you
+ * aim. So this asserts the time under the cursor before and after, and lets
+ * everything else move around it.
+ */
+export const TheWheelPansAndZoomsAboutThePointer: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+
+    const pps = () => Number(seamTrack().getAttribute("data-seam-pps"));
+    const stripLeft = () =>
+      document.querySelector<HTMLElement>("[data-seam-strip]")!.getBoundingClientRect().left;
+    /** The second of footage sitting under a given screen x. */
+    const secondsUnder = (clientX: number) => (clientX - stripLeft()) / pps();
+
+    const surface = seamSurface();
+    const box = surface.getBoundingClientRect();
+    const anchor = box.left + box.width * 0.7;
+
+    // ── PAN ───────────────────────────────────────────────────────────────
+    const beforePanX = stripLeft();
+    const beforePanPps = pps();
+    fireEvent.wheel(surface, { deltaY: 160, clientX: anchor, clientY: box.top + 4 });
+    await waitFor(() => expect(stripLeft()).toBeLessThan(beforePanX - 100));
+    // A pan is not a zoom: the scale is untouched, so every box keeps its size.
+    expect(pps()).toBe(beforePanPps);
+
+    // ── ZOOM ──────────────────────────────────────────────────────────────
+    const heldSecond = secondsUnder(anchor);
+    const beforeZoom = pps();
+    fireEvent.wheel(surface, {
+      deltaY: -240,
+      ctrlKey: true,
+      clientX: anchor,
+      clientY: box.top + 4,
+    });
+    await waitFor(() => expect(pps()).toBeGreaterThan(beforeZoom * 1.2));
+    // THE SAME SECOND IS STILL UNDER THE CURSOR. Everything else on the bar
+    // has moved and been redrawn at a new size; this one point has not.
+    expect(Math.abs(secondsUnder(anchor) - heldSecond)).toBeLessThan(0.05);
+
+    // And back out again, about the same point.
+    const zoomedIn = pps();
+    fireEvent.wheel(surface, {
+      deltaY: 240,
+      ctrlKey: true,
+      clientX: anchor,
+      clientY: box.top + 4,
+    });
+    await waitFor(() => expect(pps()).toBeLessThan(zoomedIn * 0.9));
+    expect(Math.abs(secondsUnder(anchor) - heldSecond)).toBeLessThan(0.05);
+
+    // ── AND THE STRIP CANNOT BE THROWN AWAY ───────────────────────────────
+    //
+    // A native scroller clamps for free; a transform does not. Twenty hard
+    // notches one way and twenty back is a firm two-finger flick in each
+    // direction, and neither may end with the bar empty and the strip
+    // somewhere off the side of the track.
+    const strip = document.querySelector<HTMLElement>("[data-seam-strip]")!;
+    const stillOnScreen = () => {
+      const s = strip.getBoundingClientRect();
+      const t = seamTrack().getBoundingClientRect();
+      return Math.min(s.right, t.right) - Math.max(s.left, t.left);
+    };
+    for (const direction of [1, -1]) {
+      for (let notch = 0; notch < 20; notch += 1) {
+        fireEvent.wheel(surface, {
+          deltaY: 600 * direction,
+          clientX: anchor,
+          clientY: box.top + 4,
+        });
+      }
+      await waitFor(() => expect(stillOnScreen()).toBeGreaterThan(0));
+      // Not a sliver, either: half the track is the far end of the clamp, so
+      // there is always something to grab hold of and read.
+      expect(stillOnScreen()).toBeGreaterThan(box.width * 0.4);
+    }
+  },
+};
+
+/**
+ * A SCRUB LANDING NEAR A CUT MEANS THE CUT.
+ *
+ * The cut is the thing anyone is ever aiming at on this bar — it is what the
+ * whole view is for — and it is one pixel wide. Without a snap, "put the
+ * playhead on the start of that shot" is a test of the reader's mouse hand,
+ * and the answer is almost always a frame or two out in a direction they
+ * cannot see.
+ *
+ * PIXELS, NOT SECONDS, is what makes it survive the zoom above: seven pixels
+ * is seven pixels at 5px a second and at 40, where a tolerance in seconds
+ * would swallow whole clips at one end and be unreachable at the other.
+ */
+export const AScrubNearACutTakesTheCut: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
+    const pps = Number(seamTrack().getAttribute("data-seam-pps"));
+
+    // A box with room either side of it, so "just before" and "just after" are
+    // both inside the same clip's neighbourhood and not off the end of the bar.
+    const target = seamBoxes()[4]!.getBoundingClientRect();
+    // The cut is the box's own leading edge, less the inset every box is
+    // pulled in by — see BOX_INSET_PX in the lane.
+    const cut = target.left - 2.5;
+
+    scrubToClientX(cut - 3);
+    const fromBefore = at();
+    scrubToClientX(cut + 3);
+    const fromAfter = at();
+
+    // BOTH SIDES LAND ON THE SAME INSTANT, which is the cut. Six pixels apart
+    // on screen, zero seconds apart on the clock.
+    expect(fromBefore).toBe(fromAfter);
+
+    // A press with room around it is left exactly where it was put, so the
+    // snap is a tolerance and not a quantiser: 40px further along is 40px
+    // further along, to the second.
+    scrubToClientX(cut + 40);
+    expect(at()).toBeGreaterThan(fromAfter);
+    expect(Math.abs(at() - fromAfter - 40 / pps)).toBeLessThan(0.05);
+  },
+};
+
+/**
+ * THE RULER SAYS WHAT SCALE YOU ARE AT, AND WHERE EACH COLLECTION STARTS.
+ *
+ * A box's width means "this long" only against a scale, and the scale now
+ * moves — so two bars showing the same picture can be a minute apart in what
+ * they are describing. The time ticks are the fix for that.
+ *
+ * THE COLLECTION LABELS ARE THE MORE IMPORTANT HALF. Time is derivable; "the
+ * Loading Dock starts here" is not, and it is the only landmark on a run of
+ * boxes that otherwise looks the same all the way along. They win a collision
+ * with a time tick for the same reason.
+ */
+export const TheRulerNamesTheCollections: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-ruler]")).not.toBeNull());
+    await settleStrip();
+
+    const labels = (kind: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-seam-tick=" + kind + "]")).map(
+        (tick) => tick.textContent?.trim() ?? "",
+      );
+
+    expect(labels("collection")).toEqual(["Kitchen Interior", "Loading Dock"]);
+
+    // Seconds, and enough of them to read a scale from.
+    const times = labels("time");
+    expect(times.length).toBeGreaterThan(3);
+    expect(times.every((label) => /^[0-9]+s$/.test(label))).toBe(true);
+
+    // A DASHED LINE AT THE SEAM, one per crossing and none before the first
+    // clip — there is no seam at a beginning, only a start.
+    expect(document.querySelectorAll("[data-seam-divider]").length).toBe(1);
+  },
+};
+
+/**
+ * THE MINIMAP IS THE WHOLE SEQUENCE, AND DRAGGING IT MOVES THE WINDOW.
+ *
+ * The bar is a window, and at any useful zoom most of the project is off the
+ * sides of it. That is the right trade for working on a cut and the wrong one
+ * for knowing where you are, so the two questions get two objects: this one
+ * never zooms and never scrolls, and every clip is always on it.
+ *
+ * IT PANS, IT DOES NOT SEEK. Pressing a map means "show me there". Moving the
+ * playhead from here would make one gesture do two different things depending
+ * on which of the two strips your finger happened to land on.
+ */
+export const TheMinimapMovesTheWindow: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-minimap]")).not.toBeNull());
+    await settleStrip();
+
+    const minimap = document.querySelector<HTMLElement>("[data-seam-minimap]")!;
+    const windowRect = () =>
+      document.querySelector<HTMLElement>("[data-seam-mini-window]")!.getBoundingClientRect();
+    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
+
+    // EVERY clip is on it, both collections' worth — this is the one thing on
+    // screen that never crops.
+    expect(document.querySelectorAll("[data-seam-mini-segment]").length).toBe(24);
+
+    // The window is a PART of it, not all of it: if it covered the whole
+    // minimap there would be nothing off the sides and nothing to say.
+    const map = minimap.getBoundingClientRect();
+    expect(windowRect().width).toBeLessThan(map.width * 0.8);
+
+    const before = windowRect().left;
+    const clock = at();
+    const press = pointerAt(map.left + map.width * 0.85, map.top + map.height / 2);
+    fireEvent.pointerDown(minimap, press);
+    await waitFor(() => expect(windowRect().left).toBeGreaterThan(before + 40));
+
+    // AND THE PLAYHEAD DID NOT MOVE. Panning is a change of view, not a change
+    // of position — the difference between looking somewhere and going there.
+    expect(at()).toBe(clock);
+    fireEvent.pointerUp(minimap, press);
+  },
+};
+
+/**
+ * POINTING AT A BOX SAYS WHICH SHOT IT IS.
+ *
+ * A box is a coloured rectangle. Colour groups it by collection and width
+ * gives its length, and neither answers the question anyone actually has,
+ * which is whether that is the shot they are looking for — the bar spans the
+ * whole project, so most of what is on it is unidentifiable by construction.
+ *
+ * The preview answers it WITHOUT MOVING THE PLAYHEAD, which is the point:
+ * checking costs you nothing and leaves you where you were.
+ */
+export const PointingAtABoxSaysWhatItIs: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
+    const preview = () => document.querySelector<HTMLElement>("[data-seam-preview]");
+
+    expect(preview()).toBeNull();
+
+    const surface = seamSurface();
+    const target = seamBoxes()[3]!.getBoundingClientRect();
+    const before = at();
+    fireEvent.pointerMove(
+      surface,
+      pointerAt(target.left + target.width / 2, target.top + target.height / 2),
+    );
+
+    await waitFor(() => expect(preview()).not.toBeNull());
+    expect(preview()!.textContent).toContain("Kitchen 3");
+    // Which collection, and how far into the clip — the two facts a box
+    // cannot carry itself.
+    expect(preview()!.textContent).toContain("Kitchen Interior");
+    // A ghost line marks WHERE, so the words and the position are one object.
+    expect(document.querySelector("[data-seam-ghost]")).not.toBeNull();
+    // LOOKING IS FREE.
+    expect(at()).toBe(before);
+
+    // `pointerOut` with a relatedTarget, not `pointerLeave`: React synthesises
+    // enter/leave from delegated over/out events, so a bare `pointerleave`
+    // reaches no handler and the preview would look sticky in a way it is not.
+    fireEvent.pointerOut(surface, {
+      ...pointerAt(target.left, target.top),
+      relatedTarget: document.body,
+    });
+    await waitFor(() => expect(preview()).toBeNull());
+  },
+};
+
+/**
+ * A DRAG SCRUBS; A PRESS THAT DOES NOT TRAVEL COMMITS.
+ *
+ * One surface, two gestures, told apart by distance rather than by timing — a
+ * slow deliberate scrub must not also count as a tap on wherever it started,
+ * and a decisive tap must not have to be held.
+ *
+ * WHY THE SCRUB CHOOSES NOTHING. Scrubbing is a look: you check what is
+ * coming up and go back to what you were doing. A release that made the
+ * landing point the active clip would have already moved you, so checking
+ * would cost you your place — which is the one thing looking must not do.
+ */
+export const ADragScrubsAndAClickCommits: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const subject = () => centreBox().getAttribute("data-seam-segment");
+    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
+
+    const startedOn = subject();
+    expect(startedOn).toBe("subject");
+
+    // A DRAG onto another clip moves the clock and nothing else.
+    scrubIntoBox(seamBoxes()[2]!);
+    await waitFor(() => expect(at()).toBeGreaterThan(0));
+    expect(subject()).toBe(startedOn);
+
+    // A PRESS on the same clip commits to it.
+    clickBox(seamBoxes()[2]!);
+    await waitFor(() => expect(subject()).not.toBe(startedOn));
+  },
+};
+
+/**
+ * THE BAR TAKES THE KEYBOARD.
+ *
+ * It is a `role="slider"` and it is focusable, so it owes the reader the keys
+ * a slider answers to — and the ones a transport answers to, since it is also
+ * the only transport in the view. Arrows nudge a second, shift and an arrow
+ * steps a whole clip, Home and End are the two places you jump to without
+ * aiming.
+ */
+export const TheBarTakesTheKeyboard: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const track = seamTrack();
+    const at = () => Number(track.getAttribute("aria-valuenow"));
+    const max = Number(track.getAttribute("aria-valuemax"));
+    track.focus();
+
+    fireEvent.keyDown(track, { key: "End" });
+    await waitFor(() => expect(at()).toBe(max));
+
+    fireEvent.keyDown(track, { key: "ArrowLeft" });
+    await waitFor(() => expect(at()).toBeCloseTo(max - 1, 1));
+
+    fireEvent.keyDown(track, { key: "Home" });
+    await waitFor(() => expect(at()).toBe(0));
+
+    fireEvent.keyDown(track, { key: "ArrowRight" });
+    await waitFor(() => expect(at()).toBeCloseTo(1, 1));
+
+    // Shift and an arrow is the same step the two chevrons make, so the two
+    // ways of asking cannot drift apart.
+    const subject = () => centreBox().getAttribute("data-seam-segment");
+    const startedOn = subject();
+    fireEvent.keyDown(track, { key: "ArrowRight", shiftKey: true });
+    await waitFor(() => expect(subject()).not.toBe(startedOn));
   },
 };
