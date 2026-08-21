@@ -35,8 +35,8 @@ import { useItemDetails } from "./graph-item-details-context";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
+import type { SeamBarClip } from "./graph-seam-bar-layout";
 import { SeamStripBar } from "./graph-seam-strip-bar";
-import { buildSeamStrip, stripXFor } from "./graph-seam-strip";
 import {
   buildSeamTimeline,
   seamAt,
@@ -57,17 +57,6 @@ import {
   rememberViewCount,
   type ViewCount,
 } from "./graph-item-details-view-count";
-
-/**
- * How many pixels a second of clip is worth ON THE BAR.
- *
- * Fixed, which is the whole point: it is what makes a box the size of its
- * clip rather than a share of whatever else happens to be on screen, so the
- * same shot is the same width whether three cards are up or five. At 9px a
- * ten-second shot is 90px — long enough to aim a pointer at, short enough
- * that a minute and a half of material still reads as a shape.
- */
-const BAR_PIXELS_PER_SECOND = 9;
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -519,16 +508,32 @@ function DetailsFilmstripModal({
     return colours;
   }, [ids, graph]);
 
-  const strip = useMemo(() => {
-    const clips = ids.map((id) => {
+  // EVERY CLIP THE BAR CAN REACH, with the two things the bar cannot work out
+  // for itself: what a clip is called, and which collection it belongs to.
+  //
+  // The names are for the hover preview — a box is otherwise anonymous, and
+  // "which shot is that" is the question a bar of coloured rectangles is worst
+  // at. The collection is what the dividers and the ruler's labels are drawn
+  // from: the row walks the whole project in playback order and crosses
+  // collection edges on purpose, so those edges are the only landmarks on it.
+  //
+  // The bar owns the SCALE now, so it also owns the layout — this hands it
+  // clips, not pixels.
+  const barClips = useMemo<readonly SeamBarClip[]>(() => {
+    return ids.map((id) => {
       const found = graph.nodesById.get(parseNodeId(id));
       const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      const parentId = graph.parentById.get(parseNodeId(id)) ?? null;
+      const parent = parentId === null ? undefined : graph.nodesById.get(parentId);
       return {
         id,
+        name: found?.name ?? id,
         showingSeconds: media === null ? 0 : mediaDurationSeconds(media),
+        collectionId: parentId === null ? null : (parentId as string),
+        collectionName: parent?.name ?? null,
+        ...(media === null ? {} : { posterSrc: seamClipOf(media)?.posterSrc }),
       };
     });
-    return buildSeamStrip(clips, BAR_PIXELS_PER_SECOND);
   }, [ids, graph]);
 
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
@@ -631,10 +636,12 @@ function DetailsFilmstripModal({
   // WHERE THE PLAYHEAD IS, read across from the clock. The clock says "this
   // clip, this far in"; the strip says where that clip begins. Neither has to
   // know the other's coordinates, and there is still only one answer.
-  const playheadPx = (() => {
-    const at = position ?? (centreClip === null ? null : { clipId: centreClip.id as string, clipSeconds: 0 });
+  const playheadAt = (() => {
+    const at =
+      position ??
+      (centreClip === null ? null : { clipId: centreClip.id as string, clipSeconds: 0 });
     if (at === null) return null;
-    return stripXFor(strip, at.clipId, at.clipSeconds);
+    return { clipId: at.clipId, secondsIntoClip: at.clipSeconds };
   })();
 
   const rowTransform =
@@ -650,7 +657,17 @@ function DetailsFilmstripModal({
       // panels overflow, so the centre lands in the middle and the other two
       // are clipped symmetrically. `overflow-hidden` is what makes that a crop
       // instead of a scrollbar.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/80 p-6 backdrop-blur-sm"
+      // THE TOP BAND IS RESERVED, not shared. The header and the bar are
+      // absolutely positioned so the row can be centred and cropped
+      // symmetrically without them affecting its width — which also means
+      // they take no space, and the row would centre straight up underneath
+      // them. This padding is the band they occupy: header (61px) plus the
+      // bar block at top-16 with its own pt-4 (152px to its underside), plus
+      // clearance. It grew when the bar did, and it has to keep pace: the
+      // symptom of it not doing so is the minimap resting on the top edge of
+      // the middle card, which is a quiet eight pixels rather than an obvious
+      // fault.
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/80 px-6 pt-[11rem] pb-6 backdrop-blur-sm"
       onPointerDown={(event) => {
         // Scrim only: a press that starts on a panel must never close it,
         // including one that ends outside after a trim drag.
@@ -683,10 +700,10 @@ function DetailsFilmstripModal({
         >
           <div className="mx-auto w-full max-w-5xl">
             <SeamStripBar
-              strip={strip}
+              clips={barClips}
               centreClipId={node.id as string}
               colourOf={clipColourOf}
-              playheadPx={playheadPx}
+              playheadAt={playheadAt}
               playing={playing}
               onTogglePlay={() => setPlaying((was) => !was)}
               // The same step the swipe and the neighbour-click make, so all

@@ -1,108 +1,116 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 
 import {
+  fitPixelsPerSecond,
+  offsetAfterZoom,
+  seamRulerTicks,
+  snapToCut,
+  zoomByWheel,
+  type SeamBarClip,
+} from "./graph-seam-bar-layout";
+import { SeamLane, type SeamHover } from "./graph-seam-lane";
+import { SeamMinimap } from "./graph-seam-minimap";
+import { SeamRuler } from "./graph-seam-ruler";
+import {
+  buildSeamStrip,
   stripCentreOffset,
   stripPositionAt,
-  type SeamStrip,
+  stripXFor,
 } from "./graph-seam-strip";
 
 /**
- * The bar over the carousel: every clip in the collection as a box, with the
- * one you are looking at centred over the card in the middle.
+ * The bar over the carousel: the whole project in playback order, as a
+ * zoomable, pannable, scrubbable timeline.
  *
- * ── HOW IT DIFFERS FROM THE BAR IT REPLACES ──────────────────────────────
+ * ── ONE SURFACE, THREE GESTURES, EACH WITH ITS OWN INPUT ─────────────────
  *
- * The old bar drew the clock's own window — three clips and two leads —
- * stretched across the full width. Two consequences, both of which this
- * exists to undo. Its boxes had no fixed meaning: the same clip was wide in a
- * three-up view and narrow in a five-up one, because the width was a share of
- * whatever else was on screen. And advancing REBUILT it, so the boxes that
- * stayed jumped to new coordinates instead of moving.
+ * DRAG THE BOXES TO SCRUB. The film is the control — you put the playhead on
+ * the frame you want by pointing at it, and it snaps to a cut when you land
+ * near one. There was a rail and ball under the boxes doing this, on the
+ * theory that a filmstrip and a scrubber are different objects; they are not,
+ * and separating them cost a whole second strip to say what the boxes were
+ * already showing.
  *
- * Here the layout is absolute (see `graph-seam-strip`) and the only thing that
- * changes on an advance is the transform. So a box is the size of its clip,
- * always; the clips that stay put travel exactly the distance the cards below
- * them travel; and the clips that arrive slide in from the edge rather than
- * appearing there.
+ * WHEEL TO PAN. Panning is the gesture you make while reading, so it belongs
+ * on the input you can use without committing to anything — and it frees the
+ * press for the job above.
  *
- * ── ONE BOX IS LIT, AND THE REST ARE TINTED BY COLLECTION ────────────────
+ * ⌘ OR CTRL AND WHEEL TO ZOOM, about the pointer, so the clip you were
+ * looking at when you started is the clip you are looking at when you stop.
+ * This is the part the bar could not do at all before: at one fixed scale a
+ * four-minute project is either a smear or a thing you can see a tenth of,
+ * and which you get depends on nothing but the length of the project.
  *
- * MARKED means centred — one box, the clip under the middle card, wearing a
- * check and a thin ring. It is not a colour, and that is the point: colour is
- * spoken for by the collection tints, so spending blue on "you are here" would
- * make one channel carry two meanings and quietly break the grouping. An
- * earlier version did exactly that, and before it lit every clip with a card
- * on screen — which answered a question nobody was asking, since you can see
- * which cards are up by looking at them.
+ * ── AND THREE THINGS THAT SAY WHERE YOU ARE ─────────────────────────────
  *
- * Everything else is tinted by the collection it came from, which is how the
- * bar can span the whole playback order without becoming an undifferentiated
- * run of boxes: a change of colour is a change of collection, and it lands
- * exactly where the row will cross into one.
+ * A RULER, because a box's width means "this long" only against a scale, and
+ * the scale now moves. It carries the collection names too, which are the
+ * only landmarks on a run of boxes that otherwise looks the same throughout.
  *
- * NESTING IS IN THE COLOUR ITSELF. A collection directly under the root takes
- * a hue far from its neighbours; every level below shifts a little from its
- * parent and lifts, so a collection inside an orange one is a near-orange.
- * Depth reads as a family, the top level reads as a difference, and none of it
- * costs a second channel — an earlier version drew the ancestors as bars
- * across the top of each box, which was a stripe explaining what the colour
- * had failed to say.
+ * A MINIMAP, because the bar is a window and that is most of the reason to
+ * have one. It shows the whole sequence, always, with a rectangle marking the
+ * part the bar is currently drawing.
  *
- * The tints are deliberately MUTED and deliberately not blue. They are
- * grouping, not state — the only saturated thing on this bar should be the
- * box you are on, and the only red should be the playhead.
+ * A HOVER PREVIEW, because a box is anonymous. Pointing at one and being told
+ * what it is answers "is that the shot I want" without moving the playhead to
+ * find out.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ────────────────────────────────────
+ *
+ * LETTING GO CHOOSES NOTHING. A scrub is a look: you check what is coming up
+ * and go back to what you were doing, and a release that made the landing
+ * point the active clip would have already moved you. A CLICK on a box is how
+ * you commit to one, and the arrows are how you step.
+ *
+ * THE ACTIVE CLIP IS NOT DRAGGED TO THE MIDDLE. A change of subject brings
+ * the new clip into VIEW if it is off the side, and otherwise leaves the bar
+ * exactly where you put it.
  */
-/**
- * How far each box is pulled in from its clip's true extent, per side.
- *
- * The gap between two boxes is therefore twice this. It is an inset rather
- * than a margin because the box's MIDDLE has to stay exactly on the clip's
- * middle — that is what the centring arithmetic aligns to the card below —
- * and trimming only the width would shift it by half the gap.
- */
-const BOX_INSET_PX = 2.5;
-
-/** Travel that turns a press on the boxes from a click into a pan. */
-const CLICK_SLOP_PX = 4;
 
 /**
- * How near an end of the track the ball has to get before the strip starts
+ * How near an end of the track the pointer has to get before the strip starts
  * travelling under it, and how fast it goes when it does.
  *
  * The speed ramps with depth into the zone rather than being a constant, so
- * the edge is a throttle and not a switch: a ball resting just inside it
+ * the edge is a throttle and not a switch: a pointer resting just inside it
  * creeps along at a readable pace, one pushed hard against the very end runs
- * at `MAX`, and the two are the same gesture at different depths. At a flat
- * speed the only way to travel a little would be to touch the edge and
- * immediately back off, which is a flinch rather than a control.
+ * at `MAX`, and the two are the same gesture at different depths.
  */
 const EDGE_PAN_ZONE_PX = 40;
 const EDGE_PAN_MAX_PX_PER_FRAME = 16;
 const EDGE_PAN_GAIN = 0.4;
 
+/** Travel that turns a press on the boxes from a click into a scrub. */
+const CLICK_SLOP_PX = 4;
+
 /**
- * How fast the strip should travel for a ball at `clientX`, in px per frame.
- *
- * Positive means the strip moves LEFT — later clips come in from the right,
- * which is the direction the ball is being pushed. Zero anywhere but the two
- * zones, so the ordinary middle of the rail is an ordinary scrubber.
+ * How much clear track the playhead keeps either side of it while the bar is
+ * following playback. Wider on the trailing side because playback runs that
+ * way and the point of following is to show what is COMING.
  */
-function edgePanVelocity(clientX: number, rail: DOMRect): number {
-  const intoLeft = rail.left + EDGE_PAN_ZONE_PX - clientX;
+const FOLLOW_LEAD_PX = 56;
+const FOLLOW_TRAIL_PX = 72;
+
+function edgePanVelocity(clientX: number, track: DOMRect): number {
+  const intoLeft = track.left + EDGE_PAN_ZONE_PX - clientX;
   if (intoLeft > 0) return -Math.min(EDGE_PAN_MAX_PX_PER_FRAME, intoLeft * EDGE_PAN_GAIN);
-  const intoRight = clientX - (rail.right - EDGE_PAN_ZONE_PX);
+  const intoRight = clientX - (track.right - EDGE_PAN_ZONE_PX);
   if (intoRight > 0) return Math.min(EDGE_PAN_MAX_PX_PER_FRAME, intoRight * EDGE_PAN_GAIN);
   return 0;
 }
 
+function readSeconds(value: number): string {
+  return `${value.toFixed(2)}s`;
+}
+
 export function SeamStripBar({
-  strip,
+  clips,
   centreClipId,
   colourOf,
-  playheadPx,
+  playheadAt,
   playing,
   onTogglePlay,
   onStepBack,
@@ -111,35 +119,32 @@ export function SeamStripBar({
   onCommitClip,
   onScrubbingChange,
 }: Readonly<{
-  strip: SeamStrip;
-  /** The clip to centre — the one under the middle card. */
+  /** Every clip the bar can reach, in playback order. */
+  clips: readonly SeamBarClip[];
+  /** The clip under the middle card — marked, not centred. */
   centreClipId: string;
   /** Each clip's box colour, derived from where its collection sits in the
    *  tree — see `clipColourOf` in the carousel. */
   colourOf: ReadonlyMap<string, string>;
-
-  /** Where the playhead sits, in absolute strip pixels; null when untouched. */
-  playheadPx: number | null;
+  /** Where playback is, as the clock reports it; null when untouched. */
+  playheadAt: Readonly<{ clipId: string; secondsIntoClip: number }> | null;
   playing: boolean;
   onTogglePlay: () => void;
   /** Step the carousel one clip. Null at the end it cannot go. */
   onStepBack: (() => void) | null;
   onStepForward: (() => void) | null;
   /** Scrub to an absolute point on the timeline, in seconds. */
-  onScrubSeconds: (seconds: number) => void;
+  onScrubSeconds: (value: number) => void;
   /** A box was CLICKED — make that clip the centred one. */
   onCommitClip: (clipId: string) => void;
-
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
   onScrubbingChange?: (active: boolean) => void;
 }>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
+  const laneRef = useRef<HTMLDivElement | null>(null);
   const [trackWidth, setTrackWidth] = useState(0);
 
-  // The container's width is half the centring arithmetic, so it has to be
-  // measured rather than assumed — and re-measured, because the view count
-  // and the window both change it.
   useEffect(() => {
     const element = trackRef.current;
     if (element === null) return;
@@ -153,7 +158,7 @@ export function SeamStripBar({
 
   // WHERE "CENTRED" IS — computed, not measured off the moving cards.
   //
-  // It is not the middle of this track: the play button and the readout inset
+  // It is not the middle of this track: the transport and the readout inset
   // it, so its own middle sits ~30px left of the card it must sit above.
   //
   // It IS the middle of the LAYOUT viewport. The scrim centres the row and the
@@ -161,12 +166,6 @@ export function SeamStripBar({
   // centre card lands on that middle by construction — and `clientWidth`
   // rather than `innerWidth` because the latter counts the scrollbar, which is
   // the entire 8px the first version of this was out by.
-  //
-  // Two earlier attempts measured the card instead, and both were wrong in the
-  // same way: the card MOVES, so any read is a race with the row's slide. A
-  // timer version stuck ~650px out after a count change; a settle-on-two-equal-
-  // frames version stopped early mid-slide and drifted by thousands. The
-  // geometry was knowable the whole time.
   const [centreAtPx, setCentreAtPx] = useState(0);
   useEffect(() => {
     const element = trackRef.current;
@@ -180,431 +179,486 @@ export function SeamStripBar({
     return () => window.removeEventListener("resize", measure);
   }, [trackWidth]);
 
+  // ── SCALE ────────────────────────────────────────────────────────────────
+  //
+  // Null until the track has been measured, because the opening scale is a
+  // question about width and there is no honest answer before there is one.
+  const [pxPerSecond, setPxPerSecond] = useState<number | null>(null);
 
+  const totalSeconds = useMemo(
+    () => clips.reduce((sum, clip) => sum + Math.max(0, clip.showingSeconds), 0),
+    [clips],
+  );
+
+  // OPENS FITTED TO THE COLLECTION YOU ARE IN, not to the whole project.
+  //
+  // The bar spans everything, and everything is the wrong unit for a first
+  // glance: on a fifty-minute project a fit-to-all scale draws the shot you
+  // opened as two pixels. The collection is the sequence you are working on,
+  // so it gets the width — and at 1.65 trackfuls a little of it is off each
+  // side, which is how the bar says there is more.
+  const subjectCollectionSeconds = useMemo(() => {
+    const subject = clips.find((clip) => clip.id === centreClipId);
+    if (subject === undefined) return totalSeconds;
+    const sum = clips
+      .filter((clip) => clip.collectionId === subject.collectionId)
+      .reduce((total, clip) => total + Math.max(0, clip.showingSeconds), 0);
+    return sum > 0 ? sum : totalSeconds;
+  }, [clips, centreClipId, totalSeconds]);
+
+  useEffect(() => {
+    if (trackWidth <= 0) return;
+    // ONCE. Re-fitting on every width change would undo a zoom whenever the
+    // window moved, and re-fitting on a change of subject would undo one every
+    // time you stepped a clip.
+    setPxPerSecond(
+      (current) => current ?? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth),
+    );
+  }, [trackWidth, subjectCollectionSeconds]);
+
+  const scale = pxPerSecond ?? 9;
+  const strip = useMemo(() => buildSeamStrip(clips, scale), [clips, scale]);
+
+  // ── PAN ──────────────────────────────────────────────────────────────────
+  //
+  // Null until something places it, then owned outright by the user. The
+  // fallback centres the subject, which is the right thing to do exactly once
+  // — on open. After that the bar stays where it was put.
   const [panPx, setPanPx] = useState<number | null>(null);
-  const [panning, setPanning] = useState(false);
-  const panRef = useRef<{ pointerId: number; x: number; from: number; moved: boolean } | null>(null);
-
-  // PARKED ONCE, THEN LEFT ALONE.
-  //
-  // The centring is computed against the clip the view OPENED on, captured
-  // here and never updated. It used to follow the subject, which sounds
-  // helpful and is not: the bar jumped under the hand every time the cards
-  // moved, and a strip you had just pushed somewhere useful threw your
-  // position away. The active clip does not need to be in the middle — it is
-  // marked, which is what makes it findable.
-  //
-  // A state initialiser rather than an effect that freezes it later: an effect
-  // would set state during the first commit, which is a cascading render, and
-  // the compiler's lint refuses it outright.
-  const [parkedOn] = useState(centreClipId);
   const centredOffset = stripCentreOffset(
     strip,
-    parkedOn,
+    centreClipId,
     centreAtPx > 0 ? centreAtPx * 2 : trackWidth,
   );
   const offset = panPx ?? centredOffset;
 
-  const onBoxesPointerDown = useCallback(
+  // Set by any deliberate pan, cleared by any deliberate seek. While it is
+  // set, playback stops dragging the bar around under the reader.
+  const [followSuspended, setFollowSuspended] = useState(false);
+
+  const [scrubbing, setScrubbing] = useState(false);
+  const [snapKey, setSnapKey] = useState(0);
+  const [hover, setHover] = useState<SeamHover | null>(null);
+
+  const playheadPx =
+    playheadAt === null
+      ? null
+      : stripXFor(strip, playheadAt.clipId, playheadAt.secondsIntoClip);
+  const playheadSeconds = playheadPx === null || scale <= 0 ? null : playheadPx / scale;
+
+  // ── MIRRORS ──────────────────────────────────────────────────────────────
+  //
+  // So the frame loop and the native wheel listener can read live values
+  // without listing them as dependencies and re-arming themselves between
+  // frames. Several of these props are inline arrows in the view — a new
+  // function on every render — and depending on one would do exactly that.
+  const pointerXRef = useRef(0);
+  const panPxRef = useRef<number | null>(null);
+  const offsetRef = useRef(0);
+  const scaleRef = useRef(9);
+  const totalPxRef = useRef(0);
+  const onScrubSecondsRef = useRef(onScrubSeconds);
+  useEffect(() => {
+    panPxRef.current = panPx;
+    offsetRef.current = offset;
+    scaleRef.current = scale;
+    totalPxRef.current = strip.totalPx;
+    onScrubSecondsRef.current = onScrubSeconds;
+  });
+
+  /** Move the pan without waiting for a render to tell the loops about it. */
+  const setOffset = useCallback((next: number) => {
+    offsetRef.current = next;
+    panPxRef.current = next;
+    setPanPx(next);
+  }, []);
+
+  const seekToStripX = useCallback((stripX: number) => {
+    if (scaleRef.current <= 0) return;
+    const at = Math.min(Math.max(stripX, 0), totalPxRef.current);
+    onScrubSecondsRef.current(at / scaleRef.current);
+  }, []);
+
+  /** Local x within the track, which is the space every gesture works in. */
+  const localX = useCallback((clientX: number) => {
+    const element = trackRef.current;
+    if (element === null) return 0;
+    return clientX - element.getBoundingClientRect().left;
+  }, []);
+
+  // ── SCRUBBING ────────────────────────────────────────────────────────────
+  const pressRef = useRef<{ pointerId: number; x: number; moved: boolean } | null>(null);
+  const lastSnapRef = useRef<number | null>(null);
+
+  const scrubToClientX = useCallback(
+    (clientX: number) => {
+      const raw = localX(clientX) - offsetRef.current;
+      const snapped = snapToCut(strip, raw);
+      // ACKNOWLEDGE A SNAP ONCE, not on every frame that stays on it. A
+      // playhead twitching sixty times a second while the hand sat still
+      // would be a fault indicator, not a confirmation.
+      if (snapped === raw) {
+        lastSnapRef.current = null;
+      } else if (lastSnapRef.current !== snapped) {
+        lastSnapRef.current = snapped;
+        setSnapKey((key) => key + 1);
+      }
+      seekToStripX(snapped);
+    },
+    [localX, seekToStripX, strip],
+  );
+
+  const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (!event.isPrimary || event.button !== 0) return;
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
-        /* untrusted pointer (stories) — moves still arrive on the element */
+        /* untrusted pointer (stories) — the moves still arrive here */
       }
-      panRef.current = {
-        pointerId: event.pointerId,
-        x: event.clientX,
-        from: offset,
-        moved: false,
-      };
-      setPanning(true);
+      pressRef.current = { pointerId: event.pointerId, x: event.clientX, moved: false };
+      pointerXRef.current = event.clientX;
+      lastSnapRef.current = null;
+      setHover(null);
+      setScrubbing(true);
+      setFollowSuspended(false);
+      onScrubbingChange?.(true);
+      scrubToClientX(event.clientX);
     },
-    [offset],
+    [onScrubbingChange, scrubToClientX],
   );
 
-  const onBoxesPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const pan = panRef.current;
-    if (pan === null || event.pointerId !== pan.pointerId) return;
-    const travel = event.clientX - pan.x;
-    if (Math.abs(travel) > CLICK_SLOP_PX) pan.moved = true;
-    setPanPx(pan.from + travel);
-  }, []);
+  const showHover = useCallback(
+    (clientX: number) => {
+      const stripX = localX(clientX) - offsetRef.current;
+      const at = stripPositionAt(strip, stripX);
+      const clip = at === null ? undefined : clips.find((candidate) => candidate.id === at.clipId);
+      if (at === null || clip === undefined) {
+        setHover(null);
+        return;
+      }
+      setHover({
+        x: stripX,
+        name: clip.name,
+        meta: `${clip.collectionName === null ? "" : `${clip.collectionName} · `}${readSeconds(
+          at.secondsIntoClip,
+        )} / ${readSeconds(clip.showingSeconds)}`,
+        ...(clip.posterSrc === undefined ? {} : { posterSrc: clip.posterSrc }),
+      });
+    },
+    [clips, localX, strip],
+  );
 
-  const endPan = useCallback(
+  const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      const pan = panRef.current;
-      panRef.current = null;
-      setPanning(false);
-      if (pan === null || pan.moved) return;
+      const press = pressRef.current;
+      if (press === null) {
+        showHover(event.clientX);
+        return;
+      }
+      if (event.pointerId !== press.pointerId) return;
+      if (Math.abs(event.clientX - press.x) > CLICK_SLOP_PX) press.moved = true;
+      pointerXRef.current = event.clientX;
+      scrubToClientX(event.clientX);
+    },
+    [scrubToClientX, showHover],
+  );
+
+  const endPress = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const press = pressRef.current;
+      pressRef.current = null;
+      if (press === null) return;
+      setScrubbing(false);
+      onScrubbingChange?.(false);
       // A PRESS THAT DID NOT TRAVEL IS A CLICK, and a click on a box makes
       // that clip active. Distinguished by travel rather than by timing,
-      // because the surface's other job is a pan and a slow deliberate push
-      // must not also count as a tap on wherever it started.
-      const rail = railRef.current;
-      if (rail === null) return;
-      const stripX = event.clientX - rail.getBoundingClientRect().left - offset;
+      // because a slow deliberate scrub must not also count as a tap on
+      // wherever it started.
+      if (press.moved) return;
+      const stripX = localX(event.clientX) - offsetRef.current;
       const landedOn = stripPositionAt(strip, stripX)?.clipId ?? null;
       if (landedOn !== null && landedOn !== centreClipId) onCommitClip(landedOn);
     },
-    [strip, centreClipId, onCommitClip, offset],
+    [centreClipId, localX, onCommitClip, onScrubbingChange, strip],
   );
 
-
-
-
-
-
-
-  // ── THE BOXES ARE PUSHED, NOT STEPPED ──────────────────────────────────
+  // ── HOLDING AT AN EDGE RUNS THE STRIP UNDER THE POINTER ──────────────────
   //
-  // Grab and shove: the strip follows the hand for as far as it is dragged and
-  // stays where it is let go. It briefly moved three clips per swipe, which
-  // was wrong twice over — it did not work at all (the gesture only fired on a
-  // clean release past a threshold, so a slow drag did nothing), and tying it
-  // to a NUMBER was the wrong idea anyway. This is a map you are moving
-  // around, not a control that advances.
+  // The track only spans what is on screen, so without this the end of it is
+  // the end of the timeline you can reach in one gesture, with the rest of the
+  // order sitting an inch off the side.
   //
-  // The pan is REMEMBERED once touched. Until then the strip auto-centres on
-  // the subject; after, it stays where it was put, and only a change of
-  // subject re-centres it.
-
-  // ── THE RAIL SCRUBS ─────────────────────────────────────────────────────
-  //
-  // A plain proportional slider over the whole timeline: the clock spans every
-  // clip, so a fraction of the rail is a fraction of the running time and
-  // needs none of the strip's transform arithmetic.
-  const railRef = useRef<HTMLDivElement | null>(null);
-
-  const [scrubbing, setScrubbing] = useState(false);
-
-  // Read out as primitives: the loop below depends on them, and `strip` is
-  // rebuilt by the view on every render.
-  const { totalPx, pxPerSecond } = strip;
-
-  // THE RAIL SHARES THE STRIP'S COORDINATES, which is what makes the ball sit
-  // under the playhead.
-  //
-  // It was a proportional slider over the whole timeline: a fraction of the
-  // rail meant a fraction of the running time. That is a perfectly good
-  // scrubber and it did not LINE UP — the boxes above are drawn at a fixed
-  // scale and panned, so the same instant was at two different x positions and
-  // the ball drifted away from the mark it was supposed to be holding.
-  //
-  // Now a point on the rail is converted through the strip's own transform, so
-  // the two agree by construction at any pan.
-  const secondsAt = useCallback(
-    (clientX: number) => {
-      const rail = railRef.current;
-      if (rail === null || strip.pxPerSecond <= 0) return null;
-      const box = rail.getBoundingClientRect();
-      const stripX = clientX - box.left - offset;
-      return Math.min(Math.max(stripX / strip.pxPerSecond, 0), strip.totalPx / strip.pxPerSecond);
-    },
-    [strip, offset],
-  );
-
-  // Where the ball was last seen, so the frame loop below can keep working a
-  // hand that has stopped moving.
-  const scrubXRef = useRef(0);
-
-  // MIRRORS, so the frame loop can read live values without listing them as
-  // dependencies and restarting itself. `onScrubSeconds` is an inline arrow in
-  // the view, so it is a new function on every render — depending on it would
-  // tear down and re-arm the loop between every pair of frames.
-  const panPxRef = useRef<number | null>(null);
-  const centredOffsetRef = useRef(0);
-  const onScrubSecondsRef = useRef(onScrubSeconds);
+  // A FRAME LOOP RATHER THAN THE POINTER MOVES, because the hand is STILL —
+  // holding at an edge fires no further pointermove events at all, and an
+  // implementation reading the moves would travel only while the hand
+  // jittered.
   useEffect(() => {
-    panPxRef.current = panPx;
-    centredOffsetRef.current = centredOffset;
-    onScrubSecondsRef.current = onScrubSeconds;
-  });
-
-  // ── HOLDING THE BALL AT AN EDGE RUNS THE STRIP UNDER IT ─────────────────
-  //
-  // The rail only spans what is on screen, so without this the end of the
-  // rail is the end of the timeline you can reach: push the ball against the
-  // right edge and the scrub simply stops, with the rest of the order sitting
-  // an inch off the side of the track. Now holding it there pulls the strip
-  // along underneath — forward at the right edge, back at the left — and the
-  // seek follows the clips that arrive, so one gesture crosses the whole
-  // collection instead of the window you happened to open on.
-  //
-  // A FRAME LOOP RATHER THAN THE POINTER MOVES, because the hand is STILL.
-  // The gesture is holding the ball against an edge, which fires no further
-  // pointermove events at all — an implementation hung off the moves would
-  // travel only while the hand jittered, which is precisely the wrong feel.
-  useEffect(() => {
-    if (!scrubbing || pxPerSecond <= 0) return;
+    if (!scrubbing) return;
     let frame = requestAnimationFrame(function tick() {
       frame = requestAnimationFrame(tick);
-      const rail = railRef.current;
-      if (rail === null) return;
-      const box = rail.getBoundingClientRect();
-      const velocity = edgePanVelocity(scrubXRef.current, box);
+      const element = trackRef.current;
+      if (element === null || scaleRef.current <= 0) return;
+      const box = element.getBoundingClientRect();
+      const velocity = edgePanVelocity(pointerXRef.current, box);
       if (velocity === 0) return;
 
-      const next = (panPxRef.current ?? centredOffsetRef.current) - velocity;
-      // IT STOPS AT THE ENDS BY ASKING WHERE THE BALL NOW POINTS, not by
+      const next = offsetRef.current - velocity;
+      // IT STOPS AT THE ENDS BY ASKING WHERE THE POINTER NOW POINTS, not by
       // clamping the transform. The offset that puts the last clip under the
-      // ball is a function of the pan, the track width and the scale, and the
-      // one number that actually has to stay in range is the time being
-      // scrubbed to — so that is the number the guard is written against.
-      const stripX = scrubXRef.current - box.left - next;
-      if (stripX < 0 || stripX > totalPx) return;
+      // pointer is a function of the pan, the track width and the scale, and
+      // the one number that has to stay in range is the time being scrubbed
+      // to — so that is the number the guard is written against.
+      const stripX = pointerXRef.current - box.left - next;
+      if (stripX < 0 || stripX > totalPxRef.current) return;
 
-      panPxRef.current = next;
-      setPanPx(next);
-      onScrubSecondsRef.current(stripX / pxPerSecond);
+      // THE FILM MOVED UNDER THE POINTER, so this is a drag even though the
+      // hand never left the spot it landed on. Without this an edge-scrub
+      // across half the project would end in a CLICK — committing to whatever
+      // clip happened to arrive under a stationary finger.
+      const press = pressRef.current;
+      if (press !== null) press.moved = true;
+
+      setOffset(next);
+      seekToStripX(stripX);
     });
     return () => cancelAnimationFrame(frame);
-  }, [scrubbing, pxPerSecond, totalPx]);
+  }, [scrubbing, seekToStripX, setOffset]);
 
-  const releaseScrub = useCallback(() => {
-    setScrubbing(false);
-    onScrubbingChange?.(false);
-    // LETTING GO CHOOSES NOTHING. It briefly made whatever the scrub landed on
-    // the active clip, which put a decision on the end of a gesture whose
-    // whole purpose is to look around: you could not check what was coming up
-    // and then go back to what you were doing, because looking had already
-    // moved you. Scrubbing is a look; a CLICK on a box is how you commit to
-    // one, and the arrows are how you step.
-  }, [onScrubbingChange]);
+  // ── WHEEL: PAN, OR ZOOM ABOUT THE POINTER ────────────────────────────────
+  //
+  // A NATIVE, NON-PASSIVE LISTENER. React registers `onWheel` passively at the
+  // root, so `preventDefault` from a synthetic handler is ignored — which
+  // would leave a zoom gesture also zooming the browser and a pan gesture also
+  // scrolling the dialog behind the bar.
+  useEffect(() => {
+    const element = laneRef.current;
+    if (element === null) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setFollowSuspended(true);
+      setHover(null);
+      if (event.ctrlKey || event.metaKey) {
+        const from = scaleRef.current;
+        const to = zoomByWheel(from, event.deltaY);
+        if (to === from) return;
+        const anchorLocalX = event.clientX - element.getBoundingClientRect().left;
+        setPxPerSecond(to);
+        setOffset(offsetAfterZoom({ anchorLocalX, offset: offsetRef.current, from, to }));
+        return;
+      }
+      // The dominant axis, so a trackpad's horizontal swipe and a mouse
+      // wheel's vertical notch both mean the same thing on a horizontal bar.
+      const delta =
+        Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (delta === 0) return;
+      setOffset(offsetRef.current - delta);
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [setOffset]);
 
+  // ── KEEPING THE PLAYHEAD IN VIEW ─────────────────────────────────────────
+  //
+  // NUDGED, NOT CENTRED, and only once it has actually reached an edge. A bar
+  // that recentres every frame is a bar whose contents are permanently
+  // sliding, which makes the one thing it is for — reading where you are —
+  // the one thing it is bad at.
+  const nudgeIntoView = useCallback(
+    (targetPx: number) => {
+      const width = trackRef.current?.getBoundingClientRect().width ?? trackWidth;
+      if (width <= 0) return;
+      const current = offsetRef.current;
+      const onScreen = targetPx + current;
+      let next = current;
+      if (onScreen < FOLLOW_LEAD_PX) next = FOLLOW_LEAD_PX - targetPx;
+      else if (onScreen > width - FOLLOW_TRAIL_PX) next = width - FOLLOW_TRAIL_PX - targetPx;
+      if (next === current) return;
+      setOffset(next);
+    },
+    [setOffset, trackWidth],
+  );
+
+  useEffect(() => {
+    if (!playing || followSuspended || playheadPx === null) return;
+    nudgeIntoView(playheadPx);
+  }, [playing, followSuspended, playheadPx, nudgeIntoView]);
+
+  // A CHANGE OF SUBJECT BRINGS THE NEW CLIP INTO VIEW — and no further. It
+  // does not get dragged to the middle: the bar is a map you have positioned,
+  // and stepping a clip is not a request to throw that away. Skipped while the
+  // pan is still null, because the fallback is already centring it.
+  const [broughtIntoView, setBroughtIntoView] = useState(centreClipId);
+  useEffect(() => {
+    if (broughtIntoView === centreClipId) return;
+    setBroughtIntoView(centreClipId);
+    setFollowSuspended(false);
+    if (panPxRef.current === null) return;
+    const segment = strip.segments.find((candidate) => candidate.clipId === centreClipId);
+    if (segment === undefined) return;
+    nudgeIntoView(segment.leftPx + segment.widthPx / 2);
+  }, [broughtIntoView, centreClipId, nudgeIntoView, strip]);
+
+  const ticks = useMemo(() => seamRulerTicks({ strip, clips }), [strip, clips]);
+
+  const panToSeconds = useCallback(
+    (value: number) => {
+      const width = trackRef.current?.getBoundingClientRect().width ?? trackWidth;
+      setFollowSuspended(true);
+      setOffset(width / 2 - value * scaleRef.current);
+    },
+    [setOffset, trackWidth],
+  );
 
   if (strip.totalPx <= 0) return null;
 
-  const totalSeconds = strip.totalPx / strip.pxPerSecond;
-  const atSeconds = playheadPx === null ? null : playheadPx / strip.pxPerSecond;
-  // Where the ball sits: exactly under the playhead, because it is the same
-  // number — the playhead's x on the strip, which the rail now measures in too.
-  const ballPx = playheadPx === null ? null : playheadPx + offset;
+  const atSeconds = playheadSeconds ?? 0;
+  const windowFromSeconds = scale <= 0 ? 0 : -offset / scale;
+  const windowToSeconds = scale <= 0 ? 0 : (-offset + trackWidth) / scale;
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const seekBy = (delta: number) => {
+      event.preventDefault();
+      setFollowSuspended(false);
+      onScrubSeconds(Math.min(Math.max(atSeconds + delta, 0), totalSeconds));
+    };
+    if (event.code === "Space") {
+      event.preventDefault();
+      onTogglePlay();
+    } else if (event.key === "ArrowLeft") {
+      if (event.shiftKey) {
+        event.preventDefault();
+        onStepBack?.();
+      } else seekBy(-1);
+    } else if (event.key === "ArrowRight") {
+      if (event.shiftKey) {
+        event.preventDefault();
+        onStepForward?.();
+      } else seekBy(1);
+    } else if (event.key === "Home") {
+      seekBy(-Infinity);
+    } else if (event.key === "End") {
+      seekBy(Infinity);
+    }
+  };
 
   return (
-    <div data-seam-bar className="flex w-full items-center gap-3">
-      <button
-        type="button"
-        onClick={onTogglePlay}
-        aria-label={playing ? "Pause" : "Play across the cut"}
-        className="shrink-0 rounded-full p-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-      >
-        {playing ? (
-          <Pause aria-hidden="true" className="h-4 w-4" />
-        ) : (
-          <Play aria-hidden="true" className="h-4 w-4" />
-        )}
-      </button>
-
-      {/* STEP ONE CLIP, either way.
-          The bar is a map of the whole order and the cards move by gesture —
-          swipe, or click a neighbour — which is fine when the next clip is on
-          screen and awkward when you just want the next one. Two arrows are
-          the plainest possible statement of "one forward, one back", and they
-          bracket the thing they move.
-          Disabled rather than hidden at the ends: a control that vanishes
-          takes its own position with it and shifts the bar sideways. */}
-      <button
-        type="button"
-        data-seam-step="back"
-        disabled={onStepBack === null}
-        onClick={() => onStepBack?.()}
-        aria-label="Previous clip"
-        title="Previous clip"
-        className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-25 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
-      >
-        <ChevronLeft aria-hidden="true" className="h-4 w-4" />
-      </button>
+    <div data-seam-bar className="flex w-full items-start gap-3">
+      <div className="flex shrink-0 items-center gap-1">
+        {/* STEP ONE CLIP, either way, bracketing the thing they move.
+            Disabled rather than hidden at the ends: a control that vanishes
+            takes its own position with it and shifts the bar sideways. */}
+        <button
+          type="button"
+          data-seam-step="back"
+          disabled={onStepBack === null}
+          onClick={() => onStepBack?.()}
+          aria-label="Previous clip"
+          title="Previous clip (⇧←)"
+          className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
+        >
+          <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={onTogglePlay}
+          aria-label={playing ? "Pause" : "Play across the cut"}
+          title="Play / pause (space)"
+          className="rounded-full p-1.5 text-zinc-300 outline-none hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
+          {playing ? (
+            <Pause aria-hidden="true" className="h-4 w-4" />
+          ) : (
+            <Play aria-hidden="true" className="h-4 w-4" />
+          )}
+        </button>
+        <button
+          type="button"
+          data-seam-step="forward"
+          disabled={onStepForward === null}
+          onClick={() => onStepForward?.()}
+          aria-label="Next clip"
+          title="Next clip (⇧→)"
+          className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
+        >
+          <ChevronRight aria-hidden="true" className="h-4 w-4" />
+        </button>
+      </div>
 
       <div
         ref={trackRef}
         data-seam-track
         data-seam-centre-at={Math.round(centreAtPx)}
+        data-seam-pps={Math.round(scale * 100) / 100}
         role="slider"
         tabIndex={0}
         aria-label="Scrub across the cut"
         aria-valuemin={0}
         aria-valuemax={Math.round(totalSeconds * 100) / 100}
-        aria-valuenow={Math.round((atSeconds ?? 0) * 100) / 100}
+        aria-valuenow={Math.round(atSeconds * 100) / 100}
+        onKeyDown={onKeyDown}
         // `outline-none` on the BASE, not only on focus-visible. It is a
         // role="slider" with a tabIndex, so pressing it focuses it — and the
-        // browser's own focus ring was drawing a pale outline around the whole
-        // track the moment you touched it, which read as a border the bar did
-        // not have a second earlier. Keyboard focus still gets a visible ring,
-        // in blue, from the focus-visible rule.
+        // browser's own focus ring drew a pale outline around the whole track
+        // the moment you touched it, which read as a border the bar did not
+        // have a second earlier.
         className="relative flex-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
-        <div
-          data-seam-boxes
-          onPointerDown={onBoxesPointerDown}
-          onPointerMove={onBoxesPointerMove}
-          onPointerUp={endPan}
-          onPointerCancel={endPan}
-          className="relative h-9 cursor-grab overflow-hidden active:cursor-grabbing"
-        >
-        <div
-          data-seam-strip
-          className="absolute inset-y-0 left-0 will-change-transform"
-          style={{
-            transform: `translateX(${offset}px)`,
-            width: strip.totalPx,
-            // EASED WHEN IT MOVES ITSELF, INSTANT WHEN YOU MOVE IT.
-            //
-            // A change of subject re-centres the strip, and that should glide.
-            // A hand pushing it should not: with the transition left on, every
-            // pointer move started a 260ms animation toward a target the next
-            // move replaced, so the strip lagged the hand and — measured — a
-            // second shove inside that window looked like no movement at all.
-            // Off for a scrub as well as a pan: the edge loop moves the strip
-            // every frame, and a 260ms ease toward a target the next frame
-            // replaces is the same lag the pan had, one gesture over.
-            transition:
-              panning || scrubbing ? "none" : "transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1)",
+        <SeamLane
+          laneRef={laneRef}
+          strip={strip}
+          clips={clips}
+          colourOf={colourOf}
+          centreClipId={centreClipId}
+          offset={offset}
+          playheadPx={playheadPx}
+          snapKey={snapKey}
+          ghostX={hover === null ? null : hover.x}
+          hover={scrubbing ? null : hover}
+          chip={scrubbing ? readSeconds(atSeconds) : null}
+          handlers={{
+            onPointerDown,
+            onPointerMove,
+            onPointerUp: endPress,
+            onPointerCancel: endPress,
+            onPointerLeave: () => setHover(null),
           }}
-        >
-          {strip.segments.map((segment) => {
-            if (segment.widthPx <= 0) return null;
-            const isCentre = segment.clipId === centreClipId;
-            const colour = colourOf.get(segment.clipId) ?? "hsl(220 8% 34%)";
-            return (
-              <span
-                key={segment.clipId}
-                data-seam-segment={segment.clipId}
-                data-seam-segment-live={isCentre ? "" : undefined}
-                aria-hidden="true"
-                // Inset from BOTH sides — see BOX_INSET_PX. The floor keeps a
-                // very short clip as a visible sliver rather than letting the
-                // gap eat it.
-                style={{
-                  left: segment.leftPx + BOX_INSET_PX,
-                  width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
-                  backgroundColor: colour,
-                }}
-                className={[
-                  "absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]",
-                  // NO RING. The centred box was outlined as well as checked,
-                  // which at a box's width read as two stray white edges
-                  // rather than as an outline — the corners round away and
-                  // only the left and right sides survive. The check alone
-                  // says it, and the box keeps its collection's colour because
-                  // colour is spoken for: it says which collection a clip
-                  // belongs to, and one channel cannot carry two meanings.
-                ].join(" ")}
-              >
-                {/* WHICH ONE YOU ARE ON, as a mark rather than a hue. Hidden
-                    on a box too narrow to hold it: a check crushed into 10px
-                    is a smudge, and the ring already says the same thing. */}
-                {isCentre && segment.widthPx >= 16 ? (
-                  // A DISC, NOT A GLYPH. A check said "done" — a state this
-                  // clip is not in — and being white it was the brightest
-                  // thing on the bar, louder than the playhead, which is the
-                  // mark that actually moves. A hole punched in the box reads
-                  // as "this one" without introducing a second shape or a
-                  // second colour: it is black at half strength, so the clip's
-                  // own colour comes through it and the disc stays a shade of
-                  // the box rather than a mark laid on top of it.
-                  <span
-                    data-seam-marker
-                    className="h-3 w-3 rounded-full bg-black/50"
-                  />
-                ) : null}
-              </span>
-            );
-          })}
-        </div>
+        />
 
-        {playheadPx !== null && (
-          <span
-            data-seam-playhead
-            aria-hidden="true"
-            style={{ transform: `translateX(${playheadPx + offset}px)` }}
-            // A HAIRLINE. One physical pixel wherever the display allows it:
-            // the playhead's job is to name an instant, and a 2px line spans
-            // two of them at this scale. `w-px` rather than a fraction of a
-            // rem so it does not thicken with the type scale.
-            className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-red-500"
-          >
-            {/* The head of the line, so the playhead reads as a position that
-                was put there rather than a border between two boxes. */}
-            <span className="absolute -top-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500" />
-          </span>
-        )}
-        </div>
+        {/* THERE IS MORE THAT WAY. The boxes are clipped hard at the track's
+            edges, and a hard edge is indistinguishable from an end — these say
+            which of the two you are looking at, and disappear when there is
+            nothing beyond. */}
+        <span
+          aria-hidden="true"
+          data-seam-fade="left"
+          hidden={offset >= -0.5}
+          className="pointer-events-none absolute top-0 left-0 h-9 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
+        />
+        <span
+          aria-hidden="true"
+          data-seam-fade="right"
+          hidden={strip.totalPx + offset <= trackWidth + 0.5}
+          className="pointer-events-none absolute top-0 right-0 h-9 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
+        />
 
-        {/* THE SCRUBBER: a rail and a ball.
-            Separated from the boxes so each surface does one thing — the boxes
-            are a filmstrip you push, this is a control you drag. It spans the
-            whole timeline, so a fraction of the rail is a fraction of the
-            running time and none of the strip's transform arithmetic applies.
-        */}
-        <div
-          ref={railRef}
-          data-seam-rail
-          onPointerDown={(event) => {
-            if (!event.isPrimary || event.button !== 0) return;
-            try {
-              event.currentTarget.setPointerCapture(event.pointerId);
-            } catch {
-              /* untrusted pointer (stories) — the moves still arrive here */
-            }
-            scrubXRef.current = event.clientX;
-            setScrubbing(true);
-            onScrubbingChange?.(true);
-            const at = secondsAt(event.clientX);
-            if (at !== null) onScrubSeconds(at);
-          }}
-          onPointerMove={(event) => {
-            if (!scrubbing) return;
-            // Recorded on every move so the frame loop keeps travelling after
-            // the hand stops — the edge gesture is a HOLD, not a drag.
-            scrubXRef.current = event.clientX;
-            const at = secondsAt(event.clientX);
-            if (at !== null) onScrubSeconds(at);
-          }}
-          onPointerUp={releaseScrub}
-          onPointerCancel={releaseScrub}
-          className="relative mt-1.5 flex h-4 cursor-ew-resize items-center"
-        >
-          <span aria-hidden="true" className="absolute inset-x-0 h-0.5 rounded-full bg-white/20" />
-          {/* Played so far, so the rail reads as a clock and not only as a
-              track with a dot on it. */}
-          {ballPx !== null && (
-            <>
-              {/* Played so far, so the rail reads as a clock and not only as a
-                  track with a dot on it. */}
-              <span
-                aria-hidden="true"
-                style={{ width: Math.max(0, ballPx) }}
-                className="absolute left-0 h-0.5 rounded-full bg-white/45"
-              />
-              <span
-                data-seam-ball
-                aria-hidden="true"
-                style={{ left: ballPx }}
-                className="absolute h-3 w-3 -translate-x-1/2 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.6)]"
-              />
-            </>
-          )}
-        </div>
+        <SeamRuler ticks={ticks} offset={offset} />
+
+        <SeamMinimap
+          clips={clips}
+          colourOf={colourOf}
+          totalSeconds={totalSeconds}
+          windowFromSeconds={windowFromSeconds}
+          windowToSeconds={windowToSeconds}
+          playheadSeconds={playheadSeconds}
+          onPanToSeconds={panToSeconds}
+        />
       </div>
 
-      <button
-        type="button"
-        data-seam-step="forward"
-        disabled={onStepForward === null}
-        onClick={() => onStepForward?.()}
-        aria-label="Next clip"
-        title="Next clip"
-        className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-25 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
-      >
-        <ChevronRight aria-hidden="true" className="h-4 w-4" />
-      </button>
-
       <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400">
-        <span className="text-blue-300">{(atSeconds ?? 0).toFixed(2)}s</span>
+        <span className="text-blue-300">{readSeconds(atSeconds)}</span>
         {" / "}
-        {totalSeconds.toFixed(2)}s
+        {readSeconds(totalSeconds)}
       </span>
     </div>
   );
