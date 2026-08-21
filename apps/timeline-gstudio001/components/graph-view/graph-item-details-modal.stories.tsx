@@ -1716,6 +1716,32 @@ export const TheWheelPansAndZoomsAboutThePointer: Story = {
     });
     await waitFor(() => expect(pps()).toBeLessThan(zoomedIn * 0.9));
     expect(Math.abs(secondsUnder(anchor) - heldSecond)).toBeLessThan(0.05);
+
+    // ── AND THE STRIP CANNOT BE THROWN AWAY ───────────────────────────────
+    //
+    // A native scroller clamps for free; a transform does not. Twenty hard
+    // notches one way and twenty back is a firm two-finger flick in each
+    // direction, and neither may end with the bar empty and the strip
+    // somewhere off the side of the track.
+    const strip = document.querySelector<HTMLElement>("[data-seam-strip]")!;
+    const stillOnScreen = () => {
+      const s = strip.getBoundingClientRect();
+      const t = seamTrack().getBoundingClientRect();
+      return Math.min(s.right, t.right) - Math.max(s.left, t.left);
+    };
+    for (const direction of [1, -1]) {
+      for (let notch = 0; notch < 20; notch += 1) {
+        fireEvent.wheel(surface, {
+          deltaY: 600 * direction,
+          clientX: anchor,
+          clientY: box.top + 4,
+        });
+      }
+      await waitFor(() => expect(stillOnScreen()).toBeGreaterThan(0));
+      // Not a sliver, either: half the track is the far end of the clamp, so
+      // there is always something to grab hold of and read.
+      expect(stillOnScreen()).toBeGreaterThan(box.width * 0.4);
+    }
   },
 };
 

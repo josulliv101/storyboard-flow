@@ -263,14 +263,32 @@ export function SeamStripBar({
     offsetRef.current = offset;
     scaleRef.current = scale;
     totalPxRef.current = strip.totalPx;
+    panLimitRef.current = panLimit;
     onScrubSecondsRef.current = onScrubSeconds;
   });
 
+  // HOW FAR THE STRIP MAY BE PUSHED EITHER WAY.
+  //
+  // A native scroller clamps at both ends for free, and the bar's transform
+  // does not — without this a firm two-finger swipe throws the whole strip off
+  // the side of the track and leaves you looking at an empty bar, with the
+  // minimap as the only clue where it went.
+  //
+  // The bound is the CENTRE OF THE TRACK rather than its edges: the opening
+  // position centres the marked box, so an early clip legitimately sits with
+  // the strip pushed right and empty space before it — that space is the truth
+  // that there is nothing before the first clip. Clamping to zero would undo
+  // the one alignment the bar exists to hold.
+  const panLimit = Math.max(trackWidth / 2, centreAtPx);
+  const panLimitRef = useRef(0);
+
   /** Move the pan without waiting for a render to tell the loops about it. */
   const setOffset = useCallback((next: number) => {
-    offsetRef.current = next;
-    panPxRef.current = next;
-    setPanPx(next);
+    const most = panLimitRef.current;
+    const clamped = Math.min(most, Math.max(most - totalPxRef.current, next));
+    offsetRef.current = clamped;
+    panPxRef.current = clamped;
+    setPanPx(clamped);
   }, []);
 
   const seekToStripX = useCallback((stripX: number) => {
