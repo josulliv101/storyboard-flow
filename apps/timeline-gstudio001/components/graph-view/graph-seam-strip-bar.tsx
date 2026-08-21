@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 
 import {
+  BAR_COLLECTION_COLOURS_ENABLED,
+  BAR_NEUTRAL_COLOUR,
+} from "@/lib/bar-collection-colours-flag";
+
+import {
   fitPixelsPerSecond,
   offsetAfterZoom,
   seamRulerTicks,
@@ -47,8 +52,11 @@ import {
  * ── AND THREE THINGS THAT SAY WHERE YOU ARE ─────────────────────────────
  *
  * A RULER, because a box's width means "this long" only against a scale, and
- * the scale now moves. It carries the collection names too, which are the
- * only landmarks on a run of boxes that otherwise looks the same throughout.
+ * the scale now moves. It carries the collection names too, and with the
+ * collection tint parked behind a flag (see `bar-collection-colours-flag`)
+ * those names and the dashed dividers are the ONLY landmarks on a run of
+ * boxes that otherwise looks the same throughout — which is why both are
+ * structural rather than decorative.
  *
  * A MINIMAP, because the bar is a window and that is most of the reason to
  * have one. It shows the whole sequence, always, with a rectangle marking the
@@ -218,6 +226,17 @@ export function SeamStripBar({
 
   const scale = pxPerSecond ?? 9;
   const strip = useMemo(() => buildSeamStrip(clips, scale), [clips, scale]);
+
+  // ONE NEUTRAL FOR EVERY BOX unless the tint is switched on. Substituted here
+  // rather than at the derivation, so the collection tones are still computed
+  // and still handed over — the flag decides whether the bar PAINTS with them,
+  // which is what makes turning it back on one environment variable. Both the
+  // strip and the minimap read this, so they cannot end up disagreeing about
+  // whether the bar is a coloured object.
+  const boxColourOf = useMemo(() => {
+    if (BAR_COLLECTION_COLOURS_ENABLED) return colourOf;
+    return new Map(clips.map((clip) => [clip.id, BAR_NEUTRAL_COLOUR] as const));
+  }, [clips, colourOf]);
 
   // ── PAN ──────────────────────────────────────────────────────────────────
   //
@@ -626,7 +645,7 @@ export function SeamStripBar({
           laneRef={laneRef}
           strip={strip}
           clips={clips}
-          colourOf={colourOf}
+          colourOf={boxColourOf}
           centreClipId={centreClipId}
           offset={offset}
           playheadPx={playheadPx}
@@ -664,7 +683,7 @@ export function SeamStripBar({
 
         <SeamMinimap
           clips={clips}
-          colourOf={colourOf}
+          colourOf={boxColourOf}
           totalSeconds={totalSeconds}
           windowFromSeconds={windowFromSeconds}
           windowToSeconds={windowToSeconds}

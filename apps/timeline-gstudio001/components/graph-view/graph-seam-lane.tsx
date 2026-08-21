@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 
+import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
+
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 import type { SeamStrip } from "./graph-seam-strip";
 
@@ -136,7 +138,7 @@ export function SeamLane({
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;
             const isCentre = segment.clipId === centreClipId;
-            const colour = colourOf.get(segment.clipId) ?? "hsl(220 8% 34%)";
+            const colour = colourOf.get(segment.clipId) ?? BAR_NEUTRAL_COLOUR;
             return (
               <span
                 key={segment.clipId}

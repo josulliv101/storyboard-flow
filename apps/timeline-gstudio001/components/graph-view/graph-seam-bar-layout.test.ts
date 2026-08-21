@@ -178,16 +178,32 @@ describe("seamRulerTicks", () => {
     ]);
   });
 
-  it("drops a time tick that would land on a collection label", () => {
-    // 60s is a collection seam at x=60; at 10px a second the 5s ladder puts a
-    // time tick at 60 too, and 50 and 70 are both inside the 26px clash zone.
+  it("clears the whole WIDTH of a collection label, not just its mark", () => {
+    // The label is left-aligned on its tick, so it reaches to the RIGHT — and
+    // a clash zone measured around the mark alone let the next time tick print
+    // straight through the end of the word. Forty seconds at 10px a second:
+    // the 5s ladder wants a tick every 50px, "Van Interior" starts at x=200
+    // and reaches about 75px past it, so the two ticks inside that reach give
+    // way and the one beyond it does not.
+    const clips: readonly SeamBarClip[] = [
+      clip("a", 20, "kitchen", "Kitchen"),
+      clip("b", 20, "van", "Van Interior"),
+    ];
+    const times = seamRulerTicks({ strip: buildSeamStrip(clips, 10), clips })
+      .filter((tick) => tick.kind === "time")
+      .map((tick) => tick.x);
+    expect(times).not.toContain(200);
+    expect(times).not.toContain(250);
+    expect(times).toContain(300);
+  });
+
+  it("gives way to a collection tick on its own mark as well", () => {
     const times = seamRulerTicks({ strip: STRIP, clips: CLIPS })
       .filter((tick) => tick.kind === "time")
       .map((tick) => tick.x);
+    // 60 is the seam itself; 50 is inside the mark's own clash zone.
     expect(times).not.toContain(60);
     expect(times).not.toContain(50);
-    expect(times).not.toContain(70);
-    expect(times).toContain(100);
   });
 
   it("never runs a tick past the end of the strip", () => {
