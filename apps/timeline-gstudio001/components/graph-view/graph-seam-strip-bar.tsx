@@ -65,34 +65,37 @@ import {
  */
 const BOX_INSET_PX = 2.5;
 
+/** Travel before a drag across the boxes counts as a swipe. */
+const BOXES_SWIPE_PX = 28;
+
 /**
- * How much shorter a box gets per level of nesting.
+ * How far one swipe across the BOXES moves the carousel.
  *
- * Small on purpose: it is a second, quieter statement of what the colour
- * already says, and the point is that the run of boxes has a SHAPE you can
- * read at a glance — top-level items standing tallest — not that any one box
- * is measurably shorter than its neighbour.
+ * Three, because this gesture only exists to be coarser than the one below it.
+ * The cards move a clip per swipe; if the bar did the same there would be two
+ * controls for one step and no reason to reach past the nearer one.
  */
-const DEPTH_STEP_PX = 4;
+const BOXES_SWIPE_CLIPS = 3;
 
 export function SeamStripBar({
   strip,
   centreClipId,
-  styleOf,
+  colourOf,
   playheadPx,
   playing,
   onTogglePlay,
   onStepBack,
   onStepForward,
-  onScrubTo,
+  onScrubSeconds,
+  onStepBy,
   onScrubbingChange,
 }: Readonly<{
   strip: SeamStrip;
   /** The clip to centre — the one under the middle card. */
   centreClipId: string;
-  /** Each clip's box colour and nesting depth, derived from where its
-   *  collection sits in the tree — see `clipStyleOf` in the carousel. */
-  styleOf: ReadonlyMap<string, { colour: string; depth: number }>;
+  /** Each clip's box colour, derived from where its collection sits in the
+   *  tree — see `clipColourOf` in the carousel. */
+  colourOf: ReadonlyMap<string, string>;
 
   /** Where the playhead sits, in absolute strip pixels; null when untouched. */
   playheadPx: number | null;
@@ -101,7 +104,10 @@ export function SeamStripBar({
   /** Step the carousel one clip. Null at the end it cannot go. */
   onStepBack: (() => void) | null;
   onStepForward: (() => void) | null;
-  onScrubTo: (clipId: string, secondsIntoClip: number) => void;
+  /** Scrub to an absolute point on the timeline, in seconds. */
+  onScrubSeconds: (seconds: number) => void;
+  /** Move the carousel by `delta` clips — the boxes swipe in threes. */
+  onStepBy: (delta: number) => void;
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
   onScrubbingChange?: (active: boolean) => void;
@@ -158,60 +164,71 @@ export function SeamStripBar({
   // where the card is.
   const offset = stripCentreOffset(strip, centreClipId, centreAtPx > 0 ? centreAtPx * 2 : trackWidth);
 
-  const resolve = useCallback(
-    (clientX: number) => {
-      const element = trackRef.current;
-      if (element === null) return null;
-      const x = clientX - element.getBoundingClientRect().left - offset;
-      return stripPositionAt(strip, x);
-    },
-    [strip, offset],
-  );
+  // ── THE BOXES SWIPE; THEY DO NOT SCRUB ──────────────────────────────────
+  //
+  // Pressing a box used to scrub to it, which put two jobs on one surface: the
+  // bar was both the map and the control, and a press had to mean either "go
+  // there" or "look there" without any way to say which. Scrubbing moved to
+  // its own rail below, and the boxes became what they look like — a filmstrip
+  // you push.
+  //
+  // THREE AT A TIME, because the boxes are a coarse view: the cards below move
+  // one clip per swipe and this is the gesture you reach for when one is not
+  // enough. Same threshold as the cards' own swipe so the two feel like one
+  // instruction at two scales.
+  const swipeRef = useRef<{ pointerId: number; x: number } | null>(null);
 
-  const onPointerDown = useCallback(
+  const onBoxesPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    swipeRef.current = { pointerId: event.pointerId, x: event.clientX };
+  }, []);
+
+  const onBoxesPointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!event.isPrimary || event.button !== 0) return;
-      const at = resolve(event.clientX);
-      if (at === null) return;
-      // EVERY box scrubs, including the ones with no card on screen — the
-      // clock covers the whole collection now, so there is nowhere on this bar
-      // that means nothing. The monitor shows whatever you land on; the row
-      // stays where it is.
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // Untrusted pointer (a story's synthetic sequence). Capture is an
-        // optimisation for a real finger leaving the track mid-drag; without
-        // it the drag still tracks every move that lands on the element, so
-        // the gesture works and only the overshoot is lost. Throwing here
-        // aborted the whole handler and took scrubbing with it.
-      }
-      setDragging(true);
-      onScrubbingChange?.(true);
-      onScrubTo(at.clipId, at.secondsIntoClip);
+      const swipe = swipeRef.current;
+      swipeRef.current = null;
+      if (swipe === null || event.pointerId !== swipe.pointerId) return;
+      const dx = event.clientX - swipe.x;
+      if (Math.abs(dx) < BOXES_SWIPE_PX) return;
+      // Dragged LEFT pulls the strip forward, the same direction the cards
+      // move for the same gesture.
+      onStepBy(dx < 0 ? BOXES_SWIPE_CLIPS : -BOXES_SWIPE_CLIPS);
     },
-    [resolve, onScrubTo, onScrubbingChange],
+    [onStepBy],
   );
 
-  const onPointerMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!dragging) return;
-      const at = resolve(event.clientX);
-      if (at === null) return;
-      onScrubTo(at.clipId, at.secondsIntoClip);
+  // ── THE RAIL SCRUBS ─────────────────────────────────────────────────────
+  //
+  // A plain proportional slider over the whole timeline: the clock spans every
+  // clip, so a fraction of the rail is a fraction of the running time and
+  // needs none of the strip's transform arithmetic.
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const [scrubbing, setScrubbing] = useState(false);
+
+  const secondsAt = useCallback(
+    (clientX: number, totalSeconds: number) => {
+      const rail = railRef.current;
+      if (rail === null) return null;
+      const box = rail.getBoundingClientRect();
+      if (box.width <= 0) return null;
+      const ratio = (clientX - box.left) / box.width;
+      return Math.min(Math.max(ratio, 0), 1) * totalSeconds;
     },
-    [dragging, resolve, onScrubTo],
+    [],
   );
 
-  const endDrag = useCallback(() => {
-    setDragging(false);
-    onScrubbingChange?.(false);
-  }, [onScrubbingChange]);
 
   if (strip.totalPx <= 0) return null;
 
   const totalSeconds = strip.totalPx / strip.pxPerSecond;
   const atSeconds = playheadPx === null ? null : playheadPx / strip.pxPerSecond;
+  // Where the ball sits on its rail: the same instant the playhead marks on
+  // the boxes, expressed against the whole running time instead of against
+  // the strip's pixels.
+  const railFraction =
+    totalSeconds > 0 && atSeconds !== null
+      ? Math.min(Math.max(atSeconds / totalSeconds, 0), 1)
+      : 0;
 
   return (
     <div data-seam-bar className="flex w-full items-center gap-3">
@@ -258,19 +275,21 @@ export function SeamStripBar({
         aria-valuemin={0}
         aria-valuemax={Math.round(totalSeconds * 100) / 100}
         aria-valuenow={Math.round((atSeconds ?? 0) * 100) / 100}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
         // `outline-none` on the BASE, not only on focus-visible. It is a
         // role="slider" with a tabIndex, so pressing it focuses it — and the
         // browser's own focus ring was drawing a pale outline around the whole
         // track the moment you touched it, which read as a border the bar did
         // not have a second earlier. Keyboard focus still gets a visible ring,
         // in blue, from the focus-visible rule.
-        //
-        className="relative h-9 flex-1 cursor-ew-resize overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        className="relative flex-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
+        <div
+          data-seam-boxes
+          onPointerDown={onBoxesPointerDown}
+          onPointerUp={onBoxesPointerUp}
+          onPointerCancel={() => { swipeRef.current = null; }}
+          className="relative h-9 cursor-grab overflow-hidden active:cursor-grabbing"
+        >
         <div
           data-seam-strip
           className="absolute inset-y-0 left-0 will-change-transform"
@@ -292,12 +311,7 @@ export function SeamStripBar({
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;
             const isCentre = segment.clipId === centreClipId;
-            const style = styleOf.get(segment.clipId) ?? { colour: "hsl(220 8% 34%)", depth: 0 };
-            // SHORTER THE DEEPER IT SITS, sharing a baseline so the tops step
-            // down and the run reads as an outline of the tree. Capped at four
-            // levels: past that a box would be a sliver, and the colour is
-            // already carrying depth as well.
-            const depthInsetPx = Math.min(style.depth, 4) * DEPTH_STEP_PX;
+            const colour = colourOf.get(segment.clipId) ?? "hsl(220 8% 34%)";
             return (
               <span
                 key={segment.clipId}
@@ -310,12 +324,10 @@ export function SeamStripBar({
                 style={{
                   left: segment.leftPx + BOX_INSET_PX,
                   width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
-                  backgroundColor: style.colour,
-                  top: depthInsetPx,
-                  bottom: 0,
+                  backgroundColor: colour,
                 }}
                 className={[
-                  "absolute flex items-center justify-center overflow-hidden rounded-[3px]",
+                  "absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]",
                   // NO RING. The centred box was outlined as well as checked,
                   // which at a box's width read as two stray white edges
                   // rather than as an outline — the corners round away and
@@ -356,6 +368,59 @@ export function SeamStripBar({
             <span className="absolute -top-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500" />
           </span>
         )}
+        </div>
+
+        {/* THE SCRUBBER: a rail and a ball.
+            Separated from the boxes so each surface does one thing — the boxes
+            are a filmstrip you push, this is a control you drag. It spans the
+            whole timeline, so a fraction of the rail is a fraction of the
+            running time and none of the strip's transform arithmetic applies.
+        */}
+        <div
+          ref={railRef}
+          data-seam-rail
+          onPointerDown={(event) => {
+            if (!event.isPrimary || event.button !== 0) return;
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId);
+            } catch {
+              /* untrusted pointer (stories) — the moves still arrive here */
+            }
+            setScrubbing(true);
+            onScrubbingChange?.(true);
+            const at = secondsAt(event.clientX, totalSeconds);
+            if (at !== null) onScrubSeconds(at);
+          }}
+          onPointerMove={(event) => {
+            if (!scrubbing) return;
+            const at = secondsAt(event.clientX, totalSeconds);
+            if (at !== null) onScrubSeconds(at);
+          }}
+          onPointerUp={() => {
+            setScrubbing(false);
+            onScrubbingChange?.(false);
+          }}
+          onPointerCancel={() => {
+            setScrubbing(false);
+            onScrubbingChange?.(false);
+          }}
+          className="relative mt-1.5 flex h-4 cursor-ew-resize items-center"
+        >
+          <span aria-hidden="true" className="absolute inset-x-0 h-0.5 rounded-full bg-white/20" />
+          {/* Played so far, so the rail reads as a clock and not only as a
+              track with a dot on it. */}
+          <span
+            aria-hidden="true"
+            style={{ width: `${railFraction * 100}%` }}
+            className="absolute left-0 h-0.5 rounded-full bg-white/45"
+          />
+          <span
+            data-seam-ball
+            aria-hidden="true"
+            style={{ left: `${railFraction * 100}%` }}
+            className="absolute h-3 w-3 -translate-x-1/2 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.6)]"
+          />
+        </div>
       </div>
 
       <button

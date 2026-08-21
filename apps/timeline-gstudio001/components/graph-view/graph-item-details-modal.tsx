@@ -426,7 +426,7 @@ function DetailsFilmstripModal({
   // scope shrinking to match it.
   // Durations come straight from the graph, so this costs a map lookup per
   // clip and no media at all — the boxes are geometry, not pictures.
-  // WHAT EACH CLIP'S BOX LOOKS LIKE, derived from WHERE its collection sits.
+  // WHAT COLOUR EACH CLIP'S BOX IS, derived from WHERE its collection sits.
   //
   // The first version gave every collection the next tint from a flat palette
   // and drew the ancestors as bars across the top of the box. Both halves were
@@ -440,7 +440,7 @@ function DetailsFilmstripModal({
   // lifts, so a collection inside an orange one is a near-orange: obviously
   // its own thing, obviously that thing's child. Depth reads as a family, and
   // the top level reads as a difference.
-  const clipStyleOf = useMemo(() => {
+  const clipColourOf = useMemo(() => {
     const rootId = flatOrderRootId(graph);
 
     // Ordered so that CONSECUTIVE assignments are far apart, and so that no
@@ -494,7 +494,7 @@ function DetailsFilmstripModal({
       return tone;
     };
 
-    const styles = new Map<string, { colour: string; depth: number }>();
+    const colours = new Map<string, string>();
     for (const id of ids) {
       // The chain from just under the root down to the clip's own collection.
       const chain: string[] = [];
@@ -511,14 +511,12 @@ function DetailsFilmstripModal({
         tone = toneFor(collectionId, depth === 0 ? null : chain[depth - 1]!);
       });
       const resolved: Tone = tone ?? { hue: 220, saturation: 8, lightness: 34 };
-      styles.set(id, {
-        colour: `hsl(${resolved.hue % 360} ${resolved.saturation}% ${resolved.lightness}%)`,
-        // How far down the tree this clip sits. Zero for one held directly at
-        // the top; the bar shortens a box by this.
-        depth: chain.length,
-      });
+      colours.set(
+        id,
+        `hsl(${resolved.hue % 360} ${resolved.saturation}% ${resolved.lightness}%)`,
+      );
     }
-    return styles;
+    return colours;
   }, [ids, graph]);
 
   const strip = useMemo(() => {
@@ -687,7 +685,7 @@ function DetailsFilmstripModal({
             <SeamStripBar
               strip={strip}
               centreClipId={node.id as string}
-              styleOf={clipStyleOf}
+              colourOf={clipColourOf}
               playheadPx={playheadPx}
               playing={playing}
               onTogglePlay={() => setPlaying((was) => !was)}
@@ -696,17 +694,16 @@ function DetailsFilmstripModal({
               onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
               onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
               onScrubbingChange={setScrubbing}
-              onScrubTo={(clipId, secondsIntoClip) => {
-                // Back across the seam the other way: the bar reports a clip
-                // and an offset into it, and the clock wants bar seconds. The
-                // span carries `sourceOffset` because a run-up joins its clip
-                // partway through, so the two only line up once it is taken
-                // off.
-                const span = seamSpanFor(timeline, clipId);
-                if (span === null) return;
-                const next = span.from + Math.max(0, secondsIntoClip - span.sourceOffset);
+              // The clock spans every clip, so a point on the rail IS a point
+              // on the clock and needs no conversion.
+              onScrubSeconds={(seconds) => {
                 setPlaying(false);
-                setBarSeconds(Math.min(Math.max(next, span.from), span.to));
+                setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
+              }}
+              onStepBy={(delta) => {
+                const target = Math.min(Math.max(centre + delta, 0), ids.length - 1);
+                const id = ids[target];
+                if (id !== undefined && target !== centre) onOpenNeighbour(id);
               }}
             />
           </div>
