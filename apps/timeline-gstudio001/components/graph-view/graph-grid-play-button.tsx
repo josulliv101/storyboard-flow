@@ -42,10 +42,6 @@ import type { PreviewTimeChannel } from "./preview-time-channel";
  */
 type CardStart = Readonly<{ start: number; end: number; disabled: boolean }>;
 
-/** Near enough to a clip's start to call it there. A frame at 25fps is 0.04s,
- *  so this is "within a frame" without pretending the clock is exact. */
-const AT_START_SECONDS = 0.05;
-
 const ClipStartsContext = createContext<ReadonlyMap<string, CardStart> | null>(null);
 
 export function GridPlayStarts({
@@ -120,10 +116,10 @@ export function GraphGridPlayButton({
   // timeline re-renders exactly two buttons per crossing rather than the whole
   // grid on every tick. That was the objection to a toggle; a boolean snapshot
   // answers it.
-  // ONE STRING, not two booleans. Both facts come from the same two values and
-  // are mutually exclusive, so a single snapshot means one subscription and one
-  // bail-out check — and, more usefully, makes it impossible to render a card
-  // that claims to be playing AND parked at its own start.
+  // ONE STRING, and it now answers the question the single button asks:
+  // IS THE PLAYHEAD ON THIS CLIP? Four mutually exclusive states from the same
+  // two values, so one subscription and one bail-out check, and no way to
+  // render a card claiming two of them at once.
   const cardState = useSyncExternalStore(
     (onChange) => {
       const stopTime = channel.subscribe(onChange);
@@ -134,43 +130,34 @@ export function GraphGridPlayButton({
       };
     },
     () => {
-      if (card === undefined) return "at-start";
+      if (card === undefined) return "forward";
       const now = channel.get();
-      if (channel.isPlaying() && now >= card.start && now < card.end) return "playing";
-      if (Math.abs(now - card.start) < AT_START_SECONDS) return "at-start";
-      // WHICH WAY THE JUMP GOES. Note that a playhead sitting INSIDE this clip
-      // but past its start counts as "back" — pressing cue would rewind to the
-      // clip's opening, and that is what the arrow should say.
+      // INSIDE THIS CLIP AT ALL, not merely parked on its first frame. That
+      // was the old test, and it is the wrong one for a single control: a
+      // playhead three seconds into a shot is plainly ON that shot, and
+      // offering to "go to its start" there is a rewind nobody asked for.
+      if (now >= card.start && now < card.end) {
+        return channel.isPlaying() ? "playing" : "here";
+      }
       return card.start < now ? "back" : "forward";
     },
-    () => "at-start",
+    () => "forward",
   );
   const playingHere = cardState === "playing";
-  // ALREADY THERE, so the cue has nothing to do. Disabled rather than hidden:
-  // a control that vanishes when you have just used it takes its own
-  // explanation with it, and the gap left behind moves the button beside it.
-  const alreadyAtStart = cardState === "at-start";
+  // WHICH CONTROL THIS IS. On the clip the playhead is sitting in, the button
+  // is a transport control; anywhere else it is a way of getting there.
+  const onThisClip = cardState === "playing" || cardState === "here";
 
-  // WHICH WAY THE ARROW POINTS, remembered across the moment it arrives.
-  //
-  // Rotating is the whole signal: forward for a card ahead of the playhead,
-  // turned around for one behind it — the same glyph, saying "fetch the
+  // WHICH WAY THE ARROW POINTS: forward for a card ahead of the playhead,
+  // turned around for one behind it — the same glyph saying "fetch the
   // playhead back" instead of "run on to there".
   //
-  // The ref exists for the instant the jump COMPLETES. At that point the card
-  // is at-start with no direction of its own, and recomputing would snap a
-  // backward arrow forward at the exact moment it went quiet — the control
-  // contradicting the trip you just watched it make. Holding the last real
-  // direction lets it arrive pointing the way it went.
-  // STATE ADJUSTED DURING RENDER, which React sanctions for exactly this —
-  // deriving from a prop or a store value that has changed — and which a ref
-  // cannot do here, since reading one during render is neither allowed nor
-  // reliable.
-  const [lastDirection, setLastDirection] = useState<"back" | "forward">("forward");
-  if ((cardState === "back" || cardState === "forward") && cardState !== lastDirection) {
-    setLastDirection(cardState);
-  }
-  const pointsBack = (cardState === "at-start" ? lastDirection : cardState) === "back";
+  // The last-direction memory this used to keep is gone with the state it
+  // served. It existed for the instant a jump COMPLETED, when the card became
+  // "at-start" with no direction of its own and a recomputed arrow would snap
+  // round at the moment it went quiet. Arriving now makes the button a PLAY
+  // control, so there is no arrow left to contradict the trip you just watched.
+  const pointsBack = cardState === "back";
   const node = useCollectionsSelector((snapshot) => snapshot.graph.nodesById.get(nodeId) ?? null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -257,116 +244,104 @@ export function GraphGridPlayButton({
       ref={anchorRef}
       className="pointer-events-none absolute inset-0 [[data-select-mode]_&]:hidden"
     >
-      {/* A ROW, so the two controls share one corner and one baseline rather
-          than each finding its own. */}
+      {/* ONE CONTROL, AND WHICH ONE DEPENDS ON WHERE THE PLAYHEAD IS.
+          There were two: play/pause, and a cue that jumped the playhead to
+          this clip's start. Two controls on every card, in every cell, and on
+          any given card exactly one of them was the one you wanted — the cue
+          was pointless on the clip already playing, and play was the long way
+          round on a clip the playhead was nowhere near.
+
+          So the button IS the answer to "is the playhead here": on this clip
+          it is the transport, anywhere else it is the way of getting here.
+          The pair never disagreed about where a clip begins because there is
+          no pair now.
+
+          `data-grid-play` / `data-grid-cue` still mark the two modes, so a
+          selector for either finds the button exactly when it is that thing. */}
       <div
         style={artworkBottom === null ? undefined : { bottom: `${8 - artworkBottom}px` }}
         className={[
-          // left-3.5 = the card's own 6px padding plus 8px, so the pair sits
-          // inside the PICTURE's corner rather than on its edge.
-          "pointer-events-none absolute left-3.5 z-20 flex items-center gap-1.5",
+          // left-3.5 = the card's own 6px padding plus 8px, so it sits inside
+          // the PICTURE's corner rather than on its edge.
+          "pointer-events-none absolute left-3.5 z-20 flex items-center",
           artworkBottom === null ? "bottom-2" : "",
         ].join(" ")}
       >
-      <button
-        type="button"
-        data-grid-play={nodeId as string}
-        aria-label={
-          playingHere ? `Pause ${node.name}` : `Play ${node.name} in the preview`
-        }
-        title={playingHere ? `Pause ${node.name}` : `Play ${node.name} in the preview`}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          // Stopped, or the press also reaches the card underneath and selects
-          // it — or, held a moment, starts a reorder drag.
-          event.stopPropagation();
-          if (playingHere) {
-            // Pause where it is, rather than rewinding: stopping to look at a
-            // frame and being thrown back to the clip's start would make the
-            // button useless for the thing you stop for.
-            channel.setPlaying(false);
-            return;
-          }
-          // ALWAYS FROM THIS CARD'S OWN START, even if the clock is already
-          // inside it — "play this" means this clip from its beginning, not
-          // "resume wherever the playhead happens to be sitting".
-          //
-          // SEEK, THEN START A FRAME LATER, and the frame is the whole point.
-          // Both writes land in one React batch, so the pane received the new
-          // time and `playing: true` together — and a controlled player
-          // ignores an incoming time while it is playing, or it would fight
-          // its own progress. The seek was dropped and playback ran from
-          // wherever the pane already was: measured, pressing the third card
-          // played from 0.0s instead of its 16.5s start, and because the pause
-          // state is derived from the same window, the button never flipped
-          // either. Letting the seek land while the pane is still paused fixes
-          // both.
-          channel.set(card.start);
-          requestAnimationFrame(() => channel.setPlaying(true));
-        }}
-        className={discClass}
-      >
-        {playingHere ? (
-          <Pause aria-hidden="true" className="size-3.5" fill="currentColor" />
-        ) : (
-          // Nudged right: a triangle's optical centre is left of its box.
-          <Play aria-hidden="true" className="size-3.5 translate-x-px" fill="currentColor" />
-        )}
-      </button>
-
-      {/* CUE, not play: the playhead moves to this clip's start and stops
-          there. The transport's own skip glyph, reused rather than invented —
-          a second symbol for one action is how two controls end up disagreeing
-          about what they do.
-
-          POINTING FORWARD. The back-facing twin was the literal reading — "go
-          to the start of this" — but from the board the gesture is a jump
-          ACROSS the timeline to a card you can see, and most of the cards you
-          reach for are ahead of where the playhead is sitting. Facing it
-          backwards made a forward jump look like a rewind. It is the same
-          glyph rotated; the direction it points is the only thing being said
-          here, and it should agree with the direction you are travelling.
-
-          Hidden while THIS clip is playing: the playhead is already inside it,
-          so "go to its start" during playback would be a rewind nobody asked
-          for, and the pause button beside it is the thing you actually want at
-          that moment. */}
-      {!playingHere && (
         <button
           type="button"
-          data-grid-cue={nodeId as string}
-          disabled={alreadyAtStart}
+          {...(onThisClip
+            ? { "data-grid-play": nodeId as string }
+            : { "data-grid-cue": nodeId as string })}
           aria-label={
-            pointsBack
-              ? `Move the playhead back to the start of ${node.name}`
-              : `Move the playhead forward to the start of ${node.name}`
+            playingHere
+              ? `Pause ${node.name}`
+              : onThisClip
+                ? `Play ${node.name} in the preview`
+                : pointsBack
+                  ? `Move the playhead back to the start of ${node.name}`
+                  : `Move the playhead forward to the start of ${node.name}`
           }
           title={
-            alreadyAtStart
-              ? `The playhead is already at the start of ${node.name}`
-              : `Go to the start of ${node.name}`
+            playingHere
+              ? `Pause ${node.name}`
+              : onThisClip
+                ? `Play ${node.name} in the preview`
+                : `Go to the start of ${node.name}`
           }
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
+            // Stopped, or the press also reaches the card underneath and
+            // selects it — or, held a moment, starts a reorder drag.
             event.stopPropagation();
+            if (playingHere) {
+              // Pause where it is, rather than rewinding: stopping to look at
+              // a frame and being thrown back to the clip's start would make
+              // the button useless for the thing you stop for.
+              channel.setPlaying(false);
+              return;
+            }
+            if (!onThisClip) {
+              // CUE: the playhead moves to this clip's start and stops there.
+              channel.set(card.start);
+              return;
+            }
+            // ALWAYS FROM THIS CARD'S OWN START, even though the clock is
+            // already inside it — "play this" means this clip from its
+            // beginning, not "resume wherever the playhead happens to sit".
+            //
+            // SEEK, THEN START A FRAME LATER, and the frame is the whole
+            // point. Both writes land in one React batch, so the pane received
+            // the new time and `playing: true` together — and a controlled
+            // player ignores an incoming time while it is playing, or it would
+            // fight its own progress. The seek was dropped and playback ran
+            // from wherever the pane already was: measured, pressing the third
+            // card played from 0.0s instead of its 16.5s start. Letting the
+            // seek land while the pane is still paused fixes it.
             channel.set(card.start);
+            requestAnimationFrame(() => channel.setPlaying(true));
           }}
-          className={`${discClass} disabled:pointer-events-none disabled:opacity-40`}
+          className={discClass}
         >
-          {/* TRANSITIONED, because the turn is the message. A glyph that
-              simply appears facing the other way says the same thing without
-              anyone noticing it changed; watching it swing is what teaches the
-              rule. */}
-          <SkipForward
-            aria-hidden="true"
-            fill="currentColor"
-            className={[
-              "size-3.5 transition-transform duration-200 ease-out motion-reduce:transition-none",
-              pointsBack ? "rotate-180" : "rotate-0",
-            ].join(" ")}
-          />
+          {playingHere ? (
+            <Pause aria-hidden="true" className="size-3.5" fill="currentColor" />
+          ) : onThisClip ? (
+            // Nudged right: a triangle's optical centre is left of its box.
+            <Play aria-hidden="true" className="size-3.5 translate-x-px" fill="currentColor" />
+          ) : (
+            /* TRANSITIONED, because the turn is the message. A glyph that
+               simply appears facing the other way says the same thing without
+               anyone noticing it changed; watching it swing is what teaches
+               the rule. */
+            <SkipForward
+              aria-hidden="true"
+              fill="currentColor"
+              className={[
+                "size-3.5 transition-transform duration-200 ease-out motion-reduce:transition-none",
+                pointsBack ? "rotate-180" : "rotate-0",
+              ].join(" ")}
+            />
+          )}
         </button>
-      )}
       </div>
     </div>
   );
