@@ -2282,6 +2282,48 @@ export const ThePlaybarIsGreyUnlessAsked: Story = {
 };
 
 /**
+ * F2 RENAMES THE CLIP YOU OPENED, not every clip on screen.
+ *
+ * Each panel registers its own document-level capture listener for Escape and
+ * F2 — and the listener is the panel's, so it renames the panel that owns it.
+ * With five panels mounted that is five listeners, and `stopPropagation` does
+ * not stop the others: it stops the event travelling to another NODE, and
+ * these are all on `document`. One keypress, five rename fields.
+ *
+ * Escape is the same wiring and hides it, because closing five times closes
+ * once. F2 is where it shows.
+ *
+ * "Which dialog has the keyboard" is singular by definition — the comment in
+ * the panel says exactly that about its focus wiring, and the keyboard effect
+ * was the one part that had not been told.
+ */
+export const F2RenamesOnlyTheOpenedClip: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-item-details-panel]").length).toBeGreaterThan(1),
+    );
+    const fields = () => document.querySelectorAll('input[aria-label="Clip name"]').length;
+    expect(fields()).toBe(0);
+
+    // On the document, and not from inside a field — the guard for an editable
+    // target is what lets the rename input itself handle its own keys.
+    fireEvent.keyDown(document.body, { key: "F2" });
+
+    await waitFor(() => expect(fields()).toBeGreaterThan(0));
+    // ONE, AND ON THE SUBJECT. Every mounted panel hears the key — they all
+    // listen on `document` — but only the one you opened may act on it.
+    expect(fields()).toBe(1);
+    const field = document.querySelector<HTMLInputElement>('input[aria-label="Clip name"]')!;
+    expect(
+      field.closest("[data-item-details-panel]")?.getAttribute("data-item-details-panel"),
+    ).toBe("centre");
+
+    fireEvent.keyDown(field, { key: "Escape" });
+  },
+};
+
+/**
  * THE BAR'S OWN CONTROLS SIT BETWEEN ITS TWO BARS.
  *
  * The scrub bar is the cut, the minimap is the project, and the row between

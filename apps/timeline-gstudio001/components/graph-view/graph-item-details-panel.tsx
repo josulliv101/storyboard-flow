@@ -264,6 +264,19 @@ export function DetailsPanel({
   // input's stopPropagation never gets the chance to speak.
   const beginRename = rename.begin;
   useEffect(() => {
+    // THE CENTRE PANEL ONLY, which the paragraph above says about the focus
+    // wiring and this effect had not been told.
+    //
+    // Every mounted panel ran this, so a single F2 called `begin()` on all
+    // five and `stopPropagation` did not stop it: these listeners are all on
+    // `document`, and stopping propagation stops an event reaching another
+    // NODE, not the other listeners on this one. Which panel you ended up
+    // renaming was listener order — measured, it was a neighbour, so pressing
+    // F2 in a view opened on one clip put the cursor in a different clip's
+    // name.
+    //
+    // Escape hid it, because closing five times closes once.
+    if (!centre) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableKeyboardTarget(event.target)) return;
       if (event.key === "Escape") {
@@ -279,7 +292,7 @@ export function DetailsPanel({
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose, beginRename]);
+  }, [centre, onClose, beginRename]);
 
   // HOW FAR TO PAINT IT UP while the clock is being dragged. Aimed at a SIZE
   // rather than multiplied by a guess: a fixed factor is nothing at five
