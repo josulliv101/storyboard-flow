@@ -167,6 +167,8 @@ function BoardMenu({
    *  see `graph-clip-names.tsx`. */
   clipNamesShown: boolean;
   onClipNamesChange: (shown: boolean) => void;
+  /** Whether the details view's play bar draws each clip's first frame rather
+   *  than a grey box. Off by default — see `graph-playbar-thumbnails.tsx`. */
   /** Whose render format this menu edits. The section reads and writes the
    *  document itself, so the menu only has to say WHICH one. */
   projectId: string;
@@ -1956,6 +1958,9 @@ export function GraphBoard({
    *  threaded down; see `graph-clip-names.tsx`. */
   clipNamesShown: boolean;
   onClipNamesChange: (shown: boolean) => void;
+  /** Whether the play bar in the details view draws each clip's first frame
+   *  rather than a grey box. Published as a context; see
+   *  `graph-playbar-thumbnails.tsx`. */
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   /** The preview pane above the board. The board renders it AND carries its

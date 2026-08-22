@@ -100,6 +100,34 @@ const FIRST_FRAME_NUDGE_SECONDS = 0.05;
  * to say "this is that shot". It samples the START instead. Pinning it to the
  * end was already rejected for the same reason in reverse.
  */
+/**
+ * The poster a MONITORING video element should paint before it has decoded
+ * anything: the frame it is about to seek to, not the clip's first.
+ *
+ * A fresh `<video>` has no frame, so it paints its poster. Where the element
+ * is mounting in order to show a particular moment — the clip a scrub just
+ * landed on, given its own panel — a poster of the clip's OPENING frame is
+ * a picture of the wrong moment, held until the seek lands and then replaced.
+ * The frame was never lost; it was re-acquired in public, and the swap reads
+ * as a skip.
+ *
+ * `seconds` of null means "no clock is asking" — a resting neighbour, which
+ * genuinely is showing its opening frame and wants the base poster.
+ *
+ * Falls back to the base for anything the builder cannot transform, which is
+ * every non-Cloudinary source: a fixture, an upload still in flight. That is
+ * the same picture as before rather than none.
+ */
+export function monitorPosterUrl(
+  posterSrc: string | undefined,
+  seconds: number | null,
+  build: VideoFrameUrlBuilder = defaultVideoFrameUrlBuilder,
+): string | undefined {
+  if (posterSrc === undefined) return undefined;
+  if (seconds === null || !Number.isFinite(seconds)) return posterSrc;
+  return build(posterSrc, Math.max(0, seconds));
+}
+
 export function videoFrameUrls(
   posters: readonly string[],
   count: number,

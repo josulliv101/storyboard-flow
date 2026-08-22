@@ -164,6 +164,29 @@ html body[data-scroll-locked] {
 /* Sidebar trash drawer button: "something just arrived" — a pop with a
    wiggle and a brief brighten (no color shift — the sidebar stays on its
    gray scheme), played once per arrival (see timeline-sidebar). */
+/* Details view, letting go of the play bar: the row does NOT scroll to the
+   landed clip, because the middle card is already showing it — it has been the
+   monitor for the whole scrub. Moving it would animate a change that already
+   happened. So the row cuts to its new offset and the panels either side fade
+   in with their new contents: what changes is what changes, and the picture
+   being judged never moves.
+
+   Stepping is the other case and keeps its slide (see the row's own
+   `transition-transform`): there the middle card really is becoming a
+   different clip, and the travel is what says which way you went. */
+@keyframes seam-panel-swap {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-seam-panel-swap {
+  animation: seam-panel-swap 300ms ease-out;
+}
+
 @keyframes trash-arrival {
   0% {
     transform: scale(1);

@@ -68,6 +68,14 @@ describe("barReachWindow", () => {
     expect(window.centre).toBe(5);
   });
 
+  it("takes five either side", () => {
+    const window = barReachWindow(ids, 30, 5);
+    expect(window.ids).toHaveLength(11);
+    expect(window.ids[0]).toBe("clip-25");
+    expect(window.ids[10]).toBe("clip-35");
+    expect(window.ids[window.centre]).toBe("clip-30");
+  });
+
   it("survives a subject it cannot find", () => {
     const window = barReachWindow(ids, -1, 10);
     expect(window.ids).toBe(ids);

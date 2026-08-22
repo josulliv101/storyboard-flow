@@ -60,6 +60,13 @@ import {
   type ViewCount,
 } from "./graph-item-details-view-count";
 import {
+  PLAYBAR_THUMBNAIL_STYLES,
+  PlaybarThumbnailsProvider,
+  lastPlaybarThumbnails,
+  rememberPlaybarThumbnails,
+  type PlaybarThumbnails,
+} from "./graph-playbar-thumbnails";
+import {
   BAR_REACHES,
   barReachLabel,
   barReachWindow,
@@ -247,7 +254,12 @@ function DetailsFilmstripModal({
   const carryClockRef = useRef<SeamPosition | null>(null);
   // WHERE AN EASING JUMP STARTED, while it is still easing. Null the rest of
   // the time, which is nearly all of the time.
-  const [easingFrom, setEasingFrom] = useState<number | null>(null);
+  // A BAR LANDING IN FLIGHT: true while the panels either side are fading in.
+  // Set in the handler rather than derived, because the difference between a
+  // step and a landing is WHICH GESTURE ASKED, and nothing about the resulting
+  // state remembers that.
+  const [swapping, setSwapping] = useState(false);
+  const swapRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   // A DRAG IS IN PROGRESS ON THE BAR. Distinct from `scrubbed`, which stays
   // true once the clock has been touched: this is the gesture itself, and it
@@ -263,6 +275,14 @@ function DetailsFilmstripModal({
   // panels are on screen: the row is what you are working on, the bar is how
   // much of the sequence you can get to without leaving it.
   const [reach, setReach] = useState<BarReach>(lastBarReach());
+  // WHAT THE BOXES DRAW, kept beside the reach because it is the same kind of
+  // question — how much this control shows you, and of what. Seeded from
+  // module scope so it survives the modal being closed and reopened.
+  const [frames, setFrames] = useState<PlaybarThumbnails>(lastPlaybarThumbnails());
+  const chooseFrames = useCallback((next: PlaybarThumbnails) => {
+    rememberPlaybarThumbnails(next);
+    setFrames(next);
+  }, []);
 
   const clipAt = useCallback(
     (index: number): MediaNode | null => {
@@ -402,38 +422,7 @@ function DetailsFilmstripModal({
     );
   }
 
-  // A LANDING THAT IS NOT A STEP IS A CUT.
-  //
-  // The row eases across one panel width for a swipe, a neighbour click or a
-  // step arrow, and that easing is the gesture finishing itself. A scrub
-  // release can land twenty clips away, and the same 300ms spent crossing
-  // twenty panel widths is not a move — it is every card on screen leaving to
-  // the left, most of them unmounted placeholders, with the one you asked for
-  // turning up at the end of it. Going somewhere else in the timeline is a
-  // cut, so it cuts.
-  //
-  // DONE TO THE NODE, NOT THROUGH STATE. A `cutTo` flag would have to be
-  // cleared again a render later, which is a cascading render for one frame of
-  // styling — and the frame it is trying to influence has already been
-  // decided by then. A layout effect runs after the transform is in the DOM
-  // and before the browser paints it, which is exactly the window where
-  // "arrive, do not travel" can still be said. The reflow read is what makes
-  // it stick: without it the two style writes coalesce and the transition
-  // never goes away.
   const stripRef = useRef<HTMLDivElement | null>(null);
-  const centreWasRef = useRef(centre);
-  useLayoutEffect(() => {
-    const strip = stripRef.current;
-    const jumped = Math.abs(centre - centreWasRef.current) > STEPPED_MAX;
-    centreWasRef.current = centre;
-    if (!jumped || strip === null) return;
-    strip.style.transition = "none";
-    void strip.offsetWidth;
-    const frame = requestAnimationFrame(() => {
-      strip.style.transition = "";
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [centre]);
 
   // Where the BAR draws its playhead when nothing has moved it: the cut at the
   // head of the centre clip, which is the moment this view is about.
@@ -488,20 +477,20 @@ function DetailsFilmstripModal({
   // honest.
   const MOUNTED_RADIUS = Math.floor(viewCount / 2) + 1;
 
-  // HOW FAR THE ROW WILL TRAVEL RATHER THAN CUT.
+  // HOW A LANDING FROM THE BAR ARRIVES: IT DOES NOT TRAVEL.
   //
-  // One panel is a step; beyond about five the ease stops reading as travel
-  // and starts reading as a whip, and the cards in between go past too fast to
-  // be anything but noise. Five is the last distance where you can still watch
-  // the row move and know where you went.
+  // Stepping and letting go of the bar look like the same event and are not.
+  // A step really does make the middle card a different clip, and the slide is
+  // what says which way you went. Letting go of the bar does not: the middle
+  // card has been the MONITOR for the whole scrub, so it is already showing
+  // the clip you landed on, and scrolling the row to it animates a change that
+  // has already happened — the one thing on screen that did not need to move
+  // is the thing that moves.
   //
-  // THE MOUNT WINDOW IS WHY THIS IS NOT JUST A NUMBER. `MOUNTED_RADIUS` is
-  // two panels either side at three-up, so a five-panel ease would slide three
-  // EMPTY boxes past — including the card you were just on, which would blink
-  // out and leave as a placeholder. `easingFrom` widens the window to cover
-  // the whole span for the length of the animation and then lets it go again,
-  // so the travel is paid for only while it is being watched.
-  const STEPPED_MAX = 5;
+  // So the row cuts to its new offset, the middle card stays exactly where it
+  // is with exactly the picture it had, and the panels either side fade in
+  // with their new contents. What changes is what changes.
+  const SWAP_MS = 300;
 
   const chooseReach = useCallback((next: BarReach) => {
     rememberBarReach(next);
@@ -638,14 +627,24 @@ function DetailsFilmstripModal({
         collectionId: parentId === null ? null : (parentId as string),
         collectionName: parent?.name ?? null,
         ...(media === null ? {} : { posterSrc: seamClipOf(media)?.posterSrc }),
+        // ONLY A VIDEO GETS THE FULL SET. A still's single image sampled at
+        // ten intervals is ten copies of itself, which is a filmstrip saying
+        // nothing happens — worse than the one frame it is made of. Leaving
+        // these off is what makes the bar fall back to `cover` for it.
+        ...(media !== null && media.mediaKind === "video" && media.posterSrcs !== undefined
+          ? {
+              posterSrcs: media.posterSrcs,
+              trimInSeconds: seamClipOf(media)?.trimInSeconds ?? 0,
+            }
+          : {}),
       };
     });
   }, [barWindow, graph]);
 
   // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a
   // released scrub differ only in how the clip was chosen; what happens next
-  // — carry the clock, widen the mount window if the row is about to travel,
-  // move — is the same sentence and is written once.
+  // — carry the clock, cut rather than travel, fade the panels either side —
+  // is the same sentence and is written once.
   const landOn = useCallback(
     (clipId: string, at: SeamPosition | null) => {
       if (clipId === (node.id as string)) return;
@@ -656,23 +655,45 @@ function DetailsFilmstripModal({
       // carrying the other clip's position would land you on the right card
       // showing the wrong one's time.
       carryClockRef.current = at !== null && at.clipId === clipId ? at : null;
-      // Only a jump that will actually be animated needs the panels in
-      // between: one step already has them, and a cut never shows them.
-      if (distance > 1 && distance <= STEPPED_MAX) setEasingFrom(centre);
+      // A NEIGHBOUR IS STILL A STEP. Landing on the clip directly beside the
+      // one you are on is the same single move the arrows and the swipe make,
+      // and it keeps their slide — the fade is for arrivals that come from
+      // somewhere the row was not showing.
+      swapRef.current = distance > 1;
+      setSwapping(distance > 1);
       onOpenNeighbour(clipId);
     },
-    [STEPPED_MAX, centre, ids, node.id, onOpenNeighbour],
+    [centre, ids, node.id, onOpenNeighbour],
   );
 
-  // LET GO AGAIN once the row has arrived. Slightly longer than the 300ms
-  // ease, so the last frame is still covered; cleared on a timer rather than
-  // on `transitionend`, which does not fire when a second landing interrupts
-  // the first and would strand the window open.
+  // THE ROW CUTS RATHER THAN SLIDES, for a bar landing only. Done to the node
+  // because the frame this is trying to influence has already been decided by
+  // the time any state update could land: a layout effect runs after the new
+  // transform is in the DOM and before the browser paints it, which is the
+  // only window where "do not travel" can still be said. The reflow read
+  // between the two writes is load-bearing — without it they coalesce and the
+  // transition never goes away.
+  useLayoutEffect(() => {
+    if (!swapRef.current) return;
+    swapRef.current = false;
+    const strip = stripRef.current;
+    if (strip === null) return;
+    strip.style.transition = "none";
+    void strip.offsetWidth;
+    const frame = requestAnimationFrame(() => {
+      strip.style.transition = "";
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [centre]);
+
+  // AND THE FADE ENDS. On a timer rather than on `animationend`, which fires
+  // once per panel and would need counting, and does not fire at all for a
+  // panel that unmounted mid-fade.
   useEffect(() => {
-    if (easingFrom === null) return;
-    const timer = setTimeout(() => setEasingFrom(null), 360);
+    if (!swapping) return;
+    const timer = setTimeout(() => setSwapping(false), SWAP_MS + 40);
     return () => clearTimeout(timer);
-  }, [easingFrom]);
+  }, [SWAP_MS, swapping]);
 
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
@@ -851,6 +872,7 @@ function DetailsFilmstripModal({
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="mx-auto w-full max-w-5xl">
+            <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
             <SeamStripBar
               clips={barClips}
               centreClipId={node.id as string}
@@ -887,16 +909,81 @@ function DetailsFilmstripModal({
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
             />
-            {/* HOW FAR THE BAR REACHES, tucked under its right-hand end.
-                Here rather than with the panel-count picker at the foot of the
-                screen because it is a question about THIS control: the number
-                you are reading is the width of the thing directly above it,
-                and the two are read together. */}
+            {/* EVERYTHING THE BAR ITSELF IS SET BY, on one row under it.
+                These began in the board's gear menu, which is where settings
+                you set once belong — but these are not that. They are read
+                against the bar directly above them: the reach is the width of
+                what you are looking at, and the frames are what it is made of.
+                A control you judge by looking at the thing it changes wants to
+                be next to that thing.
+
+                TWO GROUPS, split left and right, because they answer different
+                questions: what the boxes are made of, and how many of them
+                there are. Run together as one row of eight badges they would
+                read as one setting with eight values. */}
+            <div className="mt-2 flex items-center justify-between gap-4">
+              <div
+                data-details-bar-frames
+                role="group"
+                aria-label="What the bar's boxes draw"
+                className="flex items-center gap-1"
+              >
+                <span className="mr-1 font-mono text-[10px] text-zinc-500">frames</span>
+                {/* THREE BADGES, TWO SETTINGS. Whether the boxes draw frames
+                    and which kind are separate answers, but as controls they
+                    are one question — a picture of what the bar is made of —
+                    and a row that reads OFF · COVER · STRIP says it in the
+                    shape the reach beside it already uses.
+
+                    OFF DOES NOT WIPE THE STYLE. It sets `shown` and leaves
+                    `style` alone, so coming back lands on the kind you were
+                    using: switching frames off and on stays a comparison you
+                    can make twice rather than a choice you re-enter. That is
+                    the whole reason the two are stored apart even though they
+                    are pressed together. */}
+                {(["off", ...PLAYBAR_THUMBNAIL_STYLES] as const).map((option) => {
+                  const active = option === "off" ? !frames.shown : frames.shown && frames.style === option;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() =>
+                        chooseFrames(
+                          option === "off"
+                            ? { ...frames, shown: false }
+                            : { shown: true, style: option },
+                        )
+                      }
+                      title={
+                        option === "off"
+                          ? "Plain boxes"
+                          : option === "cover"
+                            ? "One frame filling each box"
+                            : "A strip of frames across each clip"
+                      }
+                      className={[
+                        "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
+                        active
+                          ? "bg-zinc-100 text-zinc-900"
+                          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+                      ].join(" ")}
+                    >
+                      {/* `STRIP`, not `FILMSTRIP`: these badges sit beside a
+                          reach picker of two- and three-character tokens, and
+                          one nine-character label would set the row's rhythm
+                          for the sake of a word the title attribute already
+                          says in full. */}
+                      {option === "filmstrip" ? "STRIP" : option.toUpperCase()}
+                    </button>
+                  );
+                })}
+              </div>
             <div
               data-details-bar-reach
               role="group"
               aria-label="Clips either side on the bar"
-              className="mt-2 flex items-center justify-end gap-1"
+              className="flex items-center gap-1"
             >
               <span className="mr-1 font-mono text-[10px] text-zinc-500">reach</span>
               {BAR_REACHES.map((option) => (
@@ -921,6 +1008,8 @@ function DetailsFilmstripModal({
                 </button>
               ))}
             </div>
+            </div>
+            </PlaybarThumbnailsProvider>
           </div>
         </div>
       )}
@@ -977,26 +1066,23 @@ function DetailsFilmstripModal({
           // landing on the next clip is animated and letting go short of the
           // threshold springs back.
           //
-          // A LANDING FURTHER OFF THAN `STEPPED_MAX` is cut rather than
-          // eased, but not from here — see the layout effect above, which
-          // suppresses this for the single frame the jump paints in.
+          // A BAR LANDING has no transition at all, which the layout effect
+          // above does to the node rather than from here.
           dragPx === 0
-            ? "transition-transform duration-300 ease-out motion-reduce:transition-none"
+            ? "transition-transform ease-out motion-reduce:transition-none"
             : "",
         ].join(" ")}
         style={{
           gap: PANEL_GAP,
           transform: rowTransform,
+          transitionDuration: "300ms",
         }}
       >
         {ids.map((id, index) => {
-          // Within the resting window, OR anywhere along a span the row is
-          // currently easing across — see `easingFrom`.
-          const mounted =
-            Math.abs(index - centre) <= MOUNTED_RADIUS ||
-            (easingFrom !== null &&
-              index >= Math.min(easingFrom, centre) &&
-              index <= Math.max(easingFrom, centre));
+          // Nothing travels across the row any more, so the resting window is
+          // the whole window: a landing cuts, and the panels it cuts to are
+          // the ones already inside it.
+          const mounted = Math.abs(index - centre) <= MOUNTED_RADIUS;
           const panel = mounted ? graph.nodesById.get(parseNodeId(id)) : null;
           const media =
             panel && panel.kind === "media" && (panel as MediaNode).src
@@ -1026,6 +1112,7 @@ function DetailsFilmstripModal({
               key={id}
               node={media}
               centre={index === centre}
+              swapping={swapping}
               // Everything but the picture goes out while the clock is being
               // dragged — see `scrubFocus`.
               scrubFocus={scrubbing && index === centre}
@@ -1050,7 +1137,29 @@ function DetailsFilmstripModal({
               monitor={
                 index === centre && monitorNode && position
                   ? { node: monitorNode, seconds: position.clipSeconds }
-                  : null
+                  : // THE PANEL UNDER THE PLAYHEAD KEEPS ITSELF AT THE
+                    // PLAYHEAD, even while it is a neighbour.
+                    //
+                    // This is what makes letting go seamless. Without it, a
+                    // clip is resting on its own first frame right up until
+                    // the moment it becomes the centre, and only then starts
+                    // seeking — so the release reads as: the right frame (in
+                    // the outgoing centre, which was monitoring it), a cut,
+                    // the FIRST frame, and a skip back to the right one. The
+                    // poster fix cannot help here, because this element
+                    // already has a decoded frame; it is simply the wrong one.
+                    //
+                    // Seeking it early means the panel is already showing the
+                    // landed frame before it is asked to be the subject, and
+                    // the cut has nothing left to change.
+                    //
+                    // ONE EXTRA ELEMENT SEEKING, not nine: exactly one panel
+                    // is under the playhead at a time, and it is the one whose
+                    // frame is about to be wanted. The scrub proxy covers it
+                    // for the same reason it covers the centre.
+                    position !== null && position.clipId === id
+                    ? { node: media, seconds: position.clipSeconds }
+                    : null
               }
               // Only the monitor makes sound: it is the panel showing what the
               // clock says is on screen, so it is the only one whose audio
@@ -1061,7 +1170,11 @@ function DetailsFilmstripModal({
               // dragged: the neighbours are context, and enlarging them would
               // be enlarging the thing you are trying to look past.
               magnified={index === centre && scrubbing}
-              scrubbing={index === centre && scrubbing}
+              // The proxy follows the seeking, not the centring: a neighbour
+              // tracking the playhead is doing the same expensive thing the
+              // centre is, and a full-res seek per pointer move is what the
+              // proxy exists to avoid.
+              scrubbing={scrubbing && (index === centre || position?.clipId === id)}
               swipe={swipe}
               width={panelWidth}
               // Engaged, and not the one being watched. Uses the same gate as

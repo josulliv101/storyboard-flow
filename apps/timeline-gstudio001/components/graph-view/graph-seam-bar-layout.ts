@@ -24,6 +24,14 @@ export type SeamBarClip = Readonly<{
   collectionId: string | null;
   collectionName: string | null;
   posterSrc?: string;
+  /** Every poster the clip has, for sampling a strip of frames across it.
+   *  Present only for VIDEO — a still has one image and a row of copies of it
+   *  is a filmstrip of nothing happening, so stills draw the single frame
+   *  whatever the style says. */
+  posterSrcs?: readonly string[];
+  /** Where the visible range starts in the source, so sampled frames land
+   *  inside the part of the clip that actually plays. */
+  trimInSeconds?: number;
 }>;
 
 /**

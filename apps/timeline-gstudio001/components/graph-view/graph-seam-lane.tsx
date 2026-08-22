@@ -1,11 +1,126 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
+import {
+  usePlaybarThumbnails,
+  type PlaybarThumbnailStyle,
+} from "./graph-playbar-thumbnails";
+import { videoFrameUrls } from "@/lib/video-frame-url";
 import type { SeamStrip } from "./graph-seam-strip";
+
+/**
+ * How long the strip takes to slide when the centred clip changes.
+ *
+ * Long enough to be read as one thing moving rather than as two different
+ * pictures — the whole reason to animate this is that the bar re-centres on
+ * somewhere else and a jump cannot be told apart from a redraw.
+ */
+const SEAM_SLIDE_MS = 520;
+
+/** Roughly the bar's own height (`h-9`), so a cell reads as a square. */
+const FILMSTRIP_CELL_PX = 36;
+/** Past this the cells stretch rather than multiply — see `SegmentFrames`. */
+const MAX_FILMSTRIP_CELLS = 12;
+
+/**
+ * WHAT FILLS ONE BOX when frames are switched on: a single frame, or a row of
+ * them sampled across the clip.
+ *
+ * Its own component so the cell arithmetic is not inlined in the middle of the
+ * strip's layout, and so React can skip a box whose inputs did not change —
+ * the bar re-renders on every pointer move during a drag, and rebuilding a
+ * dozen image lists per box per frame is exactly the cost this is not worth.
+ */
+function SegmentFrames({
+  clipId,
+  clip,
+  posterSrc,
+  widthPx,
+  style,
+}: Readonly<{
+  clipId: string;
+  clip: SeamBarClip | undefined;
+  posterSrc: string | undefined;
+  widthPx: number;
+  style: PlaybarThumbnailStyle;
+}>) {
+  // HOW MANY CELLS FIT, at roughly one per bar-height so each reads as a
+  // square. Capped, because a long clip at a high zoom is a box thousands of
+  // pixels wide and one image per 36px of it is a hundred requests for a
+  // single shot. Past the cap the cells stretch rather than multiply, which
+  // is the honest trade: still evenly spaced across the clip, just wider than
+  // they are tall.
+  const cells = useMemo(() => {
+    if (style !== "filmstrip" || clip?.posterSrcs === undefined) return null;
+    const wanted = Math.min(
+      MAX_FILMSTRIP_CELLS,
+      Math.max(1, Math.round(widthPx / FILMSTRIP_CELL_PX)),
+    );
+    const urls = videoFrameUrls(clip.posterSrcs, wanted, {
+      trimInSeconds: clip.trimInSeconds ?? 0,
+      effectiveSeconds: clip.showingSeconds,
+    });
+    return urls.length === 0 ? null : urls;
+  }, [clip, style, widthPx]);
+
+  if (cells !== null) {
+    return (
+      <span
+        data-seam-filmstrip={clipId}
+        className="absolute inset-0 flex"
+        aria-hidden="true"
+      >
+        {cells.map((url, index) => (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            // The URL is not unique — a clip short enough that two slots land
+            // on the same frame gives the same string twice — so the index is
+            // the only stable identity here.
+            key={index}
+            data-seam-thumbnail={clipId}
+            src={url}
+            alt=""
+            aria-hidden="true"
+            // `flex-1` rather than a fixed width, so the cells divide the box
+            // exactly and there is never a grey tail at the end of a strip.
+            className="h-full min-w-0 flex-1 object-cover"
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+          />
+        ))}
+      </span>
+    );
+  }
+
+  if (posterSrc === undefined) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      data-seam-thumbnail={clipId}
+      src={posterSrc}
+      alt=""
+      aria-hidden="true"
+      // COVER, and no more. The box's width is its duration and its height is
+      // the bar's, so the frame it holds is whatever shape that comes out as —
+      // cropping to fill is the only fit that keeps every box the same height
+      // and the run of them readable as a strip. A `contain` fit would
+      // letterbox each clip differently and turn the bar into a row of
+      // unrelated shapes.
+      className="absolute inset-0 h-full w-full object-cover"
+      // The bar can hold a hundred of these and none of them is the thing
+      // being read on arrival.
+      loading="lazy"
+      decoding="async"
+      draggable={false}
+    />
+  );
+}
+
 
 /**
  * The playhead's head, and its twitch when the scrub lands on a cut.
@@ -54,6 +169,49 @@ function SnapPulse({ snapKey }: Readonly<{ snapKey: number }>) {
  * and trimming only the width would shift it by half the gap.
  */
 const BOX_INSET_PX = 2.5;
+
+/**
+ * WHAT SEPARATES TWO BOXES ONCE THEY HOLD PICTURES.
+ *
+ * The gap between boxes is `BOX_INSET_PX` either side — five pixels of the
+ * strip showing through. Against flat grey that is plenty. Between two frames
+ * it disappears, and NO SINGLE COLOUR FIXES IT, which is the whole design
+ * problem here: a dark gap is invisible between two dark frames, a pale one is
+ * invisible between two bright frames, and footage supplies both within the
+ * same cut. Picking either is picking which half of the timeline to fail on.
+ *
+ * SO THE GAP CARRIES BOTH TONES. The strip's own background is pale and each
+ * box casts a dark ring into the gap either side of it, which makes every gap
+ * read dark · pale · dark whatever is beside it:
+ *
+ *     two bright frames   white | DARK pale DARK | white   ← the rings show
+ *     two dark frames     black | dark PALE dark | black   ← the core shows
+ *     one of each         both, from opposite sides
+ *
+ *                         |<-1.5->|<-2->|<-1.5->|   of the 5px already there
+ *
+ * There is no arrangement of neighbours where neither tone has contrast,
+ * which is what "works on both" has to mean. The alternative — a colour no
+ * footage supplies, a saturated cyan or magenta — would also always show, and
+ * would turn a bar you read for rhythm into a bar you read for stripes.
+ *
+ * THE THREE BANDS SHARE THE FIVE PIXELS THAT WERE ALREADY THERE: 1.5px of
+ * dark, 2px of pale, 1.5px of dark. The first pass gave the pale core three of
+ * the five and the dark barely registered against a bright frame — a white
+ * band with a hairline either side reads as a white band. Roughly equal thirds
+ * read as a rule.
+ *
+ * WIDENING THE GAP IS THE WRONG FIX, and not only because it was asked
+ * against: a box's width IS its duration, so spending more of it on separation
+ * makes short clips read shorter and changes what the bar is saying. None of
+ * this costs layout — the gap is already there, the bands only divide it, and
+ * a ring paints outside the box rather than over the picture.
+ *
+ * Only when frames are on. Over grey the whole treatment is decoration
+ * answering a question nobody asked.
+ */
+const FRAMED_GAP_COLOUR = "rgba(212, 212, 216, 0.92)";
+const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(0, 0, 0, 0.82)";
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */
@@ -110,6 +268,58 @@ export function SeamLane({
   chip: string | null;
   handlers: React.ComponentProps<"div">;
 }>) {
+  // THE BOXES SLIDE INTO POSITION ON A MOVE, and jump for everything else.
+  //
+  // The strip's transform is driven by three different things and only one of
+  // them wants easing. A drag has to track the hand exactly — the whole point
+  // of the edge run is that the strip moves WITH the pointer — and a wheel
+  // zoom or a pan is the same: they are the hand, and easing them reads as
+  // lag. Changing which clip is centred is different. Nothing is under the
+  // reader's finger, the strip re-centres on somewhere else entirely, and a
+  // jump there is the one case where the eye cannot tell whether the bar
+  // moved or was replaced.
+  //
+  // APPLIED TO THE NODE FOR A FIXED WINDOW rather than held as state: the
+  // easing belongs to one arrival, and a `sliding` flag would have to be
+  // cleared a render later — a cascading render to describe half a second of
+  // styling. The pointer handler clears it early so a drag begun mid-slide is
+  // still exact from its first frame.
+  const thumbnails = usePlaybarThumbnails();
+  // The clips by id, so a segment can reach its posters without a scan per box.
+  const clipById = useMemo(() => new Map(clips.map((clip) => [clip.id, clip])), [clips]);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const centreWasRef = useRef(centreClipId);
+  const offsetWasRef = useRef(offset);
+  useLayoutEffect(() => {
+    const node = stripRef.current;
+    const moved = centreWasRef.current !== centreClipId;
+    const previous = offsetWasRef.current;
+    centreWasRef.current = centreClipId;
+    offsetWasRef.current = offset;
+    if (!moved || node === null || previous === offset) return;
+
+    // PUT IT BACK, THEN LET IT GO. A transition cannot be added to a value
+    // that has ALREADY changed: by the time a layout effect runs, React has
+    // written the new transform, and switching easing on afterwards animates
+    // nothing — the browser has one value and no previous one to interpolate
+    // from. So the old position is restored with easing off, the reflow makes
+    // that the state being transitioned FROM, and only then is the new one
+    // asked for.
+    node.style.transition = "none";
+    node.style.transform = `translateX(${previous}px)`;
+    void node.offsetWidth;
+    node.style.transition = `transform ${SEAM_SLIDE_MS}ms ease-out`;
+    node.style.transform = `translateX(${offset}px)`;
+
+    // Only the easing is cleared at the end. The transform is left exactly
+    // where it was put — it is the same value React renders, so the two agree
+    // and there is no frame where the strip is briefly somewhere else.
+    const done = setTimeout(() => {
+      node.style.transition = "";
+    }, SEAM_SLIDE_MS + 60);
+    return () => clearTimeout(done);
+  }, [centreClipId, offset]);
+
   const seams = collectionSeams(clips);
   const viewportX = (stripX: number) => stripX + offset;
 
@@ -118,6 +328,14 @@ export function SeamLane({
       ref={laneRef}
       data-seam-boxes
       {...handlers}
+      // A DRAG BEGUN MID-SLIDE IS EXACT FROM ITS FIRST FRAME. In CAPTURE, so
+      // it runs before the bar's own pointer handler and cannot be replaced by
+      // the spread above — leaving the easing on would put the strip a fixed
+      // distance behind the hand for the rest of the slide's duration, which
+      // is the lag the drag path is careful to avoid everywhere else.
+      onPointerDownCapture={() => {
+        if (stripRef.current !== null) stripRef.current.style.transition = "";
+      }}
       // `touch-none`, because every gesture here is claimed: a drag scrubs and
       // a two-finger swipe pans. Left to the browser, the first would also
       // scroll the dialog behind the bar.
@@ -131,9 +349,17 @@ export function SeamLane({
     >
       <div className="absolute inset-0 overflow-hidden">
         <div
+          ref={stripRef}
           data-seam-strip
           className="absolute inset-y-0 left-0 will-change-transform"
-          style={{ transform: `translateX(${offset}px)`, width: strip.totalPx }}
+          style={{
+            transform: `translateX(${offset}px)`,
+            width: strip.totalPx,
+            // THE GAPS ARE THIS SHOWING THROUGH. The boxes are opaque and
+            // absolutely positioned over it, so the only part of this that is
+            // ever visible is the space between them — see `FRAMED_GAP_COLOUR`.
+            ...(thumbnails.shown ? { backgroundColor: FRAMED_GAP_COLOUR } : {}),
+          }}
         >
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;
@@ -148,14 +374,38 @@ export function SeamLane({
                 style={{
                   left: segment.leftPx + BOX_INSET_PX,
                   width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                  // THE COLOUR STAYS UNDER THE PICTURE. A frame that has not
+                  // loaded yet, or a clip that has no poster at all, leaves
+                  // the box exactly as it is without the setting — so turning
+                  // thumbnails on can add pictures but can never subtract the
+                  // bar.
                   backgroundColor: colour,
+                  // See `FRAMED_BOX_EDGE`: the ring is the dark half of the
+                  // gap, and the strip's own background is the pale half.
+                  ...(thumbnails.shown ? { boxShadow: FRAMED_BOX_EDGE } : {}),
                 }}
                 className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]"
               >
+                {thumbnails.shown ? (
+                  <SegmentFrames
+                    clipId={segment.clipId}
+                    clip={clipById.get(segment.clipId)}
+                    posterSrc={segment.posterSrc}
+                    widthPx={Math.max(2, segment.widthPx - BOX_INSET_PX * 2)}
+                    style={thumbnails.style}
+                  />
+                ) : null}
                 {isCentre && segment.widthPx >= 16 ? (
                   <span
                     data-seam-marker
-                    className="h-3 w-3 rounded-full bg-black/50"
+                    // Above the frame once there is one, and darker for it: a
+                    // 50% black dot reads on grey and disappears into a busy
+                    // picture, which is the one box it has to be findable in.
+                    className={
+                      thumbnails.shown
+                        ? "relative z-10 h-3 w-3 rounded-full bg-black/70 ring-1 ring-white/70"
+                        : "h-3 w-3 rounded-full bg-black/50"
+                    }
                   />
                 ) : null}
               </span>

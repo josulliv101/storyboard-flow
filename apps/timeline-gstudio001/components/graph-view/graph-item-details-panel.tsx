@@ -43,6 +43,7 @@ export function DetailsPanel({
   node,
   centre,
   monitor,
+  swapping = false,
   playhead,
   playing = false,
   playingHere = false,
@@ -82,6 +83,16 @@ export function DetailsPanel({
    * to panel at the moment of the cut is an eye that misses the cut.
    */
   monitor: Readonly<{ node: MediaNode; seconds: number }> | null;
+  /**
+   * Fade in rather than appear, because the row cut to a new place instead of
+   * travelling to it.
+   *
+   * Only ever set on a NEIGHBOUR. The centre card is the reason the row cut at
+   * all — it has been the monitor for the whole scrub, so it is already
+   * showing the clip that was landed on, and fading it would flicker the one
+   * picture on screen that did not change.
+   */
+  swapping?: boolean;
   /**
    * How far through this clip's own trimmed range the playhead is, 0-1, or null
    * when the playhead is not inside this clip at all. Drawn as a line on the
@@ -292,6 +303,7 @@ export function DetailsPanel({
         // that was opened. The neighbours are working panels, not focus traps.
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
+        data-item-details-swapping={swapping && !centre ? "" : undefined}
         // WHAT FRAME THIS PANEL IS SHOWING, when the clock is what put it
         // there. Absent on a panel resting on its own first frame, which is a
         // different state from "at zero seconds" and the one an untouched view
@@ -327,6 +339,27 @@ export function DetailsPanel({
         // — and answers it constantly, which means it never moves and never
         // pulls the eye.
         className={[
+          // FADE IN, because the row cut here rather than travelling. See
+          // `swapping` — never on the centre, which did not change.
+          swapping && !centre ? "animate-seam-panel-swap" : "",
+          // AND NOTHING ELSE ANIMATES WHILE IT DOES.
+          //
+          // A landing leaves the clock engaged, so every neighbour is newly
+          // `dimmed` and starts its own 300ms `transition-[opacity,filter]` in
+          // the same frame this fade begins. Two nested opacity animations is
+          // already one too many; the second of them also animates a GRAYSCALE
+          // FILTER, and a filter over a `<video>` that is still fetching and
+          // decoding its first frame is repainted from the decoder every tick.
+          // That is why this was smooth on stills and not on video — an `<img>`
+          // is a static bitmap and costs nothing to re-filter.
+          //
+          // So the incoming panel arrives already dimmed and already drained,
+          // and the only thing that moves is the fade. Higher specificity than
+          // the utility it overrides (a descendant selector against a single
+          // class), so it needs no important modifier.
+          swapping && !centre
+            ? "[&_[data-item-details-frame]]:transition-none"
+            : "",
           // MID-SCRUB, EVERYTHING BUT THE PICTURE GOES OUT. The frame excludes
           // itself by name, so the one thing being judged keeps full strength
           // while the header, the strip, the numbers and the tags recede. A
