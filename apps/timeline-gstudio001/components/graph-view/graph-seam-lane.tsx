@@ -1,11 +1,20 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 import type { SeamStrip } from "./graph-seam-strip";
+
+/**
+ * How long the strip takes to slide when the centred clip changes.
+ *
+ * Long enough to be read as one thing moving rather than as two different
+ * pictures — the whole reason to animate this is that the bar re-centres on
+ * somewhere else and a jump cannot be told apart from a redraw.
+ */
+const SEAM_SLIDE_MS = 520;
 
 /**
  * The playhead's head, and its twitch when the scrub lands on a cut.
@@ -110,6 +119,55 @@ export function SeamLane({
   chip: string | null;
   handlers: React.ComponentProps<"div">;
 }>) {
+  // THE BOXES SLIDE INTO POSITION ON A MOVE, and jump for everything else.
+  //
+  // The strip's transform is driven by three different things and only one of
+  // them wants easing. A drag has to track the hand exactly — the whole point
+  // of the edge run is that the strip moves WITH the pointer — and a wheel
+  // zoom or a pan is the same: they are the hand, and easing them reads as
+  // lag. Changing which clip is centred is different. Nothing is under the
+  // reader's finger, the strip re-centres on somewhere else entirely, and a
+  // jump there is the one case where the eye cannot tell whether the bar
+  // moved or was replaced.
+  //
+  // APPLIED TO THE NODE FOR A FIXED WINDOW rather than held as state: the
+  // easing belongs to one arrival, and a `sliding` flag would have to be
+  // cleared a render later — a cascading render to describe half a second of
+  // styling. The pointer handler clears it early so a drag begun mid-slide is
+  // still exact from its first frame.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const centreWasRef = useRef(centreClipId);
+  const offsetWasRef = useRef(offset);
+  useLayoutEffect(() => {
+    const node = stripRef.current;
+    const moved = centreWasRef.current !== centreClipId;
+    const previous = offsetWasRef.current;
+    centreWasRef.current = centreClipId;
+    offsetWasRef.current = offset;
+    if (!moved || node === null || previous === offset) return;
+
+    // PUT IT BACK, THEN LET IT GO. A transition cannot be added to a value
+    // that has ALREADY changed: by the time a layout effect runs, React has
+    // written the new transform, and switching easing on afterwards animates
+    // nothing — the browser has one value and no previous one to interpolate
+    // from. So the old position is restored with easing off, the reflow makes
+    // that the state being transitioned FROM, and only then is the new one
+    // asked for.
+    node.style.transition = "none";
+    node.style.transform = `translateX(${previous}px)`;
+    void node.offsetWidth;
+    node.style.transition = `transform ${SEAM_SLIDE_MS}ms ease-out`;
+    node.style.transform = `translateX(${offset}px)`;
+
+    // Only the easing is cleared at the end. The transform is left exactly
+    // where it was put — it is the same value React renders, so the two agree
+    // and there is no frame where the strip is briefly somewhere else.
+    const done = setTimeout(() => {
+      node.style.transition = "";
+    }, SEAM_SLIDE_MS + 60);
+    return () => clearTimeout(done);
+  }, [centreClipId, offset]);
+
   const seams = collectionSeams(clips);
   const viewportX = (stripX: number) => stripX + offset;
 
@@ -118,6 +176,14 @@ export function SeamLane({
       ref={laneRef}
       data-seam-boxes
       {...handlers}
+      // A DRAG BEGUN MID-SLIDE IS EXACT FROM ITS FIRST FRAME. In CAPTURE, so
+      // it runs before the bar's own pointer handler and cannot be replaced by
+      // the spread above — leaving the easing on would put the strip a fixed
+      // distance behind the hand for the rest of the slide's duration, which
+      // is the lag the drag path is careful to avoid everywhere else.
+      onPointerDownCapture={() => {
+        if (stripRef.current !== null) stripRef.current.style.transition = "";
+      }}
       // `touch-none`, because every gesture here is claimed: a drag scrubs and
       // a two-finger swipe pans. Left to the browser, the first would also
       // scroll the dialog behind the bar.
@@ -131,6 +197,7 @@ export function SeamLane({
     >
       <div className="absolute inset-0 overflow-hidden">
         <div
+          ref={stripRef}
           data-seam-strip
           className="absolute inset-y-0 left-0 will-change-transform"
           style={{ transform: `translateX(${offset}px)`, width: strip.totalPx }}
