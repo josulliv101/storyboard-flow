@@ -230,6 +230,9 @@ function DetailsFilmstripModal({
   // on the way out of one subject and read once on the way into the next, and
   // a re-render in between would be a render nobody needs.
   const carryClockRef = useRef<number | null>(null);
+  // WHERE AN EASING JUMP STARTED, while it is still easing. Null the rest of
+  // the time, which is nearly all of the time.
+  const [easingFrom, setEasingFrom] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   // A DRAG IS IN PROGRESS ON THE BAR. Distinct from `scrubbed`, which stays
   // true once the clock has been touched: this is the gesture itself, and it
@@ -391,7 +394,7 @@ function DetailsFilmstripModal({
   const centreWasRef = useRef(centre);
   useLayoutEffect(() => {
     const strip = stripRef.current;
-    const jumped = Math.abs(centre - centreWasRef.current) > 1;
+    const jumped = Math.abs(centre - centreWasRef.current) > STEPPED_MAX;
     centreWasRef.current = centre;
     if (!jumped || strip === null) return;
     strip.style.transition = "none";
@@ -454,6 +457,21 @@ function DetailsFilmstripModal({
   // which is all the row needs from it — the geometry that keeps the step
   // honest.
   const MOUNTED_RADIUS = Math.floor(viewCount / 2) + 1;
+
+  // HOW FAR THE ROW WILL TRAVEL RATHER THAN CUT.
+  //
+  // One panel is a step; beyond about five the ease stops reading as travel
+  // and starts reading as a whip, and the cards in between go past too fast to
+  // be anything but noise. Five is the last distance where you can still watch
+  // the row move and know where you went.
+  //
+  // THE MOUNT WINDOW IS WHY THIS IS NOT JUST A NUMBER. `MOUNTED_RADIUS` is
+  // two panels either side at three-up, so a five-panel ease would slide three
+  // EMPTY boxes past — including the card you were just on, which would blink
+  // out and leave as a placeholder. `easingFrom` widens the window to cover
+  // the whole span for the length of the animation and then lets it go again,
+  // so the travel is paid for only while it is being watched.
+  const STEPPED_MAX = 5;
 
   const chooseViewCount = useCallback((next: ViewCount) => {
     rememberViewCount(next);
@@ -589,6 +607,34 @@ function DetailsFilmstripModal({
     });
   }, [ids, graph]);
 
+  // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a
+  // released scrub differ only in how the clip was chosen; what happens next
+  // — carry the clock, widen the mount window if the row is about to travel,
+  // move — is the same sentence and is written once.
+  const landOn = useCallback(
+    (clipId: string, seconds: number | null) => {
+      if (clipId === (node.id as string)) return;
+      const to = ids.indexOf(clipId);
+      const distance = to < 0 ? Number.POSITIVE_INFINITY : Math.abs(to - centre);
+      carryClockRef.current = seconds;
+      // Only a jump that will actually be animated needs the panels in
+      // between: one step already has them, and a cut never shows them.
+      if (distance > 1 && distance <= STEPPED_MAX) setEasingFrom(centre);
+      onOpenNeighbour(clipId);
+    },
+    [STEPPED_MAX, centre, ids, node.id, onOpenNeighbour],
+  );
+
+  // LET GO AGAIN once the row has arrived. Slightly longer than the 300ms
+  // ease, so the last frame is still covered; cleared on a timer rather than
+  // on `transitionend`, which does not fire when a second landing interrupts
+  // the first and would strand the window open.
+  useEffect(() => {
+    if (easingFrom === null) return;
+    const timer = setTimeout(() => setEasingFrom(null), 360);
+    return () => clearTimeout(timer);
+  }, [easingFrom]);
+
   const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
   // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
@@ -720,7 +766,16 @@ function DetailsFilmstripModal({
       // symptom of it not doing so is the minimap resting on the top edge of
       // the middle card, which is a quiet eight pixels rather than an obvious
       // fault.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/80 px-6 pt-[11rem] pb-6 backdrop-blur-sm"
+      // `overflow-clip`, NOT `overflow-hidden`. Both crop, but `hidden` makes
+      // this a SCROLL CONTAINER — and the row is thirteen thousand pixels
+      // wide, so there is a great deal for it to scroll. Landing on a new clip
+      // moves focus to that panel's menu button, the browser scrolls the
+      // container to reveal it, and that scroll lands ON TOP of the transform
+      // the row has already made: measured, 1981px of `scrollLeft` against a
+      // row that had itself moved 1728px, which put the card just chosen
+      // entirely off the left edge. `clip` crops without ever being
+      // scrollable, so the transform stays the only thing that moves the row.
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[11rem] pb-6 backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim
@@ -776,20 +831,15 @@ function DetailsFilmstripModal({
               // both re-centre the row, and both bring the frame with them.
               // Splitting them would mean a few pixels of travel decided
               // whether you kept your place in the shot.
-              onCommitClip={(clipId) => {
-                if (clipId === (node.id as string)) return;
-                carryClockRef.current = barSeconds;
-                onOpenNeighbour(clipId);
-              }}
+              onCommitClip={(clipId) => landOn(clipId, barSeconds)}
               // WHEREVER THE PLAYHEAD FINISHED, which is not always under the
               // pointer: holding at an edge runs the strip along beneath a
               // hand that is standing still. `position` is the view's own
               // answer to where the clock is, so the drag does not have to
               // carry one.
               onScrubEnd={() => {
-                if (position === null || position.clipId === (node.id as string)) return;
-                carryClockRef.current = shownSeconds;
-                onOpenNeighbour(position.clipId);
+                if (position === null) return;
+                landOn(position.clipId, shownSeconds);
               }}
               onScrubSeconds={(seconds) => {
                 setPlaying(false);
@@ -852,9 +902,9 @@ function DetailsFilmstripModal({
           // landing on the next clip is animated and letting go short of the
           // threshold springs back.
           //
-          // A LANDING FURTHER OFF THAN ONE PANEL is cut rather than eased,
-          // but not from here — see the layout effect above, which suppresses
-          // this for the single frame the jump paints in.
+          // A LANDING FURTHER OFF THAN `STEPPED_MAX` is cut rather than
+          // eased, but not from here — see the layout effect above, which
+          // suppresses this for the single frame the jump paints in.
           dragPx === 0
             ? "transition-transform duration-300 ease-out motion-reduce:transition-none"
             : "",
@@ -865,7 +915,13 @@ function DetailsFilmstripModal({
         }}
       >
         {ids.map((id, index) => {
-          const mounted = Math.abs(index - centre) <= MOUNTED_RADIUS;
+          // Within the resting window, OR anywhere along a span the row is
+          // currently easing across — see `easingFrom`.
+          const mounted =
+            Math.abs(index - centre) <= MOUNTED_RADIUS ||
+            (easingFrom !== null &&
+              index >= Math.min(easingFrom, centre) &&
+              index <= Math.max(easingFrom, centre));
           const panel = mounted ? graph.nodesById.get(parseNodeId(id)) : null;
           const media =
             panel && panel.kind === "media" && (panel as MediaNode).src

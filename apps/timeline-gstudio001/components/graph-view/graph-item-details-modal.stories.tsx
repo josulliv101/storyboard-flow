@@ -402,6 +402,28 @@ function centreBox(): HTMLElement {
  * as scrubs landing at zero, because the mismatch pushed the target off the
  * front of the timeline and the clamp caught it.
  */
+/**
+ * Past the PANEL ROW's own transition — a different element from the bar's
+ * strip, and on its own clock. `settleStrip` watches `[data-seam-strip]`, so a
+ * row easing across three panels is invisible to it and a measurement taken
+ * straight after reads a card mid-flight.
+ */
+async function settleRow(): Promise<void> {
+  const row = document.querySelector<HTMLElement>("[data-details-strip]");
+  expect(row).not.toBeNull();
+  await new Promise((resolve) => setTimeout(resolve, 360));
+  let previous = Number.NaN;
+  await waitFor(
+    () => {
+      const now = row!.getBoundingClientRect().left;
+      const settled = Math.abs(now - previous) < 0.5;
+      previous = now;
+      expect(settled).toBe(true);
+    },
+    { timeout: 3000 },
+  );
+}
+
 async function settleStrip(): Promise<void> {
   const strip = document.querySelector<HTMLElement>("[data-seam-strip]");
   expect(strip).not.toBeNull();
@@ -2025,66 +2047,99 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     await settleStrip();
     const subject = () => centreBox().getAttribute("data-seam-segment");
     const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
+    const strip = () => document.querySelector<HTMLElement>("[data-details-strip]")!;
+    const stripX = () => strip().getBoundingClientRect().left;
+    const panels = () => document.querySelectorAll("[data-item-details-panel]").length;
+    const boxIndex = () => seamBoxes().indexOf(centreBox());
 
-    const startedOn = subject();
-    expect(startedOn).toBe("subject");
+    // Hold the scrub, read the clock at the moment before the release, let go.
+    const dragToBox = async (box: HTMLElement) => {
+      const rect = box.getBoundingClientRect();
+      const x = rect.left + rect.width * 0.5;
+      scrubToClientX(x, { hold: true });
+      await waitFor(() => expect(at()).toBeGreaterThan(0));
+      const letGoAt = at();
+      const surface = seamSurface();
+      const surfaceBox = surface.getBoundingClientRect();
+      fireEvent.pointerUp(surface, pointerAt(x, surfaceBox.top + surfaceBox.height / 2));
+      return letGoAt;
+    };
 
-    // ── A DRAG ONTO ANOTHER CLIP LANDS THERE ──────────────────────────────
-    // Held first, so the clock can be read at the moment before the release
-    // — the number the release has to preserve.
-    const target = seamBoxes()[2]!;
-    const box = target.getBoundingClientRect();
-    const restingOn = box.left + box.width * 0.5;
-    scrubToClientX(restingOn, { hold: true });
-    await waitFor(() => expect(at()).toBeGreaterThan(0));
-    const letGoAt = at();
-    // Still where it was: the row moves on release, not during.
-    expect(subject()).toBe(startedOn);
+    expect(subject()).toBe("subject");
+    const restingPanels = panels();
 
-    const surface = seamSurface();
-    const surfaceBox = surface.getBoundingClientRect();
-    fireEvent.pointerUp(
-      surface,
-      pointerAt(restingOn, surfaceBox.top + surfaceBox.height / 2),
-    );
+    // ── A SHORT LANDING TRAVELS, AND NOTHING EMPTY GOES PAST ──────────────
+    const from = boxIndex();
+    const near = seamBoxes()[from + 3]!;
+    const letGoNear = await dragToBox(near);
+    await waitFor(() => expect(subject()).not.toBe("subject"));
 
-    // The row advanced...
-    await waitFor(() => expect(subject()).not.toBe(startedOn));
+    // Still moving a beat later: three panels is a step you can follow, so it
+    // is shown as one.
+    const travellingFrom = stripX();
+    // MORE PANELS ARE REAL THAN USUALLY ARE. The resting mount window is two
+    // either side; the cards being crossed live outside it, and without the
+    // widening they would be the empty placeholders the row is made of —
+    // including the one you just left, which would blink out and slide away.
+    expect(panels()).toBeGreaterThan(restingPanels);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(stripX()).not.toBe(travellingFrom);
 
-    // ── AND IT ARRIVED RATHER THAN TRAVELLED ──────────────────────────────
-    // The row eases across ONE panel width for a swipe or a step. A landing
-    // can be twenty clips away, and spending the same 300ms crossing twenty
-    // panel widths is every card on screen leaving to the left with the one
-    // you asked for turning up at the end of it.
-    //
-    // ASSERTED AS "IT DOES NOT MOVE" rather than by reading a transition
-    // duration off the element, because the cut lasts a single render and
-    // catching that one frame would be a race. Two readings a beat apart
-    // cannot be fooled: mid-flight they differ, arrived they do not.
-    const centrePanel = () =>
-      document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
-    const landedX = centrePanel().getBoundingClientRect().left;
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(centrePanel().getBoundingClientRect().left).toBe(landedX);
+    await settleStrip();
+    await settleRow();
+    expect(subject()).toBe(near.getAttribute("data-seam-segment"));
+    // THE CLOCK DID NOT MOVE. Every panel derives its picture from
+    // `seamAt(timeline, barSeconds)`, so a bar reading the same second before
+    // and after the row advances IS the centre panel holding the frame.
+    expect(at()).toBe(letGoNear);
+    // And the window let go again once it had arrived.
+    await waitFor(() => expect(panels()).toBe(restingPanels));
 
-    // And it arrived in the MIDDLE, which is what says the offset it cut to
-    // was the right one rather than merely a still one.
-    const panelBox = centrePanel().getBoundingClientRect();
-    expect(Math.abs(panelBox.left + panelBox.width / 2 - window.innerWidth / 2)).toBeLessThan(2);
-
-    // ...onto the clip the playhead was actually on...
-    expect(subject()).toBe(target.getAttribute("data-seam-segment"));
-    // ...and the clock did not move a frame in the process.
-    expect(at()).toBe(letGoAt);
-
-    // ── AND A PRESS THAT DID NOT TRAVEL DOES THE SAME ─────────────────────
-    // The two gestures are a few pixels of hand movement apart, so they must
-    // not be a whole behaviour apart.
+    // ── A LONG ONE ARRIVES INSTEAD ────────────────────────────────────────
+    // THE SEAT IS READ HERE, not at the top of the story. The row is a
+    // different shape on its first paint — panels are still arriving — so its
+    // resting x then is not the resting x it keeps. Taken between the two
+    // landings, both readings describe the same row.
+    const seatX = () =>
+      document
+        .querySelector<HTMLElement>('[data-item-details-panel="centre"]')!
+        .getBoundingClientRect().left;
+    const restingCentreX = seatX();
     const landedOn = subject();
-    const next = seamBoxes()[4]!;
-    clickBox(next);
+    const far = seamBoxes()[boxIndex() + 12]!;
+    // THE PRECONDITION. Past `STEPPED_MAX`, or this measures the easing path
+    // twice and the cut not at all.
+    expect(12).toBeGreaterThan(5);
+    const letGoFar = await dragToBox(far);
     await waitFor(() => expect(subject()).not.toBe(landedOn));
-    expect(subject()).toBe(next.getAttribute("data-seam-segment"));
+
+    // ASSERTED AS "IT DOES NOT MOVE" rather than by reading a transition
+    // duration off the element: the cut lasts a single render and catching
+    // that frame would be a race, while two readings a beat apart cannot be
+    // fooled — mid-flight they differ, arrived they do not.
+    const landedX = seatX();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(seatX()).toBe(landedX);
+
+    // Arrived in the MIDDLE, which is what says the offset it cut to was the
+    // right one rather than merely a still one.
+    // Arrived in the CENTRE SEAT — measured against where the centre panel sat
+    // at rest at the top of this story rather than against the middle of the
+    // window, because the row's resting x is a product of panel width, gap and
+    // the scrim's padding and this assertion should not have to know any of
+    // them. Landing still but one seat out would otherwise read as success.
+    expect(seatX()).toBeCloseTo(restingCentreX, 0);
+
+    // THE SCRIM NEVER SCROLLS. It crops a row thirteen thousand pixels wide,
+    // so if it were a scroll container there would be a great deal for the
+    // browser to scroll it by — and it would, because landing moves focus to
+    // the new panel's menu button and a hidden overflow is still scrolled to
+    // reveal what is focused. That scroll would land on top of the transform
+    // the row has already made and put the chosen card off the left edge.
+    // Zero here is `overflow-clip` doing its job.
+    expect(strip().parentElement!.scrollLeft).toBe(0);
+    expect(subject()).toBe(far.getAttribute("data-seam-segment"));
+    expect(at()).toBe(letGoFar);
   },
 };
 
