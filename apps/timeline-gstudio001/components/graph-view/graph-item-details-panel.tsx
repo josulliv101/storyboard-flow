@@ -342,6 +342,24 @@ export function DetailsPanel({
           // FADE IN, because the row cut here rather than travelling. See
           // `swapping` — never on the centre, which did not change.
           swapping && !centre ? "animate-seam-panel-swap" : "",
+          // AND NOTHING ELSE ANIMATES WHILE IT DOES.
+          //
+          // A landing leaves the clock engaged, so every neighbour is newly
+          // `dimmed` and starts its own 300ms `transition-[opacity,filter]` in
+          // the same frame this fade begins. Two nested opacity animations is
+          // already one too many; the second of them also animates a GRAYSCALE
+          // FILTER, and a filter over a `<video>` that is still fetching and
+          // decoding its first frame is repainted from the decoder every tick.
+          // That is why this was smooth on stills and not on video — an `<img>`
+          // is a static bitmap and costs nothing to re-filter.
+          //
+          // So the incoming panel arrives already dimmed and already drained,
+          // and the only thing that moves is the fade. Higher specificity than
+          // the utility it overrides (a descendant selector against a single
+          // class), so it needs no important modifier.
+          swapping && !centre
+            ? "[&_[data-item-details-frame]]:transition-none"
+            : "",
           // MID-SCRUB, EVERYTHING BUT THE PICTURE GOES OUT. The frame excludes
           // itself by name, so the one thing being judged keeps full strength
           // while the header, the strip, the numbers and the tags recede. A
