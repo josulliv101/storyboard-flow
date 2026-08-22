@@ -2282,6 +2282,58 @@ export const ThePlaybarIsGreyUnlessAsked: Story = {
 };
 
 /**
+ * THE BAR SAYS WHEN IT HAS ACTUALLY RUN OUT.
+ *
+ * Running out of boxes and running out of PROJECT look identical, and at any
+ * reach short of `All` they are usually different things: the window is
+ * cropped at both ends nearly everywhere in a long cut, so the last box on
+ * screen is just the last one the reach allowed. A stop is drawn only where
+ * the window has reached a real end.
+ *
+ * BOTH DIRECTIONS ARE ASSERTED FROM THE SAME SCENE, by changing the reach
+ * rather than the subject: at `All` this collection fits, so both ends are
+ * real ends; at `5` the subject sits far enough inside that neither is.
+ */
+export const TheBarMarksTheEndsOfTheProject: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const caps = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-seam-cap]")).map(
+        (cap) => cap.dataset.seamCap,
+      );
+
+    // EVERYTHING ON THE BAR: both ends are the project's own.
+    reachTo("All");
+    await waitFor(() => expect(seamBoxes().length).toBe(24));
+    expect(caps().sort()).toEqual(["end", "start"]);
+
+    // The start cap sits OUTSIDE the first box rather than over it — it is a
+    // mark about the film, not a mark on a clip.
+    const first = seamBoxes()[0]!.getBoundingClientRect();
+    const startCap = document
+      .querySelector<HTMLElement>('[data-seam-cap="start"]')!
+      .getBoundingClientRect();
+    expect(startCap.right).toBeLessThanOrEqual(first.left + 0.5);
+
+    const last = seamBoxes()[23]!.getBoundingClientRect();
+    const endCap = document
+      .querySelector<HTMLElement>('[data-seam-cap="end"]')!
+      .getBoundingClientRect();
+    expect(endCap.left).toBeGreaterThanOrEqual(last.right - 0.5);
+
+    // CROPPED AT BOTH ENDS: the subject is ten clips in and five either side
+    // reaches neither, so neither stop is true and neither is drawn.
+    reachTo("5");
+    await waitFor(() => expect(seamBoxes().length).toBe(11));
+    expect(caps()).toEqual([]);
+
+    reachTo("10");
+  },
+};
+
+/**
  * THE BAR'S BOXES SLIDE INTO POSITION WHEN THE CENTRED CLIP CHANGES.
  *
  * The strip's transform is driven by three different things and only one of

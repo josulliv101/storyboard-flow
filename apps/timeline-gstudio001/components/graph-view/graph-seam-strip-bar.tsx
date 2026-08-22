@@ -127,6 +127,8 @@ export function SeamStripBar({
   onCommitClip,
   onScrubEnd,
   onScrubbingChange,
+  atStart,
+  atEnd,
 }: Readonly<{
   /** Every clip the bar can reach, in playback order. */
   clips: readonly SeamBarClip[];
@@ -157,6 +159,10 @@ export function SeamStripBar({
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
   onScrubbingChange?: (active: boolean) => void;
+  /** Whether the bar's first and last clips are the project's — the reach can
+   *  crop the window short of either, and then there IS more either side. */
+  atStart: boolean;
+  atEnd: boolean;
 }>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const laneRef = useRef<HTMLDivElement | null>(null);
@@ -663,6 +669,8 @@ export function SeamStripBar({
           clips={clips}
           colourOf={boxColourOf}
           centreClipId={centreClipId}
+          atStart={atStart}
+          atEnd={atEnd}
           offset={offset}
           playheadPx={playheadPx}
           snapKey={snapKey}

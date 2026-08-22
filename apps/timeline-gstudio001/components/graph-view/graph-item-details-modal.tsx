@@ -875,6 +875,14 @@ function DetailsFilmstripModal({
             <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
             <SeamStripBar
               clips={barClips}
+              // WHETHER THE BAR HAS ACTUALLY RUN OUT, which is a different
+              // question from whether it has run out of boxes. At a reach of
+              // ten the window is cropped at both ends nearly everywhere in a
+              // long project, and the last box on screen is simply the last
+              // one the reach allowed. These are true only when the window has
+              // reached the real ends.
+              atStart={barWindow.ids[0] === ids[0]}
+              atEnd={barWindow.ids[barWindow.ids.length - 1] === ids[ids.length - 1]}
               centreClipId={node.id as string}
               colourOf={clipColourOf}
               playheadAt={playheadAt}
