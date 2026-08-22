@@ -174,30 +174,35 @@ const BOX_INSET_PX = 2.5;
  * WHAT SEPARATES TWO BOXES ONCE THEY HOLD PICTURES.
  *
  * The gap between boxes is `BOX_INSET_PX` either side — five pixels of the
- * lane showing through. Against flat grey that is plenty: two greys with a
- * dark line between them is obviously two things. Between two frames it
- * disappears, and the reason is that the lane is DARK: a photograph already
- * contains dark edges, so a dark gap is just one more of them and the eye has
- * no reason to read that particular one as a boundary.
+ * strip showing through. Against flat grey that is plenty. Between two frames
+ * it disappears, and NO SINGLE COLOUR FIXES IT, which is the whole design
+ * problem here: a dark gap is invisible between two dark frames, a pale one is
+ * invisible between two bright frames, and footage supplies both within the
+ * same cut. Picking either is picking which half of the timeline to fail on.
  *
- * SO THE GAP ITSELF CHANGES COLOUR, rather than the boxes growing an edge.
- * A pale gap is not a colour footage supplies, which is exactly what makes it
- * read as structure instead of as picture — and it separates a dark frame from
- * a bright one just as well as two dark ones, which a fixed hairline in either
- * direction does not.
+ * SO THE GAP CARRIES BOTH TONES. The strip's own background is pale and each
+ * box casts a dark ring one pixel into the gap either side of it, which makes
+ * every gap read dark · pale · dark whatever is beside it:
+ *
+ *     two bright frames   white | DARK pale DARK | white   ← the rings show
+ *     two dark frames     black | dark PALE dark | black   ← the core shows
+ *     one of each         both, from opposite sides
+ *
+ * There is no arrangement of neighbours where neither tone has contrast,
+ * which is what "works on both" has to mean. The alternative — a colour no
+ * footage supplies, a saturated cyan or magenta — would also always show, and
+ * would turn a bar you read for rhythm into a bar you read for stripes.
  *
  * WIDENING IT IS THE WRONG FIX, and not only because it was asked against: a
  * box's width IS its duration, so spending more of it on separation makes
- * short clips read shorter and changes what the bar is saying. This costs no
- * layout at all — the gap is already there, it is simply a different colour.
+ * short clips read shorter and changes what the bar is saying. None of this
+ * costs layout — the gap is already there, and a ring paints outside the box.
  *
- * The hairline that remains is the other half of the same problem: a bright
- * frame running straight into a pale gap has no edge either, so each box keeps
- * a dark one just inside its own border. Only when frames are on; over grey
- * the whole treatment is decoration answering a question nobody asked.
+ * Only when frames are on. Over grey the whole treatment is decoration
+ * answering a question nobody asked.
  */
 const FRAMED_GAP_COLOUR = "rgba(212, 212, 216, 0.92)";
-const FRAMED_BOX_EDGE = "inset 0 0 0 1px rgba(0, 0, 0, 0.55)";
+const FRAMED_BOX_EDGE = "0 0 0 1px rgba(0, 0, 0, 0.78)";
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */
@@ -366,8 +371,8 @@ export function SeamLane({
                   // thumbnails on can add pictures but can never subtract the
                   // bar.
                   backgroundColor: colour,
-                  // See `FRAMED_BOX_EDGE`: the gap between two pictures has to
-                  // be drawn, where the gap between two greys did not.
+                  // See `FRAMED_BOX_EDGE`: the ring is the dark half of the
+                  // gap, and the strip's own background is the pale half.
                   ...(thumbnails.shown ? { boxShadow: FRAMED_BOX_EDGE } : {}),
                 }}
                 className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]"

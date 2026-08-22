@@ -2123,22 +2123,23 @@ export const ThePlaybarCanDrawFrames: Story = {
     const boxStyle = getComputedStyle(first.parentElement!);
     expect(boxStyle.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
 
-    // AND THE GAPS CHANGE COLOUR. The gap between two boxes is five pixels of
-    // the strip showing through, which is obvious between two greys and
-    // invisible between two photographs — the lane is dark, a picture already
-    // contains dark edges, and the eye has no reason to read that one as a
-    // boundary. A PALE gap is not a colour footage supplies, so it reads as
-    // structure rather than as picture. Recoloured rather than widened,
-    // because a box's width is its duration and spending more of it on
-    // separation would change what the bar is saying.
+    // AND THE GAP CARRIES BOTH TONES. No single colour separates two frames:
+    // a dark gap is invisible between two dark ones, a pale gap between two
+    // bright ones, and footage supplies both inside the same cut. So the
+    // strip's background is pale and each box casts a dark ring into the gap,
+    // which makes every gap read dark · pale · dark whatever is beside it.
+    // Asserted as BOTH being present, because either alone is the bug.
     const gap = getComputedStyle(
       document.querySelector<HTMLElement>("[data-seam-strip]")!,
     ).backgroundColor;
-    const channels = gap.match(/[\d.]+/g)!.slice(0, 3).map(Number);
-    expect(Math.min(...channels)).toBeGreaterThan(160);
-    // And each box keeps a dark hairline just inside its own border, so a
-    // bright frame running into the pale gap still has an edge.
-    expect(boxStyle.boxShadow).toMatch(/inset/);
+    const pale = gap.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    expect(Math.min(...pale)).toBeGreaterThan(160);
+
+    const ring = boxStyle.boxShadow.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    expect(Math.max(...ring)).toBeLessThan(90);
+    // OUTSIDE the box, which is what puts it in the gap rather than over the
+    // picture — and what keeps it costing no layout.
+    expect(boxStyle.boxShadow).not.toMatch(/inset/);
 
     framesTo("OFF");
     await waitFor(() =>
