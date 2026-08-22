@@ -668,11 +668,14 @@ function DetailsFilmstripModal({
       // the middle card, which is a quiet eight pixels rather than an obvious
       // fault.
       className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/80 px-6 pt-[11rem] pb-6 backdrop-blur-sm"
-      onPointerDown={(event) => {
-        // Scrim only: a press that starts on a panel must never close it,
-        // including one that ends outside after a trim drag.
-        if (event.target === event.currentTarget) onClose();
-      }}
+      // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
+      // glanced at — trimming, scrubbing and swiping all end with the pointer
+      // somewhere unpredictable, and the panels are cropped by the scrim
+      // rather than surrounded by it, so "outside" is a place the hand lands
+      // by accident. Escape and the close button are the only two ways out,
+      // and both are explicit. The stopPropagation guards below are older
+      // than this and are left alone: they keep presses on the header and the
+      // bar from reaching anything listening further up.
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a

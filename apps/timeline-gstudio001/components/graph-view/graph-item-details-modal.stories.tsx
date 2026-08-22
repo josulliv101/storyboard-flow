@@ -542,6 +542,51 @@ export const FlankedByItsNeighbours: Story = {
   },
 };
 
+/**
+ * THE SCRIM IS NOT A WAY OUT. Only Escape and the close button are.
+ *
+ * This view is worked in rather than glanced at, and the row is CROPPED by the
+ * scrim rather than surrounded by it — so the dark area is where the hand
+ * lands at the end of a trim, a scrub or a swipe, not somewhere it goes on
+ * purpose. Dismissing there loses the position in the cut for a gesture nobody
+ * meant to make.
+ *
+ * The Escape half is what stops this passing vacuously: it proves closing is
+ * wired at all, so the scrim half is measuring a refusal rather than a modal
+ * that could not close either way.
+ */
+export const TheScrimDoesNotDismiss: Story = {
+  render: () => <SeamHarness />,
+  play: async () => {
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3),
+    );
+    const scrim = document.querySelector<HTMLElement>("[data-item-details]")!;
+
+    // A press that both starts AND ends on the scrim — the strongest form of
+    // the gesture that used to close it.
+    fireEvent.pointerDown(scrim, { isPrimary: true, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(scrim, { isPrimary: true, button: 0, pointerId: 1 });
+    fireEvent.click(scrim);
+
+    // A FIXED WAIT, not a `waitFor`. The assertion is that something does NOT
+    // happen, and closing is a view transition rather than a re-render: a
+    // `waitFor` would find three panels still on screen in the very first
+    // check — mid-transition, on their way out — and pass while the modal was
+    // in the act of closing. This has to outlast the transition to mean
+    // anything.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Still open, and still showing the same three panels.
+    expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3);
+
+    // Escape still closes, which is the half that keeps the assertion above
+    // honest.
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(document.querySelector("[data-item-details]")).toBeNull());
+  },
+};
+
 /** Clicking a neighbour re-centres on it, and the strip re-resolves around the
  *  new subject — the previous clip becomes the next one. */
 /**
