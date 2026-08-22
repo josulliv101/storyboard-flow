@@ -129,6 +129,8 @@ export function SeamStripBar({
   onScrubbingChange,
   atStart,
   atEnd,
+  settingsLeft,
+  settingsRight,
 }: Readonly<{
   /** Every clip the bar can reach, in playback order. */
   clips: readonly SeamBarClip[];
@@ -163,6 +165,19 @@ export function SeamStripBar({
    *  crop the window short of either, and then there IS more either side. */
   atStart: boolean;
   atEnd: boolean;
+  /**
+   * The view's own settings, dropped into the controls row either side of the
+   * transport.
+   *
+   * SLOTS RATHER THAN PROPS, because what belongs there is not the bar's
+   * business: it is `frames` and `reach` today and could be neither tomorrow,
+   * and the bar would have to grow a prop and a branch for each one. What the
+   * bar DOES own is the row — that the transport is centred in it, that the
+   * clock sits with the controls, and that the whole thing lands between the
+   * scrub bar and the minimap — and none of that changes with what is passed.
+   */
+  settingsLeft?: React.ReactNode;
+  settingsRight?: React.ReactNode;
 }>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const laneRef = useRef<HTMLDivElement | null>(null);
@@ -602,48 +617,7 @@ export function SeamStripBar({
   };
 
   return (
-    <div data-seam-bar className="flex w-full items-start gap-3">
-      <div className="flex shrink-0 items-center gap-1">
-        {/* STEP ONE CLIP, either way, bracketing the thing they move.
-            Disabled rather than hidden at the ends: a control that vanishes
-            takes its own position with it and shifts the bar sideways. */}
-        <button
-          type="button"
-          data-seam-step="back"
-          disabled={onStepBack === null}
-          onClick={() => onStepBack?.()}
-          aria-label="Previous clip"
-          title="Previous clip (⇧←)"
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
-        >
-          <ChevronLeft aria-hidden="true" className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onTogglePlay}
-          aria-label={playing ? "Pause" : "Play across the cut"}
-          title="Play / pause (space)"
-          className="rounded-full p-1.5 text-zinc-300 outline-none hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500"
-        >
-          {playing ? (
-            <Pause aria-hidden="true" className="h-4 w-4" />
-          ) : (
-            <Play aria-hidden="true" className="h-4 w-4" />
-          )}
-        </button>
-        <button
-          type="button"
-          data-seam-step="forward"
-          disabled={onStepForward === null}
-          onClick={() => onStepForward?.()}
-          aria-label="Next clip"
-          title="Next clip (⇧→)"
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
-        >
-          <ChevronRight aria-hidden="true" className="h-4 w-4" />
-        </button>
-      </div>
-
+    <div data-seam-bar className="flex w-full flex-col gap-2">
       <div
         ref={trackRef}
         data-seam-track
@@ -704,23 +678,98 @@ export function SeamStripBar({
         />
 
         <SeamRuler ticks={ticks} offset={offset} />
-
-        <SeamMinimap
-          clips={clips}
-          colourOf={boxColourOf}
-          totalSeconds={totalSeconds}
-          windowFromSeconds={windowFromSeconds}
-          windowToSeconds={windowToSeconds}
-          playheadSeconds={playheadSeconds}
-          onPanToSeconds={panToSeconds}
-        />
       </div>
 
-      <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400">
-        <span className="text-blue-300">{readSeconds(atSeconds)}</span>
-        {" / "}
-        {readSeconds(totalSeconds)}
-      </span>
+      {/* ONE ROW BETWEEN THE TWO BARS, and the transport in the middle of it.
+          The scrub bar above is the cut; the minimap below is the project; the
+          controls that drive both sit between them where they are equally
+          about each.
+
+          A THREE-COLUMN GRID, not a flex row with `justify-between`. The
+          transport has to be centred on the BAR, and a flex row centres it
+          between whatever happens to be either side of it — so it would drift
+          left and right as the settings changed width, which is exactly what a
+          play button must not do. `1fr auto 1fr` puts it in the middle of the
+          track above it and leaves it there. */}
+      <div
+        data-seam-controls
+        className="grid grid-cols-[1fr_auto_1fr] items-center gap-3"
+      >
+        {/* HIDDEN, NOT WRAPPED, on a narrow view. Wrapping this row costs the
+            strip below a line of height it has to be told about — see the
+            scrim's top padding — and the two settings here are set once, while
+            the transport and the clock are used continuously. The row keeps
+            what is being USED. */}
+        <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsLeft}</div>
+
+        <div data-seam-transport className="flex items-center gap-1">
+          {/* STEP ONE CLIP, either way, bracketing the thing they move.
+              Disabled rather than hidden at the ends: a control that vanishes
+              takes its own position with it and shifts the bar sideways. */}
+          <button
+            type="button"
+            data-seam-step="back"
+            disabled={onStepBack === null}
+            onClick={() => onStepBack?.()}
+            aria-label="Previous clip"
+            title="Previous clip (⇧←)"
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
+          >
+            <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onTogglePlay}
+            aria-label={playing ? "Pause" : "Play across the cut"}
+            title="Play / pause (space)"
+            className="rounded-full p-1.5 text-zinc-300 outline-none hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            {playing ? (
+              <Pause aria-hidden="true" className="h-4 w-4" />
+            ) : (
+              <Play aria-hidden="true" className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            type="button"
+            data-seam-step="forward"
+            disabled={onStepForward === null}
+            onClick={() => onStepForward?.()}
+            aria-label="Next clip"
+            title="Next clip (⇧→)"
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
+          >
+            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex min-w-0 items-center justify-end gap-3">
+          {/* THE CLOCK, which came from the far right of the scrub bar. It
+              belongs with the transport rather than with the track: it says
+              where playback IS, which is the same question the play button
+              answers, and reading the two together is why it moved. */}
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400">
+            <span className="text-blue-300">{readSeconds(atSeconds)}</span>
+            {" / "}
+            {readSeconds(totalSeconds)}
+          </span>
+          <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsRight}</div>
+        </div>
+      </div>
+
+      {/* THE WHOLE PROJECT, under the controls rather than tucked inside the
+          track. It is a different scale from the bar above — that one shows a
+          stretch, this one shows all of it — and stacking them with the
+          controls between says so. */}
+      <SeamMinimap
+        clips={clips}
+        colourOf={boxColourOf}
+        totalSeconds={totalSeconds}
+        windowFromSeconds={windowFromSeconds}
+        windowToSeconds={windowToSeconds}
+        playheadSeconds={playheadSeconds}
+        onPanToSeconds={panToSeconds}
+      />
     </div>
   );
 }

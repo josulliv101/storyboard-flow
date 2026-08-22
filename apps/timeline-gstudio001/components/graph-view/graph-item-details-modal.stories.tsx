@@ -2282,6 +2282,78 @@ export const ThePlaybarIsGreyUnlessAsked: Story = {
 };
 
 /**
+ * THE BAR'S OWN CONTROLS SIT BETWEEN ITS TWO BARS.
+ *
+ * The scrub bar is the cut, the minimap is the project, and the row between
+ * them drives both: the transport, the clock, and the two settings that say
+ * how much the bar shows and what its boxes are made of. Everything that acts
+ * on the bar is in one place, and it is the place both bars can be read from.
+ *
+ * THE TRANSPORT IS CENTRED ON THE TRACK, not between its neighbours. A flex
+ * row would centre it against whatever sits either side, so it would drift as
+ * the settings changed width — and a play button that moves when you change a
+ * setting is a play button you have to look for. The three-column grid puts it
+ * in the middle of the bar and leaves it there.
+ */
+export const TheBarsControlsSitBetweenIts: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-controls]")).not.toBeNull());
+    await settleStrip();
+    const box = (selector: string) =>
+      document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+
+    // ── ORDER: cut, controls, project ─────────────────────────────────────
+    const track = box("[data-seam-track]");
+    const controls = box("[data-seam-controls]");
+    const minimap = box("[data-seam-minimap]");
+    expect(track.bottom).toBeLessThanOrEqual(controls.top + 0.5);
+    expect(controls.bottom).toBeLessThanOrEqual(minimap.top + 0.5);
+
+    // ── THE TRANSPORT IS CENTRED ON THE TRACK ─────────────────────────────
+    const transport = box("[data-seam-transport]");
+    expect(Math.abs(
+      transport.left + transport.width / 2 - (track.left + track.width / 2),
+    )).toBeLessThan(2);
+
+    // ── AND EVERYTHING ELSE IS IN THAT ROW WITH IT ────────────────────────
+    const row = document.querySelector<HTMLElement>("[data-seam-controls]")!;
+    expect(row.querySelector("[data-details-bar-frames]")).not.toBeNull();
+    expect(row.querySelector("[data-details-bar-reach]")).not.toBeNull();
+    expect(row.querySelector("[data-seam-transport]")).not.toBeNull();
+    // The clock, which used to sit at the far right of the scrub bar itself.
+    expect(row.textContent).toMatch(/[\d.]+s\s*\/\s*[\d.]+s/);
+
+    // ── AND THE TRACK GOT THE WIDTH THE TRANSPORT AND CLOCK GAVE UP ───────
+    // They were siblings of the track, so the bar was as wide as the modal
+    // minus both of them; now they are below it and the track is the whole
+    // width. Stated as a floor rather than a number, so it survives a change
+    // of viewport instead of being calibrated to one.
+    expect(track.width).toBeGreaterThan(window.innerWidth * 0.9);
+
+    // ── AND THE ROW BELOW STILL CLEARS IT ─────────────────────────────────
+    // The top band is RESERVED by the scrim's padding, not shared: the bar is
+    // absolutely positioned and takes no space, so the strip would centre
+    // straight up underneath it. Every time the bar grows a row that padding
+    // has to grow with it, and the symptom of it not doing so is the minimap
+    // resting on the top edge of the middle card — a quiet eight pixels rather
+    // than an obvious fault. This moved the transport and the clock INTO that
+    // band, so it is exactly the change that would do it.
+    const panel = box('[data-item-details-panel="centre"]');
+    //
+    // BOUNDED BOTH WAYS, because only one of the two is a fault you would
+    // notice. Too little and the minimap rests on the card — the code calls
+    // that "a quiet eight pixels", and eight is exactly what an 11rem band
+    // leaves, so the floor is set above it. Too much and the band is holding
+    // space for a row that is no longer there, which nothing would ever
+    // report: the view just sits lower than it needs to.
+    const slack = panel.top - minimap.bottom;
+    expect(slack).toBeGreaterThan(16);
+    expect(slack).toBeLessThan(80);
+  },
+};
+
+/**
  * THE BAR SAYS WHEN IT HAS ACTUALLY RUN OUT.
  *
  * Running out of boxes and running out of PROJECT look identical, and at any
