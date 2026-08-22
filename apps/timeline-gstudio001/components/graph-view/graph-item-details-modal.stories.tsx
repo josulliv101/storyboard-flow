@@ -15,10 +15,6 @@ import { createGraphDetailsStore } from "@/lib/graph-details-store";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { ItemDetailsProvider, useItemDetails } from "./graph-item-details-context";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
-import {
-  PlaybarThumbnailsProvider,
-  type PlaybarThumbnailStyle,
-} from "./graph-playbar-thumbnails";
 
 // The details modal's first stories. It had none, which is how it came to
 // describe a VOICEOVER as a "still" — the branch that renders the duration
@@ -252,15 +248,7 @@ function EndHarness() {
   );
 }
 
-function SeamHarness({
-  scene = SEAM_SCENE,
-  thumbnails = false,
-  thumbnailStyle = "cover",
-}: {
-  scene?: GraphNodeSpec;
-  thumbnails?: boolean;
-  thumbnailStyle?: PlaybarThumbnailStyle;
-}) {
+function SeamHarness({ scene = SEAM_SCENE }: { scene?: GraphNodeSpec }) {
   // Built FROM the scene, so a fixture can grow without the harness having to
   // be told about every clip in it by name.
   const store = createGraphDetailsStore(
@@ -274,7 +262,6 @@ function SeamHarness({
   );
   return (
     <div className="graph-view-theme min-h-[600px] bg-zinc-950">
-      <PlaybarThumbnailsProvider shown={thumbnails} style={thumbnailStyle}>
       <DndCollections initialGraph={graphOfRoot(scene)}>
         <GraphDetailsProvider store={store}>
           <ItemDetailsProvider>
@@ -283,7 +270,6 @@ function SeamHarness({
           </ItemDetailsProvider>
         </GraphDetailsProvider>
       </DndCollections>
-      </PlaybarThumbnailsProvider>
     </div>
   );
 }
@@ -422,6 +408,23 @@ function centreBox(): HTMLElement {
  * row easing across three panels is invisible to it and a measurement taken
  * straight after reads a card mid-flight.
  */
+/**
+ * Press one of the frames badges by its label — `OFF`, `COVER`, `STRIP`.
+ *
+ * SET EXPLICITLY AND PUT BACK. Like the reach, these are remembered at module
+ * scope for the session, so a story that leaves frames on hands them to
+ * whichever story runs next in the same browser.
+ */
+function framesTo(label: string): void {
+  const group = document.querySelector<HTMLElement>("[data-details-bar-frames]");
+  expect(group).not.toBeNull();
+  const button = Array.from(group!.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  expect(button).not.toBeUndefined();
+  button!.click();
+}
+
 /** Press one of the reach picker's buttons by its label. */
 function reachTo(label: string): void {
   const group = document.querySelector<HTMLElement>("[data-details-bar-reach]");
@@ -2057,28 +2060,35 @@ export const PointingAtABoxSaysWhatItIs: Story = {
 /**
  * THE PLAY BAR CAN DRAW FRAMES INSTEAD OF GREY BOXES, and does not by default.
  *
- * A bar of thumbnails answers "which shot is that" without a hover, which is
- * the whole reason to want it. What it costs is what the grey bar is good at:
- * a box's width is its duration, so an even run of grey reads as rhythm —
- * where the cuts fall, which shots are long, where the pace changes. Put
- * pictures in them and the eye reads the pictures, because it always will.
- * Hence a setting, and hence off.
+ * A bar of frames answers "which shot is that" without a hover, which is the
+ * whole reason to want it. What it costs is what the grey bar is good at: a
+ * box's width is its duration, so an even run of grey reads as rhythm — where
+ * the cuts fall, which shots are long, where the pace changes. Put pictures in
+ * them and the eye reads the pictures, because it always will. Hence a
+ * setting, and hence off.
  *
  * THE COLOUR STAYS UNDERNEATH. A clip with no poster — audio has none — and a
  * frame that has not loaded yet both leave the box exactly as it is without
  * the setting, so turning this on can add pictures but never subtract the bar.
  */
 export const ThePlaybarCanDrawFrames: Story = {
-  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} thumbnails />,
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
     await settleStrip();
 
-    const boxes = seamBoxes();
+    // OFF FIRST, and asserted: the control is on the bar now, so the story can
+    // show the before as well as the after.
+    expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0);
+    framesTo("COVER");
+
+    const boxCount = seamBoxes().length;
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(boxCount),
+    );
     const thumbs = Array.from(
       document.querySelectorAll<HTMLImageElement>("[data-seam-thumbnail]"),
     );
-    expect(thumbs.length).toBe(boxes.length);
 
     // COVER, AND THE WHOLE BOX. The box's width is its duration and its height
     // is the bar's, so the frame is whatever shape that comes out as —
@@ -2095,6 +2105,11 @@ export const ThePlaybarCanDrawFrames: Story = {
     // rather than a hole.
     expect(getComputedStyle(first.parentElement!).backgroundColor).not.toBe(
       "rgba(0, 0, 0, 0)",
+    );
+
+    framesTo("OFF");
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
     );
   },
 };
@@ -2115,20 +2130,22 @@ export const ThePlaybarCanDrawFrames: Story = {
  */
 export const ThePlaybarCanDrawAFilmstrip: Story = {
   // TRIMMED_SCENE because its clips are VIDEO with posters and real trims —
-  // the only fixture here that a filmstrip can be built from at all. A still
-  // falls back to the single frame by design, which is the next story.
-  render: () => <SeamHarness scene={TRIMMED_SCENE} thumbnails thumbnailStyle="filmstrip" />,
+  // the only fixture here a filmstrip can be built from at all. A still falls
+  // back to the single frame by design, which is the story after next.
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
     await settleStrip();
+    framesTo("STRIP");
 
     // The widest box, so there is room for more than one cell in it — a strip
     // of one is a `cover` by another name and would prove nothing.
-    const strips = Array.from(
-      document.querySelectorAll<HTMLElement>("[data-seam-filmstrip]"),
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-seam-filmstrip]").length).toBeGreaterThan(0),
     );
-    expect(strips.length).toBeGreaterThan(0);
-    const widest = strips
+    const widest = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-filmstrip]"),
+    )
       .slice()
       .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]!;
     const cells = Array.from(widest.querySelectorAll<HTMLImageElement>("img"));
@@ -2151,6 +2168,8 @@ export const ThePlaybarCanDrawAFilmstrip: Story = {
     // THE STYLE IS A SEPARATE SETTING FROM WHETHER FRAMES SHOW AT ALL: this is
     // the strip, so the single covering frame must not ALSO be in the box.
     expect(widest.parentElement!.querySelectorAll("img").length).toBe(cells.length);
+
+    framesTo("OFF");
   },
 };
 
@@ -2159,27 +2178,33 @@ export const ThePlaybarCanDrawAFilmstrip: Story = {
  *
  * A still has one image. Sampling it at ten intervals gives ten copies of
  * itself — a filmstrip whose content is "nothing happens here", which is worse
- * than the one frame it is made of and takes ten requests to say. So the
- * strip is offered only where there is something to sample, and the setting
- * degrades rather than obeying.
+ * than the one frame it is made of and takes ten requests to say. So the strip
+ * is offered only where there is something to sample, and the setting degrades
+ * rather than obeying.
  */
 export const AStillIgnoresTheFilmstrip: Story = {
-  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} thumbnails thumbnailStyle="filmstrip" />,
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
     await settleStrip();
-    expect(document.querySelectorAll("[data-seam-filmstrip]").length).toBe(0);
+    framesTo("STRIP");
+
     // Still a picture per box — falling back is not the same as giving up.
-    expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(
-      seamBoxes().length,
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(
+        seamBoxes().length,
+      ),
     );
+    expect(document.querySelectorAll("[data-seam-filmstrip]").length).toBe(0);
+
+    framesTo("OFF");
   },
 };
 
-/** OFF BY DEFAULT: the same bar, same scene, no pictures. Its own story rather
- *  than a second half of the one above, because "the setting does something"
- *  and "the setting is off unless asked for" fail in different ways and one
- *  should not hide the other. */
+/** OFF UNLESS ASKED: the control has to start somewhere, and the plain bar is
+ *  where. Its own story rather than a half of the one above, because "the
+ *  setting does something" and "the setting is off to begin with" fail in
+ *  different ways and one should not hide the other. */
 export const ThePlaybarIsGreyUnlessAsked: Story = {
   render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
@@ -2187,6 +2212,22 @@ export const ThePlaybarIsGreyUnlessAsked: Story = {
     await settleStrip();
     expect(seamBoxes().length).toBeGreaterThan(0);
     expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0);
+    // The control says so too, which is what makes the bar's state readable
+    // rather than merely true.
+    const group = document.querySelector<HTMLElement>("[data-details-bar-frames]")!;
+    const badges = Array.from(group.querySelectorAll("button"));
+    expect(badges.map((badge) => badge.textContent?.trim())).toEqual([
+      "OFF",
+      "COVER",
+      "STRIP",
+    ]);
+    // OFF is the one lit, and the other two are offered rather than hidden —
+    // the row says what the bar could be as well as what it is.
+    expect(badges.map((badge) => badge.getAttribute("aria-pressed"))).toEqual([
+      "true",
+      "false",
+      "false",
+    ]);
   },
 };
 

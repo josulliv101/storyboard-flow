@@ -128,12 +128,6 @@ import { GraphRenderStatus } from "./graph-render-status";
 import { GraphProjectMenu } from "./graph-project-menu";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
-import {
-  PLAYBAR_THUMBNAIL_STYLES,
-  PlaybarThumbnailsProvider,
-  isPlaybarThumbnailStyle,
-  type PlaybarThumbnailStyle,
-} from "./graph-playbar-thumbnails";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -165,10 +159,6 @@ function BoardMenu({
   onItemSizeChange,
   clipNamesShown,
   onClipNamesChange,
-  playbarThumbnails,
-  onPlaybarThumbnailsChange,
-  playbarThumbnailStyle,
-  onPlaybarThumbnailStyleChange,
   projectId,
 }: Readonly<{
   itemSize: ItemSize;
@@ -179,12 +169,6 @@ function BoardMenu({
   onClipNamesChange: (shown: boolean) => void;
   /** Whether the details view's play bar draws each clip's first frame rather
    *  than a grey box. Off by default — see `graph-playbar-thumbnails.tsx`. */
-  playbarThumbnails: boolean;
-  onPlaybarThumbnailsChange: (shown: boolean) => void;
-  /** One frame filling each box, or a row of frames sampled across the clip.
-   *  Kept whether or not frames are shown — see `graph-playbar-thumbnails.tsx`. */
-  playbarThumbnailStyle: PlaybarThumbnailStyle;
-  onPlaybarThumbnailStyleChange: (style: PlaybarThumbnailStyle) => void;
   /** Whose render format this menu edits. The section reads and writes the
    *  document itself, so the menu only has to say WHICH one. */
   projectId: string;
@@ -252,43 +236,6 @@ function BoardMenu({
           >
             Show name over item
           </DropdownMenuCheckboxItem>
-          {/* THE PLAY BAR, not the board — which is why it names its surface
-              where the item above does not. It sits with the other "what does
-              this draw" answers rather than in the details view itself: that
-              view is a place you go to work, and a setting you reach for once
-              does not belong among the controls you use while you are there. */}
-          <DropdownMenuCheckboxItem
-            checked={playbarThumbnails}
-            onCheckedChange={(next) => onPlaybarThumbnailsChange(next === true)}
-            onSelect={(event) => event.preventDefault()}
-          >
-            Show playbar thumbnails
-          </DropdownMenuCheckboxItem>
-          {/* AND WHICH KIND — only once there are frames to have a kind. Two
-              settings rather than three states in one control, because "show
-              frames" and "which frames" are separate questions: the style
-              survives being switched off and on, which is what makes toggling
-              frames a comparison you can make twice rather than a choice you
-              re-enter every time.
-
-              Hidden rather than disabled when off. A disabled radio pair is a
-              row of dead controls explaining a setting that is not in effect;
-              absent, the menu simply gets shorter. */}
-          {playbarThumbnails ? (
-            <DropdownMenuRadioGroup
-              className="flex flex-wrap gap-1 pl-8 pt-1.5"
-              value={playbarThumbnailStyle}
-              onValueChange={(value) => {
-                if (isPlaybarThumbnailStyle(value)) onPlaybarThumbnailStyleChange(value);
-              }}
-            >
-              {PLAYBAR_THUMBNAIL_STYLES.map((option) => (
-                <DropdownMenuRadioBadge key={option} value={option}>
-                  {option === "cover" ? "COVER" : "STRIP"}
-                </DropdownMenuRadioBadge>
-              ))}
-            </DropdownMenuRadioGroup>
-          ) : null}
         </DropdownMenuGroup>
         {/* RENDER FORMAT, moved in from the header row.
             It read "16:9 · 720p" beside the breadcrumbs — a standing fact
@@ -1980,10 +1927,6 @@ export function GraphBoard({
   onItemSizeChange,
   clipNamesShown,
   onClipNamesChange,
-  playbarThumbnails,
-  onPlaybarThumbnailsChange,
-  playbarThumbnailStyle,
-  onPlaybarThumbnailStyleChange,
   pixelsPerSecond,
   onPixelsPerSecondChange,
   previewOn,
@@ -2018,10 +1961,6 @@ export function GraphBoard({
   /** Whether the play bar in the details view draws each clip's first frame
    *  rather than a grey box. Published as a context; see
    *  `graph-playbar-thumbnails.tsx`. */
-  playbarThumbnails: boolean;
-  onPlaybarThumbnailsChange: (shown: boolean) => void;
-  playbarThumbnailStyle: PlaybarThumbnailStyle;
-  onPlaybarThumbnailStyleChange: (style: PlaybarThumbnailStyle) => void;
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   /** The preview pane above the board. The board renders it AND carries its
@@ -2203,7 +2142,6 @@ export function GraphBoard({
       {/* Spans the header AND the surfaces for the same reason: the toggle
           that sets it lives in the header's menu, and every card that reads it
           is below. */}
-      <PlaybarThumbnailsProvider shown={playbarThumbnails} style={playbarThumbnailStyle}>
       <ClipNamesProvider shown={clipNamesShown}>
       {/* Spans the surfaces AND the child rows below them, because the pairing
           it carries joins the two: a collection's card up here and its row
@@ -2677,10 +2615,6 @@ export function GraphBoard({
                   onItemSizeChange={onItemSizeChange}
                   clipNamesShown={clipNamesShown}
                   onClipNamesChange={onClipNamesChange}
-                  playbarThumbnails={playbarThumbnails}
-                  onPlaybarThumbnailsChange={onPlaybarThumbnailsChange}
-                  playbarThumbnailStyle={playbarThumbnailStyle}
-                  onPlaybarThumbnailStyleChange={onPlaybarThumbnailStyleChange}
                   projectId={projectId}
                 />
               </div>
@@ -2998,7 +2932,6 @@ export function GraphBoard({
       </TagFilterProvider>
       </CollectionHoverProvider>
       </ClipNamesProvider>
-      </PlaybarThumbnailsProvider>
       </ItemDetailsProvider>
     </OpenKeyBoundary>
   );

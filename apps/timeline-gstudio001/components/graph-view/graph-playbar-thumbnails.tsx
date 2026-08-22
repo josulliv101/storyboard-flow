@@ -83,3 +83,25 @@ export function PlaybarThumbnailsProvider({
 export function usePlaybarThumbnails(): PlaybarThumbnails {
   return useContext(PlaybarThumbnailsContext);
 }
+
+/**
+ * The last answers chosen, kept at module scope.
+ *
+ * Deliberately NOT persisted, for the same reason the view count and the reach
+ * are not: these are a working posture for a session rather than preferences,
+ * and a board reopened tomorrow should start on the plain bar. Held here
+ * rather than in the view that renders the controls so that closing the
+ * details modal and opening another clip does not reset them — the modal
+ * unmounts, and state inside it would go with it.
+ */
+let rememberedShown = false;
+let rememberedStyle: PlaybarThumbnailStyle = "cover";
+
+export function lastPlaybarThumbnails(): PlaybarThumbnails {
+  return { shown: rememberedShown, style: rememberedStyle };
+}
+
+export function rememberPlaybarThumbnails(next: PlaybarThumbnails): void {
+  rememberedShown = next.shown;
+  rememberedStyle = next.style;
+}
