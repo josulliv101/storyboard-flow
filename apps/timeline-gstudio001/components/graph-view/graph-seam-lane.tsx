@@ -181,28 +181,37 @@ const BOX_INSET_PX = 2.5;
  * same cut. Picking either is picking which half of the timeline to fail on.
  *
  * SO THE GAP CARRIES BOTH TONES. The strip's own background is pale and each
- * box casts a dark ring one pixel into the gap either side of it, which makes
- * every gap read dark · pale · dark whatever is beside it:
+ * box casts a dark ring into the gap either side of it, which makes every gap
+ * read dark · pale · dark whatever is beside it:
  *
  *     two bright frames   white | DARK pale DARK | white   ← the rings show
  *     two dark frames     black | dark PALE dark | black   ← the core shows
  *     one of each         both, from opposite sides
+ *
+ *                         |<-1.5->|<-2->|<-1.5->|   of the 5px already there
  *
  * There is no arrangement of neighbours where neither tone has contrast,
  * which is what "works on both" has to mean. The alternative — a colour no
  * footage supplies, a saturated cyan or magenta — would also always show, and
  * would turn a bar you read for rhythm into a bar you read for stripes.
  *
- * WIDENING IT IS THE WRONG FIX, and not only because it was asked against: a
- * box's width IS its duration, so spending more of it on separation makes
- * short clips read shorter and changes what the bar is saying. None of this
- * costs layout — the gap is already there, and a ring paints outside the box.
+ * THE THREE BANDS SHARE THE FIVE PIXELS THAT WERE ALREADY THERE: 1.5px of
+ * dark, 2px of pale, 1.5px of dark. The first pass gave the pale core three of
+ * the five and the dark barely registered against a bright frame — a white
+ * band with a hairline either side reads as a white band. Roughly equal thirds
+ * read as a rule.
+ *
+ * WIDENING THE GAP IS THE WRONG FIX, and not only because it was asked
+ * against: a box's width IS its duration, so spending more of it on separation
+ * makes short clips read shorter and changes what the bar is saying. None of
+ * this costs layout — the gap is already there, the bands only divide it, and
+ * a ring paints outside the box rather than over the picture.
  *
  * Only when frames are on. Over grey the whole treatment is decoration
  * answering a question nobody asked.
  */
 const FRAMED_GAP_COLOUR = "rgba(212, 212, 216, 0.92)";
-const FRAMED_BOX_EDGE = "0 0 0 1px rgba(0, 0, 0, 0.78)";
+const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(0, 0, 0, 0.82)";
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */

@@ -2140,6 +2140,14 @@ export const ThePlaybarCanDrawFrames: Story = {
     // OUTSIDE the box, which is what puts it in the gap rather than over the
     // picture — and what keeps it costing no layout.
     expect(boxStyle.boxShadow).not.toMatch(/inset/);
+    // AND THE THREE BANDS SHARE THE GAP THAT WAS ALREADY THERE. The ring is
+    // most of the way to half the inset either side, so the pale core is a
+    // band rather than the whole gap with a hairline on it — a white band with
+    // a hairline either side reads as a white band. It must not reach the
+    // inset itself, which would close the gap and leave two boxes touching.
+    const spread = Number(boxStyle.boxShadow.match(/([\d.]+)px(?!.*px)/)![1]);
+    expect(spread).toBeGreaterThan(1);
+    expect(spread).toBeLessThan(2.5);
 
     framesTo("OFF");
     await waitFor(() =>
@@ -2439,6 +2447,18 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
 
     // THE PANELS EITHER SIDE ARE WHAT MOVED, so they are what fades.
     expect(swapping()).toBeGreaterThan(0);
+
+    // AND NOTHING ELSE ANIMATES WHILE THEY DO. A landing leaves the clock
+    // engaged, so every neighbour is newly `dimmed` and would start its own
+    // 300ms opacity-and-GRAYSCALE transition in the same frame the fade
+    // begins. Two nested opacity animations is one too many, and a filter over
+    // a video still fetching its first frame is repainted from the decoder
+    // every tick — which is why this was smooth on stills and juddered on
+    // video. The incoming panel arrives already dimmed and already drained.
+    const fading = document.querySelector<HTMLElement>(
+      "[data-item-details-swapping] [data-item-details-frame]",
+    )!;
+    expect(getComputedStyle(fading).transitionProperty).toBe("none");
     expect(
       centrePanel().hasAttribute("data-item-details-swapping"),
     ).toBe(false);
