@@ -221,6 +221,15 @@ function DetailsFilmstripModal({
   // needed loaded. Null says "not scrubbed", which is a different state from
   // "scrubbed to the beginning" and the one an untouched view is in.
   const [barSeconds, setBarSeconds] = useState<number | null>(null);
+  // THE ONE SECOND THAT SURVIVES AN ADVANCE, and only the advance it caused.
+  //
+  // Letting go of the bar re-centres the row on whatever the playhead landed
+  // on, and the frame you released on is the whole point of having gone there
+  // — so it has to arrive with you rather than being reset to the new clip's
+  // head. A ref rather than state because nothing renders from it: it is set
+  // on the way out of one subject and read once on the way into the next, and
+  // a re-render in between would be a render nobody needs.
+  const carryClockRef = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
   // A DRAG IS IN PROGRESS ON THE BAR. Distinct from `scrubbed`, which stays
   // true once the clock has been touched: this is the gesture itself, and it
@@ -331,9 +340,19 @@ function DetailsFilmstripModal({
     [collectionSeamClips, subjectSeamIndex],
   );
 
-  // ADVANCING RESETS THE CLOCK TO THIS CLIP'S START, because the bar is rebuilt
-  // around a different cut — the old seconds would name a moment in a run of
-  // time that no longer exists.
+  // ADVANCING RESETS THE CLOCK TO THIS CLIP'S START — unless the advance was
+  // the clock's own doing, in which case it KEEPS its place. See
+  // `carryClockRef` below: the seconds survive exactly one subject change, the
+  // one they caused.
+  //
+  // Carrying them is only sound because every clip is on the bar in full and
+  // the spans do not depend on the subject: `buildSeamTimeline` is handed the
+  // whole collection with no leads, and the subject index moves `centreStart`
+  // and nothing else. So a second on the old bar is the same second on the new
+  // one. (It was NOT always so. The bar used to be a window with run-ups
+  // around the subject, and then the old seconds really did name a moment in a
+  // run of time that no longer existed — which is why this reset was
+  // unconditional.)
   //
   // ADJUSTED DURING RENDER rather than in an effect, which is React's own
   // answer for "this state derives from a prop that changed". An effect would
@@ -346,7 +365,8 @@ function DetailsFilmstripModal({
   if (clockFor !== (node.id as string)) {
     setClockFor(node.id as string);
     setPlaying(false);
-    setBarSeconds(null);
+    setBarSeconds(carryClockRef.current);
+    carryClockRef.current = null;
   }
 
   // Where the BAR draws its playhead when nothing has moved it: the cut at the
@@ -716,12 +736,27 @@ function DetailsFilmstripModal({
               onScrubbingChange={setScrubbing}
               // The clock spans every clip, so a point on the rail IS a point
               // on the clock and needs no conversion.
-              // The other direction of the same binding: the cards follow the
-              // scrubber when it is let go, and the scrubber follows the cards
-              // whenever the subject changes (the clock resets to that clip's
-              // own start — see `clockFor` above).
+              //
+              // THE CARDS FOLLOW THE SCRUBBER WHEN IT IS LET GO — however it
+              // was let go. A click and a two-pixel drag are the same gesture
+              // as far as the hand is concerned, so they land the same way:
+              // both re-centre the row, and both bring the frame with them.
+              // Splitting them would mean a few pixels of travel decided
+              // whether you kept your place in the shot.
               onCommitClip={(clipId) => {
-                if (clipId !== (node.id as string)) onOpenNeighbour(clipId);
+                if (clipId === (node.id as string)) return;
+                carryClockRef.current = barSeconds;
+                onOpenNeighbour(clipId);
+              }}
+              // WHEREVER THE PLAYHEAD FINISHED, which is not always under the
+              // pointer: holding at an edge runs the strip along beneath a
+              // hand that is standing still. `position` is the view's own
+              // answer to where the clock is, so the drag does not have to
+              // carry one.
+              onScrubEnd={() => {
+                if (position === null || position.clipId === (node.id as string)) return;
+                carryClockRef.current = shownSeconds;
+                onOpenNeighbour(position.clipId);
               }}
               onScrubSeconds={(seconds) => {
                 setPlaying(false);

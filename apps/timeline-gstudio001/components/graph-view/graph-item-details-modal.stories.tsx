@@ -430,9 +430,13 @@ async function settleStrip(): Promise<void> {
  * strip's transform is needed — which is what makes this survive a pan and a
  * zoom that a fraction-of-the-timeline version would not.
  */
-function scrubIntoBox(box: HTMLElement, within = 0.5): void {
+function scrubIntoBox(
+  box: HTMLElement,
+  within = 0.5,
+  options?: { hold?: boolean },
+): void {
   const target = box.getBoundingClientRect();
-  scrubToClientX(target.left + target.width * within);
+  scrubToClientX(target.left + target.width * within, options);
 }
 
 /** Swipe the boxes, which moves the carousel three clips at a time. */
@@ -781,11 +785,17 @@ export const TheRingMarksWhoseFramesAreUp: Story = {
 
     // Move the clock right across a seam and onto another clip's frames. The
     // monitor changes; the ring does not.
+    //
+    // HELD, NOT RELEASED. Letting go now lands the row on whatever the
+    // playhead reached, and this story is about the ring during the look —
+    // the state where the monitor is showing one clip and the subject is
+    // still another. Releasing would collapse the two and the assertion
+    // would be trivially true.
     const boxes = seamBoxes();
     const centreIndex = boxes.indexOf(centreBox());
     expect(centreIndex).toBeGreaterThan(0);
     await settleStrip();
-    scrubIntoBox(boxes[centreIndex - 1]!);
+    scrubIntoBox(boxes[centreIndex - 1]!, 0.5, { hold: true });
     await waitFor(() =>
       expect(seamTrack().getAttribute("aria-valuenow")).not.toBe(null),
     );
@@ -1665,21 +1675,27 @@ export const HoldingAtAnEdgeRunsTheStrip: Story = {
     expect(ranPx).toBeGreaterThan(5);
     expect(Math.abs(ranPx - (at() - fromAt) * pps)).toBeLessThan(2);
 
-    // ── LETTING GO STOPS IT, AND CHOOSES NOTHING ──────────────────────────
+    // ── LETTING GO STOPS IT, AND LANDS ON WHAT IT RAN TO ──────────────────
     release(box.right - 12);
     const stoppedAt = at();
     const stoppedX = stripLeft();
     await rest(300);
     expect(at()).toBe(stoppedAt);
     expect(stripLeft()).toBe(stoppedX);
-    // The hand never moved, so by travel alone this looks like a tap — and a
-    // tap commits to a clip. The edge loop has to declare the drag on the
-    // bar's behalf, or scrubbing across the project ends by opening whatever
-    // shot happened to arrive under a stationary finger.
-    expect(subject()).toBe(startedOn);
+    // WHERE THE PLAYHEAD FINISHED, NOT WHERE THE HAND IS. The hand never
+    // moved, so this is the case that would go wrong if the release resolved
+    // a clip from the pointer's x: the strip ran a long way underneath a
+    // stationary finger, and what is under it now is not what was under it
+    // when the press began. The view answers from its own clock instead.
+    expect(subject()).not.toBe(startedOn);
 
     // ── AND THE LEFT EDGE REVERSES ────────────────────────────────────────
-    press(box.left + 12);
+    // MEASURED AGAIN. The release above landed the row on a new clip, and the
+    // bar re-pans around it — so the geometry read at the top of this story
+    // describes a bar that no longer exists.
+    await settleStrip();
+    const after = seamSurface().getBoundingClientRect();
+    press(after.left + 12);
     const pressedBackAt = at();
     await waitFor(() => expect(at()).toBeLessThan(pressedBackAt - 1), { timeout: 2000 });
     const backFrom = at();
@@ -1688,7 +1704,7 @@ export const HoldingAtAnEdgeRunsTheStrip: Story = {
     const backPx = stripLeft() - backFromX;
     expect(backPx).toBeGreaterThan(5);
     expect(Math.abs(backPx - (backFrom - at()) * pps)).toBeLessThan(2);
-    release(box.left + 12);
+    release(after.left + 12);
   },
 };
 
@@ -1818,9 +1834,13 @@ export const AScrubNearACutTakesTheCut: Story = {
     // pulled in by — see BOX_INSET_PX in the lane.
     const cut = target.left - 2.5;
 
-    scrubToClientX(cut - 3);
+    // HELD THROUGHOUT. These are three readings of one scale, so the bar
+    // underneath them has to be the same bar: a release would land the row on
+    // the clip just scrubbed to, and the next measurement would be taken
+    // against a strip that had moved. Nothing here is about committing.
+    scrubToClientX(cut - 3, { hold: true });
     const fromBefore = at();
-    scrubToClientX(cut + 3);
+    scrubToClientX(cut + 3, { hold: true });
     const fromAfter = at();
 
     // BOTH SIDES LAND ON THE SAME INSTANT, which is the cut. Six pixels apart
@@ -1830,7 +1850,7 @@ export const AScrubNearACutTakesTheCut: Story = {
     // A press with room around it is left exactly where it was put, so the
     // snap is a tolerance and not a quantiser: 40px further along is 40px
     // further along, to the second.
-    scrubToClientX(cut + 40);
+    scrubToClientX(cut + 40, { hold: true });
     expect(at()).toBeGreaterThan(fromAfter);
     expect(Math.abs(at() - fromAfter - 40 / pps)).toBeLessThan(0.05);
   },
@@ -1968,18 +1988,26 @@ export const PointingAtABoxSaysWhatItIs: Story = {
 };
 
 /**
- * A DRAG SCRUBS; A PRESS THAT DOES NOT TRAVEL COMMITS.
+ * LETTING GO IS THE COMMIT — AND YOU KEEP THE FRAME YOU LET GO ON.
  *
- * One surface, two gestures, told apart by distance rather than by timing — a
- * slow deliberate scrub must not also count as a tap on wherever it started,
- * and a decisive tap must not have to be held.
+ * A drag and a press that does not travel are still told apart (distance, not
+ * timing: a slow deliberate scrub must not count as a tap on wherever it
+ * started). But they now LAND the same way, because they are the same
+ * sentence: you put the playhead somewhere and took your hand off it.
  *
- * WHY THE SCRUB CHOOSES NOTHING. Scrubbing is a look: you check what is
- * coming up and go back to what you were doing. A release that made the
- * landing point the active clip would have already moved you, so checking
- * would cost you your place — which is the one thing looking must not do.
+ * Scrubbing used to choose nothing, on the reasoning that looking ahead must
+ * not cost you your place. The place is what changed: the row follows the
+ * playhead now, and the clock comes WITH it rather than snapping to the new
+ * clip's head — so you arrive on the exact frame you were judging, which is
+ * the frame you went there to see. Losing it was what made the old rule feel
+ * like a look rather than a move.
+ *
+ * THE CLOCK NOT MOVING IS THE ASSERTION. Every panel derives its picture from
+ * `position`, which is `seamAt(timeline, barSeconds)` — so a bar reading the
+ * same second before and after the row advances IS the centre panel holding
+ * the frame. A jump here would be the reset this change removes.
  */
-export const ADragScrubsAndAClickCommits: Story = {
+export const LettingGoOfTheBarLandsTheStrip: Story = {
   render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
@@ -1990,14 +2018,40 @@ export const ADragScrubsAndAClickCommits: Story = {
     const startedOn = subject();
     expect(startedOn).toBe("subject");
 
-    // A DRAG onto another clip moves the clock and nothing else.
-    scrubIntoBox(seamBoxes()[2]!);
+    // ── A DRAG ONTO ANOTHER CLIP LANDS THERE ──────────────────────────────
+    // Held first, so the clock can be read at the moment before the release
+    // — the number the release has to preserve.
+    const target = seamBoxes()[2]!;
+    const box = target.getBoundingClientRect();
+    const restingOn = box.left + box.width * 0.5;
+    scrubToClientX(restingOn, { hold: true });
     await waitFor(() => expect(at()).toBeGreaterThan(0));
+    const letGoAt = at();
+    // Still where it was: the row moves on release, not during.
     expect(subject()).toBe(startedOn);
 
-    // A PRESS on the same clip commits to it.
-    clickBox(seamBoxes()[2]!);
+    const surface = seamSurface();
+    const surfaceBox = surface.getBoundingClientRect();
+    fireEvent.pointerUp(
+      surface,
+      pointerAt(restingOn, surfaceBox.top + surfaceBox.height / 2),
+    );
+
+    // The row advanced...
     await waitFor(() => expect(subject()).not.toBe(startedOn));
+    // ...onto the clip the playhead was actually on...
+    expect(subject()).toBe(target.getAttribute("data-seam-segment"));
+    // ...and the clock did not move a frame in the process.
+    expect(at()).toBe(letGoAt);
+
+    // ── AND A PRESS THAT DID NOT TRAVEL DOES THE SAME ─────────────────────
+    // The two gestures are a few pixels of hand movement apart, so they must
+    // not be a whole behaviour apart.
+    const landedOn = subject();
+    const next = seamBoxes()[4]!;
+    clickBox(next);
+    await waitFor(() => expect(subject()).not.toBe(landedOn));
+    expect(subject()).toBe(next.getAttribute("data-seam-segment"));
   },
 };
 

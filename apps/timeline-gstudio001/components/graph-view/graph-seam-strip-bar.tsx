@@ -125,6 +125,7 @@ export function SeamStripBar({
   onStepForward,
   onScrubSeconds,
   onCommitClip,
+  onScrubEnd,
   onScrubbingChange,
 }: Readonly<{
   /** Every clip the bar can reach, in playback order. */
@@ -145,6 +146,14 @@ export function SeamStripBar({
   onScrubSeconds: (value: number) => void;
   /** A box was CLICKED — make that clip the centred one. */
   onCommitClip: (clipId: string) => void;
+  /**
+   * A DRAG ENDED. No clip id, deliberately: where the playhead finished is not
+   * always under the pointer — holding at an edge runs the strip along while
+   * the hand stays put — so the bar would have to re-derive a position it does
+   * not own. The view already resolves the playhead to a clip and a time; this
+   * only tells it when to act on that.
+   */
+  onScrubEnd?: () => void;
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
   onScrubbingChange?: (active: boolean) => void;
@@ -412,12 +421,19 @@ export function SeamStripBar({
       // that clip active. Distinguished by travel rather than by timing,
       // because a slow deliberate scrub must not also count as a tap on
       // wherever it started.
-      if (press.moved) return;
+      if (press.moved) {
+        // A DRAG NOW LANDS TOO. Letting go used to leave the row where it was
+        // and only the monitor travelling, so the shot you had scrubbed to was
+        // on screen but not the one you were working on — you had to go and
+        // fetch it. Releasing is the commit.
+        onScrubEnd?.();
+        return;
+      }
       const stripX = localX(event.clientX) - offsetRef.current;
       const landedOn = stripPositionAt(strip, stripX)?.clipId ?? null;
       if (landedOn !== null && landedOn !== centreClipId) onCommitClip(landedOn);
     },
-    [centreClipId, localX, onCommitClip, onScrubbingChange, strip],
+    [centreClipId, localX, onCommitClip, onScrubEnd, onScrubbingChange, strip],
   );
 
   // ── HOLDING AT AN EDGE RUNS THE STRIP UNDER THE POINTER ──────────────────
