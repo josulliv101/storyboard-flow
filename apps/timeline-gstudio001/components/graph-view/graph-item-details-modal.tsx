@@ -871,7 +871,12 @@ function DetailsFilmstripModal({
           className="pointer-events-auto absolute inset-x-0 top-16 z-20 px-6 pt-4"
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <div className="mx-auto w-full max-w-5xl">
+          {/* WIDER THAN THE ROW BELOW IT, deliberately. The panels are
+              sized to be worked in and cap out; the bar is a map and gets
+              more useful the more of the project it can show at a legible
+              scale — at `5xl` a twenty-clip reach was boxes a few pixels
+              wide. */}
+          <div className="mx-auto w-full max-w-7xl">
             <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
             <SeamStripBar
               clips={barClips}
@@ -881,6 +886,100 @@ function DetailsFilmstripModal({
               // long project, and the last box on screen is simply the last
               // one the reach allowed. These are true only when the window has
               // reached the real ends.
+              // THE VIEW'S OWN SETTINGS, handed to the bar to place. They
+              // used to be a row of their own beneath it; they are read
+              // against the bar directly above them, so they belong in the
+              // bar's own controls row alongside the transport and the clock.
+              settingsLeft={
+                <div
+                  data-details-bar-frames
+                  role="group"
+                  aria-label="What the bar's boxes draw"
+                  className="flex items-center gap-1"
+                >
+                  <span className="mr-1 font-mono text-[10px] text-zinc-500">frames</span>
+                  {/* THREE BADGES, TWO SETTINGS. Whether the boxes draw frames
+                      and which kind are separate answers, but as controls they
+                      are one question — a picture of what the bar is made of —
+                      and a row that reads OFF · COVER · STRIP says it in the
+                      shape the reach beside it already uses.
+
+                      OFF DOES NOT WIPE THE STYLE. It sets `shown` and leaves
+                      `style` alone, so coming back lands on the kind you were
+                      using: switching frames off and on stays a comparison you
+                      can make twice rather than a choice you re-enter. That is
+                      the whole reason the two are stored apart even though they
+                      are pressed together. */}
+                  {(["off", ...PLAYBAR_THUMBNAIL_STYLES] as const).map((option) => {
+                    const active = option === "off" ? !frames.shown : frames.shown && frames.style === option;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() =>
+                          chooseFrames(
+                            option === "off"
+                              ? { ...frames, shown: false }
+                              : { shown: true, style: option },
+                          )
+                        }
+                        title={
+                          option === "off"
+                            ? "Plain boxes"
+                            : option === "cover"
+                              ? "One frame filling each box"
+                              : "A strip of frames across each clip"
+                        }
+                        className={[
+                          "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
+                          active
+                            ? "bg-zinc-100 text-zinc-900"
+                            : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+                        ].join(" ")}
+                      >
+                        {/* `STRIP`, not `FILMSTRIP`: these badges sit beside a
+                            reach picker of two- and three-character tokens, and
+                            one nine-character label would set the row's rhythm
+                            for the sake of a word the title attribute already
+                            says in full. */}
+                        {option === "filmstrip" ? "STRIP" : option.toUpperCase()}
+                      </button>
+                    );
+                  })}
+                </div>
+              }
+              settingsRight={
+              <div
+                  data-details-bar-reach
+                role="group"
+                aria-label="Clips either side on the bar"
+                className="flex items-center gap-1"
+            >
+                <span className="mr-1 font-mono text-[10px] text-zinc-500">reach</span>
+                {BAR_REACHES.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={option === reach}
+                    onClick={() => chooseReach(option)}
+                    title={
+                      option === "all"
+                        ? "Reach the whole sequence"
+                        : `Reach ${option} clips either side`
+                    }
+                    className={[
+                      "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
+                      option === reach
+                        ? "bg-zinc-100 text-zinc-900"
+                        : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+                    ].join(" ")}
+                  >
+                    {barReachLabel(option)}
+                  </button>
+                ))}
+            </div>
+              }
               atStart={barWindow.ids[0] === ids[0]}
               atEnd={barWindow.ids[barWindow.ids.length - 1] === ids[ids.length - 1]}
               centreClipId={node.id as string}
@@ -917,106 +1016,6 @@ function DetailsFilmstripModal({
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
             />
-            {/* EVERYTHING THE BAR ITSELF IS SET BY, on one row under it.
-                These began in the board's gear menu, which is where settings
-                you set once belong — but these are not that. They are read
-                against the bar directly above them: the reach is the width of
-                what you are looking at, and the frames are what it is made of.
-                A control you judge by looking at the thing it changes wants to
-                be next to that thing.
-
-                TWO GROUPS, split left and right, because they answer different
-                questions: what the boxes are made of, and how many of them
-                there are. Run together as one row of eight badges they would
-                read as one setting with eight values. */}
-            <div className="mt-2 flex items-center justify-between gap-4">
-              <div
-                data-details-bar-frames
-                role="group"
-                aria-label="What the bar's boxes draw"
-                className="flex items-center gap-1"
-              >
-                <span className="mr-1 font-mono text-[10px] text-zinc-500">frames</span>
-                {/* THREE BADGES, TWO SETTINGS. Whether the boxes draw frames
-                    and which kind are separate answers, but as controls they
-                    are one question — a picture of what the bar is made of —
-                    and a row that reads OFF · COVER · STRIP says it in the
-                    shape the reach beside it already uses.
-
-                    OFF DOES NOT WIPE THE STYLE. It sets `shown` and leaves
-                    `style` alone, so coming back lands on the kind you were
-                    using: switching frames off and on stays a comparison you
-                    can make twice rather than a choice you re-enter. That is
-                    the whole reason the two are stored apart even though they
-                    are pressed together. */}
-                {(["off", ...PLAYBAR_THUMBNAIL_STYLES] as const).map((option) => {
-                  const active = option === "off" ? !frames.shown : frames.shown && frames.style === option;
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() =>
-                        chooseFrames(
-                          option === "off"
-                            ? { ...frames, shown: false }
-                            : { shown: true, style: option },
-                        )
-                      }
-                      title={
-                        option === "off"
-                          ? "Plain boxes"
-                          : option === "cover"
-                            ? "One frame filling each box"
-                            : "A strip of frames across each clip"
-                      }
-                      className={[
-                        "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
-                        active
-                          ? "bg-zinc-100 text-zinc-900"
-                          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-                      ].join(" ")}
-                    >
-                      {/* `STRIP`, not `FILMSTRIP`: these badges sit beside a
-                          reach picker of two- and three-character tokens, and
-                          one nine-character label would set the row's rhythm
-                          for the sake of a word the title attribute already
-                          says in full. */}
-                      {option === "filmstrip" ? "STRIP" : option.toUpperCase()}
-                    </button>
-                  );
-                })}
-              </div>
-            <div
-              data-details-bar-reach
-              role="group"
-              aria-label="Clips either side on the bar"
-              className="flex items-center gap-1"
-            >
-              <span className="mr-1 font-mono text-[10px] text-zinc-500">reach</span>
-              {BAR_REACHES.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={option === reach}
-                  onClick={() => chooseReach(option)}
-                  title={
-                    option === "all"
-                      ? "Reach the whole sequence"
-                      : `Reach ${option} clips either side`
-                  }
-                  className={[
-                    "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
-                    option === reach
-                      ? "bg-zinc-100 text-zinc-900"
-                      : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-                  ].join(" ")}
-                >
-                  {barReachLabel(option)}
-                </button>
-              ))}
-            </div>
-            </div>
             </PlaybarThumbnailsProvider>
           </div>
         </div>
