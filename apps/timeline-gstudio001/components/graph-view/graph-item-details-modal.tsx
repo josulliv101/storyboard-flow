@@ -1137,7 +1137,29 @@ function DetailsFilmstripModal({
               monitor={
                 index === centre && monitorNode && position
                   ? { node: monitorNode, seconds: position.clipSeconds }
-                  : null
+                  : // THE PANEL UNDER THE PLAYHEAD KEEPS ITSELF AT THE
+                    // PLAYHEAD, even while it is a neighbour.
+                    //
+                    // This is what makes letting go seamless. Without it, a
+                    // clip is resting on its own first frame right up until
+                    // the moment it becomes the centre, and only then starts
+                    // seeking — so the release reads as: the right frame (in
+                    // the outgoing centre, which was monitoring it), a cut,
+                    // the FIRST frame, and a skip back to the right one. The
+                    // poster fix cannot help here, because this element
+                    // already has a decoded frame; it is simply the wrong one.
+                    //
+                    // Seeking it early means the panel is already showing the
+                    // landed frame before it is asked to be the subject, and
+                    // the cut has nothing left to change.
+                    //
+                    // ONE EXTRA ELEMENT SEEKING, not nine: exactly one panel
+                    // is under the playhead at a time, and it is the one whose
+                    // frame is about to be wanted. The scrub proxy covers it
+                    // for the same reason it covers the centre.
+                    position !== null && position.clipId === id
+                    ? { node: media, seconds: position.clipSeconds }
+                    : null
               }
               // Only the monitor makes sound: it is the panel showing what the
               // clock says is on screen, so it is the only one whose audio
@@ -1148,7 +1170,11 @@ function DetailsFilmstripModal({
               // dragged: the neighbours are context, and enlarging them would
               // be enlarging the thing you are trying to look past.
               magnified={index === centre && scrubbing}
-              scrubbing={index === centre && scrubbing}
+              // The proxy follows the seeking, not the centring: a neighbour
+              // tracking the playhead is doing the same expensive thing the
+              // centre is, and a full-res seek per pointer move is what the
+              // proxy exists to avoid.
+              scrubbing={scrubbing && (index === centre || position?.clipId === id)}
               swipe={swipe}
               width={panelWidth}
               // Engaged, and not the one being watched. Uses the same gate as

@@ -2419,11 +2419,21 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
       const x = rect.left + rect.width * 0.5;
       scrubToClientX(x, { hold: true });
       await waitFor(() => expect(at()).toBeGreaterThan(0));
-      const heldFrame = Number(
-        document
-          .querySelector<HTMLElement>("[data-item-details-at]")!
-          .getAttribute("data-item-details-at"),
+      const reporting = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-item-details-at]"),
       );
+      const heldFrame = Number(reporting[0]!.getAttribute("data-item-details-at"));
+
+      // TWO PANELS ARE ON THIS FRAME, AND THAT IS THE POINT. The centre is
+      // monitoring the clip being scrubbed to, and that clip's OWN panel is
+      // already showing the same moment rather than resting on its first
+      // frame. Without the second, the release reads as: the right frame, a
+      // cut, the FIRST frame, and a skip back — because the panel arriving in
+      // the middle has a decoded frame already and it is the wrong one.
+      expect(reporting.length).toBe(2);
+      expect(
+        reporting.map((panel) => Number(panel.getAttribute("data-item-details-at"))),
+      ).toEqual([heldFrame, heldFrame]);
       const surface = seamSurface();
       const surfaceBox = surface.getBoundingClientRect();
       fireEvent.pointerUp(surface, pointerAt(x, surfaceBox.top + surfaceBox.height / 2));
@@ -2434,7 +2444,13 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     const restingSeat = seatX();
 
     // ── A LANDING SEVERAL CLIPS OFF CUTS, AND THE MIDDLE STAYS PUT ────────
-    const target = seamBoxes()[boxIndex() + 4]!;
+    // TWO CLIPS, WHICH IS INSIDE `MOUNTED_RADIUS` AND OUTSIDE A STEP. Both
+    // halves matter: past one clip so it cuts and fades rather than stepping,
+    // and near enough that the target's panel EXISTS during the scrub, which
+    // is what the pre-seek below can be observed on. A landing beyond the
+    // mount window has no panel to pre-seek and is covered instead by the
+    // poster the fresh element paints — see `monitorPosterUrl`.
+    const target = seamBoxes()[boxIndex() + 2]!;
     const letGo = await dragToBox(target);
     await waitFor(() => expect(subject()).not.toBe("subject"));
 
