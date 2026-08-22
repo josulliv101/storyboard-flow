@@ -13,6 +13,7 @@ import { DETAILS_HERO_FILL_CLASS } from "./graph-view-config";
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { cloudinaryScrubProxySrc } from "@/lib/cloudinary-scrub-proxy";
 import { useFrameCrossfade } from "@/hooks/use-frame-crossfade";
+import { monitorPosterUrl } from "@/lib/video-frame-url";
 import { formatSeconds } from "@/lib/format-duration";
 import { HERO } from "./graph-item-details-shared";
 import type { LiveTrim } from "@storyboard/ui/dnd-collections";
@@ -93,6 +94,15 @@ export function ItemDetailsMonitor({
   // still in flight — and the hook simply scrubs the real element then, which
   // is what it always did.
   const scrubProxySrc = shownVideo?.src ? cloudinaryScrubProxySrc(shownVideo.src) : null;
+  // See the `poster` below: the frame the element is ABOUT to seek to, so the
+  // picture it paints before it has decoded anything is already the right one.
+  // The builder returns its input unchanged for anything it cannot
+  // transform — a fixture, an upload still in flight — so the fallback is the
+  // opening frame, which is what this always used.
+  const posterAtRawTime = monitorPosterUrl(
+    shownVideo?.posterSrcs?.[0],
+    monitor ? rawTime : null,
+  );
   const { videoRef, proxyRef, showProxy } = useSeekedVideo(
     Math.round(rawTime * 25) / 25,
     shownVideo !== null || shownAudio !== null,
@@ -162,7 +172,22 @@ export function ItemDetailsMonitor({
             crossfadeVideoRef.current = element;
           }}
           src={shownVideo.src}
-          poster={shownVideo.posterSrcs?.[0]}
+          // THE POSTER IS THE FRAME BEING ASKED FOR, not the clip's first.
+          //
+          // Letting go of the bar gives the landed clip its OWN panel, and a
+          // fresh `<video>` has no frame yet — so it paints its poster, and
+          // the poster used to be `posterSrcs[0]`. That is the clip's opening
+          // frame, which is almost never where the playhead is: you saw the
+          // right frame while scrubbing (the old panel's monitor was showing
+          // it), then the first frame, then a skip to the right one again as
+          // the seek landed. The frame was never lost — it was re-acquired in
+          // public.
+          //
+          // Pointing the poster at the SAME time the element is seeking to
+          // makes the two agree, so the swap from poster to decoded frame is
+          // invisible. Falls back to the opening frame when there is no clock
+          // to ask, which is a resting neighbour and exactly right for one.
+          poster={posterAtRawTime}
           // UNMUTED WHILE PLAYING. Judging a cut is not only a picture
           // problem — a line landing across the join, or music that
           // stops dead on it, is the thing being looked for as often as

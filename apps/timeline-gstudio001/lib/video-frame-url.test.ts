@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   cloudinaryVideoFrameUrl,
   collectionPreviewFrameUrl,
+  monitorPosterUrl,
   videoFrameUrls,
   type VideoFrameUrlBuilder,
 } from "./video-frame-url";
@@ -183,5 +184,40 @@ describe("videoFrameUrls", () => {
   it("defaults to the Cloudinary builder", () => {
     const urls = videoFrameUrls([CLOUDINARY_FRAME], 1, { trimInSeconds: 0, effectiveSeconds: 4 });
     expect(urls[0]).toContain("so_0.05,");
+  });
+});
+
+describe("monitorPosterUrl", () => {
+  const cloudinary =
+    "https://res.cloudinary.com/demo/video/upload/so_0,w_640/folder/clip.jpg";
+
+  it("points the poster at the frame the element is seeking to", () => {
+    // THE WHOLE POINT: a fresh <video> paints its poster before it has decoded
+    // anything, so a poster of the opening frame is a picture of the wrong
+    // moment held until the seek lands — which reads as a skip.
+    expect(monitorPosterUrl(cloudinary, 4.5)).toContain("so_4.5");
+    expect(monitorPosterUrl(cloudinary, 4.5)).not.toContain("so_0,");
+  });
+
+  it("leaves a resting panel on its opening frame", () => {
+    // Null is "no clock is asking" — a neighbour genuinely showing its first
+    // frame, which is a different state from being at zero seconds.
+    expect(monitorPosterUrl(cloudinary, null)).toBe(cloudinary);
+  });
+
+  it("hands back what it cannot transform rather than nothing", () => {
+    const fixture = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=";
+    expect(monitorPosterUrl(fixture, 4.5)).toBe(fixture);
+  });
+
+  it("has no poster to offer when the clip has none", () => {
+    expect(monitorPosterUrl(undefined, 4.5)).toBeUndefined();
+  });
+
+  it("refuses a time that is not one", () => {
+    // A clock that has not resolved yet must not turn a good poster into a
+    // URL with `so_NaN` in it, which resolves to nothing at all.
+    expect(monitorPosterUrl(cloudinary, Number.NaN)).toBe(cloudinary);
+    expect(monitorPosterUrl(cloudinary, -3)).toContain("so_0");
   });
 });
