@@ -170,6 +170,30 @@ function SnapPulse({ snapKey }: Readonly<{ snapKey: number }>) {
  */
 const BOX_INSET_PX = 2.5;
 
+/**
+ * WHAT SEPARATES TWO BOXES ONCE THEY HOLD PICTURES.
+ *
+ * The gap between boxes is `BOX_INSET_PX` either side — five pixels of the
+ * lane showing through. Against flat grey that is plenty: two greys with a
+ * dark line between them is obviously two things. Between two frames it
+ * disappears, because a photograph already contains dark edges and the eye has
+ * no reason to read that particular one as a boundary rather than as part of
+ * the picture.
+ *
+ * WIDENING THE GAP IS THE WRONG FIX. A box's width is its duration; spending
+ * more of it on separation makes short clips shorter and changes what the bar
+ * is saying. So the boundary is painted rather than made bigger: a light
+ * hairline INSIDE each box's own edge, which reads as the frame line of a
+ * physical strip, and a dark one just outside it, which deepens the gap that
+ * is already there. Neither takes a pixel of layout — an inset shadow paints
+ * within the box and an outer one paints into the gap.
+ *
+ * Only when frames are on. Over grey the same treatment is a hairline on a
+ * flat colour, which is decoration answering a question nobody asked.
+ */
+const FRAMED_BOX_EDGE =
+  "inset 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.85)";
+
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */
   x: number;
@@ -330,6 +354,9 @@ export function SeamLane({
                   // thumbnails on can add pictures but can never subtract the
                   // bar.
                   backgroundColor: colour,
+                  // See `FRAMED_BOX_EDGE`: the gap between two pictures has to
+                  // be drawn, where the gap between two greys did not.
+                  ...(thumbnails.shown ? { boxShadow: FRAMED_BOX_EDGE } : {}),
                 }}
                 className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]"
               >

@@ -2103,14 +2103,30 @@ export const ThePlaybarCanDrawFrames: Story = {
 
     // The colour is still under it, so a frame that never loads leaves a bar
     // rather than a hole.
-    expect(getComputedStyle(first.parentElement!).backgroundColor).not.toBe(
-      "rgba(0, 0, 0, 0)",
-    );
+    const boxStyle = getComputedStyle(first.parentElement!);
+    expect(boxStyle.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+
+    // AND THE BOUNDARY IS DRAWN. The gap between two boxes is five pixels of
+    // the lane showing through, which is obvious between two greys and
+    // invisible between two photographs — a picture already contains dark
+    // edges and the eye has no reason to read that one as a boundary. Painted
+    // rather than widened, because a box's width is its duration and spending
+    // more of it on separation would change what the bar is saying.
+    expect(boxStyle.boxShadow).not.toBe("none");
+    // Both halves: a light hairline inside the box's own edge, and a dark one
+    // just outside it in the gap.
+    expect(boxStyle.boxShadow).toMatch(/inset/);
+    expect(boxStyle.boxShadow.match(/rgba?\(/g)?.length).toBe(2);
 
     framesTo("OFF");
     await waitFor(() =>
       expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
     );
+    // AND IT GOES AWAY WITH THEM. Over flat grey the same treatment is a
+    // hairline on a plain colour — decoration answering a question nobody
+    // asked, and one more thing between the reader and the rhythm the grey
+    // bar is for.
+    expect(getComputedStyle(seamBoxes()[0]!).boxShadow).toBe("none");
   },
 };
 
