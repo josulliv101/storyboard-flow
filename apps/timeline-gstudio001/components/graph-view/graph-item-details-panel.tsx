@@ -292,6 +292,14 @@ export function DetailsPanel({
         // that was opened. The neighbours are working panels, not focus traps.
         {...(centre ? dialogProps : {})}
         data-item-details-panel={centre ? "centre" : "neighbour"}
+        // WHAT FRAME THIS PANEL IS SHOWING, when the clock is what put it
+        // there. Absent on a panel resting on its own first frame, which is a
+        // different state from "at zero seconds" and the one an untouched view
+        // is in. Exposed because it is the one fact about a landing that
+        // cannot be read any other way: the bar is a window, so its own
+        // seconds mean different things on different bars, while this is the
+        // clip's own time and travels.
+        data-item-details-at={monitor === null ? undefined : monitor.seconds.toFixed(3)}
         data-item-details-scrub-focus={scrubFocus ? "" : undefined}
         data-item-details-magnified={magnification > 1 ? "" : undefined}
         style={{

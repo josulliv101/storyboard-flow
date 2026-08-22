@@ -408,6 +408,17 @@ function centreBox(): HTMLElement {
  * row easing across three panels is invisible to it and a measurement taken
  * straight after reads a card mid-flight.
  */
+/** Press one of the reach picker's buttons by its label. */
+function reachTo(label: string): void {
+  const group = document.querySelector<HTMLElement>("[data-details-bar-reach]");
+  expect(group).not.toBeNull();
+  const button = Array.from(group!.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  expect(button).not.toBeUndefined();
+  button!.click();
+}
+
 async function settleRow(): Promise<void> {
   const row = document.querySelector<HTMLElement>("[data-details-strip]");
   expect(row).not.toBeNull();
@@ -1948,9 +1959,18 @@ export const TheMinimapMovesTheWindow: Story = {
       document.querySelector<HTMLElement>("[data-seam-mini-window]")!.getBoundingClientRect();
     const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
 
-    // EVERY clip is on it, both collections' worth — this is the one thing on
-    // screen that never crops.
-    expect(document.querySelectorAll("[data-seam-mini-segment]").length).toBe(24);
+    // AS FAR AS THE BAR REACHES, which is the default ten either side — the
+    // minimap draws the stretch the clock covers, not the whole project. It
+    // used to be the one thing on screen that never cropped; the reach picker
+    // is what changed that, and `All` is still there for when the question is
+    // where this sits in the sequence.
+    const segments = () => document.querySelectorAll("[data-seam-mini-segment]").length;
+    expect(segments()).toBe(21);
+    reachTo("All");
+    await waitFor(() => expect(segments()).toBe(24));
+    // Left as it was found, for whichever story runs next in this browser.
+    reachTo("10");
+    await waitFor(() => expect(segments()).toBe(21));
 
     // The window is a PART of it, not all of it: if it covered the whole
     // minimap there would be nothing off the sides and nothing to say.
@@ -2021,6 +2041,50 @@ export const PointingAtABoxSaysWhatItIs: Story = {
 };
 
 /**
+ * HOW FAR THE BAR REACHES IS A SETTING, and ten either side is where it opens.
+ *
+ * The bar used to draw the whole collection whatever you were doing, which is
+ * the right answer to "where does this sit in the sequence" and the wrong one
+ * to "what is around this cut" — at a hundred clips a box is a hairline and
+ * the thing you are working on is indistinguishable from the thing you are
+ * not. The reach is the dial between those two questions.
+ *
+ * TWENTY AND ALL ARE THE SAME PICTURE HERE, because this scene is 24 clips
+ * long and twenty either side reaches past both ends. That is the window
+ * clamping rather than the setting failing — `barReachWindow` has its own
+ * tests for the arithmetic, and this covers the wiring.
+ */
+export const TheBarReachIsASetting: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const boxes = () => seamBoxes().length;
+    const subject = () => centreBox().getAttribute("data-seam-segment");
+
+    // SET EXPLICITLY RATHER THAN ASSUMED. The reach is remembered at module
+    // scope for the session, so a story that ran earlier in this browser and
+    // reached for `All` would leave it there — and a story that reads the
+    // default is really reading whoever went last. What the default IS belongs
+    // in the module's own test, where nothing can have moved it.
+    reachTo("10");
+    await waitFor(() => expect(boxes()).toBe(21));
+    const startedOn = subject();
+
+    reachTo("All");
+    await waitFor(() => expect(boxes()).toBe(24));
+
+    reachTo("10");
+    await waitFor(() => expect(boxes()).toBe(21));
+
+    // CHANGING THE REACH IS NOT A MOVE. It changes how much you can get to,
+    // not where you are — losing your place to a change of view would make
+    // the control cost more than it is worth.
+    expect(subject()).toBe(startedOn);
+  },
+};
+
+/**
  * LETTING GO IS THE COMMIT — AND YOU KEEP THE FRAME YOU LET GO ON.
  *
  * A drag and a press that does not travel are still told apart (distance, not
@@ -2051,6 +2115,12 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     const stripX = () => strip().getBoundingClientRect().left;
     const panels = () => document.querySelectorAll("[data-item-details-panel]").length;
     const boxIndex = () => seamBoxes().indexOf(centreBox());
+    const shownFrame = () =>
+      Number(
+        document
+          .querySelector<HTMLElement>('[data-item-details-panel="centre"]')!
+          .getAttribute("data-item-details-at"),
+      );
 
     // Hold the scrub, read the clock at the moment before the release, let go.
     const dragToBox = async (box: HTMLElement) => {
@@ -2058,11 +2128,18 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
       const x = rect.left + rect.width * 0.5;
       scrubToClientX(x, { hold: true });
       await waitFor(() => expect(at()).toBeGreaterThan(0));
-      const letGoAt = at();
+      // The frame the MONITOR is on at the moment of release — the thing the
+      // landing has to preserve, and the only reading that survives the bar
+      // being rebuilt around a new subject.
+      const heldFrame = Number(
+        document
+          .querySelector<HTMLElement>("[data-item-details-at]")!
+          .getAttribute("data-item-details-at"),
+      );
       const surface = seamSurface();
       const surfaceBox = surface.getBoundingClientRect();
       fireEvent.pointerUp(surface, pointerAt(x, surfaceBox.top + surfaceBox.height / 2));
-      return letGoAt;
+      return heldFrame;
     };
 
     expect(subject()).toBe("subject");
@@ -2088,10 +2165,11 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     await settleStrip();
     await settleRow();
     expect(subject()).toBe(near.getAttribute("data-seam-segment"));
-    // THE CLOCK DID NOT MOVE. Every panel derives its picture from
-    // `seamAt(timeline, barSeconds)`, so a bar reading the same second before
-    // and after the row advances IS the centre panel holding the frame.
-    expect(at()).toBe(letGoNear);
+    // THE FRAME CAME WITH IT. Read off the panel rather than off the bar:
+    // the bar is a window with a reach either side of the subject, so it is
+    // rebuilt around wherever you land and its own seconds are not comparable
+    // across the journey. The panel reports the clip's OWN time, which is.
+    expect(shownFrame()).toBeCloseTo(letGoNear, 2);
     // And the window let go again once it had arrived.
     await waitFor(() => expect(panels()).toBe(restingPanels));
 
@@ -2106,10 +2184,12 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
         .getBoundingClientRect().left;
     const restingCentreX = seatX();
     const landedOn = subject();
-    const far = seamBoxes()[boxIndex() + 12]!;
+    const far = seamBoxes()[boxIndex() + 8]!;
     // THE PRECONDITION. Past `STEPPED_MAX`, or this measures the easing path
-    // twice and the cut not at all.
-    expect(12).toBeGreaterThan(5);
+    // twice and the cut not at all — and inside the default reach, or there is
+    // no box there to aim at.
+    expect(8).toBeGreaterThan(5);
+    expect(far).not.toBeUndefined();
     const letGoFar = await dragToBox(far);
     await waitFor(() => expect(subject()).not.toBe(landedOn));
 
@@ -2139,7 +2219,7 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     // Zero here is `overflow-clip` doing its job.
     expect(strip().parentElement!.scrollLeft).toBe(0);
     expect(subject()).toBe(far.getAttribute("data-seam-segment"));
-    expect(at()).toBe(letGoFar);
+    expect(shownFrame()).toBeCloseTo(letGoFar, 2);
   },
 };
 
