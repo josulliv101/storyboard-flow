@@ -21,6 +21,55 @@ import type { SeamStrip } from "./graph-seam-strip";
  */
 const SEAM_SLIDE_MS = 520;
 
+/** How wide the end-of-project stop is. Wider than the hairline between two
+ *  boxes, so it is read as an edge rather than as another gap. */
+const CAP_WIDTH_PX = 6;
+
+/**
+ * WHERE THE PROJECT ENDS, drawn just outside the first and last boxes.
+ *
+ * The bar is a window: at most reaches it shows a stretch with more either
+ * side, and running out of boxes means only that you have reached the edge of
+ * what is on screen. Once the window actually reaches the first or last clip
+ * that stops being true, and there is no way to tell the two situations apart
+ * from the boxes alone — a bar that has run out looks exactly like a bar that
+ * has been cropped.
+ *
+ * SO IT IS DRAWN, AND ONLY THEN. A solid stop with the light falling away
+ * from it: the bar reads left to right as film, so the end of the film is a
+ * hard edge with nothing after it. Deliberately not another box — anything
+ * box-shaped here would be counted as a clip.
+ *
+ * INSIDE THE STRIP, so it travels with the boxes rather than sitting at the
+ * end of the track. The track's end is a fact about scrolling; this is a fact
+ * about the project, and the two are not in the same place at most zooms.
+ */
+function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: number }>) {
+  return (
+    <span
+      data-seam-cap={side}
+      aria-hidden="true"
+      style={{
+        // Just outside the box's own edge, using the same inset the gap
+        // between two boxes is made of — so the stop sits at the distance the
+        // eye already reads as "next thing along".
+        left: side === "start" ? atPx - CAP_WIDTH_PX - BOX_INSET_PX : atPx + BOX_INSET_PX,
+        width: CAP_WIDTH_PX,
+      }}
+      className={[
+        "absolute inset-y-1 rounded-[2px]",
+        // The gradient runs AWAY from the film: solid against the last frame,
+        // gone by the outer edge. A flat bar would read as one more clip in a
+        // colour nobody chose.
+        side === "start"
+          ? "bg-gradient-to-l from-zinc-300/85 to-zinc-300/0"
+          : "bg-gradient-to-r from-zinc-300/85 to-zinc-300/0",
+      ].join(" ")}
+    />
+  );
+}
+
+
 /** Roughly the bar's own height (`h-9`), so a cell reads as a square. */
 const FILMSTRIP_CELL_PX = 36;
 /** Past this the cells stretch rather than multiply — see `SegmentFrames`. */
@@ -250,6 +299,8 @@ export function SeamLane({
   hover,
   chip,
   handlers,
+  atStart,
+  atEnd,
 }: Readonly<{
   /** The element the bar attaches its non-passive wheel listener to. */
   laneRef: React.RefObject<HTMLDivElement | null>;
@@ -267,6 +318,12 @@ export function SeamLane({
   /** The time under the playhead while it is being dragged. */
   chip: string | null;
   handlers: React.ComponentProps<"div">;
+  /** Whether the bar's first clip is the project's first — see `SeamEndCap`.
+   *  False when the reach has cropped the window short of it, because then
+   *  there IS more to the left and saying otherwise would be a lie. */
+  atStart: boolean;
+  /** The same question at the other end. */
+  atEnd: boolean;
 }>) {
   // THE BOXES SLIDE INTO POSITION ON A MOVE, and jump for everything else.
   //
@@ -411,6 +468,9 @@ export function SeamLane({
               </span>
             );
           })}
+
+          {atStart && <SeamEndCap side="start" atPx={0} />}
+          {atEnd && <SeamEndCap side="end" atPx={strip.totalPx} />}
 
           {/* WHERE ONE COLLECTION ENDS AND THE NEXT BEGINS. A dashed hairline
             rather than a gap: a gap is what the bar already puts between
