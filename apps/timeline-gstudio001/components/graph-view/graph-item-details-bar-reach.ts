@@ -6,11 +6,13 @@
 //
 // A number is a COUNT OF CLIPS EITHER SIDE, so 10 puts 21 clips on the bar
 // when the subject has that many neighbours — ten behind, the subject, ten
-// ahead. `"all"` is the whole collection, which is what the bar did before
+// ahead. Five is the tightest, and roughly the run the strip below can show
+// at once: at that reach the bar stops being a map and becomes a close look
+// at the cut you are working on. `"all"` is the whole collection, which is what the bar did before
 // there was a choice and is still the right answer when the question is
 // "where does this sit in the sequence".
 
-export const BAR_REACHES = [10, 20, "all"] as const;
+export const BAR_REACHES = [5, 10, 20, "all"] as const;
 export type BarReach = (typeof BAR_REACHES)[number];
 
 /**

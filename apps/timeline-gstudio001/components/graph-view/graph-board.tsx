@@ -128,6 +128,7 @@ import { GraphRenderStatus } from "./graph-render-status";
 import { GraphProjectMenu } from "./graph-project-menu";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
+import { PlaybarThumbnailsProvider } from "./graph-playbar-thumbnails";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -159,6 +160,8 @@ function BoardMenu({
   onItemSizeChange,
   clipNamesShown,
   onClipNamesChange,
+  playbarThumbnails,
+  onPlaybarThumbnailsChange,
   projectId,
 }: Readonly<{
   itemSize: ItemSize;
@@ -167,6 +170,10 @@ function BoardMenu({
    *  see `graph-clip-names.tsx`. */
   clipNamesShown: boolean;
   onClipNamesChange: (shown: boolean) => void;
+  /** Whether the details view's play bar draws each clip's first frame rather
+   *  than a grey box. Off by default — see `graph-playbar-thumbnails.tsx`. */
+  playbarThumbnails: boolean;
+  onPlaybarThumbnailsChange: (shown: boolean) => void;
   /** Whose render format this menu edits. The section reads and writes the
    *  document itself, so the menu only has to say WHICH one. */
   projectId: string;
@@ -233,6 +240,18 @@ function BoardMenu({
             onSelect={(event) => event.preventDefault()}
           >
             Show name over item
+          </DropdownMenuCheckboxItem>
+          {/* THE PLAY BAR, not the board — which is why it names its surface
+              where the item above does not. It sits with the other "what does
+              this draw" answers rather than in the details view itself: that
+              view is a place you go to work, and a setting you reach for once
+              does not belong among the controls you use while you are there. */}
+          <DropdownMenuCheckboxItem
+            checked={playbarThumbnails}
+            onCheckedChange={(next) => onPlaybarThumbnailsChange(next === true)}
+            onSelect={(event) => event.preventDefault()}
+          >
+            Show playbar thumbnails
           </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
         {/* RENDER FORMAT, moved in from the header row.
@@ -1925,6 +1944,8 @@ export function GraphBoard({
   onItemSizeChange,
   clipNamesShown,
   onClipNamesChange,
+  playbarThumbnails,
+  onPlaybarThumbnailsChange,
   pixelsPerSecond,
   onPixelsPerSecondChange,
   previewOn,
@@ -1956,6 +1977,11 @@ export function GraphBoard({
    *  threaded down; see `graph-clip-names.tsx`. */
   clipNamesShown: boolean;
   onClipNamesChange: (shown: boolean) => void;
+  /** Whether the play bar in the details view draws each clip's first frame
+   *  rather than a grey box. Published as a context; see
+   *  `graph-playbar-thumbnails.tsx`. */
+  playbarThumbnails: boolean;
+  onPlaybarThumbnailsChange: (shown: boolean) => void;
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   /** The preview pane above the board. The board renders it AND carries its
@@ -2137,6 +2163,7 @@ export function GraphBoard({
       {/* Spans the header AND the surfaces for the same reason: the toggle
           that sets it lives in the header's menu, and every card that reads it
           is below. */}
+      <PlaybarThumbnailsProvider shown={playbarThumbnails}>
       <ClipNamesProvider shown={clipNamesShown}>
       {/* Spans the surfaces AND the child rows below them, because the pairing
           it carries joins the two: a collection's card up here and its row
@@ -2610,6 +2637,8 @@ export function GraphBoard({
                   onItemSizeChange={onItemSizeChange}
                   clipNamesShown={clipNamesShown}
                   onClipNamesChange={onClipNamesChange}
+                  playbarThumbnails={playbarThumbnails}
+                  onPlaybarThumbnailsChange={onPlaybarThumbnailsChange}
                   projectId={projectId}
                 />
               </div>
@@ -2927,6 +2956,7 @@ export function GraphBoard({
       </TagFilterProvider>
       </CollectionHoverProvider>
       </ClipNamesProvider>
+      </PlaybarThumbnailsProvider>
       </ItemDetailsProvider>
     </OpenKeyBoundary>
   );

@@ -267,6 +267,10 @@ export function GraphTimelineView({
   // stored preference: neither persists today, and one of the two quietly
   // outliving the tab would be the surprise.
   const [clipNamesShown, setClipNamesShown] = useState(false);
+  // Whether the play bar draws frames instead of grey boxes. Session state
+  // beside the two above for the same reason they are: none of the three
+  // persists, and one of them quietly outliving the tab would be the surprise.
+  const [playbarThumbnails, setPlaybarThumbnails] = useState(false);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
   // Decides whether trim handles are drawn on every clip or only the
   // selected one — see the prop below.
@@ -917,6 +921,8 @@ export function GraphTimelineView({
                 onItemSizeChange={setItemSize}
                 clipNamesShown={clipNamesShown}
                 onClipNamesChange={setClipNamesShown}
+                playbarThumbnails={playbarThumbnails}
+                onPlaybarThumbnailsChange={setPlaybarThumbnails}
                 pixelsPerSecond={pixelsPerSecond}
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}

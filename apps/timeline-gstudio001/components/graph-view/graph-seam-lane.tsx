@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
+import { usePlaybarThumbnails } from "./graph-playbar-thumbnails";
 import type { SeamStrip } from "./graph-seam-strip";
 
 /**
@@ -135,6 +136,7 @@ export function SeamLane({
   // cleared a render later — a cascading render to describe half a second of
   // styling. The pointer handler clears it early so a drag begun mid-slide is
   // still exact from its first frame.
+  const thumbnails = usePlaybarThumbnails();
   const stripRef = useRef<HTMLDivElement | null>(null);
   const centreWasRef = useRef(centreClipId);
   const offsetWasRef = useRef(offset);
@@ -215,14 +217,48 @@ export function SeamLane({
                 style={{
                   left: segment.leftPx + BOX_INSET_PX,
                   width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                  // THE COLOUR STAYS UNDER THE PICTURE. A frame that has not
+                  // loaded yet, or a clip that has no poster at all, leaves
+                  // the box exactly as it is without the setting — so turning
+                  // thumbnails on can add pictures but can never subtract the
+                  // bar.
                   backgroundColor: colour,
                 }}
                 className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]"
               >
+                {thumbnails && segment.posterSrc !== undefined ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    data-seam-thumbnail={segment.clipId}
+                    src={segment.posterSrc}
+                    alt=""
+                    aria-hidden="true"
+                    // COVER, and no more. The box's width is its duration and
+                    // its height is the bar's, so the frame it holds is
+                    // whatever shape that comes out as — cropping to fill is
+                    // the only fit that keeps every box the same height and
+                    // the run of them still readable as a strip. A `contain`
+                    // fit would letterbox each clip differently and turn the
+                    // bar into a row of unrelated shapes.
+                    className="absolute inset-0 h-full w-full object-cover"
+                    // The bar can hold a hundred of these and none of them is
+                    // the thing being read on arrival.
+                    loading="lazy"
+                    decoding="async"
+                    draggable={false}
+                  />
+                ) : null}
                 {isCentre && segment.widthPx >= 16 ? (
                   <span
                     data-seam-marker
-                    className="h-3 w-3 rounded-full bg-black/50"
+                    // Above the frame once there is one, and darker for it: a
+                    // 50% black dot reads on grey and disappears into a busy
+                    // picture, which is the one box it has to be findable in.
+                    className={
+                      thumbnails
+                        ? "relative z-10 h-3 w-3 rounded-full bg-black/70 ring-1 ring-white/70"
+                        : "h-3 w-3 rounded-full bg-black/50"
+                    }
                   />
                 ) : null}
               </span>

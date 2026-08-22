@@ -15,6 +15,7 @@ import { createGraphDetailsStore } from "@/lib/graph-details-store";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { ItemDetailsProvider, useItemDetails } from "./graph-item-details-context";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
+import { PlaybarThumbnailsProvider } from "./graph-playbar-thumbnails";
 
 // The details modal's first stories. It had none, which is how it came to
 // describe a VOICEOVER as a "still" — the branch that renders the duration
@@ -248,7 +249,13 @@ function EndHarness() {
   );
 }
 
-function SeamHarness({ scene = SEAM_SCENE }: { scene?: GraphNodeSpec }) {
+function SeamHarness({
+  scene = SEAM_SCENE,
+  thumbnails = false,
+}: {
+  scene?: GraphNodeSpec;
+  thumbnails?: boolean;
+}) {
   // Built FROM the scene, so a fixture can grow without the harness having to
   // be told about every clip in it by name.
   const store = createGraphDetailsStore(
@@ -262,6 +269,7 @@ function SeamHarness({ scene = SEAM_SCENE }: { scene?: GraphNodeSpec }) {
   );
   return (
     <div className="graph-view-theme min-h-[600px] bg-zinc-950">
+      <PlaybarThumbnailsProvider shown={thumbnails}>
       <DndCollections initialGraph={graphOfRoot(scene)}>
         <GraphDetailsProvider store={store}>
           <ItemDetailsProvider>
@@ -270,6 +278,7 @@ function SeamHarness({ scene = SEAM_SCENE }: { scene?: GraphNodeSpec }) {
           </ItemDetailsProvider>
         </GraphDetailsProvider>
       </DndCollections>
+      </PlaybarThumbnailsProvider>
     </div>
   );
 }
@@ -2037,6 +2046,65 @@ export const PointingAtABoxSaysWhatItIs: Story = {
       relatedTarget: document.body,
     });
     await waitFor(() => expect(preview()).toBeNull());
+  },
+};
+
+/**
+ * THE PLAY BAR CAN DRAW FRAMES INSTEAD OF GREY BOXES, and does not by default.
+ *
+ * A bar of thumbnails answers "which shot is that" without a hover, which is
+ * the whole reason to want it. What it costs is what the grey bar is good at:
+ * a box's width is its duration, so an even run of grey reads as rhythm —
+ * where the cuts fall, which shots are long, where the pace changes. Put
+ * pictures in them and the eye reads the pictures, because it always will.
+ * Hence a setting, and hence off.
+ *
+ * THE COLOUR STAYS UNDERNEATH. A clip with no poster — audio has none — and a
+ * frame that has not loaded yet both leave the box exactly as it is without
+ * the setting, so turning this on can add pictures but never subtract the bar.
+ */
+export const ThePlaybarCanDrawFrames: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} thumbnails />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+
+    const boxes = seamBoxes();
+    const thumbs = Array.from(
+      document.querySelectorAll<HTMLImageElement>("[data-seam-thumbnail]"),
+    );
+    expect(thumbs.length).toBe(boxes.length);
+
+    // COVER, AND THE WHOLE BOX. The box's width is its duration and its height
+    // is the bar's, so the frame is whatever shape that comes out as —
+    // anything but `cover` would letterbox each clip differently and turn a
+    // strip into a row of unrelated shapes.
+    const first = thumbs[0]!;
+    expect(getComputedStyle(first).objectFit).toBe("cover");
+    const box = first.parentElement!.getBoundingClientRect();
+    const picture = first.getBoundingClientRect();
+    expect(picture.width).toBeCloseTo(box.width, 0);
+    expect(picture.height).toBeCloseTo(box.height, 0);
+
+    // The colour is still under it, so a frame that never loads leaves a bar
+    // rather than a hole.
+    expect(getComputedStyle(first.parentElement!).backgroundColor).not.toBe(
+      "rgba(0, 0, 0, 0)",
+    );
+  },
+};
+
+/** OFF BY DEFAULT: the same bar, same scene, no pictures. Its own story rather
+ *  than a second half of the one above, because "the setting does something"
+ *  and "the setting is off unless asked for" fail in different ways and one
+ *  should not hide the other. */
+export const ThePlaybarIsGreyUnlessAsked: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    expect(seamBoxes().length).toBeGreaterThan(0);
+    expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0);
   },
 };
 
