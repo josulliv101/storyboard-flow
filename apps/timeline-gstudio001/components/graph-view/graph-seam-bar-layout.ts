@@ -32,6 +32,18 @@ export type SeamBarClip = Readonly<{
   /** Where the visible range starts in the source, so sampled frames land
    *  inside the part of the clip that actually plays. */
   trimInSeconds?: number;
+  /**
+   * Skipped at play time.
+   *
+   * The flag has existed on the node all along; the bar simply never heard
+   * about it, so a disabled clip drew as an ordinary box and the one place
+   * you look to understand playback was the one place that would not tell you
+   * a shot was going to be silently stepped over. It still occupies its full
+   * width — the clip is part of the sequence you are reading even when it is
+   * not part of the sequence that plays, and shrinking it would move every cut
+   * after it.
+   */
+  disabled?: boolean;
 }>;
 
 /**

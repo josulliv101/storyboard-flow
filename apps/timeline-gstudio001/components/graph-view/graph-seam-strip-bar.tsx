@@ -25,6 +25,7 @@ import {
   stripPositionAt,
   stripXFor,
 } from "./graph-seam-strip";
+import { formatClock } from "@/lib/format-duration";
 
 /**
  * The bar over the carousel: the whole project in playback order, as a
@@ -113,6 +114,19 @@ function edgePanVelocity(clientX: number, track: DOMRect): number {
 function readSeconds(value: number): string {
   return `${value.toFixed(2)}s`;
 }
+
+/**
+ * What the two fit buttons aim at.
+ *
+ * `clip` is the collection the subject belongs to — the sequence being worked
+ * on, and the scale the bar already opens at. `all` is everything the reach
+ * window covers. They are the two questions worth one press: "show me this
+ * scene" and "show me the lot".
+ *
+ * Null once a wheel zoom has happened, because at that point neither is true
+ * and lighting one would be claiming a scale the bar is not at.
+ */
+type FitMode = "clip" | "all";
 
 export function SeamStripBar({
   clips,
@@ -288,6 +302,25 @@ export function SeamStripBar({
   const [scrubbing, setScrubbing] = useState(false);
   const [snapKey, setSnapKey] = useState(0);
   const [hover, setHover] = useState<SeamHover | null>(null);
+  // WHICH FIT THE BAR IS SITTING AT, if any. Seeded to `clip` because that is
+  // what the opening fit does — the button is lit on arrival because it
+  // describes where you already are, not somewhere you could go.
+  const [fitMode, setFitMode] = useState<FitMode | null>("clip");
+  // A WHEEL IS A GESTURE, and it has no end event.
+  //
+  // The minimap's window rectangle eases to a new place, which is right for a
+  // fit or a step and wrong for a pan: during a wheel the bar has to be
+  // exactly where the hand put it, and an eased rectangle would trail it. A
+  // press has a pointerup to switch this back off; a wheel only stops, so it
+  // is switched off on a short timer after the last notch.
+  const [wheeling, setWheeling] = useState(false);
+  const wheelStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (wheelStopRef.current !== null) clearTimeout(wheelStopRef.current);
+    },
+    [],
+  );
 
   const playheadPx =
     playheadAt === null
@@ -512,12 +545,20 @@ export function SeamStripBar({
       event.preventDefault();
       setFollowSuspended(true);
       setHover(null);
+      setWheeling(true);
+      if (wheelStopRef.current !== null) clearTimeout(wheelStopRef.current);
+      // Long enough to bridge the gap between notches of one scroll, short
+      // enough that letting go feels like letting go.
+      wheelStopRef.current = setTimeout(() => setWheeling(false), 160);
       if (event.ctrlKey || event.metaKey) {
         const from = scaleRef.current;
         const to = zoomByWheel(from, event.deltaY);
         if (to === from) return;
         const anchorLocalX = event.clientX - element.getBoundingClientRect().left;
         setPxPerSecond(to);
+        // NEITHER FIT IS TRUE ANY MORE. Leaving one lit after a zoom would be
+        // the control lying about the scale it names.
+        setFitMode(null);
         setOffset(offsetAfterZoom({ anchorLocalX, offset: offsetRef.current, from, to }));
         return;
       }
@@ -574,6 +615,47 @@ export function SeamStripBar({
   }, [broughtIntoView, centreClipId, nudgeIntoView, strip]);
 
   const ticks = useMemo(() => seamRulerTicks({ strip, clips }), [strip, clips]);
+
+  /**
+   * Re-scale so a span fills the track, and put the subject back under the
+   * card.
+   *
+   * BOTH HALVES, because a fit that only changed the scale would leave the bar
+   * showing whatever stretch happened to be under the old offset at the new
+   * zoom — usually nowhere near the clip being worked on. Fitting is a request
+   * to see something, so it re-centres as well as re-scales, which is the one
+   * place the bar deliberately overrides "stay where you were put".
+   */
+  const fitTo = useCallback(
+    (mode: FitMode) => {
+      const width = trackRef.current?.getBoundingClientRect().width ?? trackWidth;
+      if (width <= 0) return;
+      const span = mode === "clip" ? subjectCollectionSeconds : totalSeconds;
+      if (span <= 0) return;
+      const next = fitPixelsPerSecond(span, width);
+      setPxPerSecond(next);
+      setFitMode(mode);
+      setFollowSuspended(false);
+      // Re-centre with the NEW scale rather than the ref's old one — the ref
+      // is refreshed by an effect after render, so it is still the pre-fit
+      // value at this point and would centre against a scale that no longer
+      // exists.
+      const rebuilt = buildSeamStrip(clips, next);
+      const segment = rebuilt.segments.find((found) => found.clipId === centreClipId);
+      if (segment === undefined) return;
+      const target = centreAtPx > 0 ? centreAtPx : width / 2;
+      setOffset(target - (segment.leftPx + segment.widthPx / 2));
+    },
+    [
+      centreAtPx,
+      centreClipId,
+      clips,
+      setOffset,
+      subjectCollectionSeconds,
+      totalSeconds,
+      trackWidth,
+    ],
+  );
 
   const panToSeconds = useCallback(
     (value: number) => {
@@ -748,11 +830,56 @@ export function SeamStripBar({
               belongs with the transport rather than with the track: it says
               where playback IS, which is the same question the play button
               answers, and reading the two together is why it moved. */}
-          <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400">
-            <span className="text-blue-300">{readSeconds(atSeconds)}</span>
+          {/* CLOCK NOTATION, NOT SECONDS. `252.90s` is accurate and unusable —
+              nobody can place it in a four-minute cut without doing division.
+              Tenths rather than hundredths because this number MOVES: the
+              second decimal is a blur at playback speed, and the first is
+              exactly enough to see time passing. */}
+          <span
+            data-seam-clock
+            className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+          >
+            <span className="text-blue-400">{formatClock(atSeconds)}</span>
             {" / "}
-            {readSeconds(totalSeconds)}
+            <span className="text-blue-400/70">{formatClock(totalSeconds)}</span>
           </span>
+
+          {/* FIT: the two scales worth one press.
+              Zoom was ⌘-wheel and nothing else, which meant the two scales
+              anyone actually wants — this scene, and the lot — were reachable
+              only by rolling until they happened to arrive. Both are one
+              `fitPixelsPerSecond` call the bar was already making on open;
+              this just gives them a button. */}
+          <div
+            data-seam-fit
+            role="group"
+            aria-label="Fit the bar to"
+            className="hidden shrink-0 items-center gap-1 md:flex"
+          >
+            <span className="mr-1 font-mono text-[10px] text-zinc-500">fit</span>
+            {(["clip", "all"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={mode === fitMode}
+                onClick={() => fitTo(mode)}
+                title={
+                  mode === "clip"
+                    ? "Fit this clip's collection"
+                    : "Fit everything the bar reaches"
+                }
+                className={[
+                  "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
+                  mode === fitMode
+                    ? "bg-zinc-100 text-zinc-900"
+                    : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+                ].join(" ")}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+
           <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsRight}</div>
         </div>
       </div>
@@ -769,6 +896,12 @@ export function SeamStripBar({
         windowToSeconds={windowToSeconds}
         playheadSeconds={playheadSeconds}
         onPanToSeconds={panToSeconds}
+        // EASE THE WINDOW WHEN NOTHING IS DRIVING IT. A scrub can run the
+        // strip under a stationary pointer and a wheel pans it directly; both
+        // have to arrive exactly where the hand is. A fit, a step or a landing
+        // moves it somewhere else in a single frame, and that is the jump
+        // worth animating.
+        settled={!scrubbing && !wheeling}
       />
     </div>
   );

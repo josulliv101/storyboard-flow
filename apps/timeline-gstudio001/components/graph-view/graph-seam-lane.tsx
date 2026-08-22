@@ -258,9 +258,25 @@ const BOX_INSET_PX = 2.5;
  *
  * Only when frames are on. Over grey the whole treatment is decoration
  * answering a question nobody asked.
+ *
+ * ── AND IT IS A FILM STRIP, SO IT LOOKS LIKE ONE ────────────────────────
+ *
+ * The two tones are the same idea whichever way round they go: a gap reads
+ * BOTH light and dark, so one of them always has contrast against whatever is
+ * beside it. Which one is the ring and which is the core is therefore free —
+ * and the ring being the LIGHT one is what makes a run of boxes read as
+ * frames on a strip of film rather than as tiles in a chart.
+ *
+ *     two bright frames   white │ PALE dark PALE │ white   ← the core shows
+ *     two dark frames     black │ pale DARK pale │ black   ← the rings show
+ *
+ * So the strip's own background is near-black and each box casts a pale ring
+ * into the gap either side of it. Every gap still reads pale · dark · pale, no
+ * arrangement of neighbours leaves both tones without contrast, and the thing
+ * it now resembles is the thing it is.
  */
-const FRAMED_GAP_COLOUR = "rgba(212, 212, 216, 0.92)";
-const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(0, 0, 0, 0.82)";
+const FRAMED_GAP_COLOUR = "rgba(9, 9, 11, 0.95)";
+const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(244, 244, 245, 0.90)";
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */
@@ -422,11 +438,13 @@ export function SeamLane({
             if (segment.widthPx <= 0) return null;
             const isCentre = segment.clipId === centreClipId;
             const colour = colourOf.get(segment.clipId) ?? BAR_NEUTRAL_COLOUR;
+            const skipped = clipById.get(segment.clipId)?.disabled === true;
             return (
               <span
                 key={segment.clipId}
                 data-seam-segment={segment.clipId}
                 data-seam-segment-live={isCentre ? "" : undefined}
+                data-seam-segment-skipped={skipped ? "" : undefined}
                 aria-hidden="true"
                 style={{
                   left: segment.leftPx + BOX_INSET_PX,
@@ -452,20 +470,83 @@ export function SeamLane({
                     style={thumbnails.style}
                   />
                 ) : null}
-                {isCentre && segment.widthPx >= 16 ? (
+                {/* SKIPPED AT PLAY TIME: struck through with hatching.
+                    Diagonals rather than a wash, because a dimmed box is
+                    indistinguishable from a dark frame and a box this bar is
+                    already drawing pictures in has no spare brightness to
+                    signal with. Hatching is the one treatment that survives
+                    any content under it — it is a pattern, and footage is
+                    not. It paints OVER the frames and inside the box, so it
+                    costs no width: a disabled clip still occupies its full
+                    duration, which is the truth about where the later cuts
+                    fall. */}
+                {skipped ? (
                   <span
-                    data-seam-marker
-                    // Above the frame once there is one, and darker for it: a
-                    // 50% black dot reads on grey and disappears into a busy
-                    // picture, which is the one box it has to be findable in.
-                    className={
-                      thumbnails.shown
-                        ? "relative z-10 h-3 w-3 rounded-full bg-black/70 ring-1 ring-white/70"
-                        : "h-3 w-3 rounded-full bg-black/50"
-                    }
+                    data-seam-hatch
+                    aria-hidden="true"
+                    className="absolute inset-0 z-10 rounded-[3px]"
+                    style={{
+                      backgroundImage:
+                        "repeating-linear-gradient(45deg, rgba(9,9,11,0.72) 0px, rgba(9,9,11,0.72) 3px, rgba(228,228,231,0.55) 3px, rgba(228,228,231,0.55) 6px)",
+                    }}
                   />
                 ) : null}
               </span>
+            );
+          })}
+
+          {/* THE CLIP THE CARDS ARE ON, ringed rather than dotted.
+              A dot inside the box marked the centre for a while and had to
+              fight whatever picture was behind it. A ring is drawn on the
+              box's own edge, where there is never any content — so it reads at
+              every zoom, on any footage, and at widths where a 12px dot would
+              not have fitted at all. Red because it is the same red as the
+              playhead: both answer "which clip is the view about", one in
+              space and one in time.
+
+              OUTSIDE the segment list so it can sit above every box including
+              its neighbours' rings, and so a one-pixel-wide clip still gets a
+              visible mark. */}
+          {(() => {
+            const segment = strip.segments.find((found) => found.clipId === centreClipId);
+            if (segment === undefined || segment.widthPx <= 0) return null;
+            return (
+              <span
+                data-seam-marker
+                aria-hidden="true"
+                className="pointer-events-none absolute z-20 rounded-[4px] ring-2 ring-red-500"
+                style={{
+                  left: segment.leftPx + BOX_INSET_PX - 1,
+                  width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2) + 2,
+                  top: -1,
+                  bottom: -1,
+                }}
+              />
+            );
+          })()}
+
+          {/* AND SAID AGAIN ABOVE THE BOX, in red.
+              The hatching says a clip is skipped once you are looking at it;
+              this says it while you are scanning the bar for something else,
+              which is when it matters — the whole failure mode of a disabled
+              clip is not noticing one. Dotted, so it is never confused with
+              the solid red ring below it, and clear of the boxes so it does
+              not eat into a width that means duration. */}
+          {strip.segments.map((segment) => {
+            if (segment.widthPx <= 0) return null;
+            if (clipById.get(segment.clipId)?.disabled !== true) return null;
+            return (
+              <span
+                key={`skip-${segment.clipId}`}
+                data-seam-skip-rule={segment.clipId}
+                aria-hidden="true"
+                className="pointer-events-none absolute border-t-2 border-dotted border-red-500/80"
+                style={{
+                  left: segment.leftPx + BOX_INSET_PX,
+                  width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                  top: -6,
+                }}
+              />
             );
           })}
 

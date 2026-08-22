@@ -53,6 +53,7 @@ export function DetailsPanel({
   scrubbing = false,
   swipe,
   width,
+  spare = false,
   dimmed = false,
   scrubFocus = false,
   clipLabel,
@@ -173,6 +174,16 @@ export function DetailsPanel({
    */
   /** Set by the strip, which owns how many panels are on screen. */
   width: string;
+  /**
+   * Built and held ready, but outside the window the count promises.
+   *
+   * `visibility: hidden` rather than unmounting: the whole point of these is
+   * that the panel already exists when it becomes the one arriving, so it has
+   * to keep its element, its video and its decoded frame. It keeps its width
+   * too — the row's centring is arithmetic over uniform neighbour widths, and
+   * a collapsed spare would move everything between it and the middle.
+   */
+  spare?: boolean;
   /**
    * Pull this panel's picture back, because the clock is running and it is not
    * the one being watched.
@@ -306,8 +317,40 @@ export function DetailsPanel({
   // cannot query its own width — and the panel needs to change its own HEIGHT
   // when it gets narrow, not merely what it puts inside itself. The wrapper
   // carries the width and nothing else.
+  // THE WIDTH ANIMATES, and it is the one thing here that animates layout
+  // rather than paint.
+  //
+  // Stepping makes a different clip the subject, so the outgoing centre has to
+  // narrow and the incoming one has to widen — that size change IS the motion,
+  // and faking it with a transform would scale the type along with the frame.
+  // It is two elements for 300ms, in step with the row's own slide so a panel
+  // arrives at its new size exactly as it arrives at its new place.
+  // `motion-reduce` drops it to a cut.
   return (
-      <div ref={panelRef} className="@container shrink-0" style={{ width }}>
+      <div
+        ref={panelRef}
+        data-item-details-spare={spare ? "" : undefined}
+        className={[
+          "@container shrink-0",
+          // A STEP ANIMATES ITS WIDTH; A LANDING DOES NOT.
+          //
+          // Stepping makes a different clip the subject, so the outgoing
+          // centre narrows and the incoming one widens — that size change IS
+          // the motion, in step with the row's own slide.
+          //
+          // A landing is the opposite case and has been since the row learned
+          // to cut: the middle card has been the monitor for the whole scrub,
+          // so it is already showing the clip you landed on and it must not
+          // move. Animating its width would put the one thing that did not
+          // change back into motion, and would leave its edges drifting for
+          // 300ms after a gesture whose whole claim is that it arrives
+          // instantly.
+          swapping
+            ? "transition-none"
+            : "transition-[width] duration-300 ease-out motion-reduce:transition-none",
+        ].join(" ")}
+        style={{ width, ...(spare ? { visibility: "hidden" as const } : {}) }}
+      >
       <div
         // FOCUS WIRING ON THE CENTRE ONLY. Every panel is fully live — the
         // grips trim, the title renames, the video seeks — but "which dialog

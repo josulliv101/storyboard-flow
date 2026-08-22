@@ -98,12 +98,30 @@ cannot drift by a subpixel.
 - **Only `floor(viewCount/2) + 1` panels either side are actually mounted.**
   Everything else is an empty div of the right width holding its position. The
   spare pair beyond the visible edge means an arriving panel already exists
-  rather than being constructed mid-slide.
-- **View count is 3 or 5**, picked bottom-right. Width is
-  `min(48rem, (100vw - 3rem - (n-1)rem) / (n-1))` — so `n-2` panels are fully
-  visible and the two outermost are half visible, and the widths add to exactly
-  one viewport. The picker dims to 20% opacity while scrubbing.
+  rather than being constructed mid-slide. Those spares are
+  **`visibility: hidden`** (`data-item-details-spare`) — they keep their width,
+  because the centring is arithmetic over uniform neighbour widths, but they
+  paint nothing. Without that they show as a sliver down each side, since
+  `count` panels now fill the viewport exactly.
+- **View count is 3 or 5**, picked bottom-right. The picker dims to 20%
+  opacity while scrubbing.
+- **Two widths, not one.** The clip being worked on is **1.75×** its
+  neighbours, and every panel is fully visible:
+
+  ```
+  N = (100vw - 3rem - (count-1)rem) / (count - 1 + 1.75)      neighbour
+  C = 1.75 × N                                                 centre
+  ```
+
+  It used to be one width with the outer pair hanging half off each edge —
+  which is what made "show three" mean one whole panel and two halves.
+- **The centre's extra width cancels out of the centring.** The row still
+  translates by `-(N + gap) × (centre - (n-1)/2)`: the wide panel is symmetric
+  about its own middle, so only the neighbour width sets the step.
 - Transition on the row: `300ms ease-out`, disabled while a finger is on it.
+  The panels' **width** animates over the same 300ms on a step — that size
+  change is the motion — and is **cut to `transition-none` on a landing**,
+  because a landing must not move the middle card at all.
 
 ### What one panel contains
 
@@ -287,6 +305,16 @@ passively at the root, so `preventDefault` from a synthetic handler is ignored
   out otherwise looks exactly like a bar that has been cropped. They are a 6px
   gradient falling away from the film — deliberately not box-shaped, because
   anything box-shaped here gets counted as a clip.
+- **The clip the cards are on wears a red ring** on the box's own edge
+  (`data-seam-marker`), not a dot inside it — a dot had to fight whatever
+  picture the box was drawing and would not fit in a narrow one. Same red as
+  the playhead: both answer "which clip is this view about", one in space and
+  one in time.
+- **A clip playback skips is hatched** (`data-seam-hatch`) with diagonal
+  stripes, plus a red dotted rule above its box (`data-seam-skip-rule`). A
+  pattern rather than a dim, because a dimmed box is indistinguishable from a
+  dark frame. It keeps its **full width** — a disabled clip is still part of
+  the sequence you are reading, and shrinking it would move every cut after it.
 - Collection dividers and ruler labels are the only landmarks on a run of
   boxes. Collection tinting exists but sits behind
   `BAR_COLLECTION_COLOURS_ENABLED`; with it off every box takes one neutral.
@@ -315,16 +343,23 @@ With pictures in the boxes the 5px gap disappears, and **no single colour fixes
 it**: a dark gap is invisible between two dark frames, a pale one is invisible
 between two bright frames, and footage supplies both within the same cut.
 
-So the gap carries **both tones**. The strip background is pale and each box
-casts a 1.5px dark ring into the gap, making every gap read
-**dark · pale · dark**:
+So the gap carries **both tones**. The strip background is near-black and each
+box casts a 1.5px pale ring into the gap, making every gap read
+**light · dark · light**:
 
 ```
-two bright frames    white | DARK pale DARK | white    <- the rings show
-two dark frames      black | dark PALE dark | black    <- the core shows
+two bright frames    white | PALE dark PALE | white    <- the core shows
+two dark frames      black | pale DARK pale | black    <- the rings show
 one of each          both, from opposite sides
                            |1.5px| 2px |1.5px|   within the 5px already there
 ```
+
+**Which tone is the ring is free; that there are two is not.** The polarity was
+the other way round once — pale strip, dark rings — and flipped with the
+redesign because a run of boxes edged in white is what makes the bar read as
+frames on a strip of film rather than as tiles in a chart. The invariant that
+survives is that no arrangement of neighbours leaves both tones without
+contrast.
 
 Roughly equal thirds. An earlier pass gave the pale core three of the five and
 it read as a white band with a hairline either side. Widening the gap is the
@@ -343,7 +378,21 @@ row with `justify-between`, because the transport has to be centred on the
 |---|---|
 | Left | `frames` — OFF / COVER / STRIP |
 | Centre | prev clip · play/pause · next clip |
-| Right | clock (`12.40s / 88.20s`) then `reach` — 5 / 10 / 20 / All |
+| Right | clock (`0:21.6 / 4:12.9`) · `fit` — clip / all · `reach` — 5 / 10 / 20 / All |
+
+**The clock is clock notation with tenths.** `252.90s` is accurate and
+unplaceable in a four-minute cut. Tenths rather than hundredths because the
+left half moves: the second decimal is a blur at playback speed and the first
+is exactly enough to see time passing. It floors the tenth rather than rounding
+it, so it never displays a time it has not reached.
+
+**`fit` names the two scales worth one press** — `clip` is the subject's own
+collection (the scale the bar opens at), `all` is everything the reach window
+covers. Both were already one `fitPixelsPerSecond` call; before this they were
+reachable only by rolling ⌘-wheel until they happened to arrive. Fitting
+re-centres as well as re-scales, which is the one place the bar deliberately
+overrides "stay where you were put". A wheel zoom clears the lit button,
+because at that point neither is true.
 
 Step buttons are **disabled, not hidden**, at the ends — a control that
 vanishes takes its position with it and shifts the bar sideways. Both settings

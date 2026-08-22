@@ -55,7 +55,7 @@ import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
   VIEW_COUNTS,
   lastViewCount,
-  panelWidthFor,
+  panelWidthsFor,
   rememberViewCount,
   type ViewCount,
 } from "./graph-item-details-view-count";
@@ -458,7 +458,11 @@ function DetailsFilmstripModal({
     return found && found.kind === "media" ? (found as MediaNode) : null;
   })();
 
-  const panelWidth = panelWidthFor(viewCount);
+  // TWO WIDTHS NOW: the clip being worked on, and everything else. The row's
+  // step is the NEIGHBOUR width — see `panelWidthsFor` for why the centre's
+  // extra width cancels out of the centring arithmetic entirely.
+  const panelWidths = panelWidthsFor(viewCount);
+  const panelWidth = panelWidths.neighbour;
 
   // ONE PANEL FURTHER THAN CAN BE SEEN, on each side.
   //
@@ -626,6 +630,11 @@ function DetailsFilmstripModal({
         showingSeconds: media === null ? 0 : mediaDurationSeconds(media),
         collectionId: parentId === null ? null : (parentId as string),
         collectionName: parent?.name ?? null,
+        // SKIPPED AT PLAY TIME, said on the bar. The flag was on the node all
+        // along and the bar had never been told, so the one control that shows
+        // you the shape of playback was silent about a clip playback steps
+        // over. It changes how the box is PAINTED and never how wide it is.
+        ...(media?.disabled === true ? { disabled: true } : {}),
         ...(media === null ? {} : { posterSrc: seamClipOf(media)?.posterSrc }),
         // ONLY A VIDEO GETS THE FULL SET. A still's single image sampled at
         // ten intervals is ten copies of itself, which is a filmstrip saying
@@ -1183,7 +1192,23 @@ function DetailsFilmstripModal({
               // proxy exists to avoid.
               scrubbing={scrubbing && (index === centre || position?.clipId === id)}
               swipe={swipe}
-              width={panelWidth}
+              // MOUNTED, BUT NOT ON SCREEN.
+              //
+              // The spare pair beyond the visible window exists so an arriving
+              // panel is already built (see `MOUNTED_RADIUS`) — it was never
+              // meant to be SEEN. It used to be off the edge by accident:
+              // panels were wide enough that two of them overflowed the
+              // viewport entirely. Now three fit it exactly, so the spares sit
+              // in the scrim's own 24px padding and show as a sliver down each
+              // side — which reads as a fourth and fifth card the count says
+              // are not there.
+              //
+              // Hidden rather than unmounted, and hidden rather than
+              // zero-width: the row's centring assumes every non-centre panel
+              // is one neighbour wide, so collapsing these would shift every
+              // panel between them and the middle.
+              spare={Math.abs(index - centre) > half}
+              width={index === centre ? panelWidths.centre : panelWidths.neighbour}
               // Engaged, and not the one being watched. Uses the same gate as
               // the playhead lines and the ring, so the whole view agrees on
               // when the clock is running.

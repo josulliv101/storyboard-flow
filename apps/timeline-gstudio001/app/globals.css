@@ -187,6 +187,33 @@ html body[data-scroll-locked] {
   animation: seam-panel-swap 300ms ease-out;
 }
 
+/* THE UNDO NOTICE ARRIVING.
+   It slides in from the right, which is the side it is anchored to and the
+   side the buttons that produce it are on — so it reads as coming OUT of the
+   control rather than appearing over the header. Short and eased-out: this is
+   a report, and a report that makes an entrance is a report being read as an
+   alert. */
+@keyframes seam-note-in {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-seam-note-in {
+  animation: seam-note-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-seam-note-in {
+    animation: none;
+  }
+}
+
 @keyframes trash-arrival {
   0% {
     transform: scale(1);
