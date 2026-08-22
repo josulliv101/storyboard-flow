@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AudioLines, Pause, Play, Redo2, Undo2, X } from "lucide-react";
 
@@ -368,6 +368,39 @@ function DetailsFilmstripModal({
     setBarSeconds(carryClockRef.current);
     carryClockRef.current = null;
   }
+
+  // A LANDING THAT IS NOT A STEP IS A CUT.
+  //
+  // The row eases across one panel width for a swipe, a neighbour click or a
+  // step arrow, and that easing is the gesture finishing itself. A scrub
+  // release can land twenty clips away, and the same 300ms spent crossing
+  // twenty panel widths is not a move — it is every card on screen leaving to
+  // the left, most of them unmounted placeholders, with the one you asked for
+  // turning up at the end of it. Going somewhere else in the timeline is a
+  // cut, so it cuts.
+  //
+  // DONE TO THE NODE, NOT THROUGH STATE. A `cutTo` flag would have to be
+  // cleared again a render later, which is a cascading render for one frame of
+  // styling — and the frame it is trying to influence has already been
+  // decided by then. A layout effect runs after the transform is in the DOM
+  // and before the browser paints it, which is exactly the window where
+  // "arrive, do not travel" can still be said. The reflow read is what makes
+  // it stick: without it the two style writes coalesce and the transition
+  // never goes away.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const centreWasRef = useRef(centre);
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const jumped = Math.abs(centre - centreWasRef.current) > 1;
+    centreWasRef.current = centre;
+    if (!jumped || strip === null) return;
+    strip.style.transition = "none";
+    void strip.offsetWidth;
+    const frame = requestAnimationFrame(() => {
+      strip.style.transition = "";
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [centre]);
 
   // Where the BAR draws its playhead when nothing has moved it: the cut at the
   // head of the centre clip, which is the moment this view is about.
@@ -808,6 +841,7 @@ function DetailsFilmstripModal({
       {/* The STRIP: one row, translated. Centred by the scrim, then offset by
           the subject's index so the clip being worked on lands mid-screen. */}
       <div
+        ref={stripRef}
         data-details-strip
         className={[
           "flex items-center",
@@ -817,6 +851,10 @@ function DetailsFilmstripModal({
           // rather than as smoothing. It comes back for the release, so
           // landing on the next clip is animated and letting go short of the
           // threshold springs back.
+          //
+          // A LANDING FURTHER OFF THAN ONE PANEL is cut rather than eased,
+          // but not from here — see the layout effect above, which suppresses
+          // this for the single frame the jump paints in.
           dragPx === 0
             ? "transition-transform duration-300 ease-out motion-reduce:transition-none"
             : "",

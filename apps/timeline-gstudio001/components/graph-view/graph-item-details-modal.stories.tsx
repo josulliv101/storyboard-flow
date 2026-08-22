@@ -654,6 +654,17 @@ export const ClickingANeighbourAdvancesTheStrip: Story = {
     const rightHero = panels[2]!.querySelector<HTMLElement>("[data-item-details-frame]")!;
     rightHero.click();
 
+    // ONE STEP STILL EASES. The counterpart to the cut in
+    // `LettingGoOfTheBarLandsTheStrip`: a landing more than a panel away
+    // arrives without travelling, and the guard that does it is a distance
+    // test — so the thing to protect is the case just under the line. A step
+    // is a gesture finishing itself and has to be seen to move.
+    const strip = () => document.querySelector<HTMLElement>("[data-details-strip]")!;
+    const movingX = strip().getBoundingClientRect().left;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    // Still in flight a third of the way through a 300ms ease.
+    expect(strip().getBoundingClientRect().left).not.toBe(movingX);
+
     await waitFor(() => expect(centreName()).toBe("Rename After"));
 
     // THE ROW MOVED, rather than the panels swapping content where they stood.
@@ -2039,6 +2050,28 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
 
     // The row advanced...
     await waitFor(() => expect(subject()).not.toBe(startedOn));
+
+    // ── AND IT ARRIVED RATHER THAN TRAVELLED ──────────────────────────────
+    // The row eases across ONE panel width for a swipe or a step. A landing
+    // can be twenty clips away, and spending the same 300ms crossing twenty
+    // panel widths is every card on screen leaving to the left with the one
+    // you asked for turning up at the end of it.
+    //
+    // ASSERTED AS "IT DOES NOT MOVE" rather than by reading a transition
+    // duration off the element, because the cut lasts a single render and
+    // catching that one frame would be a race. Two readings a beat apart
+    // cannot be fooled: mid-flight they differ, arrived they do not.
+    const centrePanel = () =>
+      document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
+    const landedX = centrePanel().getBoundingClientRect().left;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(centrePanel().getBoundingClientRect().left).toBe(landedX);
+
+    // And it arrived in the MIDDLE, which is what says the offset it cut to
+    // was the right one rather than merely a still one.
+    const panelBox = centrePanel().getBoundingClientRect();
+    expect(Math.abs(panelBox.left + panelBox.width / 2 - window.innerWidth / 2)).toBeLessThan(2);
+
     // ...onto the clip the playhead was actually on...
     expect(subject()).toBe(target.getAttribute("data-seam-segment"));
     // ...and the clock did not move a frame in the process.
