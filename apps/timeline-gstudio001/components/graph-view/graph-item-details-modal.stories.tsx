@@ -2041,6 +2041,53 @@ export const PointingAtABoxSaysWhatItIs: Story = {
 };
 
 /**
+ * THE BAR'S BOXES SLIDE INTO POSITION WHEN THE CENTRED CLIP CHANGES.
+ *
+ * The strip's transform is driven by three different things and only one of
+ * them wants easing. A drag has to track the hand exactly — the edge run's
+ * whole point is that the strip moves WITH the pointer — and a wheel zoom or
+ * a pan is the same hand by another route. Changing which clip is centred is
+ * not: nothing is under the reader's finger, the strip re-centres on somewhere
+ * else entirely, and a jump there cannot be told apart from the bar being
+ * redrawn with different contents.
+ *
+ * THE DRAG HALF IS COVERED BY `HoldingAtAnEdgeRunsTheStrip`, which measures
+ * the strip's travel against the clock to within two pixels — an easing left
+ * switched on during a drag puts the strip behind the hand and fails there.
+ */
+export const TheBarSlidesIntoPositionOnAMove: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const stripX = () =>
+      document.querySelector<HTMLElement>("[data-seam-strip]")!.getBoundingClientRect().left;
+    const subject = () => centreBox().getAttribute("data-seam-segment");
+
+    const startedOn = subject();
+    const from = stripX();
+
+    // A press on a box well along the bar: a move, not a drag.
+    const boxes = seamBoxes();
+    const target = boxes[boxes.indexOf(centreBox()) + 6]!;
+    clickBox(target);
+    await waitFor(() => expect(subject()).not.toBe(startedOn));
+
+    // STILL ON ITS WAY. This is the assertion a jump fails: with no easing the
+    // strip is already at its destination by the first reading, so the two
+    // readings agree and nothing here can tell that it moved at all.
+    const early = stripX();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(stripX()).not.toBe(early);
+
+    // And it does arrive somewhere else, so the movement was real rather than
+    // a wobble.
+    await settleStrip();
+    expect(Math.abs(stripX() - from)).toBeGreaterThan(20);
+  },
+};
+
+/**
  * HOW FAR THE BAR REACHES IS A SETTING, and ten either side is where it opens.
  *
  * The bar used to draw the whole collection whatever you were doing, which is
@@ -2173,7 +2220,7 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     // And the window let go again once it had arrived.
     await waitFor(() => expect(panels()).toBe(restingPanels));
 
-    // ── A LONG ONE ARRIVES INSTEAD ────────────────────────────────────────
+    // ── A LONG ONE ARRIVES THE SAME WAY, FROM THE SIDE ────────────────────
     // THE SEAT IS READ HERE, not at the top of the story. The row is a
     // different shape on its first paint — panels are still arriving — so its
     // resting x then is not the resting x it keeps. Taken between the two
@@ -2185,41 +2232,43 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     const restingCentreX = seatX();
     const landedOn = subject();
     const far = seamBoxes()[boxIndex() + 8]!;
-    // THE PRECONDITION. Past `STEPPED_MAX`, or this measures the easing path
-    // twice and the cut not at all — and inside the default reach, or there is
-    // no box there to aim at.
-    expect(8).toBeGreaterThan(5);
+    // THE PRECONDITION: far enough that sliding the whole way would be
+    // obvious, and inside the default reach so there is a box there to aim at.
     expect(far).not.toBeUndefined();
     const letGoFar = await dragToBox(far);
     await waitFor(() => expect(subject()).not.toBe(landedOn));
 
-    // ASSERTED AS "IT DOES NOT MOVE" rather than by reading a transition
-    // duration off the element: the cut lasts a single render and catching
-    // that frame would be a race, while two readings a beat apart cannot be
-    // fooled — mid-flight they differ, arrived they do not.
-    const landedX = seatX();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(seatX()).toBe(landedX);
+    // IT COMES IN FROM THE SIDE, NOT FROM WHERE IT WAS. Eight clips along,
+    // but the row is never displaced by more than the approach — so the
+    // distance travelled says which side you came from and nothing else.
+    // Sliding the whole way would start this eight panel-widths out and spend
+    // half a second blurring six cards nobody can read.
+    const step = document
+      .querySelector<HTMLElement>('[data-item-details-panel="centre"]')!
+      .getBoundingClientRect().width + 16;
+    const displaced = Math.abs(seatX() - restingCentreX);
+    expect(displaced).toBeGreaterThan(1);
+    expect(displaced).toBeLessThan(step * 2 + 8);
 
-    // Arrived in the MIDDLE, which is what says the offset it cut to was the
-    // right one rather than merely a still one.
-    // Arrived in the CENTRE SEAT — measured against where the centre panel sat
-    // at rest at the top of this story rather than against the middle of the
-    // window, because the row's resting x is a product of panel width, gap and
-    // the scrim's padding and this assertion should not have to know any of
-    // them. Landing still but one seat out would otherwise read as success.
+    // And it is MOVING, not placed.
+    const slidingFrom = seatX();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(seatX()).not.toBe(slidingFrom);
+
+    await settleStrip();
+    await settleRow();
     expect(seatX()).toBeCloseTo(restingCentreX, 0);
-
-    // THE SCRIM NEVER SCROLLS. It crops a row thirteen thousand pixels wide,
-    // so if it were a scroll container there would be a great deal for the
-    // browser to scroll it by — and it would, because landing moves focus to
-    // the new panel's menu button and a hidden overflow is still scrolled to
-    // reveal what is focused. That scroll would land on top of the transform
-    // the row has already made and put the chosen card off the left edge.
-    // Zero here is `overflow-clip` doing its job.
-    expect(strip().parentElement!.scrollLeft).toBe(0);
     expect(subject()).toBe(far.getAttribute("data-seam-segment"));
     expect(shownFrame()).toBeCloseTo(letGoFar, 2);
+
+    // THE SCRIM NEVER SCROLLS. It crops a row thousands of pixels wide, so if
+    // it were a scroll container there would be a great deal for the browser
+    // to scroll it by — and it would, because landing moves focus to the new
+    // panel's menu button and a hidden overflow is still scrolled to reveal
+    // what is focused. That scroll would land on top of the transform the row
+    // has already made and put the chosen card off the left edge. Zero here is
+    // `overflow-clip` doing its job.
+    expect(strip().parentElement!.scrollLeft).toBe(0);
   },
 };
 
