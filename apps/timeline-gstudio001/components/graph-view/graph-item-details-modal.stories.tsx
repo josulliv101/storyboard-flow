@@ -2282,52 +2282,52 @@ export const TheBarReachIsASetting: Story = {
 };
 
 /**
- * LETTING GO IS THE COMMIT — AND YOU KEEP THE FRAME YOU LET GO ON.
+ * LETTING GO IS THE COMMIT — AND THE ROW DOES NOT SCROLL TO IT.
  *
  * A drag and a press that does not travel are still told apart (distance, not
- * timing: a slow deliberate scrub must not count as a tap on wherever it
- * started). But they now LAND the same way, because they are the same
- * sentence: you put the playhead somewhere and took your hand off it.
+ * timing), but they LAND the same way, because they are the same sentence: you
+ * put the playhead somewhere and took your hand off it.
  *
- * Scrubbing used to choose nothing, on the reasoning that looking ahead must
- * not cost you your place. The place is what changed: the row follows the
- * playhead now, and the clock comes WITH it rather than snapping to the new
- * clip's head — so you arrive on the exact frame you were judging, which is
- * the frame you went there to see. Losing it was what made the old rule feel
- * like a look rather than a move.
+ * THE MIDDLE CARD DOES NOT MOVE, and that is the point. It has been the
+ * monitor for the whole scrub, so it is already showing the clip being landed
+ * on — sliding the row to that clip would animate a change that has already
+ * happened, and move the one thing on screen that did not need to. So the row
+ * cuts, the middle card stays exactly where it is with exactly the picture it
+ * had, and the panels either side fade in with their new contents.
  *
- * THE CLOCK NOT MOVING IS THE ASSERTION. Every panel derives its picture from
- * `position`, which is `seamAt(timeline, barSeconds)` — so a bar reading the
- * same second before and after the row advances IS the centre panel holding
- * the frame. A jump here would be the reset this change removes.
+ * STEPPING IS THE OTHER CASE and keeps its slide: landing on the clip directly
+ * beside this one is the same single move the arrows and the swipe make, and
+ * there the middle card really is becoming something else.
+ *
+ * THE FRAME COMES WITH IT, read off the panel rather than the bar. The bar is
+ * a window with a reach either side of the subject, so it is rebuilt around
+ * wherever you land and its own seconds are not comparable across the journey.
+ * The panel reports the clip's OWN time, which is.
  */
 export const LettingGoOfTheBarLandsTheStrip: Story = {
   render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
     await settleStrip();
+    await settleRow();
     const subject = () => centreBox().getAttribute("data-seam-segment");
     const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
     const strip = () => document.querySelector<HTMLElement>("[data-details-strip]")!;
-    const stripX = () => strip().getBoundingClientRect().left;
-    const panels = () => document.querySelectorAll("[data-item-details-panel]").length;
     const boxIndex = () => seamBoxes().indexOf(centreBox());
+    const centrePanel = () =>
+      document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
+    const seatX = () => centrePanel().getBoundingClientRect().left;
     const shownFrame = () =>
-      Number(
-        document
-          .querySelector<HTMLElement>('[data-item-details-panel="centre"]')!
-          .getAttribute("data-item-details-at"),
-      );
+      Number(centrePanel().getAttribute("data-item-details-at"));
+    const swapping = () =>
+      document.querySelectorAll("[data-item-details-swapping]").length;
 
-    // Hold the scrub, read the clock at the moment before the release, let go.
+    // Hold the scrub, read the frame at the moment before the release, let go.
     const dragToBox = async (box: HTMLElement) => {
       const rect = box.getBoundingClientRect();
       const x = rect.left + rect.width * 0.5;
       scrubToClientX(x, { hold: true });
       await waitFor(() => expect(at()).toBeGreaterThan(0));
-      // The frame the MONITOR is on at the moment of release — the thing the
-      // landing has to preserve, and the only reading that survives the bar
-      // being rebuilt around a new subject.
       const heldFrame = Number(
         document
           .querySelector<HTMLElement>("[data-item-details-at]")!
@@ -2340,84 +2340,47 @@ export const LettingGoOfTheBarLandsTheStrip: Story = {
     };
 
     expect(subject()).toBe("subject");
-    const restingPanels = panels();
+    const restingSeat = seatX();
 
-    // ── A SHORT LANDING TRAVELS, AND NOTHING EMPTY GOES PAST ──────────────
-    const from = boxIndex();
-    const near = seamBoxes()[from + 3]!;
-    const letGoNear = await dragToBox(near);
+    // ── A LANDING SEVERAL CLIPS OFF CUTS, AND THE MIDDLE STAYS PUT ────────
+    const target = seamBoxes()[boxIndex() + 4]!;
+    const letGo = await dragToBox(target);
     await waitFor(() => expect(subject()).not.toBe("subject"));
 
-    // Still moving a beat later: three panels is a step you can follow, so it
-    // is shown as one.
-    const travellingFrom = stripX();
-    // MORE PANELS ARE REAL THAN USUALLY ARE. The resting mount window is two
-    // either side; the cards being crossed live outside it, and without the
-    // widening they would be the empty placeholders the row is made of —
-    // including the one you just left, which would blink out and slide away.
-    expect(panels()).toBeGreaterThan(restingPanels);
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(stripX()).not.toBe(travellingFrom);
+    // ALREADY THERE. This is the assertion a slide fails: mid-travel the
+    // middle card is panels away from its seat and only arrives later.
+    expect(seatX()).toBeCloseTo(restingSeat, 0);
+    // And it stays — nothing is easing towards anything.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(seatX()).toBeCloseTo(restingSeat, 0);
 
-    await settleStrip();
-    await settleRow();
-    expect(subject()).toBe(near.getAttribute("data-seam-segment"));
-    // THE FRAME CAME WITH IT. Read off the panel rather than off the bar:
-    // the bar is a window with a reach either side of the subject, so it is
-    // rebuilt around wherever you land and its own seconds are not comparable
-    // across the journey. The panel reports the clip's OWN time, which is.
-    expect(shownFrame()).toBeCloseTo(letGoNear, 2);
-    // And the window let go again once it had arrived.
-    await waitFor(() => expect(panels()).toBe(restingPanels));
+    // THE PANELS EITHER SIDE ARE WHAT MOVED, so they are what fades.
+    expect(swapping()).toBeGreaterThan(0);
+    expect(
+      centrePanel().hasAttribute("data-item-details-swapping"),
+    ).toBe(false);
 
-    // ── A LONG ONE ARRIVES THE SAME WAY, FROM THE SIDE ────────────────────
-    // THE SEAT IS READ HERE, not at the top of the story. The row is a
-    // different shape on its first paint — panels are still arriving — so its
-    // resting x then is not the resting x it keeps. Taken between the two
-    // landings, both readings describe the same row.
-    const seatX = () =>
-      document
-        .querySelector<HTMLElement>('[data-item-details-panel="centre"]')!
-        .getBoundingClientRect().left;
-    const restingCentreX = seatX();
+    expect(subject()).toBe(target.getAttribute("data-seam-segment"));
+    expect(shownFrame()).toBeCloseTo(letGo, 2);
+    // The fade lets go of itself.
+    await waitFor(() => expect(swapping()).toBe(0));
+
+    // ── AND A NEIGHBOUR IS STILL A STEP ───────────────────────────────────
     const landedOn = subject();
-    const far = seamBoxes()[boxIndex() + 8]!;
-    // THE PRECONDITION: far enough that sliding the whole way would be
-    // obvious, and inside the default reach so there is a box there to aim at.
-    expect(far).not.toBeUndefined();
-    const letGoFar = await dragToBox(far);
+    const next = seamBoxes()[boxIndex() + 1]!;
+    clickBox(next);
     await waitFor(() => expect(subject()).not.toBe(landedOn));
-
-    // IT COMES IN FROM THE SIDE, NOT FROM WHERE IT WAS. Eight clips along,
-    // but the row is never displaced by more than the approach — so the
-    // distance travelled says which side you came from and nothing else.
-    // Sliding the whole way would start this eight panel-widths out and spend
-    // half a second blurring six cards nobody can read.
-    const step = document
-      .querySelector<HTMLElement>('[data-item-details-panel="centre"]')!
-      .getBoundingClientRect().width + 16;
-    const displaced = Math.abs(seatX() - restingCentreX);
-    expect(displaced).toBeGreaterThan(1);
-    expect(displaced).toBeLessThan(step * 2 + 8);
-
-    // And it is MOVING, not placed.
-    const slidingFrom = seatX();
+    // No fade: one clip along is the move the arrows and the swipe make, and
+    // it travels.
+    expect(swapping()).toBe(0);
+    const travellingFrom = strip().getBoundingClientRect().left;
     await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(seatX()).not.toBe(slidingFrom);
-
-    await settleStrip();
-    await settleRow();
-    expect(seatX()).toBeCloseTo(restingCentreX, 0);
-    expect(subject()).toBe(far.getAttribute("data-seam-segment"));
-    expect(shownFrame()).toBeCloseTo(letGoFar, 2);
+    expect(strip().getBoundingClientRect().left).not.toBe(travellingFrom);
 
     // THE SCRIM NEVER SCROLLS. It crops a row thousands of pixels wide, so if
-    // it were a scroll container there would be a great deal for the browser
-    // to scroll it by — and it would, because landing moves focus to the new
-    // panel's menu button and a hidden overflow is still scrolled to reveal
-    // what is focused. That scroll would land on top of the transform the row
-    // has already made and put the chosen card off the left edge. Zero here is
-    // `overflow-clip` doing its job.
+    // it were a scroll container the browser would scroll it to reveal the
+    // newly focused panel — on top of the transform the row has already made,
+    // putting the chosen card off the left edge. Zero is `overflow-clip`.
     expect(strip().parentElement!.scrollLeft).toBe(0);
   },
 };

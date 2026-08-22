@@ -247,10 +247,12 @@ function DetailsFilmstripModal({
   const carryClockRef = useRef<SeamPosition | null>(null);
   // WHERE AN EASING JUMP STARTED, while it is still easing. Null the rest of
   // the time, which is nearly all of the time.
-  // A LANDING IN PROGRESS. `approach` is how many panels the row is displaced
-  // by, signed — non-zero on the frame it is put down, then zero for the slide
-  // itself. Null between landings, which is nearly always.
-  const [travel, setTravel] = useState<{ approach: number } | null>(null);
+  // A BAR LANDING IN FLIGHT: true while the panels either side are fading in.
+  // Set in the handler rather than derived, because the difference between a
+  // step and a landing is WHICH GESTURE ASKED, and nothing about the resulting
+  // state remembers that.
+  const [swapping, setSwapping] = useState(false);
+  const swapRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   // A DRAG IS IN PROGRESS ON THE BAR. Distinct from `scrubbed`, which stays
   // true once the clock has been touched: this is the gesture itself, and it
@@ -460,26 +462,20 @@ function DetailsFilmstripModal({
   // honest.
   const MOUNTED_RADIUS = Math.floor(viewCount / 2) + 1;
 
-  // HOW A LANDING ARRIVES: FROM THE SIDE, NOT FROM WHERE IT WAS.
+  // HOW A LANDING FROM THE BAR ARRIVES: IT DOES NOT TRAVEL.
   //
-  // The row is put down a couple of panels off, with no transition, and then
-  // slides the rest of the way in. What you see is the clip you chose coming
-  // to the middle from the side it lies on — which is the move being
-  // described, and it reads the same whether you landed two clips along or
-  // twenty.
+  // Stepping and letting go of the bar look like the same event and are not.
+  // A step really does make the middle card a different clip, and the slide is
+  // what says which way you went. Letting go of the bar does not: the middle
+  // card has been the MONITOR for the whole scrub, so it is already showing
+  // the clip you landed on, and scrolling the row to it animates a change that
+  // has already happened — the one thing on screen that did not need to move
+  // is the thing that moves.
   //
-  // SLIDING THE WHOLE DISTANCE WAS THE OBVIOUS THING AND IT IS WRONG TWICE.
-  // Ten panels of travel is ten panels that have to be REAL for the length of
-  // the animation, and a full panel is a video element, a trim strip and a tag
-  // editor — the same cost `MOUNTED_RADIUS` exists to avoid, paid all at once
-  // so that it can be blurred past. And what it buys is a whip: the cards in
-  // between go by too fast to be read, so the motion says "a long way" without
-  // saying where. A fixed short approach costs two extra panels and says the
-  // one thing the movement is for — which side you came from.
-  const SLIDE_IN = 2;
-  // Slower than the 300ms a one-panel step takes, because this one is a place
-  // change rather than a nudge and wants to be seen.
-  const SLIDE_MS = 520;
+  // So the row cuts to its new offset, the middle card stays exactly where it
+  // is with exactly the picture it had, and the panels either side fade in
+  // with their new contents. What changes is what changes.
+  const SWAP_MS = 300;
 
   const chooseReach = useCallback((next: BarReach) => {
     rememberBarReach(next);
@@ -632,8 +628,8 @@ function DetailsFilmstripModal({
 
   // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a
   // released scrub differ only in how the clip was chosen; what happens next
-  // — carry the clock, widen the mount window if the row is about to travel,
-  // move — is the same sentence and is written once.
+  // — carry the clock, cut rather than travel, fade the panels either side —
+  // is the same sentence and is written once.
   const landOn = useCallback(
     (clipId: string, at: SeamPosition | null) => {
       if (clipId === (node.id as string)) return;
@@ -644,50 +640,47 @@ function DetailsFilmstripModal({
       // carrying the other clip's position would land you on the right card
       // showing the wrong one's time.
       carryClockRef.current = at !== null && at.clipId === clipId ? at : null;
-      // WHICH SIDE IT COMES IN FROM. A clip later in the cut lies to the
-      // right, so it arrives from the right — the row is put down displaced
-      // the other way and slides back. Capped at the real distance so a
-      // one-clip landing slides one panel rather than overshooting to make up
-      // the full approach.
-      const direction = to < 0 ? 0 : Math.sign(to - centre);
-      const slide = Math.min(SLIDE_IN, distance);
-      setTravel({ approach: direction === 0 ? 0 : -direction * slide });
+      // A NEIGHBOUR IS STILL A STEP. Landing on the clip directly beside the
+      // one you are on is the same single move the arrows and the swipe make,
+      // and it keeps their slide — the fade is for arrivals that come from
+      // somewhere the row was not showing.
+      swapRef.current = distance > 1;
+      setSwapping(distance > 1);
       onOpenNeighbour(clipId);
     },
-    [SLIDE_IN, centre, ids, node.id, onOpenNeighbour],
+    [centre, ids, node.id, onOpenNeighbour],
   );
 
-  // PUT DOWN, THEN RELEASED — the two halves of the arrival, and they must be
-  // two separate frames or there is no transition to run. The layout effect
-  // paints the displaced position with the transition off, and only once the
-  // browser has actually shown it does the next frame ask for the real one.
+  // THE ROW CUTS RATHER THAN SLIDES, for a bar landing only. Done to the node
+  // because the frame this is trying to influence has already been decided by
+  // the time any state update could land: a layout effect runs after the new
+  // transform is in the DOM and before the browser paints it, which is the
+  // only window where "do not travel" can still be said. The reflow read
+  // between the two writes is load-bearing — without it they coalesce and the
+  // transition never goes away.
   useLayoutEffect(() => {
-    if (travel === null || travel.approach === 0) return;
+    if (!swapRef.current) return;
+    swapRef.current = false;
     const strip = stripRef.current;
-    if (strip !== null) {
-      strip.style.transition = "none";
-      // The reflow is load-bearing: without it the two style writes coalesce
-      // and the row simply appears in its final place.
-      void strip.offsetWidth;
-    }
+    if (strip === null) return;
+    strip.style.transition = "none";
+    void strip.offsetWidth;
     const frame = requestAnimationFrame(() => {
-      if (strip !== null) strip.style.transition = "";
-      setTravel({ approach: 0 });
+      strip.style.transition = "";
     });
     return () => cancelAnimationFrame(frame);
-  }, [travel]);
+  }, [centre]);
 
-  // AND LET THE EXTRA PANELS GO once it has arrived. On a timer rather than
-  // on `transitionend`, which does not fire when a second landing interrupts
-  // the first and would strand the widened mount window open.
+  // AND THE FADE ENDS. On a timer rather than on `animationend`, which fires
+  // once per panel and would need counting, and does not fire at all for a
+  // panel that unmounted mid-fade.
   useEffect(() => {
-    if (travel === null || travel.approach !== 0) return;
-    const timer = setTimeout(() => setTravel(null), SLIDE_MS + 60);
+    if (!swapping) return;
+    const timer = setTimeout(() => setSwapping(false), SWAP_MS + 40);
     return () => clearTimeout(timer);
-  }, [SLIDE_MS, travel]);
+  }, [SWAP_MS, swapping]);
 
-  const offset =
-    centre < 0 ? 0 : centre - (ids.length - 1) / 2 + (travel?.approach ?? 0);
+  const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
 
   // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
   // drag the film and it follows the hand, let go past a threshold and it
@@ -990,9 +983,8 @@ function DetailsFilmstripModal({
           // landing on the next clip is animated and letting go short of the
           // threshold springs back.
           //
-          // A LANDING RUNS LONGER THAN A STEP — see `SLIDE_MS` — and the
-          // frame it is put down on has no transition at all, which the
-          // layout effect above does to the node rather than from here.
+          // A BAR LANDING has no transition at all, which the layout effect
+          // above does to the node rather than from here.
           dragPx === 0
             ? "transition-transform ease-out motion-reduce:transition-none"
             : "",
@@ -1000,16 +992,14 @@ function DetailsFilmstripModal({
         style={{
           gap: PANEL_GAP,
           transform: rowTransform,
-          transitionDuration: travel === null ? "300ms" : `${SLIDE_MS}ms`,
+          transitionDuration: "300ms",
         }}
       >
         {ids.map((id, index) => {
-          // The resting window, widened by the approach while a landing is in
-          // flight: the panels the row slides over are off the side of the
-          // resting window, and empty boxes sliding in is exactly what the
-          // movement is meant to avoid. Two extra panels, for half a second.
-          const mounted =
-            Math.abs(index - centre) <= MOUNTED_RADIUS + (travel === null ? 0 : SLIDE_IN);
+          // Nothing travels across the row any more, so the resting window is
+          // the whole window: a landing cuts, and the panels it cuts to are
+          // the ones already inside it.
+          const mounted = Math.abs(index - centre) <= MOUNTED_RADIUS;
           const panel = mounted ? graph.nodesById.get(parseNodeId(id)) : null;
           const media =
             panel && panel.kind === "media" && (panel as MediaNode).src
@@ -1039,6 +1029,7 @@ function DetailsFilmstripModal({
               key={id}
               node={media}
               centre={index === centre}
+              swapping={swapping}
               // Everything but the picture goes out while the clock is being
               // dragged — see `scrubFocus`.
               scrubFocus={scrubbing && index === centre}
