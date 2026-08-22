@@ -176,23 +176,28 @@ const BOX_INSET_PX = 2.5;
  * The gap between boxes is `BOX_INSET_PX` either side — five pixels of the
  * lane showing through. Against flat grey that is plenty: two greys with a
  * dark line between them is obviously two things. Between two frames it
- * disappears, because a photograph already contains dark edges and the eye has
- * no reason to read that particular one as a boundary rather than as part of
- * the picture.
+ * disappears, and the reason is that the lane is DARK: a photograph already
+ * contains dark edges, so a dark gap is just one more of them and the eye has
+ * no reason to read that particular one as a boundary.
  *
- * WIDENING THE GAP IS THE WRONG FIX. A box's width is its duration; spending
- * more of it on separation makes short clips shorter and changes what the bar
- * is saying. So the boundary is painted rather than made bigger: a light
- * hairline INSIDE each box's own edge, which reads as the frame line of a
- * physical strip, and a dark one just outside it, which deepens the gap that
- * is already there. Neither takes a pixel of layout — an inset shadow paints
- * within the box and an outer one paints into the gap.
+ * SO THE GAP ITSELF CHANGES COLOUR, rather than the boxes growing an edge.
+ * A pale gap is not a colour footage supplies, which is exactly what makes it
+ * read as structure instead of as picture — and it separates a dark frame from
+ * a bright one just as well as two dark ones, which a fixed hairline in either
+ * direction does not.
  *
- * Only when frames are on. Over grey the same treatment is a hairline on a
- * flat colour, which is decoration answering a question nobody asked.
+ * WIDENING IT IS THE WRONG FIX, and not only because it was asked against: a
+ * box's width IS its duration, so spending more of it on separation makes
+ * short clips read shorter and changes what the bar is saying. This costs no
+ * layout at all — the gap is already there, it is simply a different colour.
+ *
+ * The hairline that remains is the other half of the same problem: a bright
+ * frame running straight into a pale gap has no edge either, so each box keeps
+ * a dark one just inside its own border. Only when frames are on; over grey
+ * the whole treatment is decoration answering a question nobody asked.
  */
-const FRAMED_BOX_EDGE =
-  "inset 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.85)";
+const FRAMED_GAP_COLOUR = "rgba(212, 212, 216, 0.92)";
+const FRAMED_BOX_EDGE = "inset 0 0 0 1px rgba(0, 0, 0, 0.55)";
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */
@@ -333,7 +338,14 @@ export function SeamLane({
           ref={stripRef}
           data-seam-strip
           className="absolute inset-y-0 left-0 will-change-transform"
-          style={{ transform: `translateX(${offset}px)`, width: strip.totalPx }}
+          style={{
+            transform: `translateX(${offset}px)`,
+            width: strip.totalPx,
+            // THE GAPS ARE THIS SHOWING THROUGH. The boxes are opaque and
+            // absolutely positioned over it, so the only part of this that is
+            // ever visible is the space between them — see `FRAMED_GAP_COLOUR`.
+            ...(thumbnails.shown ? { backgroundColor: FRAMED_GAP_COLOUR } : {}),
+          }}
         >
           {strip.segments.map((segment) => {
             if (segment.widthPx <= 0) return null;

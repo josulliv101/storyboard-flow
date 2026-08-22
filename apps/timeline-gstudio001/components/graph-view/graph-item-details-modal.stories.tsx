@@ -459,7 +459,14 @@ async function settleStrip(): Promise<void> {
   // under load: the poll can take two readings before the movement has even
   // started, agree with itself, and report a strip that is about to move as
   // settled. That is exactly how these passed alone and failed in the full run.
-  await new Promise((resolve) => setTimeout(resolve, 320));
+  //
+  // LONGER THAN THE BAR'S LANDING SLIDE (`SEAM_SLIDE_MS`, 520ms), not longer
+  // than the row's 300ms step. It was 320 when 300 was the only transition
+  // this could be waiting on; the bar started sliding on a subject change and
+  // that stopped being true, which CI found and a run of this file alone did
+  // not — the reading that lands mid-slide depends on how loaded the machine
+  // is.
+  await new Promise((resolve) => setTimeout(resolve, 600));
   let previous = Number.NaN;
   await waitFor(
     () => {
@@ -704,16 +711,18 @@ export const ClickingANeighbourAdvancesTheStrip: Story = {
     const rightHero = panels[2]!.querySelector<HTMLElement>("[data-item-details-frame]")!;
     rightHero.click();
 
-    // ONE STEP STILL EASES. The counterpart to the cut in
-    // `LettingGoOfTheBarLandsTheStrip`: a landing more than a panel away
-    // arrives without travelling, and the guard that does it is a distance
-    // test — so the thing to protect is the case just under the line. A step
-    // is a gesture finishing itself and has to be seen to move.
-    const strip = () => document.querySelector<HTMLElement>("[data-details-strip]")!;
-    const movingX = strip().getBoundingClientRect().left;
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    // Still in flight a third of the way through a 300ms ease.
-    expect(strip().getBoundingClientRect().left).not.toBe(movingX);
+    // NO TIMING ASSERTION HERE, DELIBERATELY. This used to sample the row
+    // 120ms apart and require the two readings to differ — "still in flight a
+    // third of the way through a 300ms ease". It passed alone and failed in
+    // the full run, which is the tell: nothing guarantees the first sample
+    // lands at the animation's START. Under load the click, the render and
+    // the whole ease can fall between two reads, and the story then reports a
+    // step that eased perfectly as a step that jumped.
+    //
+    // What a step does that a landing does not is covered below by ORDER — the
+    // clip that was centred is now to the left of centre — and the landing's
+    // own story proves the other half geometrically, with the row at its seat
+    // and staying there. Neither of those depends on catching a frame.
 
     await waitFor(() => expect(centreName()).toBe("Rename After"));
 
@@ -1739,10 +1748,19 @@ export const HoldingAtAnEdgeRunsTheStrip: Story = {
     // ── LETTING GO STOPS IT, AND LANDS ON WHAT IT RAN TO ──────────────────
     release(box.right - 12);
     const stoppedAt = at();
-    const stoppedX = stripLeft();
     await rest(300);
+
+    // THE CLOCK STOPS DEAD, WHICH IS WHAT "STOPS IT" MEANS. The strip does
+    // not, and must not be asserted to: letting go lands the row on the clip
+    // the playhead reached, and the bar then slides to re-centre on it. That
+    // slide is a different motion from the run — it has an end, and the run
+    // did not — so what this checks is that the RUN stopped, and then that the
+    // slide settles rather than continuing.
     expect(at()).toBe(stoppedAt);
-    expect(stripLeft()).toBe(stoppedX);
+    await settleStrip();
+    const settledX = stripLeft();
+    await rest(200);
+    expect(stripLeft()).toBe(settledX);
     // WHERE THE PLAYHEAD FINISHED, NOT WHERE THE HAND IS. The hand never
     // moved, so this is the case that would go wrong if the release resolved
     // a clip from the pointer's x: the strip ran a long way underneath a
@@ -1754,7 +1772,6 @@ export const HoldingAtAnEdgeRunsTheStrip: Story = {
     // MEASURED AGAIN. The release above landed the row on a new clip, and the
     // bar re-pans around it — so the geometry read at the top of this story
     // describes a bar that no longer exists.
-    await settleStrip();
     const after = seamSurface().getBoundingClientRect();
     press(after.left + 12);
     const pressedBackAt = at();
@@ -2106,27 +2123,35 @@ export const ThePlaybarCanDrawFrames: Story = {
     const boxStyle = getComputedStyle(first.parentElement!);
     expect(boxStyle.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
 
-    // AND THE BOUNDARY IS DRAWN. The gap between two boxes is five pixels of
-    // the lane showing through, which is obvious between two greys and
-    // invisible between two photographs — a picture already contains dark
-    // edges and the eye has no reason to read that one as a boundary. Painted
-    // rather than widened, because a box's width is its duration and spending
-    // more of it on separation would change what the bar is saying.
-    expect(boxStyle.boxShadow).not.toBe("none");
-    // Both halves: a light hairline inside the box's own edge, and a dark one
-    // just outside it in the gap.
+    // AND THE GAPS CHANGE COLOUR. The gap between two boxes is five pixels of
+    // the strip showing through, which is obvious between two greys and
+    // invisible between two photographs — the lane is dark, a picture already
+    // contains dark edges, and the eye has no reason to read that one as a
+    // boundary. A PALE gap is not a colour footage supplies, so it reads as
+    // structure rather than as picture. Recoloured rather than widened,
+    // because a box's width is its duration and spending more of it on
+    // separation would change what the bar is saying.
+    const gap = getComputedStyle(
+      document.querySelector<HTMLElement>("[data-seam-strip]")!,
+    ).backgroundColor;
+    const channels = gap.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    expect(Math.min(...channels)).toBeGreaterThan(160);
+    // And each box keeps a dark hairline just inside its own border, so a
+    // bright frame running into the pale gap still has an edge.
     expect(boxStyle.boxShadow).toMatch(/inset/);
-    expect(boxStyle.boxShadow.match(/rgba?\(/g)?.length).toBe(2);
 
     framesTo("OFF");
     await waitFor(() =>
       expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
     );
-    // AND IT GOES AWAY WITH THEM. Over flat grey the same treatment is a
-    // hairline on a plain colour — decoration answering a question nobody
-    // asked, and one more thing between the reader and the rhythm the grey
-    // bar is for.
+    // AND IT GOES AWAY WITH THEM. Over flat grey the whole treatment is
+    // decoration answering a question nobody asked, and one more thing between
+    // the reader and the rhythm the grey bar is for.
     expect(getComputedStyle(seamBoxes()[0]!).boxShadow).toBe("none");
+    expect(
+      getComputedStyle(document.querySelector<HTMLElement>("[data-seam-strip]")!)
+        .backgroundColor,
+    ).toBe("rgba(0, 0, 0, 0)");
   },
 };
 
