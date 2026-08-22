@@ -26,7 +26,8 @@
     "bin:orphans": "node --env-file=.env scripts/bin-unreachable-timelines.mjs",
     "correct:aspects": "node --env-file=.env scripts/correct-clip-aspects.mjs",
     "audit:accounts": "node --env-file=.env scripts/audit-foreign-accounts.mjs",
-    "audit:assets": "node --env-file=.env scripts/audit-dead-asset-references.mjs"
+    "audit:assets": "node --env-file=.env scripts/audit-dead-asset-references.mjs",
+    "repair:asset-paths": "node --env-file=.env scripts/repair-truncated-asset-paths.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1094.0",
