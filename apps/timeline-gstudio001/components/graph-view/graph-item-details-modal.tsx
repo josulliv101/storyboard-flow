@@ -40,6 +40,8 @@ import { SeamStripBar } from "./graph-seam-strip-bar";
 import {
   buildSeamTimeline,
   seamAt,
+  seamSecondsAt,
+  type SeamPosition,
   seamSpanFor,
   seamStripProgress,
   type SeamClip,
@@ -57,6 +59,14 @@ import {
   rememberViewCount,
   type ViewCount,
 } from "./graph-item-details-view-count";
+import {
+  BAR_REACHES,
+  barReachLabel,
+  barReachWindow,
+  lastBarReach,
+  rememberBarReach,
+  type BarReach,
+} from "./graph-item-details-bar-reach";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -229,7 +239,12 @@ function DetailsFilmstripModal({
   // head. A ref rather than state because nothing renders from it: it is set
   // on the way out of one subject and read once on the way into the next, and
   // a re-render in between would be a render nobody needs.
-  const carryClockRef = useRef<number | null>(null);
+  // CARRIED AS A POSITION, NOT A SECOND. The bar is a window with a reach
+  // either side of the subject, so it is rebuilt around wherever you land and
+  // the same frame of the same clip is a different number of seconds along on
+  // the bar you left and the bar you arrive on. A raw second would survive the
+  // journey and mean something else at the end of it.
+  const carryClockRef = useRef<SeamPosition | null>(null);
   // WHERE AN EASING JUMP STARTED, while it is still easing. Null the rest of
   // the time, which is nearly all of the time.
   const [easingFrom, setEasingFrom] = useState<number | null>(null);
@@ -244,6 +259,10 @@ function DetailsFilmstripModal({
   // would make the wider views something you re-choose rather than something
   // you use.
   const [viewCount, setViewCount] = useState<ViewCount>(lastViewCount());
+  // HOW FAR THE BAR REACHES, which is a different question from how many
+  // panels are on screen: the row is what you are working on, the bar is how
+  // much of the sequence you can get to without leaving it.
+  const [reach, setReach] = useState<BarReach>(lastBarReach());
 
   const clipAt = useCallback(
     (index: number): MediaNode | null => {
@@ -318,15 +337,23 @@ function DetailsFilmstripModal({
   // got the approach to the cut and no more. With every clip present in full
   // there is no partial neighbour to lead into; the run-up to any cut is just
   // the clip before it, which is now on the bar in its entirety.
+  // THE SLICE THE BAR ACTUALLY COVERS. `ids` is the whole flat order and the
+  // ROW still walks all of it; this is only how far the clock reaches, so the
+  // two can disagree and the row can be scrolled past the end of the bar by
+  // stepping. Everything the bar is built from comes through here, so the
+  // track, the ruler, the strip and the minimap cannot end up describing
+  // different stretches of time.
+  const barWindow = useMemo(() => barReachWindow(ids, centre, reach), [ids, centre, reach]);
+
   const collectionSeamClips = useMemo(
     () =>
-      ids
+      barWindow.ids
         .map((id) => {
           const found = graph.nodesById.get(parseNodeId(id));
           return found && found.kind === "media" ? seamClipOf(found as MediaNode) : null;
         })
         .filter((clip): clip is SeamClip => clip !== null),
-    [ids, graph],
+    [barWindow, graph],
   );
 
   // WHERE THE BAR RESTS, as an index into what `buildSeamTimeline` will
@@ -368,8 +395,11 @@ function DetailsFilmstripModal({
   if (clockFor !== (node.id as string)) {
     setClockFor(node.id as string);
     setPlaying(false);
-    setBarSeconds(carryClockRef.current);
+    const carried = carryClockRef.current;
     carryClockRef.current = null;
+    setBarSeconds(
+      carried === null ? null : seamSecondsAt(timeline, carried.clipId, carried.clipSeconds),
+    );
   }
 
   // A LANDING THAT IS NOT A STEP IS A CUT.
@@ -472,6 +502,11 @@ function DetailsFilmstripModal({
   // the whole span for the length of the animation and then lets it go again,
   // so the travel is paid for only while it is being watched.
   const STEPPED_MAX = 5;
+
+  const chooseReach = useCallback((next: BarReach) => {
+    rememberBarReach(next);
+    setReach(next);
+  }, []);
 
   const chooseViewCount = useCallback((next: ViewCount) => {
     rememberViewCount(next);
@@ -591,7 +626,7 @@ function DetailsFilmstripModal({
   // The bar owns the SCALE now, so it also owns the layout — this hands it
   // clips, not pixels.
   const barClips = useMemo<readonly SeamBarClip[]>(() => {
-    return ids.map((id) => {
+    return barWindow.ids.map((id) => {
       const found = graph.nodesById.get(parseNodeId(id));
       const media = found && found.kind === "media" ? (found as MediaNode) : null;
       const parentId = graph.parentById.get(parseNodeId(id)) ?? null;
@@ -605,18 +640,22 @@ function DetailsFilmstripModal({
         ...(media === null ? {} : { posterSrc: seamClipOf(media)?.posterSrc }),
       };
     });
-  }, [ids, graph]);
+  }, [barWindow, graph]);
 
   // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a
   // released scrub differ only in how the clip was chosen; what happens next
   // — carry the clock, widen the mount window if the row is about to travel,
   // move — is the same sentence and is written once.
   const landOn = useCallback(
-    (clipId: string, seconds: number | null) => {
+    (clipId: string, at: SeamPosition | null) => {
       if (clipId === (node.id as string)) return;
       const to = ids.indexOf(clipId);
       const distance = to < 0 ? Number.POSITIVE_INFINITY : Math.abs(to - centre);
-      carryClockRef.current = seconds;
+      // Only a position ON the clip being landed on is worth carrying. At a
+      // seam the playhead and the clicked box can disagree by a frame, and
+      // carrying the other clip's position would land you on the right card
+      // showing the wrong one's time.
+      carryClockRef.current = at !== null && at.clipId === clipId ? at : null;
       // Only a jump that will actually be animated needs the panels in
       // between: one step already has them, and a cut never shows them.
       if (distance > 1 && distance <= STEPPED_MAX) setEasingFrom(centre);
@@ -762,7 +801,9 @@ function DetailsFilmstripModal({
       // they take no space, and the row would centre straight up underneath
       // them. This padding is the band they occupy: header (61px) plus the
       // bar block at top-16 with its own pt-4 (152px to its underside), plus
-      // clearance. It grew when the bar did, and it has to keep pace: the
+      // clearance, plus the reach picker's own row (mt-2 and a ~18px button)
+      // — which is why this is 13rem and not the 11rem it was before that
+      // picker existed. It grew when the bar did, and it has to keep pace: the
       // symptom of it not doing so is the minimap resting on the top edge of
       // the middle card, which is a quiet eight pixels rather than an obvious
       // fault.
@@ -775,7 +816,7 @@ function DetailsFilmstripModal({
       // row that had itself moved 1728px, which put the card just chosen
       // entirely off the left edge. `clip` crops without ever being
       // scrollable, so the transform stays the only thing that moves the row.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[11rem] pb-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[13rem] pb-6 backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim
@@ -831,7 +872,7 @@ function DetailsFilmstripModal({
               // both re-centre the row, and both bring the frame with them.
               // Splitting them would mean a few pixels of travel decided
               // whether you kept your place in the shot.
-              onCommitClip={(clipId) => landOn(clipId, barSeconds)}
+              onCommitClip={(clipId) => landOn(clipId, position)}
               // WHEREVER THE PLAYHEAD FINISHED, which is not always under the
               // pointer: holding at an edge runs the strip along beneath a
               // hand that is standing still. `position` is the view's own
@@ -839,13 +880,47 @@ function DetailsFilmstripModal({
               // carry one.
               onScrubEnd={() => {
                 if (position === null) return;
-                landOn(position.clipId, shownSeconds);
+                landOn(position.clipId, position);
               }}
               onScrubSeconds={(seconds) => {
                 setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
             />
+            {/* HOW FAR THE BAR REACHES, tucked under its right-hand end.
+                Here rather than with the panel-count picker at the foot of the
+                screen because it is a question about THIS control: the number
+                you are reading is the width of the thing directly above it,
+                and the two are read together. */}
+            <div
+              data-details-bar-reach
+              role="group"
+              aria-label="Clips either side on the bar"
+              className="mt-2 flex items-center justify-end gap-1"
+            >
+              <span className="mr-1 font-mono text-[10px] text-zinc-500">reach</span>
+              {BAR_REACHES.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={option === reach}
+                  onClick={() => chooseReach(option)}
+                  title={
+                    option === "all"
+                      ? "Reach the whole sequence"
+                      : `Reach ${option} clips either side`
+                  }
+                  className={[
+                    "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
+                    option === reach
+                      ? "bg-zinc-100 text-zinc-900"
+                      : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+                  ].join(" ")}
+                >
+                  {barReachLabel(option)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

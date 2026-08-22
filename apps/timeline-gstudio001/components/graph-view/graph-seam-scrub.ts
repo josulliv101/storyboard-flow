@@ -168,6 +168,34 @@ export type SeamPosition = Readonly<{ clipId: string; clipSeconds: number }>;
  * The very end of the bar is the one exception: there is no next span to hand
  * it to, so it resolves to the last clip's final moment rather than to nothing.
  */
+/**
+ * The other direction: a clip and a time inside it, back to a bar time.
+ *
+ * The inverse of `seamAt`, and needed because the bar is a WINDOW again — it
+ * shows a fixed reach either side of the subject, so the same frame of the
+ * same clip is a different number of seconds along on two different bars.
+ * Anything that has to survive the window moving (the clock carried across a
+ * landing, most of all) has to travel as a position and be converted here,
+ * not as a raw second.
+ *
+ * Null when the clip is not on this bar at all, which is a real answer rather
+ * than a failure: a caller holding a position from a wider window has to be
+ * able to find out that the narrower one cannot show it.
+ */
+export function seamSecondsAt(
+  timeline: SeamTimeline,
+  clipId: string,
+  secondsIntoClip: number,
+): number | null {
+  const span = timeline.spans.find((candidate) => candidate.clipId === clipId);
+  if (span === undefined) return null;
+  // Clamped to the span: a trim can have shortened the clip since the position
+  // was taken, and a second past its end would resolve onto the NEXT clip and
+  // silently land somewhere else.
+  const within = Math.min(Math.max(secondsIntoClip - span.sourceOffset, 0), span.to - span.from);
+  return span.from + within;
+}
+
 export function seamAt(timeline: SeamTimeline, barSeconds: number): SeamPosition | null {
   if (timeline.spans.length === 0) return null;
   const time = Math.min(Math.max(barSeconds, 0), timeline.totalSeconds);
