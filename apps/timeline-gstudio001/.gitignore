@@ -29,3 +29,7 @@ fixtures/local.json
 # Offline-mode media: files the upload route writes when GSTUDIO_FIXTURE_TIMELINES
 # is set, served statically at /offline-media. Local testing artefacts.
 public/offline-media/
+
+# One-off artefact of `repair:asset-paths` — the originals it rewrote, kept
+# next to the script for a hand reversal. Operational data, not source.
+repair-truncated-asset-paths.backup.json
