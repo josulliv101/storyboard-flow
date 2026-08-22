@@ -58,6 +58,7 @@ import { bootSessionKey } from "./boot-session-key";
 import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
+import type { PlaybarThumbnailStyle } from "./graph-playbar-thumbnails";
 import { laneDropIndex, splitLaneRows } from "./graph-lane-rows";
 import { withDefaultLayerFrame } from "./graph-layer-frame";
 import { GraphViewLoadingSkeleton } from "./graph-view-loading";
@@ -271,6 +272,10 @@ export function GraphTimelineView({
   // beside the two above for the same reason they are: none of the three
   // persists, and one of them quietly outliving the tab would be the surprise.
   const [playbarThumbnails, setPlaybarThumbnails] = useState(false);
+  // Kept whether or not frames are shown, so switching them off and on is a
+  // comparison rather than a choice made again each time.
+  const [playbarThumbnailStyle, setPlaybarThumbnailStyle] =
+    useState<PlaybarThumbnailStyle>("cover");
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
   // Decides whether trim handles are drawn on every clip or only the
   // selected one — see the prop below.
@@ -923,6 +928,8 @@ export function GraphTimelineView({
                 onClipNamesChange={setClipNamesShown}
                 playbarThumbnails={playbarThumbnails}
                 onPlaybarThumbnailsChange={setPlaybarThumbnails}
+                playbarThumbnailStyle={playbarThumbnailStyle}
+                onPlaybarThumbnailStyleChange={setPlaybarThumbnailStyle}
                 pixelsPerSecond={pixelsPerSecond}
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}

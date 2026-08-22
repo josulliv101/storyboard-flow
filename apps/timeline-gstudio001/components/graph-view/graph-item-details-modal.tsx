@@ -616,6 +616,16 @@ function DetailsFilmstripModal({
         collectionId: parentId === null ? null : (parentId as string),
         collectionName: parent?.name ?? null,
         ...(media === null ? {} : { posterSrc: seamClipOf(media)?.posterSrc }),
+        // ONLY A VIDEO GETS THE FULL SET. A still's single image sampled at
+        // ten intervals is ten copies of itself, which is a filmstrip saying
+        // nothing happens — worse than the one frame it is made of. Leaving
+        // these off is what makes the bar fall back to `cover` for it.
+        ...(media !== null && media.mediaKind === "video" && media.posterSrcs !== undefined
+          ? {
+              posterSrcs: media.posterSrcs,
+              trimInSeconds: seamClipOf(media)?.trimInSeconds ?? 0,
+            }
+          : {}),
       };
     });
   }, [barWindow, graph]);

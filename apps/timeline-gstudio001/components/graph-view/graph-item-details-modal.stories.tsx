@@ -15,7 +15,10 @@ import { createGraphDetailsStore } from "@/lib/graph-details-store";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { ItemDetailsProvider, useItemDetails } from "./graph-item-details-context";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
-import { PlaybarThumbnailsProvider } from "./graph-playbar-thumbnails";
+import {
+  PlaybarThumbnailsProvider,
+  type PlaybarThumbnailStyle,
+} from "./graph-playbar-thumbnails";
 
 // The details modal's first stories. It had none, which is how it came to
 // describe a VOICEOVER as a "still" — the branch that renders the duration
@@ -252,9 +255,11 @@ function EndHarness() {
 function SeamHarness({
   scene = SEAM_SCENE,
   thumbnails = false,
+  thumbnailStyle = "cover",
 }: {
   scene?: GraphNodeSpec;
   thumbnails?: boolean;
+  thumbnailStyle?: PlaybarThumbnailStyle;
 }) {
   // Built FROM the scene, so a fixture can grow without the harness having to
   // be told about every clip in it by name.
@@ -269,7 +274,7 @@ function SeamHarness({
   );
   return (
     <div className="graph-view-theme min-h-[600px] bg-zinc-950">
-      <PlaybarThumbnailsProvider shown={thumbnails}>
+      <PlaybarThumbnailsProvider shown={thumbnails} style={thumbnailStyle}>
       <DndCollections initialGraph={graphOfRoot(scene)}>
         <GraphDetailsProvider store={store}>
           <ItemDetailsProvider>
@@ -2090,6 +2095,83 @@ export const ThePlaybarCanDrawFrames: Story = {
     // rather than a hole.
     expect(getComputedStyle(first.parentElement!).backgroundColor).not.toBe(
       "rgba(0, 0, 0, 0)",
+    );
+  },
+};
+
+/**
+ * FILMSTRIP: A ROW OF FRAMES ACROSS THE CLIP, not one frame standing for it.
+ *
+ * `cover` answers "which shot is that". A strip answers a second question the
+ * single frame cannot: what HAPPENS in it. A long take that opens on a closed
+ * door and ends on an empty room is one picture at `cover` and a story here.
+ *
+ * WHAT THIS COVERS IS THE LAYOUT, not the sampling. Which times the cells are
+ * taken at is `videoFrameUrls`, which has its own tests — and in a story the
+ * fixture posters are not Cloudinary video URLs, so every cell resolves to the
+ * same image and only the arrangement is observable. The two are worth keeping
+ * apart: the arithmetic is pure and the arrangement is geometry, and neither
+ * needs the other to be wrong to fail.
+ */
+export const ThePlaybarCanDrawAFilmstrip: Story = {
+  // TRIMMED_SCENE because its clips are VIDEO with posters and real trims —
+  // the only fixture here that a filmstrip can be built from at all. A still
+  // falls back to the single frame by design, which is the next story.
+  render: () => <SeamHarness scene={TRIMMED_SCENE} thumbnails thumbnailStyle="filmstrip" />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+
+    // The widest box, so there is room for more than one cell in it — a strip
+    // of one is a `cover` by another name and would prove nothing.
+    const strips = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-filmstrip]"),
+    );
+    expect(strips.length).toBeGreaterThan(0);
+    const widest = strips
+      .slice()
+      .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]!;
+    const cells = Array.from(widest.querySelectorAll<HTMLImageElement>("img"));
+    expect(cells.length).toBeGreaterThan(1);
+
+    // THEY DIVIDE THE BOX EXACTLY. `flex-1` rather than a fixed cell width, so
+    // there is never a grey tail at the end of a strip where the arithmetic
+    // did not come out even.
+    const box = widest.getBoundingClientRect();
+    const first = cells[0]!.getBoundingClientRect();
+    const last = cells[cells.length - 1]!.getBoundingClientRect();
+    expect(first.left).toBeCloseTo(box.left, 0);
+    expect(last.right).toBeCloseTo(box.right, 0);
+
+    // Square-ish: about one cell per bar-height, which is what makes them read
+    // as frames in a strip rather than as stripes.
+    expect(Math.abs(first.width - first.height)).toBeLessThan(first.height);
+    expect(getComputedStyle(cells[0]!).objectFit).toBe("cover");
+
+    // THE STYLE IS A SEPARATE SETTING FROM WHETHER FRAMES SHOW AT ALL: this is
+    // the strip, so the single covering frame must not ALSO be in the box.
+    expect(widest.parentElement!.querySelectorAll("img").length).toBe(cells.length);
+  },
+};
+
+/**
+ * A STILL FALLS BACK TO THE SINGLE FRAME, whatever the style says.
+ *
+ * A still has one image. Sampling it at ten intervals gives ten copies of
+ * itself — a filmstrip whose content is "nothing happens here", which is worse
+ * than the one frame it is made of and takes ten requests to say. So the
+ * strip is offered only where there is something to sample, and the setting
+ * degrades rather than obeying.
+ */
+export const AStillIgnoresTheFilmstrip: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} thumbnails thumbnailStyle="filmstrip" />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    expect(document.querySelectorAll("[data-seam-filmstrip]").length).toBe(0);
+    // Still a picture per box — falling back is not the same as giving up.
+    expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(
+      seamBoxes().length,
     );
   },
 };
