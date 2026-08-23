@@ -1,5 +1,6 @@
 "use client";
 
+import { BOX_INSET_PX } from "./graph-seam-lane";
 import type { SeamTick } from "./graph-seam-bar-layout";
 
 /**
@@ -11,6 +12,38 @@ import type { SeamTick } from "./graph-seam-bar-layout";
  * Two places, one number.
  */
 export const SEAM_RULER_HEIGHT_PX = 20;
+
+/**
+ * ── THE CLIPS, DRAWN AGAIN IN THE SCALE ─────────────────────────────────────
+ *
+ * The ruler carried numbers and collection names and nothing about the film
+ * under it, so reading "how long is that shot" meant finding a box's edges on
+ * one row and reading a number off another. A block per clip, at the same
+ * width and the same x, puts the two in one place: the run of blocks IS the
+ * run of boxes, and the numbers land on it.
+ *
+ * FAINT ENOUGH TO BE A GROUND. This is a scale, not a second film strip — the
+ * blocks are there to make divisions findable and to give the labels something
+ * to sit against, and anything with real presence would compete with the film
+ * it is describing. White at 7% is a shape you notice when you look for it and
+ * a texture when you do not.
+ */
+const RULER_BLOCK_COLOUR = "rgba(250, 250, 250, 0.07)";
+
+/**
+ * The active clip's block, and the one thing in this band with a hue.
+ *
+ * Sky is what the app already says "live" in — the seek rail's played time,
+ * the board's readout — so the active clip's block is that colour rather than
+ * a new one to learn. Kept translucent for the same reason the others are
+ * faint: it marks the stretch of scale belonging to the clip being worked on,
+ * and a solid bar would be a second claim competing with the white triangle
+ * and rule immediately below it.
+ *
+ * It is the only saturated thing up here, which is what makes it findable at a
+ * glance on a bar of two dozen blocks.
+ */
+const RULER_BLOCK_ACTIVE_COLOUR = "rgba(56, 189, 248, 0.30)";
 
 /**
  * The scale ABOVE the boxes: seconds, and where each collection starts.
@@ -54,10 +87,25 @@ export const SEAM_RULER_HEIGHT_PX = 20;
 export function SeamRuler({
   ticks,
   offset,
+  segments = [],
+  centreClipId = null,
   ghostX = null,
   handlers,
 }: Readonly<{
   ticks: readonly SeamTick[];
+  /**
+   * The film's own layout, so the scale can draw a block per clip at exactly
+   * the width and position of the box below it.
+   *
+   * The SAME numbers the lane lays its boxes out from, inset the same way —
+   * a block that agreed about width but not about the gap would sit a couple
+   * of pixels off every boundary, which at these sizes is the difference
+   * between a scale and a smear.
+   */
+  segments?: readonly Readonly<{ clipId: string; leftPx: number; widthPx: number }>[];
+  /** Which block wears the active treatment. Null draws none, which is what a
+   *  ruler rendered without a film under it should do. */
+  centreClipId?: string | null;
   /** The strip's own transform, so the ruler travels with the boxes. */
   offset: number;
   /**
@@ -114,10 +162,40 @@ export function SeamRuler({
         className="absolute inset-y-0 left-0 w-full"
         style={{ transform: `translateX(${offset}px)` }}
       >
-        {/* UNDER THE POINTER, and the same hairline the film draws. First in
-            the container so a tick mark and its label paint over it rather
-            than under — the line says where you are, and the label is what it
-            is pointing at. */}
+        {/* THE BLOCKS FIRST, so they are the GROUND the rest of the band sits
+            on. A tick, its label and the pointer's line all have to stay
+            readable over them, and the paint order is what guarantees that
+            rather than a stack of z-indexes to keep in step. */}
+        {segments.map((segment) => {
+          if (segment.widthPx <= 0) return null;
+          const isCentre = segment.clipId === centreClipId;
+          return (
+            <span
+              key={segment.clipId}
+              data-seam-ruler-block={segment.clipId}
+              data-seam-ruler-block-live={isCentre ? "" : undefined}
+              aria-hidden="true"
+              style={{
+                left: segment.leftPx + BOX_INSET_PX,
+                width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                backgroundColor: isCentre
+                  ? RULER_BLOCK_ACTIVE_COLOUR
+                  : RULER_BLOCK_COLOUR,
+              }}
+              // INSET FROM THE BOTTOM, not flush to it. The tick marks hang
+              // from that edge and a block reaching it would have them ending
+              // inside a filled rectangle rather than against the film — the
+              // marks are what point at the boundary, and they need the gap to
+              // point ACROSS.
+              className="absolute top-0 bottom-1.5 rounded-[2px]"
+            />
+          );
+        })}
+
+        {/* UNDER THE POINTER, and the same hairline the film draws. Painted
+            after the blocks so it reads over them — the line says where you
+            are, and a ground that covered it would be answering a quieter
+            question more loudly. */}
         {ghostX !== null && (
           <span
             aria-hidden="true"

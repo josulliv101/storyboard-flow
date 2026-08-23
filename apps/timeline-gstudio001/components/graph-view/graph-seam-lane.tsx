@@ -235,7 +235,7 @@ function SegmentFrames({
  * middle — that is what the centring arithmetic aligns to the card below —
  * and trimming only the width would shift it by half the gap.
  */
-const BOX_INSET_PX = 2.5;
+export const BOX_INSET_PX = 2.5;
 
 /**
  * Half the active-clip triangle's width.

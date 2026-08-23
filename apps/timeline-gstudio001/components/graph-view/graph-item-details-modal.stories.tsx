@@ -1758,6 +1758,63 @@ export const TheRulerNamesTheCollections: Story = {
 
     expect(labels("collection")).toEqual(["Kitchen Interior", "Loading Dock"]);
 
+    // ── A BLOCK PER CLIP, AND THE GAPS LEFT ALONE ────────────────────────
+    //
+    // The scale carries a faint block per clip so "how long is that shot" can
+    // be read in one place instead of two — the run of blocks IS the run of
+    // boxes. Which only works if they agree EXACTLY: a block off by a couple
+    // of pixels at these sizes is the difference between a scale and a smear.
+    const blocks = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-ruler-block]"),
+    );
+    expect(blocks.length).toBeGreaterThan(1);
+    for (const block of blocks) {
+      const id = block.getAttribute("data-seam-ruler-block")!;
+      const box = document.querySelector<HTMLElement>(
+        `[data-seam-segment="${CSS.escape(id)}"]`,
+      );
+      if (box === null) continue;
+      const blockAt = block.getBoundingClientRect();
+      const boxAt = box.getBoundingClientRect();
+      expect(Math.abs(blockAt.left - boxAt.left)).toBeLessThan(0.5);
+      expect(Math.abs(blockAt.right - boxAt.right)).toBeLessThan(0.5);
+    }
+
+    // AND NOTHING REACHES INTO THE GAP. The gap between two clips is the one
+    // part of the bar that says "these are separate", and it is drawn by
+    // absence — so a block that overran it by a pixel would close the seam the
+    // whole layout depends on. Asserted as clearance BETWEEN blocks rather
+    // than against a number, which is what "the gap stays empty" means.
+    const inOrder = [...blocks].sort(
+      (a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left,
+    );
+    for (let index = 0; index < inOrder.length - 1; index += 1) {
+      const gap =
+        inOrder[index + 1]!.getBoundingClientRect().left -
+        inOrder[index]!.getBoundingClientRect().right;
+      expect(gap).toBeGreaterThan(1);
+    }
+
+    // ── AND ONE OF THEM IS THE ACTIVE CLIP ───────────────────────────────
+    //
+    // The only saturated thing in the band, which is what makes it findable on
+    // a bar of two dozen blocks. Asserted as "different from the others" and
+    // as having a hue at all, rather than against an rgba string nobody would
+    // notice going stale.
+    const live = document.querySelectorAll<HTMLElement>("[data-seam-ruler-block-live]");
+    expect(live.length).toBe(1);
+    expect(live[0]!.getAttribute("data-seam-ruler-block")).toBe(
+      centreBox().getAttribute("data-seam-segment"),
+    );
+    const plain = blocks.find(
+      (block) => !block.hasAttribute("data-seam-ruler-block-live"),
+    )!;
+    const activeInk = getComputedStyle(live[0]!).backgroundColor;
+    expect(activeInk).not.toBe(getComputedStyle(plain).backgroundColor);
+    // A HUE, not a brighter grey: the channels have to disagree.
+    const [red, green, blue] = activeInk.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    expect(Math.max(red!, green!, blue!) - Math.min(red!, green!, blue!)).toBeGreaterThan(40);
+
     // Seconds, and enough of them to read a scale from.
     const times = labels("time");
     expect(times.length).toBeGreaterThan(3);

@@ -914,6 +914,8 @@ export function SeamStripBar({
         <SeamRuler
           ticks={ticks}
           offset={offset}
+          segments={strip.segments}
+          centreClipId={centreClipId}
           // The same x the lane's ghost uses, so the two are one line. Dropped
           // while panning for the same reason the lane drops its card: the bar
           // is moving under the pointer, and a mark claiming to be "here" is
