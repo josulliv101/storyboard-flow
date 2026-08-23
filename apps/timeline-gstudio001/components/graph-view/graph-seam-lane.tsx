@@ -5,6 +5,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
 import { DETAILS_STEP_MS, detailsStepTransition } from "./graph-details-motion";
+import {
+  BOX_INSET_PX,
+  MARK_HALF_PX,
+  MARK_HEIGHT_PX,
+  MARK_TOP_OFFSET_PX,
+  SEAM_LANE_HEIGHT_PX,
+  SEAM_PREVIEW_GAP_PX,
+} from "./graph-seam-metrics";
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 import {
   usePlaybarThumbnails,
@@ -83,31 +91,13 @@ function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: numb
 }
 
 
-/**
- * HOW TALL THE FILM IS.
- *
- * 36px for a long time, which made the frames inside it 30 — small enough
- * that a thumbnail told you a shot was dark or bright and very little else,
- * and the strip is the one place you are meant to recognise a shot by looking
- * at it. 48 puts the pictures at 42, which is where a face in a medium shot
- * stops being a smudge.
- *
- * ONE NUMBER, because four things are measured from it: the lane itself, the
- * fades over its ends, the filmstrip cell size that keeps a cell square, and
- * the hover card's offset below it. They were four literals, and a bar that
- * grew while its fades did not is a gradient floating in the middle of the
- * film.
- */
-export const SEAM_LANE_HEIGHT_PX = 48;
-
-/**
- * How far below the film the hover card hangs.
- *
- * Measured from the lane's BOTTOM rather than written as one offset from its
- * top, so the card keeps its distance when the film changes height instead of
- * climbing into it.
- */
-export const SEAM_PREVIEW_GAP_PX = 20;
+// RE-EXPORTED, not defined here. These live in `graph-seam-metrics` because
+// the ruler needs the film's box inset and the film needs the ruler's height —
+// which as two component modules importing each other is a cycle, and the kind
+// that fails as a layout built from `undefined` rather than as an error. The
+// re-export is so nothing that already imported them from the lane had to
+// move.
+export { BOX_INSET_PX, SEAM_LANE_HEIGHT_PX, SEAM_PREVIEW_GAP_PX };
 
 /** One cell per bar-height, so a filmstrip cell reads as a square. */
 const FILMSTRIP_CELL_PX = SEAM_LANE_HEIGHT_PX;
@@ -235,7 +225,6 @@ function SegmentFrames({
  * middle — that is what the centring arithmetic aligns to the card below —
  * and trimming only the width would shift it by half the gap.
  */
-export const BOX_INSET_PX = 2.5;
 
 /**
  * Half the active-clip triangle's width.
@@ -245,7 +234,6 @@ export const BOX_INSET_PX = 2.5;
  * three places have to agree on it — both borders and the clamp that keeps the
  * mark inside the bar — and they were three separate `5`s.
  */
-const MARK_HALF_PX = 5;
 
 /**
  * WHAT SEPARATES TWO BOXES ONCE THEY HOLD PICTURES.
@@ -820,9 +808,28 @@ export function SeamLane({
                 )}px, calc(100% - ${MARK_HALF_PX}px))`,
                 borderLeft: `${MARK_HALF_PX}px solid transparent`,
                 borderRight: `${MARK_HALF_PX}px solid transparent`,
-                borderTop: "6px solid rgba(250, 250, 250, 0.95)",
+                borderTop: `${MARK_HEIGHT_PX}px solid rgba(250, 250, 250, 0.95)`,
+                // ABOVE THE RULER, not inside it.
+                //
+                // It used to sit immediately over the film, which put it in
+                // the scale's band among the scale's own labels — three things
+                // claiming the same 20px, and the crowding is what made the
+                // band hard to read. Lifted clear, the ruler's contents have
+                // sole possession of the ruler and the mark reads as pointing
+                // AT the band rather than as part of it.
+                //
+                // Derived from the ruler's height, so a taller scale moves the
+                // mark with it instead of burying it. It still travels with
+                // the strip: the `left` above is unchanged, so the triangle
+                // stays over its clip through every pan.
+                //
+                // THE RULE DOES NOT COME WITH IT. That is a measurement of the
+                // BOXES — width is duration — so it stays against the film it
+                // measures. The pair is a pointer and a span, and only the
+                // pointer was in the way.
+                top: -MARK_TOP_OFFSET_PX,
               }}
-              className="pointer-events-none absolute -top-[9px] z-20 h-0 w-0 -translate-x-1/2"
+              className="pointer-events-none absolute z-20 h-0 w-0 -translate-x-1/2"
             />
           </>
         );

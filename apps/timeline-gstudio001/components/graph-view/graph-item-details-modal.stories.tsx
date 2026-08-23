@@ -1815,6 +1815,58 @@ export const TheRulerNamesTheCollections: Story = {
     const [red, green, blue] = activeInk.match(/[\d.]+/g)!.slice(0, 3).map(Number);
     expect(Math.max(red!, green!, blue!) - Math.min(red!, green!, blue!)).toBeGreaterThan(40);
 
+    // ── EVERY OTHER ONE IS FILLED ────────────────────────────────────────
+    //
+    // A block on every clip made a continuous band broken only by the gaps,
+    // and at a wide reach those gaps are a couple of pixels — so the row read
+    // as one long rectangle with notches. Alternate fills give each boundary a
+    // change of TONE as well as a gap.
+    const striped = blocks.filter((block) =>
+      block.hasAttribute("data-seam-ruler-block-striped"),
+    );
+    expect(striped.length).toBeGreaterThan(0);
+    // Roughly half, which is what "alternate" means and what a run of blocks
+    // all filled or all bare would fail.
+    expect(striped.length).toBeLessThan(blocks.length);
+    for (const bare of blocks) {
+      if (bare.hasAttribute("data-seam-ruler-block-striped")) continue;
+      if (bare.hasAttribute("data-seam-ruler-block-live")) continue;
+      expect(getComputedStyle(bare).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    }
+
+    // AND THE ACTIVE ONE IGNORES THE PATTERN. Its parity is an accident of
+    // where it sits in the order, so a mark that appeared for only half the
+    // clips you could select would be worse than no mark at all.
+    expect(live[0]!.hasAttribute("data-seam-ruler-block-striped")).toBe(false);
+    expect(activeInk).not.toBe("rgba(0, 0, 0, 0)");
+
+    // ── THE TRIANGLE CLEARED THE BAND, THE RULE DID NOT ──────────────────
+    //
+    // The mark used to sit inside the scale among its labels, three things
+    // claiming the same 20px. The rule stays: it measures the BOXES — width is
+    // duration — so it belongs against the film rather than above the scale.
+    const band = document.querySelector<HTMLElement>("[data-seam-ruler]")!.getBoundingClientRect();
+    const triangle = document
+      .querySelector<HTMLElement>("[data-seam-active-mark]")!
+      .getBoundingClientRect();
+    const rule = document
+      .querySelector<HTMLElement>("[data-seam-active-span]")!
+      .getBoundingClientRect();
+    expect(triangle.bottom).toBeLessThanOrEqual(band.top + 0.5);
+    expect(rule.top).toBeGreaterThan(band.top);
+
+    // ── AND THE LABELS SIT IN THE MIDDLE OF IT ───────────────────────────
+    //
+    // Hung from the top they read as text with a margin under it rather than
+    // as a scale; centred, each sits in the middle of the block it names and
+    // the tick mark keeps the bottom edge to itself.
+    const anyLabel = document.querySelector<HTMLElement>("[data-seam-tick] span:nth-child(2)");
+    expect(anyLabel).not.toBeNull();
+    const labelBox = anyLabel!.getBoundingClientRect();
+    expect(
+      Math.abs((labelBox.top + labelBox.height / 2) - (band.top + band.height / 2)),
+    ).toBeLessThan(1.5);
+
     // Seconds, and enough of them to read a scale from.
     const times = labels("time");
     expect(times.length).toBeGreaterThan(3);
