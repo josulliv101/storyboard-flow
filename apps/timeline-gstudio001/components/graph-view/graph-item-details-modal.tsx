@@ -20,7 +20,11 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
-import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
+import {
+  DETAILS_HERO_FILL_CLASS,
+  DETAILS_PANEL_HEIGHT_CLASS,
+  DETAILS_ROW_FLOOR_CLASS,
+} from "./graph-view-config";
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { cloudinaryScrubProxySrc } from "@/lib/cloudinary-scrub-proxy";
 import { useFrameCrossfade } from "@/hooks/use-frame-crossfade";
@@ -32,11 +36,7 @@ import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
-import {
-  DETAILS_HEIGHT_DELAY_MS,
-  DETAILS_HEIGHT_MS,
-  detailsStepTransition,
-} from "./graph-details-motion";
+import { DETAILS_STEP_MS, detailsStepTransition } from "./graph-details-motion";
 import { SegmentedControl } from "./graph-details-segmented";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
@@ -367,17 +367,20 @@ function DetailsFilmstripModal({
   // for as long as the slide takes. The card leaves with its picture on.
   const [leavingCentre, setLeavingCentre] = useState<number | null>(null);
   const centreWas = useRef(centre);
-  useEffect(() => {
+  // BEFORE PAINT, NOT AFTER. As `useEffect` this ran one frame too late: the
+  // render that changed `centre` painted with no union yet, so the outgoing
+  // card was briefly outside BOTH windows and blinked out for a single frame
+  // before the union brought it back. On a slowed recording that is a card
+  // vanishing between two frames — a hard blink, no fade — which is worse than
+  // the bug the union was added to fix.
+  useLayoutEffect(() => {
     if (centreWas.current === centre) return;
     setLeavingCentre(centreWas.current);
     centreWas.current = centre;
     // The slide's own clock, plus a frame — releasing on the same tick can
     // blank the card on its last painted frame, which is the bug in
     // miniature.
-    const timer = setTimeout(
-      () => setLeavingCentre(null),
-      DETAILS_HEIGHT_DELAY_MS + DETAILS_HEIGHT_MS + 40,
-    );
+    const timer = setTimeout(() => setLeavingCentre(null), DETAILS_STEP_MS + 40);
     return () => clearTimeout(timer);
   }, [centre]);
 
@@ -1216,6 +1219,9 @@ function DetailsFilmstripModal({
           // which top-aligns the three and lets the strips fall where the
           // picture heights leave them.
           "flex items-end",
+          // The row cannot dip while the two cards swap heights — see
+          // DETAILS_ROW_FLOOR_CLASS.
+          DETAILS_ROW_FLOOR_CLASS,
           // NO TRANSITION WHILE A FINGER IS ON IT. A drag has to track the
           // hand exactly; easing it would put the film a fixed distance
           // behind wherever the pointer actually is, which reads as lag
@@ -1356,18 +1362,8 @@ function DetailsFilmstripModal({
               // is one neighbour wide, so collapsing these would shift every
               // panel between them and the middle.
               spare={isSpare(index)}
-              // WHO IS TAKING THE MARK AND WHO IS GIVING IT UP, for as long as
-              // the step runs. Null once it has settled, so a panel that simply
-              // IS the centre transitions like anything else.
-              focusHandoff={
-                leavingCentre === null || leavingCentre === centre
-                  ? null
-                  : index === centre
-                    ? "arriving"
-                    : index === leavingCentre
-                      ? "departing"
-                      : null
-              }
+              // Held still while the row moves — see the filmstrip's own note.
+              stepping={leavingCentre !== null}
               width={index === centre ? panelWidths.centre : panelWidths.neighbour}
               // Engaged, and not the one being watched. Uses the same gate as
               // the playhead lines and the ring, so the whole view agrees on

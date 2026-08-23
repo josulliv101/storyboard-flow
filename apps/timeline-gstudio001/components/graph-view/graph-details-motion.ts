@@ -35,6 +35,36 @@
 // film with pictures in them, and a picture that bounces past its mark and
 // comes back says the software is pleased with itself. The confidence is in
 // the departure, not in the arrival.
+/**
+ * THE STEP'S CURVE, and the reason a step felt violent had nothing to do with
+ * how long it lasted.
+ *
+ * It was `cubic-bezier(0.32, 0.72, 0, 1)` — a hard ease-out, the kind that
+ * feels crisp on a 40px control and is brutal on a 507px one. Measured against
+ * that distance over 420ms, where the average speed is 1207px/s:
+ *
+ *   starts at 2716px/s   — from a standing start, in the first frame
+ *   peaks at 5094px/s    — 4.2x average, only 16% of the way through
+ *   90% of the distance covered in 37% of the time
+ *
+ * So the card leapt away at more than twice average speed with no acceleration
+ * at all, was effectively parked a third of the way in, and spent the remaining
+ * 265ms on a settle nobody can see. Both complaints — too quick, too strong —
+ * are that one line.
+ *
+ * LENGTHENING IT WOULD NOT HAVE HELPED: the extra time lands in the invisible
+ * tail, and the leap at the front is unchanged.
+ *
+ * This is ease-in-out-sine. Same 420ms, and it starts from REST:
+ *
+ *   starts at 0px/s
+ *   peaks at 1919px/s    — 1.6x average, halfway through
+ *   90% of the distance covered in 79% of the time
+ *
+ * Peak speed falls by 62%, and the visible motion more than doubles in length —
+ * 155ms of it becomes 332ms — without touching the clock. The card accelerates,
+ * travels and arrives, instead of appearing already at speed.
+ */
 const DETAILS_STEP_EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
 
 /**
@@ -98,43 +128,23 @@ export function detailsStepTransition(properties: string): string {
  */
 export const DETAILS_CHROME_MS = 210;
 
-/**
- * When the height change starts, measured from the top of the step.
+/* (kept for reference)
+ * THE CHROME AND THE HANDOFF USED TO HAVE CLOCKS OF THEIR OWN, and both are
+ * gone.
  *
- * Not the full {@link DETAILS_STEP_MS}, which would read as a pause. The step's
- * curve is a hard ease-out — it does most of its travel early — so by 300ms the
- * row has visibly stopped even though it has 120ms of settle left. Starting
- * here reads as the card adjusting once it has arrived, rather than as two
- * animations with a gap between them.
+ * The chrome ran at 210ms on the reasoning that a border and a shadow do not
+ * travel, so matching the step would leave them resolving after the panel had
+ * arrived. The handoff then split that again — 140ms for the card losing the
+ * mark, 140ms of delay for the one taking it — so that no frame had two
+ * subjects.
+ *
+ * Both are defensible in isolation and together they meant a single step ran
+ * on four different clocks: 420ms for the travel and the two axes, 210 for the
+ * chrome at rest, 140 for a card giving the mark up, 140-delayed for a card
+ * taking it. Every one of those boundaries is a moment where something stops
+ * while everything else is still going, and enough of them read as timing that
+ * is simply off.
+ *
+ * One clock for the whole step now. If the crossing needs the two cards told
+ * apart again, it should be done with something other than a second duration.
  */
-export const DETAILS_HEIGHT_DELAY_MS = 300;
-
-/** And how long it then takes. Short: it is a correction, not a journey. */
-export const DETAILS_HEIGHT_MS = 200;
-
-/**
- * How long the subject's chrome takes to LEAVE the card losing it, and how
- * long the card gaining it waits before claiming it.
- *
- * A step grows one card and shrinks another at the same time, and for the few
- * frames either side of the crossing they are near enough the same size that
- * neither reads as the subject. Watched back frame by frame, the eye has
- * nothing to follow through the middle of the step.
- *
- * THE FIX IS NOT TO STAGGER THE WIDTHS. Both cards change by exactly the same
- * amount in opposite directions, so animating them together keeps the row's
- * total width invariant; offsetting them makes it dip by that amount — 236px
- * at 1920 — and every card to the right of the pair slides out and back. The
- * geometry has to stay simultaneous.
- *
- * So the HANDOFF is staggered instead, which costs no layout at all. The
- * outgoing card drops its surface and border inside this window; the incoming
- * one waits it out before taking them. The two never wear the mark at once,
- * so there is exactly one subject at every frame of the step even while the
- * sizes are crossing.
- *
- * A third of the step. Long enough to read as a handoff rather than a
- * simultaneous swap, short enough that the arriving card is fully marked well
- * before it stops moving.
- */
-export const DETAILS_HANDOFF_MS = 140;

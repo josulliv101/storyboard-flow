@@ -4030,140 +4030,138 @@ export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
 };
 
 /**
- * ONLY ONE CARD WEARS THE MARK AT A TIME, INCLUDING MID-STEP.
+ * THE ROW DOES NOT BOB WHILE THE TWO CARDS SWAP HEIGHTS.
  *
- * A step grows one card and shrinks another simultaneously, and around the
- * crossing they are near enough the same size that neither reads as the
- * subject. On a frame-by-frame playback the eye has nothing to follow through
- * the middle of the step.
+ * The cards hang from a common bottom, so the row's height is whatever its
+ * tallest card is — the subject. MID-STEP THERE IS NO SUBJECT: the outgoing card
+ * is shrinking and the incoming one is growing, and they cross in the middle.
+ * Measured at 1920, both are 444px at the crossover against a resting 519, so
+ * the row lost 75px of height — and because the scrim centres it vertically,
+ * every card lifted 37px and settled back.
  *
- * THE WIDTHS ARE NOT WHAT GOT STAGGERED, and that is the interesting part.
- * Both cards change by exactly the same amount in opposite directions, so
- * animating them together holds the row's total width constant; offsetting them
- * would make it dip by that amount — 236px, measured at 1920 — and every card
- * to the right of the pair would slide out and back. The geometry has to stay
- * simultaneous.
+ * That bob belongs to no card's animation, which is what made it hard to place:
+ * it reads as the vertical part of the step finishing early and the horizontal
+ * part running on afterwards, and the declared timings say the exact opposite —
+ * width and height are derived to land on the same frame.
  *
- * So the CHROME is handed off instead, which costs no layout: the outgoing card
- * drops its surface and border inside the handoff window, and the incoming one
- * waits exactly that long before taking them.
- *
- * Asserted as timings rather than as painted colour, because the thing being
- * claimed is about ORDER, and a colour sampled mid-transition is a race.
+ * SIMULATED RATHER THAN SAMPLED. The crossover is one instant inside a 420ms
+ * transition and neither browser pane will sample a transition at all
+ * (requestAnimationFrame is throttled in both). Setting the two heights to their
+ * midpoint IS the crossover, and it is deterministic.
  */
-export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
+export const TheRowHoldsItsHeightThroughTheCrossover: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const strip = document.querySelector<HTMLElement>("[data-details-strip]")!;
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
+    );
+    const centre = panels.findIndex(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    );
+    expect(centre).toBeGreaterThanOrEqual(0);
+    const incoming = panels[centre + 1] ?? panels[centre - 1]!;
+
+    const rowHeight = () => Math.round(strip.getBoundingClientRect().height);
+    // An UNINVOLVED card — neither of the two swapping — so any movement it
+    // shows is the row moving under it rather than its own animation.
+    const bystander = panels.find(
+      (panel) => panel !== panels[centre] && panel !== incoming,
+    )!;
+    const bystanderTop = () => Math.round(bystander.getBoundingClientRect().top);
+
+    const restHeight = rowHeight();
+    const restTop = bystanderTop();
+
+    // THE CROSSOVER: both cards halfway between the two heights.
+    const subject = panels[centre]!.getBoundingClientRect().height;
+    const neighbour = incoming.getBoundingClientRect().height;
+    const midpoint = `${Math.round((subject + neighbour) / 2)}px`;
+    for (const panel of [panels[centre]!, incoming]) {
+      panel.style.transition = "none";
+      panel.style.height = midpoint;
+    }
+
+    const crossoverHeight = rowHeight();
+    const crossoverTop = bystanderTop();
+
+    for (const panel of [panels[centre]!, incoming]) {
+      panel.style.height = "";
+      panel.style.transition = "";
+    }
+
+    expect(`row height ${crossoverHeight}`).toBe(`row height ${restHeight}`);
+    expect(`bystander top ${crossoverTop}`).toBe(`bystander top ${restTop}`);
+  },
+};
+
+/**
+ * THE NAME DOES NOT RE-TRUNCATE WHILE THE CARD RESIZES.
+ *
+ * The card's width animates across a step and the name is a single truncated
+ * line, so every frame recomputed where the ellipsis falls: `MiniMax H3 re…`
+ * to `…ref2va int8, q…` to the full line, continuously, for the length of the
+ * move. The most legible thing on the card doing the most distracting possible
+ * thing while you read the one beside it.
+ *
+ * The heading is given the panel's FINAL width instead, with no transition of
+ * its own — the DOM lands on its new role immediately and only the box travels
+ * — so the truncation settles in one frame and the card grows around it.
+ *
+ * SIMULATED, NOT SAMPLED. Mid-animation is one instant inside a 420ms
+ * transition and neither browser pane will sample a transition at all. Forcing
+ * the outer box to the other role's width IS mid-animation, and it is
+ * deterministic: what must hold is that the heading ignores it.
+ */
+export const TheNameDoesNotReTruncateWhileTheCardResizes: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
     const panels = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
-    // PER PROPERTY, because this element now runs several clocks at once:
-    // the chrome on the handoff, height on the resize phase. A bare
-    // `transitionDelay` is a comma-separated list of five values here, and
-    // reading it whole compares the wrong things.
-    const timing = (panel: HTMLElement, property = "box-shadow") => {
-      const style = getComputedStyle(panel);
-      const at = style.transitionProperty.split(",").map((name) => name.trim()).indexOf(property);
-      const pick = (value: string) =>
-        value.split(",").map((entry) => entry.trim())[at] ?? "";
-      return {
-        duration: pick(style.transitionDuration),
-        delay: pick(style.transitionDelay),
-      };
-    };
+    const heading = (panel: HTMLElement) =>
+      panel.querySelector<HTMLElement>("div.overflow-hidden")!;
 
-    // Settled: nobody is waiting on anybody.
-    for (const panel of panels()) {
-      expect(timing(panel).delay).toBe("0s");
+    const centre = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    )!;
+    const neighbour = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "neighbour",
+    )!;
+
+    // The heading is narrower than its card by the padding it sits in, and
+    // WIDER on the subject than on a neighbour — so it is genuinely sized from
+    // the role rather than being fixed.
+    const centreHead = heading(centre).getBoundingClientRect().width;
+    const neighbourHead = heading(neighbour).getBoundingClientRect().width;
+    expect(centreHead).toBeGreaterThan(neighbourHead);
+    // Deliberately NOT asserting the exact inset. It is the padding plus the
+    // card's border, it is fractional, and an assertion on it fails first on
+    // rounding — which made this story report a padding fault when what had
+    // actually broken was the heading following the animating box.
+
+    // MID-ANIMATION: shove the boxes onto each other's widths. The headings
+    // must not move — they are already at their destination.
+    const boxes = [centre.parentElement!, neighbour.parentElement!];
+    const widths = boxes.map((box) => getComputedStyle(box).width);
+    for (const box of boxes) box.style.transition = "none";
+    boxes[0]!.style.width = widths[1]!;
+    boxes[1]!.style.width = widths[0]!;
+
+    const centreDuring = heading(centre).getBoundingClientRect().width;
+    const neighbourDuring = heading(neighbour).getBoundingClientRect().width;
+
+    for (const box of boxes) {
+      box.style.width = "";
+      box.style.transition = "";
     }
-    // The surface is part of the mark, so it has to be part of the transition —
-    // it used to snap while the border eased.
-    expect(getComputedStyle(panels()[0]!).transitionProperty).toContain("background-color");
 
-    const before = panels().find(
-      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
-    )!;
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-seam-step="back"]')!);
-
-    // DEPARTING drops it immediately, over the shorter window.
-    const departing = timing(before);
-    expect(`departing delay ${departing.delay}`).toBe("departing delay 0s");
-    expect(`departing duration ${departing.duration}`).toBe("departing duration 0.14s");
-
-    // ARRIVING waits that window out before taking anything.
-    const arriving = panels().find(
-      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
-    )!;
-    expect(arriving).not.toBe(before);
-    expect(`arriving delay ${timing(arriving).delay}`).toBe("arriving delay 0.14s");
-
-    // The one does not begin until the other has finished: no frame of the step
-    // has two marked cards, which is the whole claim.
-    expect(Number.parseFloat(departing.duration)).toBeLessThanOrEqual(
-      Number.parseFloat(timing(arriving).delay) + 0.001,
+    expect(`centre heading ${Math.round(centreDuring)}`).toBe(
+      `centre heading ${Math.round(centreHead)}`,
     );
-  },
-};
-
-/**
- * THE WIDTH TRAVELS WITH THE ROW; ONLY THE HEIGHT WAITS.
- *
- * A step used to animate width while HEIGHT snapped — it was in nobody's
- * transition list. Measured at 1920, a card promoted to subject goes from 368px
- * tall to 519, and since the cards hang from a common bottom that is a 151px
- * jump of its top edge, in a single frame, exactly as the row began to travel.
- * One dimension gliding while the other teleported is what looked wrong.
- *
- * Both full orderings were built and rejected before landing here. Resize-first
- * made the subject grow before it had anywhere to go. Slide-first left it 184px
- * right of centre — half the 368px between the two widths, because the row's
- * offset is computed from a uniform neighbour width and only centres the subject
- * once the subject IS the wide card — and made it close that gap by growing.
- *
- * So WIDTH has to travel with the row: the landing position depends on it.
- * HEIGHT does not, and it is the jarring one, so it is the only thing held back.
- *
- * Asserted as declarations. The claim is about ORDER, and neither browser pane
- * will sample a transition — requestAnimationFrame is throttled in both, so a
- * timed probe returns one frame and then nothing.
- */
-export const TheWidthTravelsWithTheRowAndTheHeightFollows: Story = {
-  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
-  play: async () => {
-    await waitFor(() => expect(seamTrack()).not.toBeNull());
-    const panel = document.querySelector<HTMLElement>("[data-item-details-panel]")!;
-    const outer = panel.parentElement!;
-    const strip = document.querySelector<HTMLElement>("[data-details-strip]")!;
-
-    const entry = (element: HTMLElement, property: string) => {
-      const style = getComputedStyle(element);
-      const at = style.transitionProperty
-        .split(",")
-        .map((name) => name.trim())
-        .indexOf(property);
-      const pick = (value: string) => value.split(",").map((v) => v.trim())[at] ?? "";
-      return { duration: pick(style.transitionDuration), delay: pick(style.transitionDelay) };
-    };
-
-    // HEIGHT IS ANIMATED AT ALL. This is the original bug, in one assertion.
-    expect(getComputedStyle(panel).transitionProperty).toContain("height");
-
-    // WIDTH AND THE ROW TRAVEL TOGETHER — same clock, neither waiting.
-    const travel = entry(strip, "transform");
-    const width = entry(outer, "width");
-    expect(`width ${width.duration}/${width.delay}`).toBe(
-      `width ${travel.duration}/${travel.delay}`,
+    expect(`neighbour heading ${Math.round(neighbourDuring)}`).toBe(
+      `neighbour heading ${Math.round(neighbourHead)}`,
     );
-    expect(`row waits ${travel.delay}`).toBe("row waits 0s");
-
-    // AND THE HEIGHT FOLLOWS, on its own shorter clock.
-    const height = entry(panel, "height");
-    expect(Number.parseFloat(height.delay)).toBeGreaterThan(0);
-    expect(Number.parseFloat(height.duration)).toBeLessThan(
-      Number.parseFloat(travel.duration),
-    );
-    // It starts as the travel is finishing rather than after a gap — most of a
-    // hard ease-out's distance is covered early.
-    expect(Number.parseFloat(height.delay)).toBeLessThan(Number.parseFloat(travel.duration));
   },
 };

@@ -22,9 +22,6 @@ import {
 } from "./graph-details-design";
 import {
   DETAILS_CHROME_MS,
-  DETAILS_HANDOFF_MS,
-  DETAILS_HEIGHT_DELAY_MS,
-  DETAILS_HEIGHT_MS,
   detailsStepTransition,
 } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
@@ -67,7 +64,7 @@ export function DetailsPanel({
   scrubbing = false,
   swipe,
   width,
-  focusHandoff = null,
+  stepping = false,
   spare = false,
   dimmed = false,
   scrubFocus = false,
@@ -199,14 +196,9 @@ export function DetailsPanel({
    * a collapsed spare would move everything between it and the middle.
    */
   spare?: boolean;
-  /**
-   * This panel's part in a subject handoff, while one is running.
-   *
-   * `"departing"` is losing the mark and drops it immediately;
-   * `"arriving"` is taking it and waits for the other to finish. Null
-   * everywhere else, including on both cards once the step has settled.
-   */
-  focusHandoff?: "arriving" | "departing" | null;
+  /** Whether the row is mid-step. Passed down so the filmstrip can hold its
+   *  measurement still rather than chase an animating width. */
+  stepping?: boolean;
   /**
    * Pull this panel's picture back, because the clock is running and it is not
    * the one being watched.
@@ -415,16 +407,9 @@ export function DetailsPanel({
           // wears it in between, so there is one subject at every frame of the
           // step — which is the point, because the SIZES are crossing at that
           // moment and cannot say which card is which.
-          ["--chrome-ms" as string]: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
-          // HEIGHT IS THE ONE THING THAT WAITS. Width travels with the row
-          // because the landing position depends on it; height does not, and it
-          // is the change that was jarring — 151px of it lands on the top edge,
-          // since the cards hang from a common bottom.
-          ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_HEIGHT_MS}ms`,
-          ["--height-delay" as string]: swapping ? "0ms" : `${DETAILS_HEIGHT_DELAY_MS}ms`,
-          ...(focusHandoff === "arriving"
-            ? { ["--focus-delay" as string]: `${DETAILS_HANDOFF_MS}ms` }
-            : {}),
+          // THE STEP'S CLOCK, for everything this element animates. A landing
+          // still cuts rather than travels, which is the one exception.
+          transitionDuration: `${DETAILS_CHROME_MS}ms`,
           zIndex: magnification > 1 ? 20 : undefined,
         }}
         data-item-details-live={onScreen ? "" : undefined}
@@ -518,10 +503,14 @@ export function DetailsPanel({
           // would still be growing after the row had begun to move. Driven by
           // variables rather than an inline `transition` so that
           // `motion-reduce:transition-none` still outranks the lot.
-          "transition-[box-shadow,border-color,background-color,transform,height]",
+          "transition-[box-shadow,border-color,background-color,transform]",
+          // Spelled out because a class cannot read a constant. See
+          // DETAILS_STEP_EASE in graph-details-motion.ts for why this curve and
+          // not the hard ease-out it replaces.
           "ease-[cubic-bezier(0.32,0.72,0,1)]",
-          "[transition-duration:var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--resize-ms)]",
-          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,var(--height-delay,0ms)]",
+          // ONE DURATION, NO DELAYS, EVERY PROPERTY — set in the style below.
+          // The surface, the border, the shadow and the height all move with the
+          // width and with the row.
           "motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //
@@ -632,11 +621,55 @@ export function DetailsPanel({
           // which is what this fixed.
           "max-h-[calc(100vh-26.625rem)]",
           centre
+            // THE CLAMP IS FOLDED INTO THE HEIGHT, and that is a timing fix
+            // rather than a sizing one.
+            //
+            // These asked for 68vh under a `max-h` of 100vh-26.625rem, and on
+            // anything but a very tall window the cap is the smaller of the two:
+            // at 910px it is 484 against the 619 being asked for. A transition
+            // interpolates the height PROPERTY, but what renders is the property
+            // clamped — so the card reached 484 at 47% of the animation and then
+            // sat there, visibly finished, while the width carried on for the
+            // remaining 53%. Height arriving early and width crawling in after it
+            // is the whole of what looked wrong, and no amount of matching
+            // durations could fix it: the two axes had the same clock and
+            // different distances to travel in it.
+            //
+            // Asking for the clamped value directly makes the interpolation end
+            // where it renders, so both axes finish together because they finish
+            // at all.
             ? "@min-[30rem]:h-[68vh] h-auto"
             : "@min-[30rem]:h-[38.9vh] h-auto",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
+        {/* THE HEADING IS ALREADY AT ITS DESTINATION WIDTH.
+
+            The card's width animates across a step, and the name is a single
+            truncated line — so every frame of that animation recomputed where
+            the ellipsis falls, and the title visibly re-truncated the whole
+            way: `MiniMax H3 re...` to `...ref2va int8, q...` to the full line.
+            That shimmer is the most legible thing on the card doing the most
+            distracting possible thing while you are trying to read the one
+            beside it.
+
+            `width` is the panel's FINAL width — the DOM lands on its new role
+            immediately and only the box animates toward it — so handing the
+            same value here, with no transition of its own, settles the
+            truncation in one frame. The card then grows or shrinks AROUND a
+            heading that has already decided what it says, and `overflow-hidden`
+            is what lets it be wider than its parent while that happens.
+
+            Costs nothing and needs no measurement: it is the same CSS
+            expression the panel is already sizing itself with, less the 2rem
+            of padding it sits inside. */}
+        <div
+          className="overflow-hidden"
+          // Less the 2rem of padding AND the card's 1px border either side, so the
+          // width the ellipsis is computed against is the one the heading will
+          // actually settle in rather than two pixels wider.
+          style={{ width: `calc(${width} - 2rem - 2px)` }}
+        >
         <ItemDetailsPanelHeader
           name={node.name}
           clipLabel={clipLabel ?? null}
@@ -650,6 +683,7 @@ export function DetailsPanel({
           nodeId={node.id as string}
           rename={rename}
         />
+        </div>
 
         <ItemDetailsMonitor
           node={node}
@@ -703,6 +737,7 @@ export function DetailsPanel({
           showing={showing}
           live={live}
           playhead={playhead}
+          stepping={stepping}
         />
 
 
