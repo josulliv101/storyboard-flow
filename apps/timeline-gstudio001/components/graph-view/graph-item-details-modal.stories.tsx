@@ -1815,29 +1815,22 @@ export const TheRulerNamesTheCollections: Story = {
     const [red, green, blue] = activeInk.match(/[\d.]+/g)!.slice(0, 3).map(Number);
     expect(Math.max(red!, green!, blue!) - Math.min(red!, green!, blue!)).toBeGreaterThan(40);
 
-    // ── EVERY OTHER ONE IS FILLED ────────────────────────────────────────
+    // ── ONE TONE FOR THE RUN ─────────────────────────────────────────────
     //
-    // A block on every clip made a continuous band broken only by the gaps,
-    // and at a wide reach those gaps are a couple of pixels — so the row read
-    // as one long rectangle with notches. Alternate fills give each boundary a
-    // change of TONE as well as a gap.
-    const striped = blocks.filter((block) =>
-      block.hasAttribute("data-seam-ruler-block-striped"),
+    // Alternate fills were tried and dropped: they gave every boundary a
+    // change of tone, but they made the band a pattern in its own right — a
+    // rhythm of light and dark that is not the film's rhythm, competing with
+    // the one thing the widths are actually saying. Asserted as EVERY
+    // non-active block agreeing, which is what a stripe reintroduced by
+    // accident would fail.
+    const runInks = new Set(
+      blocks
+        .filter((block) => !block.hasAttribute("data-seam-ruler-block-live"))
+        .map((block) => getComputedStyle(block).backgroundColor),
     );
-    expect(striped.length).toBeGreaterThan(0);
-    // Roughly half, which is what "alternate" means and what a run of blocks
-    // all filled or all bare would fail.
-    expect(striped.length).toBeLessThan(blocks.length);
-    for (const bare of blocks) {
-      if (bare.hasAttribute("data-seam-ruler-block-striped")) continue;
-      if (bare.hasAttribute("data-seam-ruler-block-live")) continue;
-      expect(getComputedStyle(bare).backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    }
-
-    // AND THE ACTIVE ONE IGNORES THE PATTERN. Its parity is an accident of
-    // where it sits in the order, so a mark that appeared for only half the
-    // clips you could select would be worse than no mark at all.
-    expect(live[0]!.hasAttribute("data-seam-ruler-block-striped")).toBe(false);
+    expect(runInks.size).toBe(1);
+    // And it is a fill, not nothing — the blocks exist to be seen.
+    expect([...runInks][0]).not.toBe("rgba(0, 0, 0, 0)");
     expect(activeInk).not.toBe("rgba(0, 0, 0, 0)");
 
     // ── THE TRIANGLE CLEARED THE BAND, THE RULE DID NOT ──────────────────

@@ -170,42 +170,29 @@ export function SeamRuler({
             on. A tick, its label and the pointer's line all have to stay
             readable over them, and the paint order is what guarantees that
             rather than a stack of z-indexes to keep in step. */}
-        {segments.map((segment, index) => {
+        {segments.map((segment) => {
           if (segment.widthPx <= 0) return null;
           const isCentre = segment.clipId === centreClipId;
-          // EVERY OTHER ONE, like the ruled lines on a ledger.
-          //
-          // A block on every clip made a continuous band broken only by the
-          // gaps, and at a wide reach those gaps are a couple of pixels — so
-          // the row read as one long rectangle with notches rather than as a
-          // run of clips. Filling alternate clips gives each boundary a change
-          // of TONE as well as a gap, which is the pair the eye actually
-          // counts by.
-          //
-          // Parity comes from the clip's place in playback order, not from
-          // anything about the view, so a block does not change tone when the
-          // bar pans or the reach changes. It is a property of the film.
-          const striped = index % 2 === 0;
           return (
             <span
               key={segment.clipId}
               data-seam-ruler-block={segment.clipId}
               data-seam-ruler-block-live={isCentre ? "" : undefined}
-              data-seam-ruler-block-striped={striped && !isCentre ? "" : undefined}
               aria-hidden="true"
               style={{
                 left: segment.leftPx + BOX_INSET_PX,
                 width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
-                // THE ACTIVE CLIP IGNORES THE PATTERN. Its parity is an
-                // accident of where it sits in the order, and a mark that
-                // appeared for half the clips you could select would be worse
-                // than no mark — the one thing this colour has to do is be
-                // there whenever it is true.
+                // ONE TONE FOR THE RUN, and the active clip apart from it.
+                //
+                // Alternate fills were tried and dropped: they gave every
+                // boundary a change of tone, but they also made the band a
+                // pattern in its own right — a rhythm of light and dark that
+                // is not the film's rhythm, competing with the one thing the
+                // widths are actually saying. An even run is a ground, and a
+                // ground is what a scale wants to be.
                 backgroundColor: isCentre
                   ? RULER_BLOCK_ACTIVE_COLOUR
-                  : striped
-                    ? RULER_BLOCK_COLOUR
-                    : "transparent",
+                  : RULER_BLOCK_COLOUR,
               }}
               // INSET FROM THE BOTTOM, not flush to it. The tick marks hang
               // from that edge and a block reaching it would have them ending
