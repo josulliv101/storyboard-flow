@@ -11,6 +11,7 @@ import {
 } from "./graph-playbar-thumbnails";
 import { videoFrameUrls } from "@/lib/video-frame-url";
 import type { SeamStrip } from "./graph-seam-strip";
+import type { PreviewAnchor } from "./graph-seam-preview-anchor";
 
 /**
  * How long the strip takes to slide when the centred clip changes.
@@ -372,6 +373,7 @@ export function SeamLane({
   snapKey,
   ghostX,
   hover,
+  previewAnchor = "follow",
   chip,
   handlers,
   atStart,
@@ -390,6 +392,9 @@ export function SeamLane({
   /** Where an un-pressed pointer is hovering, in strip pixels. */
   ghostX: number | null;
   hover: SeamHover | null;
+  /** Whether the hover card follows the pointer or parks in the middle — see
+   *  `graph-seam-preview-anchor`. */
+  previewAnchor?: PreviewAnchor;
   /** The time under the playhead while it is being dragged. */
   chip: string | null;
   handlers: React.ComponentProps<"div">;
@@ -706,21 +711,29 @@ export function SeamLane({
         <span
           data-seam-preview
           aria-hidden="true"
-          // KEPT INSIDE THE TRACK.
+          // PINNED, OR KEPT INSIDE THE TRACK.
           //
-          // It is centred on the box being pointed at, which walks it off the
-          // side as soon as that box is near either end — and the wider this
-          // card got, the more of the bar had that problem. At 288px a hover
-          // anywhere in the first or last 144 pixels was reading a card with
-          // its edge cut off, which is worst exactly where the picture is the
-          // whole point.
+          // `pinned` parks it dead centre under the bar and leaves it there, so
+          // the pointer scrubs and the picture changes in place. See
+          // `graph-seam-preview-anchor` for why that is worth having: the card
+          // is now big enough to judge a frame in, and a big thing sliding
+          // around under a moving pointer is the one arrangement in which you
+          // cannot.
           //
-          // `clamp` against percentages rather than a measured width: the
-          // percentage resolves against this element's containing block, which
-          // IS the track, so the bound follows a resize with no observer and no
-          // re-render. 9rem is half the card.
+          // `follow` centres it on the box being described, which walks it off
+          // the side as soon as that box is near either end — and the wider
+          // this card got, the more of the bar had that problem. At 288px a
+          // hover anywhere in the first or last 144 pixels was reading a card
+          // with its edge cut off, which is worst exactly where the picture is
+          // the whole point. `clamp` against percentages rather than a measured
+          // width: the percentage resolves against this element's containing
+          // block, which IS the track, so the bound follows a resize with no
+          // observer and no re-render. 9rem is half the card.
           style={{
-            left: `clamp(9rem, ${viewportX(hover.x)}px, calc(100% - 9rem))`,
+            left:
+              previewAnchor === "pinned"
+                ? "50%"
+                : `clamp(9rem, ${viewportX(hover.x)}px, calc(100% - 9rem))`,
           }}
           // BELOW THE WHOLE BAR, not just below the boxes: at `top-9` it lay
           // across the ruler and the minimap, hiding the two things that say

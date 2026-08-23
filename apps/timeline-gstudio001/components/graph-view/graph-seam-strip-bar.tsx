@@ -27,6 +27,7 @@ import {
 } from "./graph-seam-strip";
 import { formatClock } from "@/lib/format-duration";
 import { monitorPosterUrl } from "@/lib/video-frame-url";
+import type { PreviewAnchor } from "./graph-seam-preview-anchor";
 
 /**
  * The bar over the carousel: the whole project in playback order, as a
@@ -146,6 +147,7 @@ export function SeamStripBar({
   atEnd,
   settingsLeft,
   settingsRight,
+  previewAnchor = "follow",
 }: Readonly<{
   /** Every clip the bar can reach, in playback order. */
   clips: readonly SeamBarClip[];
@@ -193,6 +195,9 @@ export function SeamStripBar({
    */
   settingsLeft?: React.ReactNode;
   settingsRight?: React.ReactNode;
+  /** Whether the hover card follows the pointer or parks under the middle of
+   *  the bar — see `graph-seam-preview-anchor`. */
+  previewAnchor?: PreviewAnchor;
 }>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const laneRef = useRef<HTMLDivElement | null>(null);
@@ -761,6 +766,7 @@ export function SeamStripBar({
           snapKey={snapKey}
           ghostX={hover === null ? null : hover.x}
           hover={scrubbing ? null : hover}
+          previewAnchor={previewAnchor}
           chip={scrubbing ? readSeconds(atSeconds) : null}
           handlers={{
             onPointerDown,

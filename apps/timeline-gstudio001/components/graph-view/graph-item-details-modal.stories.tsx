@@ -3230,6 +3230,73 @@ export const TheMinimapWindowEasesButNotMidDrag: Story = {
   },
 };
 
+/**
+ * THE HOVER CARD CAN BE PINNED UNDER THE MIDDLE OF THE BAR.
+ *
+ * `follow` centres it on the box being described, which is the right default:
+ * pointing at a shot and reading about that shot is one gesture with no lookup
+ * in the middle.
+ *
+ * `pinned` parks it and leaves it there, so the pointer scrubs and the picture
+ * changes in place. That earns its keep now the card is big enough to judge a
+ * frame in — a large picture sliding around under a moving pointer is the one
+ * arrangement in which you cannot judge anything, because the eye spends the
+ * whole sweep re-finding it. The cost is that a card away from the box is less
+ * obviously ABOUT that box, which is why it is a choice rather than a change.
+ */
+export const TheHoverCardCanBePinned: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    await settleStrip();
+    framesTo("STRIP");
+
+    const lane = document.querySelector<HTMLElement>("[data-seam-boxes]")!;
+    const press = (label: string) => {
+      const group = document.querySelector<HTMLElement>("[data-details-bar-card]")!;
+      Array.from(group.querySelectorAll("button"))
+        .find((button) => button.textContent?.trim() === label)!
+        .click();
+    };
+    const hoverOver = async (box: HTMLElement, fraction: number) => {
+      const rect = box.getBoundingClientRect();
+      fireEvent.pointerMove(
+        lane,
+        pointerAt(rect.left + rect.width * fraction, rect.top + rect.height / 2),
+      );
+      return await waitFor(() => {
+        const card = document.querySelector<HTMLElement>("[data-seam-preview]");
+        expect(card).not.toBeNull();
+        return card!.style.left;
+      });
+    };
+
+    const boxes = seamBoxes();
+    const first = boxes[0]!;
+    const last = boxes[boxes.length - 1]!;
+
+    // FOLLOW: two different boxes, two different places.
+    press("FOLLOW");
+    const followedLeft = await hoverOver(first, 0.2);
+    const followedRight = await hoverOver(last, 0.8);
+    expect(followedLeft).not.toBe(followedRight);
+    // And clamped, so a box near either end never pushes the card off the
+    // track — the failure that arrived with making the card bigger.
+    expect(followedLeft).toContain("clamp(");
+
+    // PINNED: the same place wherever the pointer is.
+    press("PIN");
+    const pinnedLeft = await hoverOver(first, 0.2);
+    const pinnedRight = await hoverOver(last, 0.8);
+    expect(pinnedLeft).toBe("50%");
+    expect(pinnedRight).toBe("50%");
+
+    // Put both settings back — module scope outlives the story.
+    press("FOLLOW");
+    framesTo("STRIP");
+  },
+};
+
 const SKIPPED_SCENE: GraphNodeSpec = {
   kind: "collection",
   id: "root",

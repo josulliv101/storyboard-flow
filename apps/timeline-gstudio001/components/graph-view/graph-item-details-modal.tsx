@@ -67,6 +67,12 @@ import {
   type PlaybarThumbnails,
 } from "./graph-playbar-thumbnails";
 import {
+  PREVIEW_ANCHORS,
+  lastPreviewAnchor,
+  rememberPreviewAnchor,
+  type PreviewAnchor,
+} from "./graph-seam-preview-anchor";
+import {
   BAR_REACHES,
   barReachLabel,
   barReachWindow,
@@ -282,6 +288,13 @@ function DetailsFilmstripModal({
   const chooseFrames = useCallback((next: PlaybarThumbnails) => {
     rememberPlaybarThumbnails(next);
     setFrames(next);
+  }, []);
+  // WHERE THE HOVER CARD SITS, kept beside the other bar settings because it
+  // is the same kind of question — how this control behaves while you read it.
+  const [previewAnchor, setPreviewAnchor] = useState<PreviewAnchor>(lastPreviewAnchor());
+  const choosePreviewAnchor = useCallback((next: PreviewAnchor) => {
+    rememberPreviewAnchor(next);
+    setPreviewAnchor(next);
   }, []);
 
   const clipAt = useCallback(
@@ -900,6 +913,7 @@ function DetailsFilmstripModal({
               // against the bar directly above them, so they belong in the
               // bar's own controls row alongside the transport and the clock.
               settingsLeft={
+                <>
                 <div
                   data-details-bar-frames
                   role="group"
@@ -956,7 +970,58 @@ function DetailsFilmstripModal({
                       </button>
                     );
                   })}
+
                 </div>
+
+                {/* WHERE THE HOVER CARD SITS.
+                    ITS OWN GROUP, next to `frames` rather than inside it. They
+                    sit together because they are the same kind of question —
+                    what this bar does while you read it — and because the card
+                    only exists to show the frames the control beside it turned
+                    on. But "what the boxes draw" and "where the preview sits"
+                    are two settings, and folding the second into the first
+                    group gave that group five buttons under an aria-label
+                    describing three of them.
+
+                    `PIN` parks it dead centre under the bar so the pointer
+                    scrubs and the picture changes in place. That matters now
+                    the card is big enough to judge a frame in: a large picture
+                    sliding around under a moving pointer is the one
+                    arrangement in which you cannot judge anything, because the
+                    eye spends the sweep re-finding it. The cost is that a card
+                    away from the box is less obviously ABOUT that box, which
+                    is why this is a choice and not a change. */}
+                <span aria-hidden="true" className="mx-1 h-3 w-px bg-white/10" />
+                <div
+                  data-details-bar-card
+                  role="group"
+                  aria-label="Where the hover preview sits"
+                  className="flex items-center gap-1"
+                >
+                  <span className="mr-1 font-mono text-[10px] text-zinc-500">card</span>
+                  {PREVIEW_ANCHORS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={option === previewAnchor}
+                      onClick={() => choosePreviewAnchor(option)}
+                      title={
+                        option === "follow"
+                          ? "The preview follows the pointer"
+                          : "The preview stays under the middle of the bar"
+                      }
+                      className={[
+                        "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
+                        option === previewAnchor
+                          ? "bg-zinc-100 text-zinc-900"
+                          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+                      ].join(" ")}
+                    >
+                      {option === "follow" ? "FOLLOW" : "PIN"}
+                    </button>
+                  ))}
+                </div>
+                </>
               }
               settingsRight={
               <div
@@ -989,6 +1054,7 @@ function DetailsFilmstripModal({
                 ))}
             </div>
               }
+              previewAnchor={previewAnchor}
               atStart={barWindow.ids[0] === ids[0]}
               atEnd={barWindow.ids[barWindow.ids.length - 1] === ids[ids.length - 1]}
               centreClipId={node.id as string}
