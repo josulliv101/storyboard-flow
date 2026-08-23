@@ -388,6 +388,7 @@ export function SeamLane({
   strip,
   clips,
   panelClipIds,
+  hoveredClipId = null,
   colourOf,
   centreClipId,
   offset,
@@ -417,6 +418,8 @@ export function SeamLane({
    * the honest answer for those.
    */
   panelClipIds?: ReadonlySet<string>;
+  /** The clip under the pointer, on either row — see the strip bar. */
+  hoveredClipId?: string | null;
   colourOf: ReadonlyMap<string, string>;
   centreClipId: string;
   offset: number;
@@ -566,6 +569,7 @@ export function SeamLane({
             // clips whose frames are on screen below. Everything else stays
             // grey, which is the whole of what `OFF` is for.
             const onScreen = panelClipIds?.has(segment.clipId) === true;
+            const hovered = segment.clipId === hoveredClipId;
             const framed = thumbnails.shown || onScreen;
             // COVER FOR THESE, not the chosen style. A filmstrip answers "what
             // happens in the shot", and these are the shots you are already
@@ -611,6 +615,18 @@ export function SeamLane({
                   // thumbnails on can add pictures but can never subtract the
                   // bar.
                   backgroundColor: colour,
+                  // POINTED AT. A lift in brightness rather than a colour or a
+                  // border, because a box here is grey some of the time and a
+                  // photograph the rest, and only brightness reads on both —
+                  // a tint would be invisible over a picture and a border
+                  // would eat into a width that means duration.
+                  //
+                  // 1.18, which is enough to see when you are looking for it
+                  // and not enough to notice when you are not. The bar is a
+                  // thing you sweep a pointer across on the way to somewhere
+                  // else, and a hover that announces itself would flash all
+                  // the way along.
+                  ...(hovered ? { filter: "brightness(1.18)" } : {}),
                   // See `FRAMED_BOX_EDGE`: the ring is the dark half of the
                   // gap, and the strip's own background is the pale half.
                   ...(framed ? { boxShadow: FRAMED_BOX_EDGE } : {}),

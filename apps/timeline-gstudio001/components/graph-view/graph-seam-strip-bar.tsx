@@ -625,13 +625,57 @@ export function SeamStripBar({
    * the ruler; showing a card mid-drag would put a picture over the film at
    * exactly the moment the film is the thing being watched.
    */
+  /**
+   * WHICH BOX THE POINTER IS OVER, for the hover tint on both rows.
+   *
+   * Separate from `hover`, and deliberately: that one is the preview CARD —
+   * it waits out a dwell, carries a poster and a caption, and belongs to the
+   * ruler alone. This is just an id, it appears instantly, and BOTH surfaces
+   * set it, because pointing at a box and pointing at the scale above it are
+   * the same question about the same clip.
+   *
+   * GUARDED AGAINST NO-OP WRITES. A pointer crossing the bar fires a move
+   * every few pixels and the answer changes once per box; without this the
+   * film would re-render the whole strip on every one of them, which is the
+   * cost the package's render-efficiency model exists to avoid.
+   */
+  const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
+  const hoverClipAt = useCallback(
+    (clientX: number) => {
+      const at = stripPositionAt(strip, localX(clientX) - offsetRef.current);
+      setHoveredClipId((current) => {
+        const next = at?.clipId ?? null;
+        return current === next ? current : next;
+      });
+    },
+    [localX, strip],
+  );
+
   const onRulerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (pressRef.current !== null) return;
+      hoverClipAt(event.clientX);
       showHover(event.clientX);
     },
-    [showHover],
+    [hoverClipAt, showHover],
   );
+
+  /**
+   * The FILM's move when nothing is pressed — the tint and nothing else.
+   *
+   * No card from here: that moved to the ruler so a preview stops covering the
+   * frames it is reporting on. But the box under the pointer should still
+   * answer to being pointed at, and it is the same clip either way.
+   */
+  const onLaneHover = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (pressRef.current !== null) return;
+      hoverClipAt(event.clientX);
+    },
+    [hoverClipAt],
+  );
+
+  const clearHoveredClip = useCallback(() => setHoveredClipId(null), []);
 
   /**
    * A CLICK ON THE SCALE PUTS THE PLAYHEAD THERE, and takes the clip with it.
@@ -666,10 +710,13 @@ export function SeamStripBar({
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const press = pressRef.current;
-      // NO LONGER THE HOVER PATH. A move over the boxes with nothing pressed
-      // is now simply nothing — the ruler above answers that, see
-      // `onRulerMove`.
-      if (press === null) return;
+      // NO CARD FROM HERE — the ruler above raises that. A move over the boxes
+      // with nothing pressed still tints the one under the pointer, which is
+      // `onLaneHover`, spread onto the lane alongside this.
+      if (press === null) {
+        onLaneHover(event);
+        return;
+      }
       if (event.pointerId !== press.pointerId) return;
       if (Math.abs(event.clientX - press.x) > CLICK_SLOP_PX) press.moved = true;
       // THE LAST FEW MILLISECONDS OF THE HAND, kept so the release knows how
@@ -685,7 +732,7 @@ export function SeamStripBar({
       // version drifts by whatever a dropped or coalesced move was worth.
       setOffset(press.offset + (event.clientX - press.x));
     },
-    [setOffset],
+    [onLaneHover, setOffset],
   );
 
   const endPress = useCallback(
@@ -1027,6 +1074,7 @@ export function SeamStripBar({
           offset={offset}
           segments={strip.segments}
           centreClipId={centreClipId}
+          hoveredClipId={hoveredClipId}
           // The same x the lane's ghost uses, so the two are one line. Dropped
           // while panning for the same reason the lane drops its card: the bar
           // is moving under the pointer, and a mark claiming to be "here" is
@@ -1035,7 +1083,7 @@ export function SeamStripBar({
           playheadPx={playheadPx}
           handlers={{
             onPointerMove: onRulerMove,
-            onPointerLeave: cancelHover,
+            onPointerLeave: (event) => { cancelHover(); clearHoveredClip(); void event; },
             onPointerDown: onRulerClick,
           }}
         />
@@ -1043,6 +1091,7 @@ export function SeamStripBar({
         <SeamLane
           laneRef={laneRef}
           panelClipIds={panelClipIds}
+          hoveredClipId={hoveredClipId}
           strip={strip}
           clips={clips}
           colourOf={boxColourOf}
@@ -1058,6 +1107,7 @@ export function SeamStripBar({
             onPointerMove,
             onPointerUp: endPress,
             onPointerCancel: endPress,
+            onPointerLeave: clearHoveredClip,
           }}
         />
 

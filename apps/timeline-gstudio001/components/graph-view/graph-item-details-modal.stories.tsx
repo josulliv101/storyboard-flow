@@ -1879,6 +1879,43 @@ export const TheRulerNamesTheCollections: Story = {
     expect(triangle.bottom).toBeLessThanOrEqual(band.top + 0.5);
     expect(rule.top).toBeGreaterThan(band.top);
 
+    // ── POINTING AT A CLIP LIFTS BOTH OF ITS ROWS ────────────────────────
+    //
+    // The box and the block above it are one clip seen twice, so pointing at
+    // either lifts both. Asserted from BOTH surfaces, because they arrive by
+    // different handlers — the scale's move also raises the preview card, and
+    // the film's does nothing else at all — and a wiring mistake would leave
+    // exactly one of them dead. One was, until the lint caught a stale
+    // dependency that froze the film's half.
+    {
+      const boxes = seamBoxes();
+      const target = boxes[Math.floor(boxes.length / 2)]!;
+      const id = target.getAttribute("data-seam-segment")!;
+      const blockFor = (clip: string) =>
+        document.querySelector<HTMLElement>(`[data-seam-ruler-block="${CSS.escape(clip)}"]`)!;
+      const restingInk = getComputedStyle(blockFor(id)).backgroundColor;
+      const restingFilter = getComputedStyle(target).filter;
+
+      const box = target.getBoundingClientRect();
+      const at = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+
+      for (const surface of [seamSurface(), seamRuler()]) {
+        fireEvent.pointerMove(surface, pointerAt(at.clientX, at.clientY));
+        await waitFor(() => {
+          expect(getComputedStyle(blockFor(id)).backgroundColor).not.toBe(restingInk);
+        });
+        // The FILM lifts too, and by brightness rather than a tint: a box here
+        // is grey some of the time and a photograph the rest, and only
+        // brightness reads on both.
+        expect(getComputedStyle(target).filter).toContain("brightness");
+        fireEvent.pointerOut(surface, { ...pointerAt(at.clientX, at.clientY), relatedTarget: document.body });
+        await waitFor(() => {
+          expect(getComputedStyle(blockFor(id)).backgroundColor).toBe(restingInk);
+        });
+        expect(getComputedStyle(target).filter).toBe(restingFilter);
+      }
+    }
+
     // ── THE PLAYHEAD IS DRAWN IN THE SCALE, NOT THROUGH THE FILM ─────────
     //
     // A red hairline down the middle of the boxes cut across whatever frame it

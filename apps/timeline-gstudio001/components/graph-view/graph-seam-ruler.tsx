@@ -57,6 +57,18 @@ const RULER_BLOCK_COLOUR = "rgba(250, 250, 250, 0.16)";
 const RULER_BLOCK_ACTIVE_COLOUR = "rgba(56, 189, 248, 0.30)";
 
 /**
+ * The same two tones, pointed at.
+ *
+ * A STEP IN THE SAME INK, not a new colour: the run is one tone and the active
+ * clip is the only hue in the band, so a hover introducing a third treatment
+ * would compete with the two that already mean something. Small steps — the
+ * bar is a thing you sweep a pointer across on the way somewhere else, and a
+ * hover that announces itself would flash all the way along.
+ */
+const RULER_BLOCK_HOVER_COLOUR = "rgba(250, 250, 250, 0.26)";
+const RULER_BLOCK_ACTIVE_HOVER_COLOUR = "rgba(56, 189, 248, 0.42)";
+
+/**
  * The scale ABOVE the boxes: seconds, and where each collection starts.
  *
  * WHY A RULER AT ALL, when the boxes are already proportional. Because the
@@ -100,6 +112,7 @@ export function SeamRuler({
   offset,
   segments = [],
   centreClipId = null,
+  hoveredClipId = null,
   ghostX = null,
   playheadPx = null,
   handlers,
@@ -118,6 +131,8 @@ export function SeamRuler({
   /** Which block wears the active treatment. Null draws none, which is what a
    *  ruler rendered without a film under it should do. */
   centreClipId?: string | null;
+  /** The clip under the pointer, on either row — see the strip bar. */
+  hoveredClipId?: string | null;
   /** The strip's own transform, so the ruler travels with the boxes. */
   offset: number;
   /**
@@ -266,11 +281,13 @@ export function SeamRuler({
         {segments.map((segment) => {
           if (segment.widthPx <= 0) return null;
           const isCentre = segment.clipId === centreClipId;
+          const isHovered = segment.clipId === hoveredClipId;
           return (
             <span
               key={segment.clipId}
               data-seam-ruler-block={segment.clipId}
               data-seam-ruler-block-live={isCentre ? "" : undefined}
+              data-seam-ruler-block-hovered={isHovered ? "" : undefined}
               aria-hidden="true"
               style={{
                 left: segment.leftPx + BOX_INSET_PX,
@@ -283,9 +300,23 @@ export function SeamRuler({
                 // is not the film's rhythm, competing with the one thing the
                 // widths are actually saying. An even run is a ground, and a
                 // ground is what a scale wants to be.
+                // POINTED AT — from either row. The block lifts whether the
+                // pointer is on the scale or on the box below it, because both
+                // are the same question about the same clip.
+                //
+                // A STEP IN THE SAME INK rather than a new colour or an edge:
+                // the run is one tone and the active clip is the only hue up
+                // here, so a hover that introduced a third treatment would be
+                // competing with the two that mean something. Brighter is the
+                // one move left that says "this one" without saying anything
+                // else.
                 backgroundColor: isCentre
-                  ? RULER_BLOCK_ACTIVE_COLOUR
-                  : RULER_BLOCK_COLOUR,
+                  ? isHovered
+                    ? RULER_BLOCK_ACTIVE_HOVER_COLOUR
+                    : RULER_BLOCK_ACTIVE_COLOUR
+                  : isHovered
+                    ? RULER_BLOCK_HOVER_COLOUR
+                    : RULER_BLOCK_COLOUR,
               }}
               // INSET FROM THE BOTTOM, not flush to it. The tick marks hang
               // from that edge and a block reaching it would have them ending
