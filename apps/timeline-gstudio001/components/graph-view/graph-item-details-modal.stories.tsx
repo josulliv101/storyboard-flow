@@ -2949,3 +2949,72 @@ export const ASkippedClipIsHatchedOnTheBar: Story = {
     expect(widest.getAttribute("data-seam-segment")).toBe("skipped");
   },
 };
+
+/**
+ * A clip WIDER THAN THE TRACK THAT DRAWS IT.
+ *
+ * The active clip's rule is a sibling of the boxes, not a child, because the
+ * strip is `overflow-hidden` and a mark above the film base would be cut off
+ * by it. That escape is what the triangle needs and it is also what let the
+ * rule run past the ends of the bar: nothing was left to trim it.
+ *
+ * Every other seam fixture hides this. `LONG_SCENE`'s clips are 2-4s (~18-36px
+ * at the bar's fixed 9px a second) and `OVERFLOWING_SCENE`'s are 8s (~72px) —
+ * all far narrower than the track, so their rules sit comfortably inside it
+ * however the strip is panned. 240s is ~2160px against a track of a few
+ * hundred, so the subject cannot fit no matter where the strip stops, and the
+ * overhang is a property of the fixture rather than of the timing.
+ */
+const OVERSIZED_SUBJECT_SCENE: GraphNodeSpec = {
+  kind: "collection",
+  id: "root",
+  name: "Root",
+  children: [
+    { kind: "media" as const, id: "clip-before", name: "Before", src: plate("B", "hsl(20, 60%, 70%)"), durationSeconds: 6 },
+    { kind: "media" as const, id: "subject", name: "Subject", src: plate("S", "hsl(200, 60%, 70%)"), durationSeconds: 240 },
+    { kind: "media" as const, id: "clip-after", name: "After", src: plate("A", "hsl(120, 60%, 70%)"), durationSeconds: 6 },
+  ],
+};
+
+/**
+ * THE ACTIVE CLIP'S RULE STOPS WHERE THE BAR DOES.
+ *
+ * The rule says how long the marked clip runs, and it is the one mark on the
+ * bar whose width is a measurement. When the clip is longer than the track,
+ * that measurement has nowhere to go — and it used to simply keep drawing,
+ * out past the first box and off under the panels either side, which reads as
+ * a clip that starts somewhere off-screen rather than one that continues.
+ *
+ * Asserted as CONTAINMENT rather than against a number: the clamp is CSS
+ * (`max(0px, …)` and `min(100%, …)` against the lane's own box), so there is
+ * no measured width to compare to and the invariant holds through a resize
+ * and through every frame of a pan.
+ */
+export const TheActiveRuleIsClippedToTheBar: Story = {
+  render: () => <SeamHarness scene={OVERSIZED_SUBJECT_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    await waitFor(() => expect(seamBoxes().length).toBeGreaterThan(0));
+    await settleStrip();
+
+    const lane = seamSurface().getBoundingClientRect();
+    const rule = document.querySelector<HTMLElement>("[data-seam-active-span]");
+    expect(rule).not.toBeNull();
+
+    // THE FIXTURE ACTUALLY POSES THE PROBLEM. Without this the containment
+    // below would pass on a clip that fit all along, which is how every other
+    // seam story passes it today.
+    const marked = centreBox().getBoundingClientRect();
+    expect(marked.width).toBeGreaterThan(lane.width);
+
+    // BOTH ENDS. Half a pixel of slack for subpixel rounding, and no more —
+    // the bug this covers was 235px of overhang.
+    const drawn = rule!.getBoundingClientRect();
+    expect(drawn.left).toBeGreaterThanOrEqual(lane.left - 0.5);
+    expect(drawn.right).toBeLessThanOrEqual(lane.right + 0.5);
+
+    // AND IT IS STILL A RULE. Clamped to nothing would also satisfy the two
+    // bounds above, so the mark has to survive the clamping that trimmed it.
+    expect(drawn.width).toBeGreaterThan(0);
+  },
+};
