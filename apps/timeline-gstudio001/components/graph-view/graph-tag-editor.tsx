@@ -155,8 +155,13 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
             container clips on BOTH axes — `overflow-x: auto` makes the block
             direction `auto` too — so a popover anchored inside one opens into
             a scroll box a few pixels tall and is never seen. That is the
-            whole reason the chips are wrapped here rather than the row. */}
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            whole reason the chips are wrapped here rather than the row.
+
+            NOT `flex-1`. Grown to fill, an EMPTY scroller takes the whole row
+            and strands the `+` button against the far edge of the card, yards
+            from the chips it appends to. Shrink-only leaves it hugging its
+            content and still scrolling once there is too much. */}
+        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tags.map((tag) => (
           <span
             key={tag}
