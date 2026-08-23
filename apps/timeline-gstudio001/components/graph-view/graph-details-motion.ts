@@ -69,3 +69,30 @@ export function detailsStepTransition(properties: string): string {
  * alongside it.
  */
 export const DETAILS_CHROME_MS = 210;
+
+/**
+ * How long the subject's chrome takes to LEAVE the card losing it, and how
+ * long the card gaining it waits before claiming it.
+ *
+ * A step grows one card and shrinks another at the same time, and for the few
+ * frames either side of the crossing they are near enough the same size that
+ * neither reads as the subject. Watched back frame by frame, the eye has
+ * nothing to follow through the middle of the step.
+ *
+ * THE FIX IS NOT TO STAGGER THE WIDTHS. Both cards change by exactly the same
+ * amount in opposite directions, so animating them together keeps the row's
+ * total width invariant; offsetting them makes it dip by that amount — 236px
+ * at 1920 — and every card to the right of the pair slides out and back. The
+ * geometry has to stay simultaneous.
+ *
+ * So the HANDOFF is staggered instead, which costs no layout at all. The
+ * outgoing card drops its surface and border inside this window; the incoming
+ * one waits it out before taking them. The two never wear the mark at once,
+ * so there is exactly one subject at every frame of the step even while the
+ * sizes are crossing.
+ *
+ * A third of the step. Long enough to read as a handoff rather than a
+ * simultaneous swap, short enough that the arriving card is fully marked well
+ * before it stops moving.
+ */
+export const DETAILS_HANDOFF_MS = 140;

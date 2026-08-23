@@ -1345,6 +1345,18 @@ function DetailsFilmstripModal({
               // is one neighbour wide, so collapsing these would shift every
               // panel between them and the middle.
               spare={isSpare(index)}
+              // WHO IS TAKING THE MARK AND WHO IS GIVING IT UP, for as long as
+              // the step runs. Null once it has settled, so a panel that simply
+              // IS the centre transitions like anything else.
+              focusHandoff={
+                leavingCentre === null || leavingCentre === centre
+                  ? null
+                  : index === centre
+                    ? "arriving"
+                    : index === leavingCentre
+                      ? "departing"
+                      : null
+              }
               width={index === centre ? panelWidths.centre : panelWidths.neighbour}
               // Engaged, and not the one being watched. Uses the same gate as
               // the playhead lines and the ring, so the whole view agrees on

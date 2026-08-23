@@ -20,7 +20,11 @@ import {
   SURFACE_CARD,
   SURFACE_CARD_FOCUS,
 } from "./graph-details-design";
-import { DETAILS_CHROME_MS, detailsStepTransition } from "./graph-details-motion";
+import {
+  DETAILS_CHROME_MS,
+  DETAILS_HANDOFF_MS,
+  detailsStepTransition,
+} from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { formatSeconds } from "@/lib/format-duration";
 import { useInlineRename } from "./graph-inline-rename";
@@ -61,6 +65,7 @@ export function DetailsPanel({
   scrubbing = false,
   swipe,
   width,
+  focusHandoff = null,
   spare = false,
   dimmed = false,
   scrubFocus = false,
@@ -192,6 +197,14 @@ export function DetailsPanel({
    * a collapsed spare would move everything between it and the middle.
    */
   spare?: boolean;
+  /**
+   * This panel's part in a subject handoff, while one is running.
+   *
+   * `"departing"` is losing the mark and drops it immediately;
+   * `"arriving"` is taking it and waits for the other to finish. Null
+   * everywhere else, including on both cards once the step has settled.
+   */
+  focusHandoff?: "arriving" | "departing" | null;
   /**
    * Pull this panel's picture back, because the clock is running and it is not
    * the one being watched.
@@ -393,7 +406,17 @@ export function DetailsPanel({
           // where everything is.
           transform: magnification > 1 ? `scale(${magnification})` : undefined,
           // See the class above: the curve is a utility, the clock is here.
-          transitionDuration: `${DETAILS_CHROME_MS}ms`,
+          // THE HANDOFF, as two numbers on one property list.
+          //
+          // Departing drops the mark inside the handoff window; arriving waits
+          // exactly that long and then takes the full chrome clock. Neither
+          // wears it in between, so there is one subject at every frame of the
+          // step — which is the point, because the SIZES are crossing at that
+          // moment and cannot say which card is which.
+          transitionDuration: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
+          ...(focusHandoff === "arriving"
+            ? { ["--focus-delay" as string]: `${DETAILS_HANDOFF_MS}ms` }
+            : {}),
           zIndex: magnification > 1 ? 20 : undefined,
         }}
         data-item-details-live={onScreen ? "" : undefined}
@@ -464,7 +487,19 @@ export function DetailsPanel({
           // it lands INSIDE the motion rather than alongside it. The duration
           // is set in the style below, because Tailwind's default is 150ms and
           // a bare `ease-*` would silently take it.
-          "transition-[box-shadow,border-color,transform] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+          // BACKGROUND-COLOUR IS IN THE LIST NOW. The subject sits on a lighter
+          // surface as well as behind a brighter edge, and only the edge was
+          // ever transitioned — so the two halves of one mark arrived by
+          // different means, one eased over 210ms and the other snapping in a
+          // single frame.
+          //
+          // The delay is a CSS VARIABLE rather than an inline style so that
+          // `motion-reduce:transition-none` still wins — an inline
+          // `transition-delay` would outrank the utility that turns the whole
+          // thing off.
+          "transition-[box-shadow,border-color,background-color,transform]",
+          "ease-[cubic-bezier(0.32,0.72,0,1)] [transition-delay:var(--focus-delay,0ms)]",
+          "motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //
           // It carried a heavier white one for a while, on the reasoning that

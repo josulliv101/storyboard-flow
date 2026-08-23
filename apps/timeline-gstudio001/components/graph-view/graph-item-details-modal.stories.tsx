@@ -4028,3 +4028,69 @@ export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
     expect(getComputedStyle(leaving!).visibility).toBe("visible");
   },
 };
+
+/**
+ * ONLY ONE CARD WEARS THE MARK AT A TIME, INCLUDING MID-STEP.
+ *
+ * A step grows one card and shrinks another simultaneously, and around the
+ * crossing they are near enough the same size that neither reads as the
+ * subject. On a frame-by-frame playback the eye has nothing to follow through
+ * the middle of the step.
+ *
+ * THE WIDTHS ARE NOT WHAT GOT STAGGERED, and that is the interesting part.
+ * Both cards change by exactly the same amount in opposite directions, so
+ * animating them together holds the row's total width constant; offsetting them
+ * would make it dip by that amount — 236px, measured at 1920 — and every card
+ * to the right of the pair would slide out and back. The geometry has to stay
+ * simultaneous.
+ *
+ * So the CHROME is handed off instead, which costs no layout: the outgoing card
+ * drops its surface and border inside the handoff window, and the incoming one
+ * waits exactly that long before taking them.
+ *
+ * Asserted as timings rather than as painted colour, because the thing being
+ * claimed is about ORDER, and a colour sampled mid-transition is a race.
+ */
+export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    const timing = (panel: HTMLElement) => {
+      const style = getComputedStyle(panel);
+      return { duration: style.transitionDuration, delay: style.transitionDelay };
+    };
+
+    // Settled: nobody is waiting on anybody.
+    for (const panel of panels()) {
+      expect(timing(panel).delay).toBe("0s");
+    }
+    // The surface is part of the mark, so it has to be part of the transition —
+    // it used to snap while the border eased.
+    expect(getComputedStyle(panels()[0]!).transitionProperty).toContain("background-color");
+
+    const before = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    )!;
+    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-seam-step="back"]')!);
+
+    // DEPARTING drops it immediately, over the shorter window.
+    const departing = timing(before);
+    expect(`departing delay ${departing.delay}`).toBe("departing delay 0s");
+    expect(`departing duration ${departing.duration}`).toBe("departing duration 0.14s");
+
+    // ARRIVING waits that window out before taking anything.
+    const arriving = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    )!;
+    expect(arriving).not.toBe(before);
+    expect(`arriving delay ${timing(arriving).delay}`).toBe("arriving delay 0.14s");
+
+    // The one does not begin until the other has finished: no frame of the step
+    // has two marked cards, which is the whole claim.
+    expect(Number.parseFloat(departing.duration)).toBeLessThanOrEqual(
+      Number.parseFloat(timing(arriving).delay) + 0.001,
+    );
+  },
+};
