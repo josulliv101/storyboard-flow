@@ -199,14 +199,27 @@ html body[data-scroll-locked] {
    snap together read as a stutter. A short fade with a touch of rise says it
    came from the box below it. Quick, because it has already spent its patience
    budget on the dwell. */
+/* THE Y ONLY. THE X IS NOT THIS ANIMATION'S TO STATE.
+   The card carries `-translate-x-1/2`, and in Tailwind v4 that compiles to the
+   standalone `translate` property (`translate: -50%`), NOT to `transform`.
+   The two are separate channels and both apply — so a keyframe that also said
+   `transform: translate(-50%, …)` was not restating the shift, it was ADDING a
+   second one, and the card spent the animation a full card-width to the left
+   before snapping into place when the animation ended and `transform` went
+   back to `none`.
+   Measured on a 384px card: -7.6px while animating, 184.4px at rest — a 192px
+   jump, which is exactly the -50% applied twice. That is the whole of "it
+   shows in the wrong position first and then corrects".
+   Anything here that needs the card's own offset must leave the X alone and
+   let the class own it. */
 @keyframes seam-preview-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -4px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
   }
 }
 

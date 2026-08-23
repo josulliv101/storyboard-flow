@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   TrimOverviewStrip,
@@ -48,9 +48,39 @@ export function ItemDetailsTrimStrip({
   // HOW WIDE THE STRIP MAY DRAW, measured from the slot it lands in rather
   // than assumed: the panel's width is a container query away from this file,
   // and the strip needs a NUMBER to lay frames out with.
+  //
+  // OBSERVED, NOT MEASURED ONCE. A bare ref callback fires when the element
+  // MOUNTS and never again, and every width this panel can have arrives after
+  // that: the same element is a neighbour one moment and the centre the next
+  // as the strip advances — and the centre is deliberately wider — so the
+  // number was whichever role the panel happened to mount in. Changing the
+  // view count and resizing the window are the same story.
+  //
+  // Both directions were visible at once. A panel that mounted narrow and
+  // became the centre drew a strip short of its container; measured on the
+  // five-up story, one that mounted wide and narrowed drew 581px of film into
+  // a 357px slot — 224px of overflow.
   const [stripWidth, setStripWidth] = useState(0);
+  const observerRef = useRef<ResizeObserver | null>(null);
   const stripSlot = useCallback((element: HTMLElement | null) => {
-    setStripWidth(element === null ? 0 : element.getBoundingClientRect().width);
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (element === null) {
+      setStripWidth(0);
+      return;
+    }
+    const measure = () => {
+      const next = element.getBoundingClientRect().width;
+      // UNCHANGED IS NOT A RENDER. A ResizeObserver fires for boxes that
+      // settled on the same number, and setting state from it would re-render
+      // every panel on any mutation that touched layout — the cost #468
+      // measured on the two effects that do exactly this.
+      setStripWidth((current) => (Math.abs(current - next) < 0.5 ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    observerRef.current = observer;
   }, []);
 
   /* The whole source, with the showing window and its grips — the trim
@@ -87,7 +117,14 @@ export function ItemDetailsTrimStrip({
             the gate sits below it and a genuinely tiny panel still sheds
             the strip. */}
         {video && (
-          <div ref={stripSlot} className="hidden w-full @min-[18rem]:block">
+          <div
+            ref={stripSlot}
+            // The box the strip is measured FROM, named so a test can compare
+            // the two without walking the DOM by parentElement — the whole
+            // bug was the strip disagreeing with this element's width.
+            data-trim-strip-slot
+            className="hidden w-full @min-[18rem]:block"
+          >
             {stripWidth > 0 ? (
               <div className="relative">
                 {/* WHITE, because this view is a filmstrip.

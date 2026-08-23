@@ -341,6 +341,33 @@ function seamSurface(): HTMLElement {
   return found!;
 }
 
+/**
+ * The RULER, which is what raises the preview now.
+ *
+ * Hovering used to be the film's job, and the card appeared over the frames it
+ * was describing with the pointer resting on them. It moved to the scale above
+ * (see `graph-seam-ruler`), so every story that raises a card points here —
+ * the film keeps only the gestures that move it.
+ */
+function seamRuler(): HTMLElement {
+  const found = document.querySelector<HTMLElement>("[data-seam-ruler]");
+  expect(found).not.toBeNull();
+  return found!;
+}
+
+/**
+ * Point at the ruler directly above a given x on the film.
+ *
+ * The ruler sits immediately over the strip and is translated by the same
+ * offset, so an x that lands on a box lands on that box's scale — which is
+ * what lets these stories go on describing their targets in terms of boxes.
+ */
+function hoverRulerAt(clientX: number): void {
+  const ruler = seamRuler();
+  const box = ruler.getBoundingClientRect();
+  fireEvent.pointerMove(ruler, pointerAt(clientX, box.top + box.height / 2));
+}
+
 function pointerAt(clientX: number, clientY: number) {
   return { clientX, clientY, isPrimary: true, pointerId: 1, button: 0 };
 }
@@ -1285,6 +1312,27 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
       expect(visible("[data-tag-editor]")).toBe(false);
       expect(visible("[data-item-details-undo]")).toBe(false);
     });
+    // AND THE FILMSTRIP FILLS THE BOX IT WAS MEASURED FROM.
+    //
+    // Its width is a NUMBER, handed down so frames can be laid out, and it was
+    // read once when the slot mounted and never again. Every width a panel
+    // actually has arrives after that: the same element is a neighbour one
+    // moment and the centre the next as the strip advances, the centre is
+    // deliberately wider, and pressing "5" — which this story has just done —
+    // changes both. So the strip drew at whichever width it happened to mount
+    // at. Measured here before the fix: 581px of film inside a 357px slot.
+    //
+    // Asserted for whatever still HAS a strip rather than for every panel,
+    // because shedding it is the other half of this story.
+    for (const panel of panels()) {
+      const strip = panel.querySelector<HTMLElement>("[data-trim-overview]");
+      if (strip === null) continue;
+      const slot = panel.querySelector<HTMLElement>("[data-trim-strip-slot]")!;
+      expect(
+        Math.abs(strip.getBoundingClientRect().width - slot.getBoundingClientRect().width),
+      ).toBeLessThan(1);
+    }
+
     // Still aligned, and still identically bordered — among peers, as above.
     const middleAt = panels().findIndex(
       (panel) => panel.dataset.itemDetailsPanel === "centre",
@@ -1796,13 +1844,10 @@ export const PointingAtABoxSaysWhatItIs: Story = {
 
     expect(preview()).toBeNull();
 
-    const surface = seamSurface();
     const target = seamBoxes()[3]!.getBoundingClientRect();
     const before = at();
-    fireEvent.pointerMove(
-      surface,
-      pointerAt(target.left + target.width / 2, target.top + target.height / 2),
-    );
+    // AT THE RULER, above that box. The film raises nothing now.
+    hoverRulerAt(target.left + target.width / 2);
 
     await waitFor(() => expect(preview()).not.toBeNull());
     expect(preview()!.textContent).toContain("Kitchen 3");
@@ -1810,14 +1855,19 @@ export const PointingAtABoxSaysWhatItIs: Story = {
     // cannot carry itself.
     expect(preview()!.textContent).toContain("Kitchen Interior");
     // A ghost line marks WHERE, so the words and the position are one object.
+    // TWO SEGMENTS OF ONE LINE, since the pointer is on the ruler and the clip
+    // it is asking about is below: the scale draws its own so that pointing at
+    // it visibly does something, and the film draws the half that lands on the
+    // frames.
     expect(document.querySelector("[data-seam-ghost]")).not.toBeNull();
+    expect(document.querySelector("[data-seam-ruler-ghost]")).not.toBeNull();
     // LOOKING IS FREE.
     expect(at()).toBe(before);
 
     // `pointerOut` with a relatedTarget, not `pointerLeave`: React synthesises
     // enter/leave from delegated over/out events, so a bare `pointerleave`
     // reaches no handler and the preview would look sticky in a way it is not.
-    fireEvent.pointerOut(surface, {
+    fireEvent.pointerOut(seamRuler(), {
       ...pointerAt(target.left, target.top),
       relatedTarget: document.body,
     });
@@ -2803,10 +2853,8 @@ export const TheHoverCardCanBePinned: Story = {
     };
     const hoverOver = async (box: HTMLElement, fraction: number) => {
       const rect = box.getBoundingClientRect();
-      fireEvent.pointerMove(
-        lane,
-        pointerAt(rect.left + rect.width * fraction, rect.top + rect.height / 2),
-      );
+      // The ruler above that point on the box — the film no longer hovers.
+      hoverRulerAt(rect.left + rect.width * fraction);
       return await waitFor(() => {
         const card = document.querySelector<HTMLElement>("[data-seam-preview]");
         expect(card).not.toBeNull();
@@ -2872,7 +2920,8 @@ export const ThePanelsRecedeBehindThePreview: Story = {
     // bar reports the state and the view acts on it. Both are waited for
     // rather than assumed, which is also the assertion that the dwell has not
     // quietly become "never".
-    fireEvent.pointerMove(lane, pointerAt(centre.x, centre.y));
+    // AT THE RULER above the box. Pressing, below, is still the film's.
+    hoverRulerAt(centre.x);
     await waitFor(() => expect(document.querySelector("[data-seam-preview]")).not.toBeNull());
     await waitFor(() => expect(dimmed()).toBe(true));
     // Both properties ease, so the row does not snap dark while it slides.

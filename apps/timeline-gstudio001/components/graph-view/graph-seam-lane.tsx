@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
@@ -391,6 +391,7 @@ export function SeamLane({
   // styling. The pointer handler clears it early so a drag begun mid-slide is
   // still exact from its first frame.
   const thumbnails = usePlaybarThumbnails();
+
   // The clips by id, so a segment can reach its posters without a scan per box.
   const clipById = useMemo(() => new Map(clips.map((clip) => [clip.id, clip])), [clips]);
   const stripRef = useRef<HTMLDivElement | null>(null);
@@ -736,106 +737,188 @@ export function SeamLane({
           "is that the shot I am looking for" without moving the playhead to
           find out — the thing a bar of anonymous boxes cannot do. */}
       {hover !== null && (
-        <span
-          data-seam-preview
-          aria-hidden="true"
-          // PINNED, OR KEPT INSIDE THE TRACK.
-          //
-          // `pinned` parks it dead centre under the bar and leaves it there, so
-          // the pointer scrubs and the picture changes in place. See
-          // `graph-seam-preview-anchor` for why that is worth having: the card
-          // is now big enough to judge a frame in, and a big thing sliding
-          // around under a moving pointer is the one arrangement in which you
-          // cannot.
-          //
-          // `follow` centres it on the box being described, which walks it off
-          // the side as soon as that box is near either end — and the wider
-          // this card got, the more of the bar had that problem. At 288px a
-          // hover anywhere in the first or last 144 pixels was reading a card
-          // with its edge cut off, which is worst exactly where the picture is
-          // the whole point. `clamp` against percentages rather than a measured
-          // width: the percentage resolves against this element's containing
-          // block, which IS the track, so the bound follows a resize with no
-          // observer and no re-render. 9rem is half the card.
-          style={{
-            left:
-              previewAnchor === "pinned"
-                ? "50%"
-                : `clamp(12rem, ${viewportX(hover.x)}px, calc(100% - 12rem))`,
-          }}
-          // BELOW THE WHOLE BAR, not just below the boxes: at `top-9` it lay
-          // across the ruler and the minimap, hiding the two things that say
-          // where the box being previewed actually is.
-          // STACKED, SO THE PICTURE CAN BE THE SIZE OF THE ANSWER.
-          //
-          // It was a 56x32 thumbnail beside two lines of text — barely larger
-          // than the frame being pointed at, which made the preview a worse
-          // copy of the thing that prompted it. The question a hover asks is
-          // "which shot is that", and the only part of this card that answers
-          // it is the picture; the name and the time are confirmation. So the
-          // picture gets the full width of the card and the words go
-          // underneath.
-          //
-          // AND IT STANDS OFF THE PAGE, because it now overlaps the panels
-          // below rather than floating over a gap: a heavier border, a deeper
-          // shadow and a near-opaque ground, so it reads as something in front
-          // rather than something printed on what it covers.
-          // TIGHT UNDER THE FILM STRIP, and over whatever is beneath it.
-          //
-          // It sat below the whole block, clear of the ruler, the minimap and
-          // the controls. That put a 264px card a long way from the 30px box it
-          // was describing, so pairing the two was a journey across everything
-          // in between — the preview and its subject were the two things
-          // furthest apart on screen.
-          //
-          // It overlaps the minimap and the controls now, which is the right
-          // trade: those are read between gestures, and this is read DURING
-          // one. It is `pointer-events-none`, so the transport underneath stays
-          // pressable through it, and it is gone the moment the pointer leaves
-          // the boxes.
-          //
-          // Sitting just under the ruler at 56px rather than against the boxes:
-          // the ruler is the scale the box widths mean anything against, and
-          // covering it would answer "which shot" while hiding "how long".
-          className="animate-seam-preview-in pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
-        >
-          {hover.posterSrc === undefined ? null : (
-            // A bare <img>: the preview is a thumbnail of a source the app
-            // already holds a URL for, and next/image would add a loader
-            // round-trip on every hover for one picture.
-            <img
-              src={hover.posterSrc}
-              alt=""
-              // THE FRAME'S OWN SHAPE, whole.
-              //
-              // It was forced to 16:9 and cropped to fill, on the reasoning
-              // that a card changing height as the pointer moved would be the
-              // card itself flickering. That holds for a row of mixed shapes
-              // and costs too much here: this project's shots are 896x384, so
-              // 16:9 was cutting the sides off every one of them — the preview
-              // was showing less of the frame than the box it came from. A
-              // preview that crops is answering a question about composition
-              // with a different composition.
-              //
-              // `h-auto` with no ratio, so the poster's intrinsic dimensions
-              // decide: scope stays scope, 16:9 stays 16:9, and nothing is
-              // trimmed. The card grows and shrinks with it, which is the
-              // honest trade and much less distracting now `PIN` exists — a
-              // stationary card resizing reads as the picture changing, where
-              // a moving one resizing reads as a wobble.
-              className="h-auto w-full rounded"
-            />
-          )}
-          <span className="min-w-0">
-            <span className="block truncate text-xs font-medium text-zinc-100">
-              {hover.name}
-            </span>
-            <span className="mt-0.5 block truncate font-mono text-[11px] tabular-nums text-zinc-400">
-              {hover.meta}
-            </span>
-          </span>
-        </span>
+        <SeamPreviewCard
+          hover={hover}
+          previewAnchor={previewAnchor}
+          leftPx={viewportX(hover.x)}
+        />
       )}
     </div>
   );
+}
+
+
+/**
+ * THE HOVER CARD, as its own component so its readiness state has a LIFETIME.
+ *
+ * It holds one piece of state — whether the poster has arrived — and that has
+ * to be false again for each new appearance. Kept in the lane it needed an
+ * effect watching  to clear it, which is a synchronous setState inside
+ * an effect: the cascading-render pattern this package rejects everywhere
+ * else, and eslint fails the build over it.
+ *
+ * Mounting IS the reset. The lane renders this only while something is
+ * hovered, so the state is born false with the card and dies with it, and
+ * there is no effect and nothing to keep in step.
+ */
+function SeamPreviewCard({
+  hover,
+  previewAnchor,
+  leftPx,
+}: Readonly<{
+  hover: SeamHover;
+  previewAnchor: PreviewAnchor;
+  /** Where the card points, already in the lane's coordinates. */
+  leftPx: number;
+}>) {
+  // WHETHER THE CARD HAS A PICTURE TO BE THE SIZE OF YET.
+  //
+  // The poster is a bare `<img>` with `h-auto` and no intrinsic dimensions,
+  // so until its bytes arrive the element measures zero and the card lays out
+  // at the height of its two lines of text. The picture then lands and the
+  // card roughly triples in height — which is what "it appears in the wrong
+  // place and then corrects itself" is: not a reposition, a resize, under a
+  // card whose entrance animation has already started.
+  //
+  // Nothing here can reserve the box in advance. The card deliberately takes
+  // the poster's OWN shape rather than forcing a ratio (see the note on the
+  // image), and the app does not know that shape until the file is decoded —
+  // an aspect-ratio guess would fix the flash by reintroducing the crop that
+  // note exists to prevent.
+  //
+  // So the card waits instead. It is mounted and laid out the whole time, so
+  // the browser is fetching the poster and the element has its final size the
+  // instant anything is visible; only the paint is held. HELD FOR THE FIRST
+  // FRAME ONLY — subsequent moves swap the src under a card that is already
+  // up, and gating those would make it blink on every quarter-second of
+  // travel, which is worse than the thing being fixed.
+  const [posterReady, setPosterReady] = useState(false);
+  // A CACHED POSTER FIRES NO `load`. Re-hovering the same frame serves it from
+  // memory and the element is already `complete` before React attaches the
+  // handler, so without this the card would wait for an event that has been
+  // and gone and never paint at all.
+  const posterRef = useCallback((element: HTMLImageElement | null) => {
+    if (element?.complete === true) setPosterReady(true);
+  }, []);
+  return (
+    <span
+      data-seam-preview
+      aria-hidden="true"
+      // PINNED, OR KEPT INSIDE THE TRACK.
+      //
+      // `pinned` parks it dead centre under the bar and leaves it there, so
+      // the pointer scrubs and the picture changes in place. See
+      // `graph-seam-preview-anchor` for why that is worth having: the card
+      // is now big enough to judge a frame in, and a big thing sliding
+      // around under a moving pointer is the one arrangement in which you
+      // cannot.
+      //
+      // `follow` centres it on the box being described, which walks it off
+      // the side as soon as that box is near either end — and the wider
+      // this card got, the more of the bar had that problem. At 288px a
+      // hover anywhere in the first or last 144 pixels was reading a card
+      // with its edge cut off, which is worst exactly where the picture is
+      // the whole point. `clamp` against percentages rather than a measured
+      // width: the percentage resolves against this element's containing
+      // block, which IS the track, so the bound follows a resize with no
+      // observer and no re-render. 9rem is half the card.
+      style={{
+        left:
+          previewAnchor === "pinned"
+            ? "50%"
+            : `clamp(12rem, ${leftPx}px, calc(100% - 12rem))`,
+      }}
+      // BELOW THE WHOLE BAR, not just below the boxes: at `top-9` it lay
+      // across the ruler and the minimap, hiding the two things that say
+      // where the box being previewed actually is.
+      // STACKED, SO THE PICTURE CAN BE THE SIZE OF THE ANSWER.
+      //
+      // It was a 56x32 thumbnail beside two lines of text — barely larger
+      // than the frame being pointed at, which made the preview a worse
+      // copy of the thing that prompted it. The question a hover asks is
+      // "which shot is that", and the only part of this card that answers
+      // it is the picture; the name and the time are confirmation. So the
+      // picture gets the full width of the card and the words go
+      // underneath.
+      //
+      // AND IT STANDS OFF THE PAGE, because it now overlaps the panels
+      // below rather than floating over a gap: a heavier border, a deeper
+      // shadow and a near-opaque ground, so it reads as something in front
+      // rather than something printed on what it covers.
+      // TIGHT UNDER THE FILM STRIP, and over whatever is beneath it.
+      //
+      // It sat below the whole block, clear of the ruler, the minimap and
+      // the controls. That put a 264px card a long way from the 30px box it
+      // was describing, so pairing the two was a journey across everything
+      // in between — the preview and its subject were the two things
+      // furthest apart on screen.
+      //
+      // It overlaps the minimap and the controls now, which is the right
+      // trade: those are read between gestures, and this is read DURING
+      // one. It is `pointer-events-none`, so the transport underneath stays
+      // pressable through it, and it is gone the moment the pointer leaves
+      // the boxes.
+      //
+      // Sitting just under the ruler at 56px rather than against the boxes:
+      // the ruler is the scale the box widths mean anything against, and
+      // covering it would answer "which shot" while hiding "how long".
+      // INVISIBLE UNTIL IT IS THE RIGHT SIZE, and only on the way in — see
+      // `posterReady`. `visibility` rather than unmounting or `display`,
+      // because the element has to stay laid out for the browser to be
+      // fetching the poster at all, and it has to have its final height
+      // before the first frame anyone sees. A card with no picture to wait
+      // for is shown immediately.
+      //
+      // The entrance animation is withheld with it. Left running it would
+      // play out against a card nobody can see and arrive already over.
+      className={[
+        "pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50",
+        hover.posterSrc === undefined || posterReady
+          ? "animate-seam-preview-in visible"
+          : "invisible",
+      ].join(" ")}
+    >
+      {hover.posterSrc === undefined ? null : (
+        // A bare <img>: the preview is a thumbnail of a source the app
+        // already holds a URL for, and next/image would add a loader
+        // round-trip on every hover for one picture.
+        <img
+          ref={posterRef}
+          src={hover.posterSrc}
+          alt=""
+          // EITHER OUTCOME REVEALS THE CARD. A poster that 404s or is
+          // blocked would otherwise hold it invisible forever, and the
+          // words underneath are still worth showing — the card answers
+          // "which shot" with a name as well as a picture.
+          onLoad={() => setPosterReady(true)}
+          onError={() => setPosterReady(true)}
+          // THE FRAME'S OWN SHAPE, whole.
+          //
+          // It was forced to 16:9 and cropped to fill, on the reasoning
+          // that a card changing height as the pointer moved would be the
+          // card itself flickering. That holds for a row of mixed shapes
+          // and costs too much here: this project's shots are 896x384, so
+          // 16:9 was cutting the sides off every one of them — the preview
+          // was showing less of the frame than the box it came from. A
+          // preview that crops is answering a question about composition
+          // with a different composition.
+          //
+          // `h-auto` with no ratio, so the poster's intrinsic dimensions
+          // decide: scope stays scope, 16:9 stays 16:9, and nothing is
+          // trimmed. The card grows and shrinks with it, which is the
+          // honest trade and much less distracting now `PIN` exists — a
+          // stationary card resizing reads as the picture changing, where
+          // a moving one resizing reads as a wobble.
+          className="h-auto w-full rounded"
+        />
+      )}
+      <span className="min-w-0">
+        <span className="block truncate text-xs font-medium text-zinc-100">
+          {hover.name}
+        </span>
+        <span className="mt-0.5 block truncate font-mono text-[11px] tabular-nums text-zinc-400">
+          {hover.meta}
+        </span>
+      </span>
+    </span>  );
 }
