@@ -377,6 +377,7 @@ export function SeamLane({
   laneRef,
   strip,
   clips,
+  panelClipIds,
   colourOf,
   centreClipId,
   offset,
@@ -392,6 +393,21 @@ export function SeamLane({
   laneRef: React.RefObject<HTMLDivElement | null>;
   strip: SeamStrip;
   clips: readonly SeamBarClip[];
+  /**
+   * The clips on screen as PANELS below the bar.
+   *
+   * These draw a frame whatever the setting says. Grey boxes are for reading
+   * rhythm — width is duration, and an even run of grey shows where the cuts
+   * fall — and that argument is about the RUN of the bar, not about the two or
+   * three clips whose pictures are already filling the screen underneath.
+   * Drawing those anonymous is the bar declining to answer a question nobody
+   * is asking of it.
+   *
+   * Optional, because the lane is rendered by stories and probes with no
+   * carousel under it at all; an empty set is "nothing is on screen", which is
+   * the honest answer for those.
+   */
+  panelClipIds?: ReadonlySet<string>;
   colourOf: ReadonlyMap<string, string>;
   centreClipId: string;
   offset: number;
@@ -538,11 +554,26 @@ export function SeamLane({
             const isCentre = segment.clipId === centreClipId;
             const colour = colourOf.get(segment.clipId) ?? BAR_NEUTRAL_COLOUR;
             const skipped = clipById.get(segment.clipId)?.disabled === true;
+            // A PICTURE HERE, WHATEVER THE SETTING SAYS — for the handful of
+            // clips whose frames are on screen below. Everything else stays
+            // grey, which is the whole of what `OFF` is for.
+            const onScreen = panelClipIds?.has(segment.clipId) === true;
+            const framed = thumbnails.shown || onScreen;
+            // COVER FOR THESE, not the chosen style. A filmstrip answers "what
+            // happens in the shot", and these are the shots you are already
+            // watching happen. One frame is the question the bar is being
+            // asked about them — which of these boxes is the one below — and
+            // it is also the cheap answer: a cell per 48px of a long box, on a
+            // bar that was switched to grey partly to stop asking for them.
+            const frameStyle: PlaybarThumbnailStyle = thumbnails.shown
+              ? thumbnails.style
+              : "cover";
             return (
               <span
                 key={segment.clipId}
                 data-seam-segment={segment.clipId}
                 data-seam-segment-live={isCentre ? "" : undefined}
+                data-seam-segment-onscreen={onScreen ? "" : undefined}
                 data-seam-segment-skipped={skipped ? "" : undefined}
                 aria-hidden="true"
                 style={{
@@ -556,23 +587,23 @@ export function SeamLane({
                   backgroundColor: colour,
                   // See `FRAMED_BOX_EDGE`: the ring is the dark half of the
                   // gap, and the strip's own background is the pale half.
-                  ...(thumbnails.shown ? { boxShadow: FRAMED_BOX_EDGE } : {}),
+                  ...(framed ? { boxShadow: FRAMED_BOX_EDGE } : {}),
                   // ROOM FOR THE RING TO EXIST. See `BOX_INSET_Y_PX`: the lane
                   // clips, so without this the frame's top and bottom edges
                   // are painted straight off the element.
-                  ...(thumbnails.shown
+                  ...(framed
                     ? { top: BOX_INSET_Y_PX, bottom: BOX_INSET_Y_PX }
                     : { top: 0, bottom: 0 }),
                 }}
                 className="absolute flex items-center justify-center overflow-hidden rounded-[3px]"
               >
-                {thumbnails.shown ? (
+                {framed ? (
                   <SegmentFrames
                     clipId={segment.clipId}
                     clip={clipById.get(segment.clipId)}
                     posterSrc={segment.posterSrc}
                     widthPx={Math.max(2, segment.widthPx - BOX_INSET_PX * 2)}
-                    style={thumbnails.style}
+                    style={frameStyle}
                   />
                 ) : null}
                 {/* SKIPPED AT PLAY TIME: struck through with hatching.

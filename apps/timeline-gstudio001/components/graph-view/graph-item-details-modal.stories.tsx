@@ -1933,9 +1933,39 @@ export const ThePlaybarCanDrawFrames: Story = {
     // the bar ships on STRIP, so the plain grey state is somewhere this story
     // goes rather than somewhere it starts.
     framesTo("OFF");
-    await waitFor(() =>
-      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
-    );
+    // GREY EXCEPT WHAT IS ON SCREEN. `OFF` is not "no pictures anywhere" — it
+    // is "no pictures in the RUN of the bar", which is the thing grey boxes
+    // are for: width is duration, and an even run of grey shows where the cuts
+    // fall and where the pace changes. That argument says nothing about the
+    // two or three clips whose frames are already filling the screen below,
+    // and drawing those anonymous is the bar declining to answer a question
+    // nobody is asking of it.
+    //
+    // So the count settles at the number of panels on screen, and every one of
+    // them is a box the row is showing.
+    await waitFor(() => {
+      const framed = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-seam-thumbnail]"),
+      );
+      expect(framed.length).toBeGreaterThan(0);
+      expect(framed.length).toBeLessThan(seamBoxes().length);
+      // Each one belongs to a box marked as being on screen — the marker and
+      // the picture cannot drift apart.
+      for (const picture of framed) {
+        expect(picture.closest("[data-seam-segment-onscreen]")).not.toBeNull();
+      }
+    });
+    // AND THE REST ARE STILL GREY. The claim is about the run, so it is
+    // asserted over the run rather than over the total.
+    expect(
+      document.querySelectorAll("[data-seam-segment]:not([data-seam-segment-onscreen])")
+        .length,
+    ).toBeGreaterThan(0);
+    for (const plain of document.querySelectorAll(
+      "[data-seam-segment]:not([data-seam-segment-onscreen])",
+    )) {
+      expect(plain.querySelector("[data-seam-thumbnail]")).toBeNull();
+    }
     framesTo("COVER");
 
     const boxCount = seamBoxes().length;
@@ -2017,13 +2047,30 @@ export const ThePlaybarCanDrawFrames: Story = {
     expect(laneBox.bottom - boxRect.bottom).toBeGreaterThanOrEqual(spread);
 
     framesTo("OFF");
-    await waitFor(() =>
-      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
-    );
-    // AND IT GOES AWAY WITH THEM. Over flat grey the whole treatment is
+    // BACK TO THE RUN BEING GREY — every box except the panels on screen, as
+    // above. The pictures that remain are the clips you are looking at, which
+    // `OFF` was never an argument against.
+    const plainBoxes = () =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "[data-seam-segment]:not([data-seam-segment-onscreen])",
+        ),
+      );
+    await waitFor(() => {
+      expect(plainBoxes().length).toBeGreaterThan(0);
+      for (const plain of plainBoxes()) {
+        expect(plain.querySelector("[data-seam-thumbnail]")).toBeNull();
+      }
+    });
+    // AND THE TREATMENT GOES AWAY WITH THEM. Over flat grey the ring is
     // decoration answering a question nobody asked, and one more thing between
     // the reader and the rhythm the grey bar is for.
-    expect(getComputedStyle(seamBoxes()[0]!).boxShadow).toBe("none");
+    //
+    // Read off a box that is NOT on screen: the ring follows the PICTURE now
+    // rather than the setting, so the handful of boxes still drawing a frame
+    // keep their edge — a picture with no margin is the very thing that
+    // treatment exists to prevent.
+    expect(getComputedStyle(plainBoxes()[0]!).boxShadow).toBe("none");
     expect(
       getComputedStyle(document.querySelector<HTMLElement>("[data-seam-strip]")!)
         .backgroundColor,

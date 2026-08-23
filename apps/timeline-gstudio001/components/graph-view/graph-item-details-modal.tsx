@@ -496,6 +496,33 @@ function DetailsFilmstripModal({
   // honest.
   const MOUNTED_RADIUS = Math.floor(viewCount / 2) + 1;
 
+  /**
+   * The clips actually ON SCREEN as panels — the two or three you are looking
+   * at, not the spares built one either side of them.
+   *
+   * The bar draws these as pictures even with frames switched off. Grey boxes
+   * are for reading RHYTHM — width is duration, and a run of even grey shows
+   * where the cuts fall and where the pace changes, which pictures destroy
+   * because the eye reads pictures whatever else is there. That argument is
+   * about the RUN of the bar. It says nothing about the two or three clips
+   * whose frames are already filling the screen below, and drawing those as
+   * anonymous grey while their pictures sit underneath is the bar declining to
+   * answer a question it is not being asked.
+   *
+   * `MOUNTED_RADIUS` is deliberately not reused: it is one wider, so the row
+   * has a built panel to slide to, and those spares are never seen. Marking
+   * them would put a picture on the bar for a clip that is not on the screen.
+   */
+  const panelClipIds = useMemo(() => {
+    const radius = Math.floor(viewCount / 2);
+    const onScreen = new Set<string>();
+    for (let index = centre - radius; index <= centre + radius; index += 1) {
+      const id = ids[index];
+      if (id !== undefined) onScreen.add(id);
+    }
+    return onScreen;
+  }, [centre, ids, viewCount]);
+
   // HOW A LANDING FROM THE BAR ARRIVES: IT DOES NOT TRAVEL.
   //
   // Stepping and letting go of the bar look like the same event and are not.
@@ -934,6 +961,7 @@ function DetailsFilmstripModal({
             <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
             <SeamStripBar
               clips={barClips}
+              panelClipIds={panelClipIds}
               // WHETHER THE BAR HAS ACTUALLY RUN OUT, which is a different
               // question from whether it has run out of boxes. At a reach of
               // ten the window is cropped at both ends nearly everywhere in a

@@ -159,6 +159,7 @@ type FitMode = "clip" | "all";
 
 export function SeamStripBar({
   clips,
+  panelClipIds,
   centreClipId,
   colourOf,
   playheadAt,
@@ -177,6 +178,11 @@ export function SeamStripBar({
 }: Readonly<{
   /** Every clip the bar can reach, in playback order. */
   clips: readonly SeamBarClip[];
+  /**
+   * The clips on screen as panels below — drawn as pictures even with frames
+   * switched off. See the note where this is built in the modal.
+   */
+  panelClipIds: ReadonlySet<string>;
   /** The clip under the middle card — marked, not centred. */
   centreClipId: string;
   /** Each clip's box colour, derived from where its collection sits in the
@@ -918,6 +924,7 @@ export function SeamStripBar({
 
         <SeamLane
           laneRef={laneRef}
+          panelClipIds={panelClipIds}
           strip={strip}
           clips={clips}
           colourOf={boxColourOf}
