@@ -1,5 +1,7 @@
 "use client";
 
+import { Layers } from "lucide-react";
+
 import {
   BOX_INSET_PX,
   SEAM_COLLECTION_BAND_PX,
@@ -215,9 +217,33 @@ export function SeamRuler({
                 // centred one hangs half of itself over the collection that
                 // just ended — which reads as belonging to the wrong side of
                 // the seam.
-                className="absolute top-1/2 max-w-32 -translate-y-1/2 truncate font-mono text-[10px] leading-none tracking-wider whitespace-nowrap text-zinc-200"
+                //
+                // `inline-flex` so the glyph and the word are one line with a
+                // baseline between them, rather than an icon floated beside a
+                // block that truncates independently of it.
+                className="absolute top-1/2 inline-flex max-w-32 -translate-y-1/2 items-center gap-1 font-mono text-[10px] leading-none tracking-wider whitespace-nowrap text-zinc-200"
               >
-                {tick.label}
+                {/* THE SAME SIGN A COLLECTION WEARS EVERYWHERE — the card's
+                    mark, the sidebar shortcut's badge, the board's Collections
+                    toggle. Three places already say "collection" with this
+                    glyph, and a fourth spelling would be a fourth thing to
+                    learn.
+
+                    AT THE LETTERING'S OWN SIZE, 10px square. This is a caption
+                    strip: an icon larger than the word beside it would make
+                    the row a row of icons that happen to have names, which is
+                    the opposite of what the band is for.
+
+                    `shrink-0` so a long name truncates the WORD and never the
+                    mark — the glyph is what says which KIND of thing this is,
+                    and it is the half that still reads when the name has been
+                    cut to three letters. */}
+                <Layers
+                  aria-hidden="true"
+                  className="size-2.5 shrink-0 text-zinc-400"
+                  strokeWidth={2.25}
+                />
+                <span className="truncate">{tick.label}</span>
               </span>
             ),
           )}

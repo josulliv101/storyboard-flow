@@ -1764,6 +1764,31 @@ export const TheRulerNamesTheCollections: Story = {
 
     expect(labels("collection")).toEqual(["Kitchen Interior", "Loading Dock"]);
 
+    // ── EACH NAME WEARS THE COLLECTION SIGN ──────────────────────────────
+    //
+    // The same glyph a collection carries everywhere else — the card's mark,
+    // the sidebar shortcut's badge, the board's Collections toggle. A fourth
+    // spelling would be a fourth thing to learn.
+    //
+    // AT THE LETTERING'S OWN SIZE, asserted against the label's computed font
+    // size rather than against 10px, so the two move together: an icon larger
+    // than the word beside it turns a caption strip into a row of icons that
+    // happen to have names.
+    for (const label of document.querySelectorAll<HTMLElement>("[data-seam-tick-name]")) {
+      const glyph = label.querySelector<SVGElement>("svg");
+      const word = label.querySelector<HTMLElement>("span")!;
+      expect(glyph).not.toBeNull();
+      const mark = glyph!.getBoundingClientRect();
+      const type = Number.parseFloat(getComputedStyle(word).fontSize);
+      expect(mark.height).toBeCloseTo(type, 0);
+      // In FRONT of the name, and on its middle rather than its top.
+      const text = word.getBoundingClientRect();
+      expect(mark.right).toBeLessThanOrEqual(text.left + 0.5);
+      expect(
+        Math.abs(mark.top + mark.height / 2 - (text.top + text.height / 2)),
+      ).toBeLessThan(1.5);
+    }
+
     // ── A BLOCK PER CLIP, AND THE GAPS LEFT ALONE ────────────────────────
     //
     // The scale carries a faint block per clip so "how long is that shot" can
