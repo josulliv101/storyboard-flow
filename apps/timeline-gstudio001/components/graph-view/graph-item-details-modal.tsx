@@ -918,7 +918,14 @@ function DetailsFilmstripModal({
       // row that had itself moved 1728px, which put the card just chosen
       // entirely off the left edge. `clip` crops without ever being
       // scrollable, so the transform stays the only thing that moves the row.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[21.75rem] pb-6 backdrop-blur-sm"
+      // THE BOTTOM BAND IS RESERVED TOO, for the same reason the top one is.
+      //
+      // `pb-6` matched the view-count control's own `bottom-6`, which reserved
+      // the control's OFFSET and not the control — so the centre panel ran
+      // straight through it and 16px past the bottom of the window besides.
+      // 4.875rem is 78px: the control's 24px offset, its own 34px, and 20px of
+      // clearance so the panel stops short of it rather than against it.
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[21.75rem] pb-[4.875rem] backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim
