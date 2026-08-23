@@ -21,7 +21,7 @@ import {
   SURFACE_CARD_FOCUS,
 } from "./graph-details-design";
 import {
-  DETAILS_STEP_MS,
+  DETAILS_CHROME_MS,
   detailsStepTransition,
 } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
@@ -409,7 +409,7 @@ export function DetailsPanel({
           // moment and cannot say which card is which.
           // THE STEP'S CLOCK, for everything this element animates. A landing
           // still cuts rather than travels, which is the one exception.
-          transitionDuration: swapping ? "0ms" : `${DETAILS_STEP_MS}ms`,
+          transitionDuration: `${DETAILS_CHROME_MS}ms`,
           zIndex: magnification > 1 ? 20 : undefined,
         }}
         data-item-details-live={onScreen ? "" : undefined}
@@ -503,11 +503,11 @@ export function DetailsPanel({
           // would still be growing after the row had begun to move. Driven by
           // variables rather than an inline `transition` so that
           // `motion-reduce:transition-none` still outranks the lot.
-          "transition-[box-shadow,border-color,background-color,transform,height]",
+          "transition-[box-shadow,border-color,background-color,transform]",
           // Spelled out because a class cannot read a constant. See
           // DETAILS_STEP_EASE in graph-details-motion.ts for why this curve and
           // not the hard ease-out it replaces.
-          "ease-[cubic-bezier(0.37,0,0.63,1)]",
+          "ease-[cubic-bezier(0.32,0.72,0,1)]",
           // ONE DURATION, NO DELAYS, EVERY PROPERTY — set in the style below.
           // The surface, the border, the shadow and the height all move with the
           // width and with the row.
@@ -638,8 +638,8 @@ export function DetailsPanel({
             // Asking for the clamped value directly makes the interpolation end
             // where it renders, so both axes finish together because they finish
             // at all.
-            ? "@min-[30rem]:h-[min(68vh,calc(100vh-26.625rem))] h-auto"
-            : "@min-[30rem]:h-[min(38.9vh,calc(100vh-26.625rem))] h-auto",
+            ? "@min-[30rem]:h-[68vh] h-auto"
+            : "@min-[30rem]:h-[38.9vh] h-auto",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >

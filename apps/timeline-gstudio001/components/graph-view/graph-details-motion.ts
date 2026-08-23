@@ -65,7 +65,7 @@
  * 155ms of it becomes 332ms — without touching the clock. The card accelerates,
  * travels and arrives, instead of appearing already at speed.
  */
-const DETAILS_STEP_EASE = "cubic-bezier(0.37, 0, 0.63, 1)";
+const DETAILS_STEP_EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
 
 /**
  * How long a step takes, everywhere it is visible.
@@ -118,7 +118,17 @@ export function detailsStepTransition(properties: string): string {
     .join(", ");
 }
 
-/*
+/**
+ * The chrome's own timing — a ring brightening, a shadow lifting.
+ *
+ * Deliberately SHORTER and on the same curve. These do not travel, so matching
+ * the step's duration would leave a border still resolving long after the thing
+ * it borders had arrived. Half the step, so it lands inside it rather than
+ * alongside it.
+ */
+export const DETAILS_CHROME_MS = 210;
+
+/* (kept for reference)
  * THE CHROME AND THE HANDOFF USED TO HAVE CLOCKS OF THEIR OWN, and both are
  * gone.
  *
