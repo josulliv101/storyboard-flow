@@ -4241,3 +4241,73 @@ export const TheRowHoldsItsHeightThroughTheCrossover: Story = {
     expect(`bystander top ${crossoverTop}`).toBe(`bystander top ${restTop}`);
   },
 };
+
+/**
+ * THE NAME DOES NOT RE-TRUNCATE WHILE THE CARD RESIZES.
+ *
+ * The card's width animates across a step and the name is a single truncated
+ * line, so every frame recomputed where the ellipsis falls: `MiniMax H3 re…`
+ * to `…ref2va int8, q…` to the full line, continuously, for the length of the
+ * move. The most legible thing on the card doing the most distracting possible
+ * thing while you read the one beside it.
+ *
+ * The heading is given the panel's FINAL width instead, with no transition of
+ * its own — the DOM lands on its new role immediately and only the box travels
+ * — so the truncation settles in one frame and the card grows around it.
+ *
+ * SIMULATED, NOT SAMPLED. Mid-animation is one instant inside a 420ms
+ * transition and neither browser pane will sample a transition at all. Forcing
+ * the outer box to the other role's width IS mid-animation, and it is
+ * deterministic: what must hold is that the heading ignores it.
+ */
+export const TheNameDoesNotReTruncateWhileTheCardResizes: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    const heading = (panel: HTMLElement) =>
+      panel.querySelector<HTMLElement>("div.overflow-hidden")!;
+
+    const centre = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    )!;
+    const neighbour = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "neighbour",
+    )!;
+
+    // The heading is narrower than its card by the padding it sits in, and
+    // WIDER on the subject than on a neighbour — so it is genuinely sized from
+    // the role rather than being fixed.
+    const centreHead = heading(centre).getBoundingClientRect().width;
+    const neighbourHead = heading(neighbour).getBoundingClientRect().width;
+    expect(centreHead).toBeGreaterThan(neighbourHead);
+    // Deliberately NOT asserting the exact inset. It is the padding plus the
+    // card's border, it is fractional, and an assertion on it fails first on
+    // rounding — which made this story report a padding fault when what had
+    // actually broken was the heading following the animating box.
+
+    // MID-ANIMATION: shove the boxes onto each other's widths. The headings
+    // must not move — they are already at their destination.
+    const boxes = [centre.parentElement!, neighbour.parentElement!];
+    const widths = boxes.map((box) => getComputedStyle(box).width);
+    for (const box of boxes) box.style.transition = "none";
+    boxes[0]!.style.width = widths[1]!;
+    boxes[1]!.style.width = widths[0]!;
+
+    const centreDuring = heading(centre).getBoundingClientRect().width;
+    const neighbourDuring = heading(neighbour).getBoundingClientRect().width;
+
+    for (const box of boxes) {
+      box.style.width = "";
+      box.style.transition = "";
+    }
+
+    expect(`centre heading ${Math.round(centreDuring)}`).toBe(
+      `centre heading ${Math.round(centreHead)}`,
+    );
+    expect(`neighbour heading ${Math.round(neighbourDuring)}`).toBe(
+      `neighbour heading ${Math.round(neighbourHead)}`,
+    );
+  },
+};

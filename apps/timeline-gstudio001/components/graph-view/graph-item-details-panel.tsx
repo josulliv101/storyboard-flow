@@ -644,6 +644,33 @@ export function DetailsPanel({
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
+        {/* THE HEADING IS ALREADY AT ITS DESTINATION WIDTH.
+
+            The card's width animates across a step, and the name is a single
+            truncated line — so every frame of that animation recomputed where
+            the ellipsis falls, and the title visibly re-truncated the whole
+            way: `MiniMax H3 re...` to `...ref2va int8, q...` to the full line.
+            That shimmer is the most legible thing on the card doing the most
+            distracting possible thing while you are trying to read the one
+            beside it.
+
+            `width` is the panel's FINAL width — the DOM lands on its new role
+            immediately and only the box animates toward it — so handing the
+            same value here, with no transition of its own, settles the
+            truncation in one frame. The card then grows or shrinks AROUND a
+            heading that has already decided what it says, and `overflow-hidden`
+            is what lets it be wider than its parent while that happens.
+
+            Costs nothing and needs no measurement: it is the same CSS
+            expression the panel is already sizing itself with, less the 2rem
+            of padding it sits inside. */}
+        <div
+          className="overflow-hidden"
+          // Less the 2rem of padding AND the card's 1px border either side, so the
+          // width the ellipsis is computed against is the one the heading will
+          // actually settle in rather than two pixels wider.
+          style={{ width: `calc(${width} - 2rem - 2px)` }}
+        >
         <ItemDetailsPanelHeader
           name={node.name}
           clipLabel={clipLabel ?? null}
@@ -657,6 +684,7 @@ export function DetailsPanel({
           nodeId={node.id as string}
           rename={rename}
         />
+        </div>
 
         <ItemDetailsMonitor
           node={node}
