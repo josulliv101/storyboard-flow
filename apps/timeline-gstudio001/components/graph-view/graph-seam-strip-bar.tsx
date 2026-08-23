@@ -867,7 +867,10 @@ export function SeamStripBar({
             stay there when a setting changes width. */}
         <div
           data-seam-transport
-          className="flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/70 p-1.5"
+          // DROPPED CLEAR OF THE BARS ABOVE. `mt-5` is 20px, on the assembly
+          // rather than on the row: the badges either side keep sitting where
+          // the ruler leaves them, and only the transport takes the air.
+          className="mt-5 flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/70 p-1.5"
         >
           {/* STEP ONE CLIP, either way, bracketing the thing they move.
               Disabled rather than hidden at the ends: a control that vanishes
