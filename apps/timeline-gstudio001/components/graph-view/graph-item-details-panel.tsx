@@ -68,6 +68,7 @@ export function DetailsPanel({
   swipe,
   width,
   focusHandoff = null,
+  stepping = false,
   spare = false,
   dimmed = false,
   scrubFocus = false,
@@ -207,6 +208,9 @@ export function DetailsPanel({
    * everywhere else, including on both cards once the step has settled.
    */
   focusHandoff?: "arriving" | "departing" | null;
+  /** Whether the row is mid-step. Passed down so the filmstrip can hold its
+   *  measurement still rather than chase an animating width. */
+  stepping?: boolean;
   /**
    * Pull this panel's picture back, because the clock is running and it is not
    * the one being watched.
@@ -706,6 +710,7 @@ export function DetailsPanel({
           showing={showing}
           live={live}
           playhead={playhead}
+          stepping={stepping}
         />
 
 

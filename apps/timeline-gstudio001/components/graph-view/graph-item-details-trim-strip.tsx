@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   TrimOverviewStrip,
@@ -12,6 +12,27 @@ import {
 import { formatSeconds } from "@/lib/format-duration";
 import { TEXT_VALUE_DIM } from "./graph-details-design";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
+
+/**
+ * The narrowest panel that still gets a filmstrip — 18rem, unchanged.
+ *
+ * IN JAVASCRIPT RATHER THAN AS A CONTAINER QUERY, which is the whole point.
+ * The panel's width ANIMATES across a step, so a CSS gate is swept through
+ * mid-movement: measured on an iPad at 1024, a neighbour is 252px and the
+ * subject 441px, so every single step crosses 288px in both directions. The
+ * incoming card's filmstrip mounted halfway through the slide — blank, then
+ * filling in as its frames decoded — and the outgoing card's vanished at the
+ * same moment. On a slowed recording that frame changed three times as much
+ * as its neighbours.
+ *
+ * The measured width this compares against is frozen while the row is moving
+ * (see `stepping`), so the gate cannot flip mid-step in either direction. The
+ * strip appears, or goes, once — at rest.
+ */
+// 18rem OF PANEL, less the 2rem of padding it sits inside — the container
+// query this replaces measured the panel, and this measures the slot, so the
+// number has to be restated in the slot's terms or the gate silently moves 32px.
+const TRIM_STRIP_MIN_PX = 288 - 32;
 
 /**
  * THE SOURCE, THE WINDOW ON IT, AND THE TWO EDGES AS NUMBERS.
@@ -31,6 +52,7 @@ export function ItemDetailsTrimStrip({
   showing,
   live,
   playhead,
+  stepping = false,
 }: Readonly<{
   node: MediaNode;
   /** The clip when it windows into a longer source — video and audio both. */
@@ -45,6 +67,23 @@ export function ItemDetailsTrimStrip({
   /** Where the seam clock sits inside this clip, 0..1, or null when it is
    *  somewhere else entirely. */
   playhead: number | null;
+  /**
+   * Whether the row is mid-step, in which case this strip holds still.
+   *
+   * The panel's width animates across a step, and this strip is gated on a
+   * container query at 18rem — so a card growing into the subject SWEEPS that
+   * threshold and the whole filmstrip mounts halfway through the movement,
+   * blank, then fills in as its frames decode. Caught on a slowed recording:
+   * one frame changed three times as much as its neighbours.
+   *
+   * It also re-measured on every frame of the animation, re-rendering the panel
+   * sixty times a step to lay the same frames out at sixty slightly different
+   * widths.
+   *
+   * So measurement pauses while the row is moving and happens once when it
+   * stops. The strip arrives at rest, in one piece.
+   */
+  stepping?: boolean;
 }>) {
   // HOW WIDE THE STRIP MAY DRAW, measured from the slot it lands in rather
   // than assumed: the panel's width is a container query away from this file,
@@ -63,26 +102,52 @@ export function ItemDetailsTrimStrip({
   // a 357px slot — 224px of overflow.
   const [stripWidth, setStripWidth] = useState(0);
   const observerRef = useRef<ResizeObserver | null>(null);
-  const stripSlot = useCallback((element: HTMLElement | null) => {
-    observerRef.current?.disconnect();
-    observerRef.current = null;
-    if (element === null) {
-      setStripWidth(0);
-      return;
-    }
-    const measure = () => {
+  const slotRef = useRef<HTMLElement | null>(null);
+  // Read through a ref so the observer callback and the settle effect below
+  // are looking at the same answer without either re-subscribing.
+  const steppingRef = useRef(stepping);
+  const measure = useCallback(() => {
+    const element = slotRef.current;
+    if (element === null) return;
+    {
       const next = element.getBoundingClientRect().width;
       // UNCHANGED IS NOT A RENDER. A ResizeObserver fires for boxes that
       // settled on the same number, and setting state from it would re-render
       // every panel on any mutation that touched layout — the cost #468
       // measured on the two effects that do exactly this.
       setStripWidth((current) => (Math.abs(current - next) < 0.5 ? current : next));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    observerRef.current = observer;
+    }
   }, []);
+
+  const stripSlot = useCallback(
+    (element: HTMLElement | null) => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+      slotRef.current = element;
+      if (element === null) {
+        setStripWidth(0);
+        return;
+      }
+      measure();
+      const observer = new ResizeObserver(() => {
+        // NOT WHILE THE ROW IS MOVING. Every frame of the width animation
+        // fires this, and answering re-lays the film out at a width that is
+        // already stale — and crosses the mount threshold mid-flight.
+        if (steppingRef.current) return;
+        measure();
+      });
+      observer.observe(element);
+      observerRef.current = observer;
+    },
+    [measure],
+  );
+
+  // ONE MEASUREMENT WHEN THE ROW STOPS, which is the one that was worth taking.
+  useEffect(() => {
+    const wasStepping = steppingRef.current;
+    steppingRef.current = stepping;
+    if (wasStepping && !stepping) measure();
+  }, [stepping, measure]);
 
   /* The whole source, with the showing window and its grips — the trim
         handles, at a width the board could never give them.
@@ -124,9 +189,11 @@ export function ItemDetailsTrimStrip({
             // the two without walking the DOM by parentElement — the whole
             // bug was the strip disagreeing with this element's width.
             data-trim-strip-slot
-            className="hidden w-full @min-[18rem]:block"
+            // Always laid out, so there is always something to measure — the
+            // gate below is what decides whether film is drawn in it.
+            className="w-full"
           >
-            {stripWidth > 0 ? (
+            {stripWidth >= TRIM_STRIP_MIN_PX ? (
               <div className="relative">
                 {/* WHITE, because this view is a filmstrip.
                     The board's strip layout keeps the blue selection frame —

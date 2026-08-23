@@ -371,7 +371,13 @@ function DetailsFilmstripModal({
   // for as long as the slide takes. The card leaves with its picture on.
   const [leavingCentre, setLeavingCentre] = useState<number | null>(null);
   const centreWas = useRef(centre);
-  useEffect(() => {
+  // BEFORE PAINT, NOT AFTER. As `useEffect` this ran one frame too late: the
+  // render that changed `centre` painted with no union yet, so the outgoing
+  // card was briefly outside BOTH windows and blinked out for a single frame
+  // before the union brought it back. On a slowed recording that is a card
+  // vanishing between two frames — a hard blink, no fade — which is worse than
+  // the bug the union was added to fix.
+  useLayoutEffect(() => {
     if (centreWas.current === centre) return;
     setLeavingCentre(centreWas.current);
     centreWas.current = centre;
@@ -1363,6 +1369,8 @@ function DetailsFilmstripModal({
               // is one neighbour wide, so collapsing these would shift every
               // panel between them and the middle.
               spare={isSpare(index)}
+              // Held still while the row moves — see the filmstrip's own note.
+              stepping={leavingCentre !== null}
               // WHO IS TAKING THE MARK AND WHO IS GIVING IT UP, for as long as
               // the step runs. Null once it has settled, so a panel that simply
               // IS the centre transitions like anything else.
