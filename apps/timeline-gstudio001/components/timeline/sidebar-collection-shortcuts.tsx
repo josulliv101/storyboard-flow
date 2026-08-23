@@ -9,6 +9,7 @@ import {
   type CollectionShortcut,
 } from "@/lib/collection-shortcuts";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import { SIDEBAR_COLLECTION_SHORTCUTS_ENABLED } from "@/lib/sidebar-collection-shortcuts-flag";
 import { requestGraphOpenItem } from "@/lib/graph-view-events";
 import { cn } from "@/lib/utils";
 
@@ -365,7 +366,17 @@ export function SidebarCollectionShortcuts({
   );
   return (
     <CollectionShortcutsGroup
-      shortcuts={collectionShortcuts(documents[projectId])}
+      // WITHHELD AT THE RAIL, not at the source. `collectionShortcuts` still
+      // walks the document and still returns the list — see the flag's own
+      // note for why the derivation is deliberately left alive — and the group
+      // below simply receives none. That also means the flag needs no branch
+      // inside the group: an empty list is a state it has always rendered,
+      // because a project with no top-level collections produces one.
+      shortcuts={
+        SIDEBAR_COLLECTION_SHORTCUTS_ENABLED
+          ? collectionShortcuts(documents[projectId])
+          : []
+      }
       onOpen={requestGraphOpenItem}
       projectId={projectId}
     />
