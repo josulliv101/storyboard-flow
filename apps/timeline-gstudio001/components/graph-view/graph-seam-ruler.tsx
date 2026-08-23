@@ -1,5 +1,7 @@
 "use client";
 
+import { Layers } from "lucide-react";
+
 import {
   BOX_INSET_PX,
   SEAM_COLLECTION_BAND_PX,
@@ -55,6 +57,18 @@ const RULER_BLOCK_COLOUR = "rgba(250, 250, 250, 0.16)";
 const RULER_BLOCK_ACTIVE_COLOUR = "rgba(56, 189, 248, 0.30)";
 
 /**
+ * The same two tones, pointed at.
+ *
+ * A STEP IN THE SAME INK, not a new colour: the run is one tone and the active
+ * clip is the only hue in the band, so a hover introducing a third treatment
+ * would compete with the two that already mean something. Small steps — the
+ * bar is a thing you sweep a pointer across on the way somewhere else, and a
+ * hover that announces itself would flash all the way along.
+ */
+const RULER_BLOCK_HOVER_COLOUR = "rgba(250, 250, 250, 0.26)";
+const RULER_BLOCK_ACTIVE_HOVER_COLOUR = "rgba(56, 189, 248, 0.42)";
+
+/**
  * The scale ABOVE the boxes: seconds, and where each collection starts.
  *
  * WHY A RULER AT ALL, when the boxes are already proportional. Because the
@@ -98,7 +112,9 @@ export function SeamRuler({
   offset,
   segments = [],
   centreClipId = null,
+  hoveredClipId = null,
   ghostX = null,
+  playheadPx = null,
   handlers,
 }: Readonly<{
   ticks: readonly SeamTick[];
@@ -115,6 +131,8 @@ export function SeamRuler({
   /** Which block wears the active treatment. Null draws none, which is what a
    *  ruler rendered without a film under it should do. */
   centreClipId?: string | null;
+  /** The clip under the pointer, on either row — see the strip bar. */
+  hoveredClipId?: string | null;
   /** The strip's own transform, so the ruler travels with the boxes. */
   offset: number;
   /**
@@ -131,6 +149,17 @@ export function SeamRuler({
    */
   ghostX?: number | null;
   /**
+   * Where playback is, in STRIP space, or null when the clock is untouched.
+   *
+   * DRAWN HERE RATHER THAN ON THE FILM. A red hairline down the middle of the
+   * boxes cut across whatever frame it landed on — the one thing on this bar
+   * you are actually meant to be looking at — and at a wide reach it fell
+   * inside a thumbnail rather than beside one. The playhead says WHERE, and
+   * where belongs on the scale: the same row that carries the seconds it is
+   * pointing at.
+   */
+  playheadPx?: number | null;
+  /**
    * The hover handlers, which live here now rather than on the lane.
    *
    * Optional so the ruler can still be rendered as a plain scale — a story or
@@ -140,6 +169,8 @@ export function SeamRuler({
   handlers?: Readonly<{
     onPointerMove?: (event: React.PointerEvent<HTMLDivElement>) => void;
     onPointerLeave?: (event: React.PointerEvent<HTMLDivElement>) => void;
+    /** Press to put the playhead here and open the clip it lands in. */
+    onPointerDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
   }>;
 }>) {
   if (ticks.length === 0) return null;
@@ -163,7 +194,13 @@ export function SeamRuler({
         // target it has to receive the pointer — and `touch-none`, because the
         // strip below claims every gesture and a ruler that scrolled the
         // dialog on a touch drag would be the one part of the bar that did.
-        interactive ? "touch-none" : "pointer-events-none",
+        //
+        // `cursor-pointer`, NOT the film's `ew-resize`. That cursor promises a
+        // drag, and the two rows offer different gestures: the film is grabbed
+        // and pulled, while pressing the scale puts the playhead at the second
+        // under the pointer. A pointer says "this position is a thing you can
+        // choose", which is exactly what a press here does.
+        interactive ? "cursor-pointer touch-none" : "pointer-events-none",
       ].join(" ")}
       {...(handlers ?? {})}
     >
@@ -195,9 +232,33 @@ export function SeamRuler({
                 // centred one hangs half of itself over the collection that
                 // just ended — which reads as belonging to the wrong side of
                 // the seam.
-                className="absolute top-1/2 max-w-32 -translate-y-1/2 truncate font-mono text-[10px] leading-none tracking-wider whitespace-nowrap text-zinc-200"
+                //
+                // `inline-flex` so the glyph and the word are one line with a
+                // baseline between them, rather than an icon floated beside a
+                // block that truncates independently of it.
+                className="absolute top-1/2 inline-flex max-w-32 -translate-y-1/2 items-center gap-1 font-mono text-[10px] leading-none tracking-wider whitespace-nowrap text-zinc-200"
               >
-                {tick.label}
+                {/* THE SAME SIGN A COLLECTION WEARS EVERYWHERE — the card's
+                    mark, the sidebar shortcut's badge, the board's Collections
+                    toggle. Three places already say "collection" with this
+                    glyph, and a fourth spelling would be a fourth thing to
+                    learn.
+
+                    AT THE LETTERING'S OWN SIZE, 10px square. This is a caption
+                    strip: an icon larger than the word beside it would make
+                    the row a row of icons that happen to have names, which is
+                    the opposite of what the band is for.
+
+                    `shrink-0` so a long name truncates the WORD and never the
+                    mark — the glyph is what says which KIND of thing this is,
+                    and it is the half that still reads when the name has been
+                    cut to three letters. */}
+                <Layers
+                  aria-hidden="true"
+                  className="size-2.5 shrink-0 text-zinc-400"
+                  strokeWidth={2.25}
+                />
+                <span className="truncate">{tick.label}</span>
               </span>
             ),
           )}
@@ -220,11 +281,13 @@ export function SeamRuler({
         {segments.map((segment) => {
           if (segment.widthPx <= 0) return null;
           const isCentre = segment.clipId === centreClipId;
+          const isHovered = segment.clipId === hoveredClipId;
           return (
             <span
               key={segment.clipId}
               data-seam-ruler-block={segment.clipId}
               data-seam-ruler-block-live={isCentre ? "" : undefined}
+              data-seam-ruler-block-hovered={isHovered ? "" : undefined}
               aria-hidden="true"
               style={{
                 left: segment.leftPx + BOX_INSET_PX,
@@ -237,9 +300,23 @@ export function SeamRuler({
                 // is not the film's rhythm, competing with the one thing the
                 // widths are actually saying. An even run is a ground, and a
                 // ground is what a scale wants to be.
+                // POINTED AT — from either row. The block lifts whether the
+                // pointer is on the scale or on the box below it, because both
+                // are the same question about the same clip.
+                //
+                // A STEP IN THE SAME INK rather than a new colour or an edge:
+                // the run is one tone and the active clip is the only hue up
+                // here, so a hover that introduced a third treatment would be
+                // competing with the two that mean something. Brighter is the
+                // one move left that says "this one" without saying anything
+                // else.
                 backgroundColor: isCentre
-                  ? RULER_BLOCK_ACTIVE_COLOUR
-                  : RULER_BLOCK_COLOUR,
+                  ? isHovered
+                    ? RULER_BLOCK_ACTIVE_HOVER_COLOUR
+                    : RULER_BLOCK_ACTIVE_COLOUR
+                  : isHovered
+                    ? RULER_BLOCK_HOVER_COLOUR
+                    : RULER_BLOCK_COLOUR,
               }}
               // INSET FROM THE BOTTOM, not flush to it. The tick marks hang
               // from that edge and a block reaching it would have them ending
@@ -262,6 +339,33 @@ export function SeamRuler({
             style={{ transform: `translateX(${ghostX}px)` }}
             className="absolute inset-y-0 left-0 w-px bg-white/35"
           />
+        )}
+
+        {/* WHERE PLAYBACK IS. Last in the band so it paints over the blocks,
+            the ticks and the ghost: everything else here describes the film,
+            and this is the one mark that describes the CLOCK. */}
+        {playheadPx !== null && (
+          <span
+            data-seam-playhead
+            aria-hidden="true"
+            style={{ transform: `translateX(${playheadPx}px)` }}
+            // A HAIRLINE. One physical pixel wherever the display allows it:
+            // the playhead's job is to name an instant, and a 2px line spans
+            // two of them at this scale.
+            className="absolute inset-y-0 left-0 z-10 w-px -translate-x-1/2 bg-red-500"
+          >
+            {/* The head of the line, so the playhead reads as a position that
+                was put there rather than a border between two boxes. It used
+                to pulse when a drag snapped to a cut; there is no drag on the
+                playhead any more, so there is no snap to acknowledge.
+                AT THE TOP OF THE BAND rather than above it: the line no longer
+                runs through the film, so its head has the scale's own top edge
+                to sit on and nothing to hang over. */}
+            <span
+              data-seam-playhead-head
+              className="absolute top-0 left-1/2 block h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500"
+            />
+          </span>
         )}
         {ticks.map((tick) => (
           <span

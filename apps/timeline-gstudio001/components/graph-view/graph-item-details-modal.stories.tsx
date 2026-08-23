@@ -1275,6 +1275,44 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
       const others = boxes.filter((_, index) => index !== middle);
       expect(new Set(others).size).toBe(1);
     });
+    // ── AND THE HEIGHT RULE IS ABOUT ROLE, NOT WIDTH ─────────────────────
+    //
+    // The panel's height used to be a container query alone: over 30rem you
+    // took a fixed 68vh, under it you fitted your picture. That is a PROXY for
+    // "am I the subject", and it breaks on a large screen — at 2560x1440 a
+    // neighbour is 544px wide, clears the query, and takes the same 979px the
+    // centre does, so the 1.75 width ratio produces no height difference at
+    // all.
+    //
+    // Asserted on the CLASS rather than the rendered height, because a story
+    // canvas cannot be 2560 wide: what must hold is that the two roles ask for
+    // different heights, which is the thing a revert to one shared rule would
+    // undo. The measurement itself was taken against the running app — 979
+    // against 546, a 1.79 height ratio beside a 1.76 width ratio.
+    {
+      const heightRule = (panel: HTMLElement) =>
+        Array.from(panel.classList).filter((name) => name.includes("h-[")).join(" ");
+      const centrePanel = panels().find(
+        (panel) => panel.dataset.itemDetailsPanel === "centre",
+      )!;
+      const neighbourPanel = panels().find(
+        (panel) => panel.dataset.itemDetailsPanel === "neighbour",
+      )!;
+      expect(heightRule(centrePanel)).not.toBe("");
+      expect(heightRule(neighbourPanel)).not.toBe("");
+      expect(heightRule(centrePanel)).not.toBe(heightRule(neighbourPanel));
+      // Every neighbour asks for the SAME height — they must match each other,
+      // and fitting each to its own picture (the first attempt here) gave four
+      // different heights at five-up.
+      expect(
+        new Set(
+          panels()
+            .filter((panel) => panel.dataset.itemDetailsPanel === "neighbour")
+            .map(heightRule),
+        ).size,
+      ).toBe(1);
+    }
+
     const centreFrame = panels()
       .find((panel) => panel.dataset.itemDetailsPanel === "centre")!
       .querySelector<HTMLElement>("[data-item-details-frame]")!;
@@ -1764,6 +1802,31 @@ export const TheRulerNamesTheCollections: Story = {
 
     expect(labels("collection")).toEqual(["Kitchen Interior", "Loading Dock"]);
 
+    // ── EACH NAME WEARS THE COLLECTION SIGN ──────────────────────────────
+    //
+    // The same glyph a collection carries everywhere else — the card's mark,
+    // the sidebar shortcut's badge, the board's Collections toggle. A fourth
+    // spelling would be a fourth thing to learn.
+    //
+    // AT THE LETTERING'S OWN SIZE, asserted against the label's computed font
+    // size rather than against 10px, so the two move together: an icon larger
+    // than the word beside it turns a caption strip into a row of icons that
+    // happen to have names.
+    for (const label of document.querySelectorAll<HTMLElement>("[data-seam-tick-name]")) {
+      const glyph = label.querySelector<SVGElement>("svg");
+      const word = label.querySelector<HTMLElement>("span")!;
+      expect(glyph).not.toBeNull();
+      const mark = glyph!.getBoundingClientRect();
+      const type = Number.parseFloat(getComputedStyle(word).fontSize);
+      expect(mark.height).toBeCloseTo(type, 0);
+      // In FRONT of the name, and on its middle rather than its top.
+      const text = word.getBoundingClientRect();
+      expect(mark.right).toBeLessThanOrEqual(text.left + 0.5);
+      expect(
+        Math.abs(mark.top + mark.height / 2 - (text.top + text.height / 2)),
+      ).toBeLessThan(1.5);
+    }
+
     // ── A BLOCK PER CLIP, AND THE GAPS LEFT ALONE ────────────────────────
     //
     // The scale carries a faint block per clip so "how long is that shot" can
@@ -1853,6 +1916,59 @@ export const TheRulerNamesTheCollections: Story = {
       .getBoundingClientRect();
     expect(triangle.bottom).toBeLessThanOrEqual(band.top + 0.5);
     expect(rule.top).toBeGreaterThan(band.top);
+
+    // ── POINTING AT A CLIP LIFTS BOTH OF ITS ROWS ────────────────────────
+    //
+    // The box and the block above it are one clip seen twice, so pointing at
+    // either lifts both. Asserted from BOTH surfaces, because they arrive by
+    // different handlers — the scale's move also raises the preview card, and
+    // the film's does nothing else at all — and a wiring mistake would leave
+    // exactly one of them dead. One was, until the lint caught a stale
+    // dependency that froze the film's half.
+    {
+      const boxes = seamBoxes();
+      const target = boxes[Math.floor(boxes.length / 2)]!;
+      const id = target.getAttribute("data-seam-segment")!;
+      const blockFor = (clip: string) =>
+        document.querySelector<HTMLElement>(`[data-seam-ruler-block="${CSS.escape(clip)}"]`)!;
+      const restingInk = getComputedStyle(blockFor(id)).backgroundColor;
+      const restingFilter = getComputedStyle(target).filter;
+
+      const box = target.getBoundingClientRect();
+      const at = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+
+      for (const surface of [seamSurface(), seamRuler()]) {
+        fireEvent.pointerMove(surface, pointerAt(at.clientX, at.clientY));
+        await waitFor(() => {
+          expect(getComputedStyle(blockFor(id)).backgroundColor).not.toBe(restingInk);
+        });
+        // The FILM lifts too, and by brightness rather than a tint: a box here
+        // is grey some of the time and a photograph the rest, and only
+        // brightness reads on both.
+        expect(getComputedStyle(target).filter).toContain("brightness");
+        fireEvent.pointerOut(surface, { ...pointerAt(at.clientX, at.clientY), relatedTarget: document.body });
+        await waitFor(() => {
+          expect(getComputedStyle(blockFor(id)).backgroundColor).toBe(restingInk);
+        });
+        expect(getComputedStyle(target).filter).toBe(restingFilter);
+      }
+    }
+
+    // ── THE PLAYHEAD IS DRAWN IN THE SCALE, NOT THROUGH THE FILM ─────────
+    //
+    // A red hairline down the middle of the boxes cut across whatever frame it
+    // landed on — the one thing on this bar you are meant to be looking at.
+    // It says WHERE, and where belongs on the row that carries the seconds.
+    // Asserted as a structural fact rather than a position, because a refactor
+    // that moved it back would still put it at the right x.
+    expect(document.querySelector("[data-seam-boxes] [data-seam-playhead]")).toBeNull();
+
+    // AND THE SCALE OFFERS A PRESS. `ew-resize` would promise a drag, which is
+    // the film's gesture; pressing here puts the playhead at the second under
+    // the pointer, and a pointer is what says "this position is choosable".
+    expect(getComputedStyle(document.querySelector<HTMLElement>("[data-seam-ruler]")!).cursor).toBe(
+      "pointer",
+    );
 
     // ── AND THE LABELS SIT IN THE MIDDLE OF IT ───────────────────────────
     //
@@ -2117,6 +2233,39 @@ export const ThePlaybarCanDrawFrames: Story = {
         expect(picture.closest("[data-seam-segment-onscreen]")).not.toBeNull();
       }
     });
+    // AND THE SUBJECT READS FIRST AMONG THEM. The pictures on a grey bar are
+    // already a group set apart from the run; this is the second reading
+    // inside that group — the clip being worked on at full strength, the ones
+    // either side a step back. On the PICTURE, not the box, so all three boxes
+    // keep the same grey as their neighbours.
+    {
+      const framedBoxes = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-seam-segment-onscreen]"),
+      );
+      const opacityOf = (box: HTMLElement) => {
+        const picture = box.querySelector<HTMLElement>(
+          "[data-seam-thumbnail], [data-seam-filmstrip]",
+        );
+        return picture === null ? null : Number(getComputedStyle(picture).opacity);
+      };
+      const active = framedBoxes.filter((box) =>
+        box.hasAttribute("data-seam-segment-live"),
+      );
+      const flanking = framedBoxes.filter(
+        (box) => !box.hasAttribute("data-seam-segment-live"),
+      );
+      expect(active.length).toBe(1);
+      expect(opacityOf(active[0]!)).toBe(1);
+      expect(flanking.length).toBeGreaterThan(0);
+      for (const box of flanking) {
+        expect(opacityOf(box)).toBeCloseTo(0.8, 2);
+      }
+      // The boxes themselves are untouched — one grey across all of them.
+      expect(
+        new Set(framedBoxes.map((box) => getComputedStyle(box).backgroundColor)).size,
+      ).toBe(1);
+    }
+
     // AND THE REST ARE STILL GREY. The claim is about the run, so it is
     // asserted over the run rather than over the total.
     expect(
