@@ -20,7 +20,11 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
-import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
+import {
+  DETAILS_HERO_FILL_CLASS,
+  DETAILS_PANEL_HEIGHT_CLASS,
+  DETAILS_ROW_FLOOR_CLASS,
+} from "./graph-view-config";
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { cloudinaryScrubProxySrc } from "@/lib/cloudinary-scrub-proxy";
 import { useFrameCrossfade } from "@/hooks/use-frame-crossfade";
@@ -1216,6 +1220,9 @@ function DetailsFilmstripModal({
           // which top-aligns the three and lets the strips fall where the
           // picture heights leave them.
           "flex items-end",
+          // The row cannot dip while the two cards swap heights — see
+          // DETAILS_ROW_FLOOR_CLASS.
+          DETAILS_ROW_FLOOR_CLASS,
           // NO TRANSITION WHILE A FINGER IS ON IT. A drag has to track the
           // hand exactly; easing it would put the film a fixed distance
           // behind wherever the pointer actually is, which reads as lag

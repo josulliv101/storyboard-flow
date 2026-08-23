@@ -204,6 +204,27 @@ export const SUBTIMELINE_PANEL_RIGHT_INSET_PX = 13;
 export const DETAILS_PANEL_HEIGHT_CLASS = "h-[68vh] max-h-full";
 
 /**
+ * A FLOOR UNDER THE PANEL ROW, and the reason it has to exist.
+ *
+ * The cards hang from a common bottom, so the row's height is whatever its
+ * tallest card is — the subject. Mid-step there is no subject: the outgoing
+ * card is shrinking and the incoming one is growing, and they cross in the
+ * middle. Measured at 1920, both are 444px at the crossover against a resting
+ * 519, so the row loses 75px of height — and because the scrim centres it
+ * vertically, EVERY card lifts 37px and settles back.
+ *
+ * That bob is not either card's animation. It reads as the vertical part of
+ * the step finishing early and the horizontal part running on afterwards,
+ * which is exactly the wrong description of what the timings actually say.
+ *
+ * So the row keeps the subject's height whether or not a card currently has
+ * it. Matches the panel's own rule — `h-[68vh]` under
+ * `max-h-[calc(100vh-26.625rem)]` — expressed as one `min()` because a floor
+ * cannot be written as a height and a cap.
+ */
+export const DETAILS_ROW_FLOOR_CLASS = "min-h-[min(68vh,calc(100vh-26.625rem))]";
+
+/**
  * How a details hero fills whatever the panel's fixed height leaves it.
  *
  * `min-h-0` is not optional: a flex child's default `min-height: auto` refuses

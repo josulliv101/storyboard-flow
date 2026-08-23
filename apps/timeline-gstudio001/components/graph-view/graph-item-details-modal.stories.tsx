@@ -4174,3 +4174,70 @@ export const TheWidthTravelsWithTheRowAndTheHeightFollows: Story = {
     );
   },
 };
+
+/**
+ * THE ROW DOES NOT BOB WHILE THE TWO CARDS SWAP HEIGHTS.
+ *
+ * The cards hang from a common bottom, so the row's height is whatever its
+ * tallest card is — the subject. MID-STEP THERE IS NO SUBJECT: the outgoing card
+ * is shrinking and the incoming one is growing, and they cross in the middle.
+ * Measured at 1920, both are 444px at the crossover against a resting 519, so
+ * the row lost 75px of height — and because the scrim centres it vertically,
+ * every card lifted 37px and settled back.
+ *
+ * That bob belongs to no card's animation, which is what made it hard to place:
+ * it reads as the vertical part of the step finishing early and the horizontal
+ * part running on afterwards, and the declared timings say the exact opposite —
+ * width and height are derived to land on the same frame.
+ *
+ * SIMULATED RATHER THAN SAMPLED. The crossover is one instant inside a 420ms
+ * transition and neither browser pane will sample a transition at all
+ * (requestAnimationFrame is throttled in both). Setting the two heights to their
+ * midpoint IS the crossover, and it is deterministic.
+ */
+export const TheRowHoldsItsHeightThroughTheCrossover: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const strip = document.querySelector<HTMLElement>("[data-details-strip]")!;
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
+    );
+    const centre = panels.findIndex(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    );
+    expect(centre).toBeGreaterThanOrEqual(0);
+    const incoming = panels[centre + 1] ?? panels[centre - 1]!;
+
+    const rowHeight = () => Math.round(strip.getBoundingClientRect().height);
+    // An UNINVOLVED card — neither of the two swapping — so any movement it
+    // shows is the row moving under it rather than its own animation.
+    const bystander = panels.find(
+      (panel) => panel !== panels[centre] && panel !== incoming,
+    )!;
+    const bystanderTop = () => Math.round(bystander.getBoundingClientRect().top);
+
+    const restHeight = rowHeight();
+    const restTop = bystanderTop();
+
+    // THE CROSSOVER: both cards halfway between the two heights.
+    const subject = panels[centre]!.getBoundingClientRect().height;
+    const neighbour = incoming.getBoundingClientRect().height;
+    const midpoint = `${Math.round((subject + neighbour) / 2)}px`;
+    for (const panel of [panels[centre]!, incoming]) {
+      panel.style.transition = "none";
+      panel.style.height = midpoint;
+    }
+
+    const crossoverHeight = rowHeight();
+    const crossoverTop = bystanderTop();
+
+    for (const panel of [panels[centre]!, incoming]) {
+      panel.style.height = "";
+      panel.style.transition = "";
+    }
+
+    expect(`row height ${crossoverHeight}`).toBe(`row height ${restHeight}`);
+    expect(`bystander top ${crossoverTop}`).toBe(`bystander top ${restTop}`);
+  },
+};
