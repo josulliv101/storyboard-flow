@@ -118,53 +118,23 @@ export function detailsStepTransition(properties: string): string {
     .join(", ");
 }
 
-/**
- * The chrome's own timing — a ring brightening, a shadow lifting.
+/*
+ * THE CHROME AND THE HANDOFF USED TO HAVE CLOCKS OF THEIR OWN, and both are
+ * gone.
  *
- * Deliberately SHORTER and on the same curve. These do not travel, so matching
- * the step's duration would leave a border still resolving long after the thing
- * it borders had arrived. Half the step, so it lands inside it rather than
- * alongside it.
+ * The chrome ran at 210ms on the reasoning that a border and a shadow do not
+ * travel, so matching the step would leave them resolving after the panel had
+ * arrived. The handoff then split that again — 140ms for the card losing the
+ * mark, 140ms of delay for the one taking it — so that no frame had two
+ * subjects.
+ *
+ * Both are defensible in isolation and together they meant a single step ran
+ * on four different clocks: 420ms for the travel and the two axes, 210 for the
+ * chrome at rest, 140 for a card giving the mark up, 140-delayed for a card
+ * taking it. Every one of those boundaries is a moment where something stops
+ * while everything else is still going, and enough of them read as timing that
+ * is simply off.
+ *
+ * One clock for the whole step now. If the crossing needs the two cards told
+ * apart again, it should be done with something other than a second duration.
  */
-export const DETAILS_CHROME_MS = 210;
-
-/**
- * THE CARD CHANGES SHAPE ON ONE CLOCK — the same one the row travels on.
- *
- * Height used to run on its own: a 160ms move delayed by 260, arranged so it
- * LANDED with the width. Landing together is not the same as travelling
- * together, and it was the wrong half of the problem. For the first 260ms the
- * card grew wider without growing taller — measured at 1920, 368px of width
- * with none of its 151px of height — so its proportions distorted throughout,
- * and then the height did its whole move in the last third and caught up.
- *
- * A card getting bigger should get bigger. Same delay, same duration, same
- * curve on both axes: the shape stays a card the whole way across.
- */
-
-/**
- * How long the subject's chrome takes to LEAVE the card losing it, and how
- * long the card gaining it waits before claiming it.
- *
- * A step grows one card and shrinks another at the same time, and for the few
- * frames either side of the crossing they are near enough the same size that
- * neither reads as the subject. Watched back frame by frame, the eye has
- * nothing to follow through the middle of the step.
- *
- * THE FIX IS NOT TO STAGGER THE WIDTHS. Both cards change by exactly the same
- * amount in opposite directions, so animating them together keeps the row's
- * total width invariant; offsetting them makes it dip by that amount — 236px
- * at 1920 — and every card to the right of the pair slides out and back. The
- * geometry has to stay simultaneous.
- *
- * So the HANDOFF is staggered instead, which costs no layout at all. The
- * outgoing card drops its surface and border inside this window; the incoming
- * one waits it out before taking them. The two never wear the mark at once,
- * so there is exactly one subject at every frame of the step even while the
- * sizes are crossing.
- *
- * A third of the step. Long enough to read as a handoff rather than a
- * simultaneous swap, short enough that the arriving card is fully marked well
- * before it stops moving.
- */
-export const DETAILS_HANDOFF_MS = 140;

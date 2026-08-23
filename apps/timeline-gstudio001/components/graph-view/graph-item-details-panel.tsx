@@ -21,8 +21,6 @@ import {
   SURFACE_CARD_FOCUS,
 } from "./graph-details-design";
 import {
-  DETAILS_CHROME_MS,
-  DETAILS_HANDOFF_MS,
   DETAILS_STEP_MS,
   detailsStepTransition,
 } from "./graph-details-motion";
@@ -66,7 +64,6 @@ export function DetailsPanel({
   scrubbing = false,
   swipe,
   width,
-  focusHandoff = null,
   stepping = false,
   spare = false,
   dimmed = false,
@@ -199,14 +196,6 @@ export function DetailsPanel({
    * a collapsed spare would move everything between it and the middle.
    */
   spare?: boolean;
-  /**
-   * This panel's part in a subject handoff, while one is running.
-   *
-   * `"departing"` is losing the mark and drops it immediately;
-   * `"arriving"` is taking it and waits for the other to finish. Null
-   * everywhere else, including on both cards once the step has settled.
-   */
-  focusHandoff?: "arriving" | "departing" | null;
   /** Whether the row is mid-step. Passed down so the filmstrip can hold its
    *  measurement still rather than chase an animating width. */
   stepping?: boolean;
@@ -418,15 +407,9 @@ export function DetailsPanel({
           // wears it in between, so there is one subject at every frame of the
           // step — which is the point, because the SIZES are crossing at that
           // moment and cannot say which card is which.
-          ["--chrome-ms" as string]: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
-          // BOTH AXES ON THE STEP'S OWN CLOCK. Height had its own shorter,
-          // delayed one — arranged to LAND with the width — and that is not the
-          // same as travelling with it: the card spent the first two thirds of
-          // every step getting wider without getting taller.
-          ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_STEP_MS}ms`,
-          ...(focusHandoff === "arriving"
-            ? { ["--focus-delay" as string]: `${DETAILS_HANDOFF_MS}ms` }
-            : {}),
+          // THE STEP'S CLOCK, for everything this element animates. A landing
+          // still cuts rather than travels, which is the one exception.
+          transitionDuration: swapping ? "0ms" : `${DETAILS_STEP_MS}ms`,
           zIndex: magnification > 1 ? 20 : undefined,
         }}
         data-item-details-live={onScreen ? "" : undefined}
@@ -525,8 +508,9 @@ export function DetailsPanel({
           // DETAILS_STEP_EASE in graph-details-motion.ts for why this curve and
           // not the hard ease-out it replaces.
           "ease-[cubic-bezier(0.37,0,0.63,1)]",
-          "[transition-duration:var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--resize-ms)]",
-          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,0ms]",
+          // ONE DURATION, NO DELAYS, EVERY PROPERTY — set in the style below.
+          // The surface, the border, the shadow and the height all move with the
+          // width and with the row.
           "motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //
@@ -637,8 +621,25 @@ export function DetailsPanel({
           // which is what this fixed.
           "max-h-[calc(100vh-26.625rem)]",
           centre
-            ? "@min-[30rem]:h-[68vh] h-auto"
-            : "@min-[30rem]:h-[38.9vh] h-auto",
+            // THE CLAMP IS FOLDED INTO THE HEIGHT, and that is a timing fix
+            // rather than a sizing one.
+            //
+            // These asked for 68vh under a `max-h` of 100vh-26.625rem, and on
+            // anything but a very tall window the cap is the smaller of the two:
+            // at 910px it is 484 against the 619 being asked for. A transition
+            // interpolates the height PROPERTY, but what renders is the property
+            // clamped — so the card reached 484 at 47% of the animation and then
+            // sat there, visibly finished, while the width carried on for the
+            // remaining 53%. Height arriving early and width crawling in after it
+            // is the whole of what looked wrong, and no amount of matching
+            // durations could fix it: the two axes had the same clock and
+            // different distances to travel in it.
+            //
+            // Asking for the clamped value directly makes the interpolation end
+            // where it renders, so both axes finish together because they finish
+            // at all.
+            ? "@min-[30rem]:h-[min(68vh,calc(100vh-26.625rem))] h-auto"
+            : "@min-[30rem]:h-[min(38.9vh,calc(100vh-26.625rem))] h-auto",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >

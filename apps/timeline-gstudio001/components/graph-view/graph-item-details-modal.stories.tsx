@@ -4030,77 +4030,59 @@ export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
 };
 
 /**
- * ONLY ONE CARD WEARS THE MARK AT A TIME, INCLUDING MID-STEP.
+ * A STEP RUNS ON ONE CLOCK, WITH NOTHING WAITING AND NOTHING FINISHING EARLY.
  *
- * A step grows one card and shrinks another simultaneously, and around the
- * crossing they are near enough the same size that neither reads as the
- * subject. On a frame-by-frame playback the eye has nothing to follow through
- * the middle of the step.
+ * This replaces a story about a chrome handoff — the mark used to leave the
+ * outgoing card in 140ms and arrive on the incoming one 140ms later, so that no
+ * frame had two subjects. Defensible alone, but with the chrome also running at
+ * 210ms against the step's 420, a single step was moving on four clocks. Every
+ * boundary between them is a moment where one thing stops while the rest carry
+ * on, and enough of those read as timing that is simply off.
  *
- * THE WIDTHS ARE NOT WHAT GOT STAGGERED, and that is the interesting part.
- * Both cards change by exactly the same amount in opposite directions, so
- * animating them together holds the row's total width constant; offsetting them
- * would make it dip by that amount — 236px, measured at 1920 — and every card
- * to the right of the pair would slide out and back. The geometry has to stay
- * simultaneous.
- *
- * So the CHROME is handed off instead, which costs no layout: the outgoing card
- * drops its surface and border inside the handoff window, and the incoming one
- * waits exactly that long before taking them.
- *
- * Asserted as timings rather than as painted colour, because the thing being
- * claimed is about ORDER, and a colour sampled mid-transition is a race.
+ * THE SUBTLEST ONE WAS NOT A DURATION AT ALL. The subject asked for 68vh under a
+ * max-height of 100vh-26.625rem, and on any normal window the cap is smaller —
+ * 484px against the 619 being asked for. A transition interpolates the height
+ * PROPERTY, but what renders is the property clamped, so the card reached its
+ * full height at 47% of the animation and sat there, finished, while the width
+ * crawled on for the remaining 53%. Matching durations could never have fixed
+ * it: the axes shared a clock and had different distances to cover in it.
  */
-export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
+export const TheStepRunsOnOneClock: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
-    const panels = () =>
-      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
-    // PER PROPERTY, because this element now runs several clocks at once:
-    // the chrome on the handoff, height on the resize phase. A bare
-    // `transitionDelay` is a comma-separated list of five values here, and
-    // reading it whole compares the wrong things.
-    const timing = (panel: HTMLElement, property = "box-shadow") => {
-      const style = getComputedStyle(panel);
-      const at = style.transitionProperty.split(",").map((name) => name.trim()).indexOf(property);
-      const pick = (value: string) =>
-        value.split(",").map((entry) => entry.trim())[at] ?? "";
-      return {
-        duration: pick(style.transitionDuration),
-        delay: pick(style.transitionDelay),
-      };
-    };
+    const panel = document.querySelector<HTMLElement>("[data-item-details-panel]")!;
+    const style = getComputedStyle(panel);
 
-    // Settled: nobody is waiting on anybody.
-    for (const panel of panels()) {
-      expect(timing(panel).delay).toBe("0s");
-    }
-    // The surface is part of the mark, so it has to be part of the transition —
-    // it used to snap while the border eased.
-    expect(getComputedStyle(panels()[0]!).transitionProperty).toContain("background-color");
+    // NOTHING ON THIS ELEMENT WAITS, and everything shares one duration.
+    const durations = new Set(
+      style.transitionDuration.split(",").map((value) => value.trim()),
+    );
+    const delays = new Set(style.transitionDelay.split(",").map((value) => value.trim()));
+    expect(`durations ${[...durations].join("/")}`).toBe("durations 0.42s");
+    expect(`delays ${[...delays].join("/")}`).toBe("delays 0s");
 
-    const before = panels().find(
-      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
-    )!;
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-seam-step="back"]')!);
-
-    // DEPARTING drops it immediately, over the shorter window.
-    const departing = timing(before);
-    expect(`departing delay ${departing.delay}`).toBe("departing delay 0s");
-    expect(`departing duration ${departing.duration}`).toBe("departing duration 0.14s");
-
-    // ARRIVING waits that window out before taking anything.
-    const arriving = panels().find(
-      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
-    )!;
-    expect(arriving).not.toBe(before);
-    expect(`arriving delay ${timing(arriving).delay}`).toBe("arriving delay 0.14s");
-
-    // The one does not begin until the other has finished: no frame of the step
-    // has two marked cards, which is the whole claim.
-    expect(Number.parseFloat(departing.duration)).toBeLessThanOrEqual(
-      Number.parseFloat(timing(arriving).delay) + 0.001,
+    // AND THE HEIGHT IT ASKS FOR IS THE HEIGHT IT RENDERS.
+    //
+    // ASSERTED ON THE RULE, NOT ON THE RENDERED BOX, and that is deliberate.
+    // The explicit height only applies over 30rem of panel, and the runner's
+    // canvas is narrower than that — so a version of this that measured the box
+    // passed happily with the bug put back, because it was looking at a panel
+    // sized by its content. A guard that cannot see its subject is worse than no
+    // guard, so this checks the thing that was actually wrong: that the cap is
+    // folded INTO the height rather than left to clip it part-way through the
+    // animation.
+    const centre = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
+    ).find((p) => p.getAttribute("data-item-details-panel") === "centre")!;
+    // NOT `max-h-[calc(100vh-...)]`, which also contains `h-[` and `vh` and was
+    // being found first — the reason the first version of this reported false
+    // against a correct panel.
+    const heightRule = Array.from(centre.classList).find(
+      (name) => name.includes("h-[") && name.includes("vh") && !name.includes("max-h-"),
+    );
+    expect(`height rule folds the cap in: ${heightRule?.includes("min(") ?? false}`).toBe(
+      "height rule folds the cap in: true",
     );
   },
 };
@@ -4138,7 +4120,13 @@ export const TheCardChangesShapeOnOneClock: Story = {
         .split(",")
         .map((name) => name.trim())
         .indexOf(property);
-      const pick = (value: string) => value.split(",").map((v) => v.trim())[at] ?? "";
+      // CYCLIC. A computed transition list may be shorter than the property
+      // list and CSS repeats it — with one duration for every property it is a
+      // single entry, and indexing past it returns nothing.
+      const pick = (value: string) => {
+        const parts = value.split(",").map((v) => v.trim());
+        return parts[at % parts.length] ?? "";
+      };
       return `${pick(style.transitionDuration)} after ${pick(style.transitionDelay)}`;
     };
 
