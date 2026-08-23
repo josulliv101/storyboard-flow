@@ -13,6 +13,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
+import { DETAILS_CHROME_MS, detailsStepTransition } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { formatSeconds } from "@/lib/format-duration";
 import { useInlineRename } from "./graph-inline-rename";
@@ -345,11 +346,18 @@ export function DetailsPanel({
           // change back into motion, and would leave its edges drifting for
           // 300ms after a gesture whose whole claim is that it arrives
           // instantly.
-          swapping
-            ? "transition-none"
-            : "transition-[width] duration-300 ease-out motion-reduce:transition-none",
+          swapping ? "transition-none" : "motion-reduce:transition-none",
         ].join(" ")}
-        style={{ width, ...(spare ? { visibility: "hidden" as const } : {}) }}
+        style={{
+          width,
+          // THE STEP'S OWN TIMING, shared with the row and the film strip
+          // above — see `graph-details-motion`. Written as a style rather than
+          // a `duration-*`/`ease-*` pair so the curve is the one value all
+          // three read, instead of a cubic-bezier copied into three class
+          // strings and drifting from two of them.
+          ...(swapping ? {} : { transition: detailsStepTransition("width") }),
+          ...(spare ? { visibility: "hidden" as const } : {}),
+        }}
       >
       <div
         // FOCUS WIRING ON THE CENTRE ONLY. Every panel is fully live — the
@@ -377,6 +385,8 @@ export function DetailsPanel({
           // bigger and leaves the geometry alone — the row still knows exactly
           // where everything is.
           transform: magnification > 1 ? `scale(${magnification})` : undefined,
+          // See the class above: the curve is a utility, the clock is here.
+          transitionDuration: `${DETAILS_CHROME_MS}ms`,
           zIndex: magnification > 1 ? 20 : undefined,
         }}
         data-item-details-live={onScreen ? "" : undefined}
@@ -434,7 +444,13 @@ export function DetailsPanel({
           // large monitor have more room each than three on an iPad, and a
           // rule counting panels gets that backwards.
           "relative flex w-full flex-col gap-2 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
-          "transition-[box-shadow,border-color,transform] duration-200 ease-out motion-reduce:transition-none",
+          // THE CHROME, on the step's curve but half its clock. A ring and a
+          // shadow do not travel, so matching the step's duration would leave
+          // a border still resolving after the panel it borders had arrived —
+          // it lands INSIDE the motion rather than alongside it. The duration
+          // is set in the style below, because Tailwind's default is 150ms and
+          // a bare `ease-*` would silently take it.
+          "transition-[box-shadow,border-color,transform] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //
           // It carried a heavier white one for a while, on the reasoning that

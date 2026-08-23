@@ -28,6 +28,7 @@ import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 export function SeamMinimap({
   clips,
   colourOf,
+  centreClipId,
   totalSeconds,
   windowFromSeconds,
   windowToSeconds,
@@ -37,6 +38,17 @@ export function SeamMinimap({
 }: Readonly<{
   clips: readonly SeamBarClip[];
   colourOf: ReadonlyMap<string, string>;
+  /**
+   * The clip the middle panel is on — marked here as well as on the bar.
+   *
+   * The two strips answer different questions and the subject is the one fact
+   * they share: the bar says which shot you are on, and this says WHERE in the
+   * project that shot is. Marked on only one of them, the second question went
+   * unanswered — the map showed the window's position, which at most zooms is
+   * a stretch of a dozen clips, and left you to work out which of them was
+   * yours.
+   */
+  centreClipId: string;
   totalSeconds: number;
   /** The span the bar above is showing, in absolute seconds. */
   windowFromSeconds: number;
@@ -119,18 +131,46 @@ export function SeamMinimap({
       <div className="absolute inset-x-0 top-1 flex h-1.5 gap-px">
         {clips.map((clip, index) => {
           if (clip.showingSeconds <= 0) return null;
+          const isCentre = clip.id === centreClipId;
           return (
             <span
               key={clip.id}
               data-seam-mini-segment={clip.id}
+              data-seam-mini-segment-live={isCentre ? "" : undefined}
               style={{
                 flexGrow: clip.showingSeconds,
-                backgroundColor: colourOf.get(clip.id) ?? BAR_NEUTRAL_COLOUR,
+                // THE SUBJECT IS WHITE, and that is the whole mark.
+                //
+                // COLOUR RATHER THAN AN EDGE, because a segment here can be a
+                // single pixel wide: a border eats into a width that means
+                // duration, and an outline around a one-pixel clip is a ring
+                // standing in for the thing rather than marking it. Changing
+                // what the pixel IS works at every width.
+                //
+                // White because that is what the bar above marks its active
+                // clip with — the triangle and its rule. The same claim in the
+                // same ink, said twice at two scales, rather than a second
+                // colour to learn.
+                backgroundColor: isCentre
+                  ? "rgb(250, 250, 250)"
+                  : (colourOf.get(clip.id) ?? BAR_NEUTRAL_COLOUR),
                 // A real gap where the collection changes, so the runs read
                 // as runs at a scale far too small for a label.
                 marginLeft: index > 0 && seams.has(index) ? 3 : undefined,
               }}
-              className="min-w-px flex-shrink rounded-[1px] opacity-70"
+              className={[
+                "min-w-px flex-shrink rounded-[1px]",
+                // Full strength as well, so the white is white rather than a
+                // 70% wash of it against the dimmed run either side.
+                //
+                // AND SLIGHTLY TALLER. `-my-px` rather than a height, so it
+                // grows a pixel BOTH WAYS and stays on the same centre line as
+                // the run it sits in — a segment that only grew downward would
+                // read as hanging off the strip rather than as the one raised
+                // out of it. 6px to 8px inside a 14px rail, so it has the room
+                // and nothing clips.
+                isCentre ? "-my-px opacity-100" : "opacity-70",
+              ].join(" ")}
             />
           );
         })}

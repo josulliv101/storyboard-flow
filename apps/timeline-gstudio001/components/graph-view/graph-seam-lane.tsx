@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
+import { DETAILS_STEP_MS, detailsStepTransition } from "./graph-details-motion";
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 import {
   usePlaybarThumbnails,
@@ -20,7 +21,18 @@ import type { PreviewAnchor } from "./graph-seam-preview-anchor";
  * pictures — the whole reason to animate this is that the bar re-centres on
  * somewhere else and a jump cannot be told apart from a redraw.
  */
-const SEAM_SLIDE_MS = 520;
+const SEAM_SLIDE_MS = DETAILS_STEP_MS;
+
+/**
+ * How long a change of subject stays claimable by the travel that follows it.
+ *
+ * The step and the nudge it causes are separate commits, so the slide has to
+ * survive the gap between them — see the effect below. Bounded so an unspent
+ * intent cannot be picked up by a later gesture: a wheel pan or a drag must
+ * track the hand exactly, and easing one because a step happened a few seconds
+ * ago is the lag every other path here is careful to avoid.
+ */
+const SEAM_MOVE_CLAIM_MS = 120;
 
 /** How wide the end-of-project stop is. Wider than the hairline between two
  *  boxes, so it is read as an edge rather than as another gap. */
@@ -71,8 +83,34 @@ function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: numb
 }
 
 
-/** Roughly the bar's own height (`h-9`), so a cell reads as a square. */
-const FILMSTRIP_CELL_PX = 36;
+/**
+ * HOW TALL THE FILM IS.
+ *
+ * 36px for a long time, which made the frames inside it 30 — small enough
+ * that a thumbnail told you a shot was dark or bright and very little else,
+ * and the strip is the one place you are meant to recognise a shot by looking
+ * at it. 48 puts the pictures at 42, which is where a face in a medium shot
+ * stops being a smudge.
+ *
+ * ONE NUMBER, because four things are measured from it: the lane itself, the
+ * fades over its ends, the filmstrip cell size that keeps a cell square, and
+ * the hover card's offset below it. They were four literals, and a bar that
+ * grew while its fades did not is a gradient floating in the middle of the
+ * film.
+ */
+export const SEAM_LANE_HEIGHT_PX = 48;
+
+/**
+ * How far below the film the hover card hangs.
+ *
+ * Measured from the lane's BOTTOM rather than written as one offset from its
+ * top, so the card keeps its distance when the film changes height instead of
+ * climbing into it.
+ */
+export const SEAM_PREVIEW_GAP_PX = 20;
+
+/** One cell per bar-height, so a filmstrip cell reads as a square. */
+const FILMSTRIP_CELL_PX = SEAM_LANE_HEIGHT_PX;
 /** Past this the cells stretch rather than multiply — see `SegmentFrames`. */
 const MAX_FILMSTRIP_CELLS = 12;
 
@@ -397,13 +435,39 @@ export function SeamLane({
   const stripRef = useRef<HTMLDivElement | null>(null);
   const centreWasRef = useRef(centreClipId);
   const offsetWasRef = useRef(offset);
+  /** When the subject last changed, so the nudge that follows can claim it. */
+  const movedAtRef = useRef(0);
   useLayoutEffect(() => {
     const node = stripRef.current;
-    const moved = centreWasRef.current !== centreClipId;
+    // THE MOVE AND THE TRAVEL ARRIVE IN DIFFERENT RENDERS, which is why this
+    // used to animate nothing.
+    //
+    // A step changes the subject; the bar then decides whether that subject is
+    // off the side and, if it is, nudges the strip to bring it in. Those are
+    // two state changes and React commits them separately, so this effect ran
+    // twice: once with the new `centreClipId` and the OLD offset — nothing to
+    // interpolate, so it returned, having already recorded the new centre —
+    // and again with the new offset and `moved` now false. Both runs bailed
+    // and the strip cut.
+    //
+    // Measured on a 21-clip scene: a step moved the strip 986px with no
+    // transition property set at all.
+    //
+    // So the move is REMEMBERED rather than consumed, and spent on whichever
+    // render actually brings the travel with it. Time-bounded, because a step
+    // that needs no nudge leaves the intent unspent — and without a bound the
+    // next wheel pan, seconds later, would inherit it and ease when it must
+    // track the hand exactly. A nudge follows its step within a render or two;
+    // 120ms is generous for that and far short of a separate gesture.
+    if (centreWasRef.current !== centreClipId) {
+      centreWasRef.current = centreClipId;
+      movedAtRef.current = performance.now();
+    }
     const previous = offsetWasRef.current;
-    centreWasRef.current = centreClipId;
     offsetWasRef.current = offset;
-    if (!moved || node === null || previous === offset) return;
+    if (node === null || previous === offset) return;
+    if (performance.now() - movedAtRef.current > SEAM_MOVE_CLAIM_MS) return;
+    movedAtRef.current = 0;
 
     // PUT IT BACK, THEN LET IT GO. A transition cannot be added to a value
     // that has ALREADY changed: by the time a layout effect runs, React has
@@ -415,7 +479,7 @@ export function SeamLane({
     node.style.transition = "none";
     node.style.transform = `translateX(${previous}px)`;
     void node.offsetWidth;
-    node.style.transition = `transform ${SEAM_SLIDE_MS}ms ease-out`;
+    node.style.transition = detailsStepTransition("transform");
     node.style.transform = `translateX(${offset}px)`;
 
     // Only the easing is cleared at the end. The transform is left exactly
@@ -452,7 +516,8 @@ export function SeamLane({
       // have to escape it: a time chip drawn INSIDE the boxes covers the frames
       // it is reporting on, which is the one thing you are looking at while you
       // drag.
-      className="relative h-9 cursor-ew-resize touch-none select-none"
+      style={{ height: SEAM_LANE_HEIGHT_PX }}
+      className="relative cursor-ew-resize touch-none select-none"
     >
       <div className="absolute inset-0 overflow-hidden">
         <div
@@ -823,6 +888,7 @@ function SeamPreviewCard({
       // block, which IS the track, so the bound follows a resize with no
       // observer and no re-render. 9rem is half the card.
       style={{
+        top: SEAM_LANE_HEIGHT_PX + SEAM_PREVIEW_GAP_PX,
         left:
           previewAnchor === "pinned"
             ? "50%"
@@ -872,7 +938,7 @@ function SeamPreviewCard({
       // The entrance animation is withheld with it. Left running it would
       // play out against a card nobody can see and arrive already over.
       className={[
-        "pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50",
+        "pointer-events-none absolute z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50",
         hover.posterSrc === undefined || posterReady
           ? "animate-seam-preview-in visible"
           : "invisible",

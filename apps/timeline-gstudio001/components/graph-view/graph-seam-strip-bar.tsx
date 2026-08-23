@@ -15,7 +15,7 @@ import {
   zoomByWheel,
   type SeamBarClip,
 } from "./graph-seam-bar-layout";
-import { SeamLane, type SeamHover } from "./graph-seam-lane";
+import { SEAM_LANE_HEIGHT_PX, SeamLane, type SeamHover } from "./graph-seam-lane";
 import { SeamMinimap } from "./graph-seam-minimap";
 import { SEAM_RULER_HEIGHT_PX, SeamRuler } from "./graph-seam-ruler";
 import {
@@ -950,15 +950,15 @@ export function SeamStripBar({
           aria-hidden="true"
           data-seam-fade="left"
           hidden={offset >= -0.5}
-          style={{ top: SEAM_RULER_HEIGHT_PX }}
-          className="pointer-events-none absolute left-0 h-9 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
+          style={{ top: SEAM_RULER_HEIGHT_PX, height: SEAM_LANE_HEIGHT_PX }}
+          className="pointer-events-none absolute left-0 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
         />
         <span
           aria-hidden="true"
           data-seam-fade="right"
           hidden={strip.totalPx + offset <= trackWidth + 0.5}
-          style={{ top: SEAM_RULER_HEIGHT_PX }}
-          className="pointer-events-none absolute right-0 h-9 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
+          style={{ top: SEAM_RULER_HEIGHT_PX, height: SEAM_LANE_HEIGHT_PX }}
+          className="pointer-events-none absolute right-0 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
         />
       </div>
 
@@ -974,6 +974,7 @@ export function SeamStripBar({
       <SeamMinimap
         clips={clips}
         colourOf={boxColourOf}
+        centreClipId={centreClipId}
         totalSeconds={totalSeconds}
         windowFromSeconds={windowFromSeconds}
         windowToSeconds={windowToSeconds}
