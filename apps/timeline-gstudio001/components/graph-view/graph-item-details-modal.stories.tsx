@@ -1854,6 +1854,22 @@ export const TheRulerNamesTheCollections: Story = {
     expect(triangle.bottom).toBeLessThanOrEqual(band.top + 0.5);
     expect(rule.top).toBeGreaterThan(band.top);
 
+    // ── THE PLAYHEAD IS DRAWN IN THE SCALE, NOT THROUGH THE FILM ─────────
+    //
+    // A red hairline down the middle of the boxes cut across whatever frame it
+    // landed on — the one thing on this bar you are meant to be looking at.
+    // It says WHERE, and where belongs on the row that carries the seconds.
+    // Asserted as a structural fact rather than a position, because a refactor
+    // that moved it back would still put it at the right x.
+    expect(document.querySelector("[data-seam-boxes] [data-seam-playhead]")).toBeNull();
+
+    // AND THE SCALE OFFERS A PRESS. `ew-resize` would promise a drag, which is
+    // the film's gesture; pressing here puts the playhead at the second under
+    // the pointer, and a pointer is what says "this position is choosable".
+    expect(getComputedStyle(document.querySelector<HTMLElement>("[data-seam-ruler]")!).cursor).toBe(
+      "pointer",
+    );
+
     // ── AND THE LABELS SIT IN THE MIDDLE OF IT ───────────────────────────
     //
     // Hung from the top they read as text with a margin under it rather than
@@ -2117,6 +2133,39 @@ export const ThePlaybarCanDrawFrames: Story = {
         expect(picture.closest("[data-seam-segment-onscreen]")).not.toBeNull();
       }
     });
+    // AND THE SUBJECT READS FIRST AMONG THEM. The pictures on a grey bar are
+    // already a group set apart from the run; this is the second reading
+    // inside that group — the clip being worked on at full strength, the ones
+    // either side a step back. On the PICTURE, not the box, so all three boxes
+    // keep the same grey as their neighbours.
+    {
+      const framedBoxes = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-seam-segment-onscreen]"),
+      );
+      const opacityOf = (box: HTMLElement) => {
+        const picture = box.querySelector<HTMLElement>(
+          "[data-seam-thumbnail], [data-seam-filmstrip]",
+        );
+        return picture === null ? null : Number(getComputedStyle(picture).opacity);
+      };
+      const active = framedBoxes.filter((box) =>
+        box.hasAttribute("data-seam-segment-live"),
+      );
+      const flanking = framedBoxes.filter(
+        (box) => !box.hasAttribute("data-seam-segment-live"),
+      );
+      expect(active.length).toBe(1);
+      expect(opacityOf(active[0]!)).toBe(1);
+      expect(flanking.length).toBeGreaterThan(0);
+      for (const box of flanking) {
+        expect(opacityOf(box)).toBeCloseTo(0.8, 2);
+      }
+      // The boxes themselves are untouched — one grey across all of them.
+      expect(
+        new Set(framedBoxes.map((box) => getComputedStyle(box).backgroundColor)).size,
+      ).toBe(1);
+    }
+
     // AND THE REST ARE STILL GREY. The claim is about the run, so it is
     // asserted over the run rather than over the total.
     expect(

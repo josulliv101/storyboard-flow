@@ -99,6 +99,7 @@ export function SeamRuler({
   segments = [],
   centreClipId = null,
   ghostX = null,
+  playheadPx = null,
   handlers,
 }: Readonly<{
   ticks: readonly SeamTick[];
@@ -131,6 +132,17 @@ export function SeamRuler({
    */
   ghostX?: number | null;
   /**
+   * Where playback is, in STRIP space, or null when the clock is untouched.
+   *
+   * DRAWN HERE RATHER THAN ON THE FILM. A red hairline down the middle of the
+   * boxes cut across whatever frame it landed on — the one thing on this bar
+   * you are actually meant to be looking at — and at a wide reach it fell
+   * inside a thumbnail rather than beside one. The playhead says WHERE, and
+   * where belongs on the scale: the same row that carries the seconds it is
+   * pointing at.
+   */
+  playheadPx?: number | null;
+  /**
    * The hover handlers, which live here now rather than on the lane.
    *
    * Optional so the ruler can still be rendered as a plain scale — a story or
@@ -140,6 +152,8 @@ export function SeamRuler({
   handlers?: Readonly<{
     onPointerMove?: (event: React.PointerEvent<HTMLDivElement>) => void;
     onPointerLeave?: (event: React.PointerEvent<HTMLDivElement>) => void;
+    /** Press to put the playhead here and open the clip it lands in. */
+    onPointerDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
   }>;
 }>) {
   if (ticks.length === 0) return null;
@@ -163,7 +177,13 @@ export function SeamRuler({
         // target it has to receive the pointer — and `touch-none`, because the
         // strip below claims every gesture and a ruler that scrolled the
         // dialog on a touch drag would be the one part of the bar that did.
-        interactive ? "touch-none" : "pointer-events-none",
+        //
+        // `cursor-pointer`, NOT the film's `ew-resize`. That cursor promises a
+        // drag, and the two rows offer different gestures: the film is grabbed
+        // and pulled, while pressing the scale puts the playhead at the second
+        // under the pointer. A pointer says "this position is a thing you can
+        // choose", which is exactly what a press here does.
+        interactive ? "cursor-pointer touch-none" : "pointer-events-none",
       ].join(" ")}
       {...(handlers ?? {})}
     >
@@ -262,6 +282,33 @@ export function SeamRuler({
             style={{ transform: `translateX(${ghostX}px)` }}
             className="absolute inset-y-0 left-0 w-px bg-white/35"
           />
+        )}
+
+        {/* WHERE PLAYBACK IS. Last in the band so it paints over the blocks,
+            the ticks and the ghost: everything else here describes the film,
+            and this is the one mark that describes the CLOCK. */}
+        {playheadPx !== null && (
+          <span
+            data-seam-playhead
+            aria-hidden="true"
+            style={{ transform: `translateX(${playheadPx}px)` }}
+            // A HAIRLINE. One physical pixel wherever the display allows it:
+            // the playhead's job is to name an instant, and a 2px line spans
+            // two of them at this scale.
+            className="absolute inset-y-0 left-0 z-10 w-px -translate-x-1/2 bg-red-500"
+          >
+            {/* The head of the line, so the playhead reads as a position that
+                was put there rather than a border between two boxes. It used
+                to pulse when a drag snapped to a cut; there is no drag on the
+                playhead any more, so there is no snap to acknowledge.
+                AT THE TOP OF THE BAND rather than above it: the line no longer
+                runs through the film, so its head has the scale's own top edge
+                to sit on and nothing to hang over. */}
+            <span
+              data-seam-playhead-head
+              className="absolute top-0 left-1/2 block h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500"
+            />
+          </span>
         )}
         {ticks.map((tick) => (
           <span

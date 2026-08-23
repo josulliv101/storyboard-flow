@@ -99,6 +99,17 @@ function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: numb
 // move.
 export { BOX_INSET_PX, SEAM_LANE_HEIGHT_PX, SEAM_PREVIEW_GAP_PX };
 
+/**
+ * How strongly a NON-ACTIVE on-screen clip draws its picture in grey-box mode.
+ *
+ * The three or five clips on screen are the only ones with pictures there, so
+ * they already read as a group against the grey run. This is the second
+ * reading inside that group: the subject at full strength, the ones either
+ * side of it a step back. Enough to rank them, not enough to make a neighbour
+ * look switched off.
+ */
+const SOFTENED_PANEL_FRAME_OPACITY = 0.8;
+
 /** One cell per bar-height, so a filmstrip cell reads as a square. */
 const FILMSTRIP_CELL_PX = SEAM_LANE_HEIGHT_PX;
 /** Past this the cells stretch rather than multiply — see `SegmentFrames`. */
@@ -119,12 +130,22 @@ function SegmentFrames({
   posterSrc,
   widthPx,
   style,
+  opacity,
 }: Readonly<{
   clipId: string;
   clip: SeamBarClip | undefined;
   posterSrc: string | undefined;
   widthPx: number;
   style: PlaybarThumbnailStyle;
+  /**
+   * How strongly this clip's picture is drawn, or undefined for full.
+   *
+   * Set only in grey-box mode, where the handful of pictures on the bar are
+   * the clips on screen below — see where it is passed. Applied to the frames
+   * rather than to the box, so what softens is the picture and the box's own
+   * colour stays exactly the tone the rest of the run is.
+   */
+  opacity?: number;
 }>) {
   // HOW MANY CELLS FIT, at roughly one per bar-height so each reads as a
   // square. Capped, because a long clip at a high zoom is a box thousands of
@@ -165,7 +186,7 @@ function SegmentFrames({
         // between two clips already uses — one pixel here against five there,
         // so a frame edge never reads as a cut.
         className="absolute inset-0 flex gap-px"
-        style={{ backgroundColor: FRAMED_CELL_EDGE }}
+        style={{ backgroundColor: FRAMED_CELL_EDGE, opacity }}
         aria-hidden="true"
       >
         {cells.map((url, index) => (
@@ -206,6 +227,7 @@ function SegmentFrames({
       // letterbox each clip differently and turn the bar into a row of
       // unrelated shapes.
       className="absolute inset-0 h-full w-full object-cover"
+      style={{ opacity }}
       // The bar can hold a hundred of these and none of them is the thing
       // being read on arrival.
       loading="lazy"
@@ -369,7 +391,6 @@ export function SeamLane({
   colourOf,
   centreClipId,
   offset,
-  playheadPx,
   ghostX,
   hover,
   previewAnchor = "follow",
@@ -399,7 +420,6 @@ export function SeamLane({
   colourOf: ReadonlyMap<string, string>;
   centreClipId: string;
   offset: number;
-  playheadPx: number | null;
   /** Bumped on every snap, so the playhead can acknowledge one. */
   /** Where an un-pressed pointer is hovering, in strip pixels. */
   ghostX: number | null;
@@ -556,6 +576,24 @@ export function SeamLane({
             const frameStyle: PlaybarThumbnailStyle = thumbnails.shown
               ? thumbnails.style
               : "cover";
+            // THE SUBJECT AT FULL STRENGTH, ITS NEIGHBOURS BEHIND IT.
+            //
+            // In grey-box mode the only pictures on the bar are the clips on
+            // screen below, so they are already a group set apart from the
+            // run — and within that group the one being worked on should read
+            // first. Softening the other two says "these are also up" without
+            // making them compete with it.
+            //
+            // ONLY IN GREY MODE. With frames on, every box has a picture and
+            // dimming all but one would take the bar from a strip of film to a
+            // spotlight, which is a different thing from the setting anyone
+            // asked for.
+            //
+            // AND ON THE PICTURE, NOT THE BOX: the box's colour is the tone the
+            // whole run shares, and fading that would put these three boxes on
+            // a different grey from their neighbours.
+            const frameOpacity =
+              thumbnails.shown || isCentre ? undefined : SOFTENED_PANEL_FRAME_OPACITY;
             return (
               <span
                 key={segment.clipId}
@@ -592,6 +630,7 @@ export function SeamLane({
                     posterSrc={segment.posterSrc}
                     widthPx={Math.max(2, segment.widthPx - BOX_INSET_PX * 2)}
                     style={frameStyle}
+                    opacity={frameOpacity}
                   />
                 ) : null}
                 {/* SKIPPED AT PLAY TIME: struck through with hatching.
@@ -688,32 +727,11 @@ export function SeamLane({
             />
           )}
 
-          {playheadPx !== null && (
-            <span
-              data-seam-playhead
-              aria-hidden="true"
-              style={{ transform: `translateX(${playheadPx}px)` }}
-              // A HAIRLINE. One physical pixel wherever the display allows it:
-              // the playhead's job is to name an instant, and a 2px line spans
-              // two of them at this scale.
-              className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-red-500"
-            >
-              {/* The head of the line, so the playhead reads as a position that
-                was put there rather than a border between two boxes — and
-                what ACKNOWLEDGES A SNAP. A snap moves the playhead by a few
-                pixels at most and is otherwise invisible, so without this you
-                cannot tell the bar helped from your hand being accurate. */}
-              {/* The head of the line, so the playhead reads as a position
-                  that was put there rather than a border between two boxes.
-                  It used to pulse when a drag snapped to a cut; there is no
-                  drag on the playhead any more, so there is no snap to
-                  acknowledge. */}
-              <span
-                data-seam-playhead-head
-                className="absolute -top-1 left-1/2 block h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500"
-              />
-            </span>
-          )}
+          {/* THE PLAYHEAD IS DRAWN IN THE RULER, not here — see `SeamRuler`.
+              A red hairline down the middle of the film cut across whatever
+              frame it landed on, which is the one thing on this bar you are
+              meant to be looking at. It says WHERE, and where belongs on the
+              scale. */}
         </div>
       </div>
 

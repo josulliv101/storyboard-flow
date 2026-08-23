@@ -633,6 +633,36 @@ export function SeamStripBar({
     [showHover],
   );
 
+  /**
+   * A CLICK ON THE SCALE PUTS THE PLAYHEAD THERE, and takes the clip with it.
+   *
+   * The film's own click only ever CHOSE a clip — pressing a box makes it the
+   * subject and deliberately leaves the clock alone, because a drag on the
+   * boxes is a pan and letting go must not move you. The scale has no such
+   * gesture on it: pointing at a second and pressing can only mean "go there",
+   * so it does both — seek to the instant, and open the clip that instant is
+   * inside.
+   *
+   * SECONDS FROM PIXELS DIRECTLY, which is only sound because the strip lays
+   * clips end to end with no gap — the 5px between boxes is carved out of each
+   * clip's own span by the inset and consumes no timeline. Verified against
+   * the running bar: a tick's position equals its seconds times the scale, to
+   * a tenth of a pixel.
+   */
+  const onRulerClick = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const scale = scaleRef.current;
+      if (scale <= 0) return;
+      const stripX = localX(event.clientX) - offsetRef.current;
+      onScrubSecondsRef.current(
+        Math.min(Math.max(stripX / scale, 0), totalSeconds),
+      );
+      const at = stripPositionAt(strip, stripX);
+      if (at !== null && at.clipId !== centreClipId) onCommitClip(at.clipId);
+    },
+    [centreClipId, localX, onCommitClip, strip, totalSeconds],
+  );
+
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const press = pressRef.current;
@@ -1002,7 +1032,12 @@ export function SeamStripBar({
           // is moving under the pointer, and a mark claiming to be "here" is
           // the one thing that is not true mid-drag.
           ghostX={hover === null || panning ? null : hover.x}
-          handlers={{ onPointerMove: onRulerMove, onPointerLeave: cancelHover }}
+          playheadPx={playheadPx}
+          handlers={{
+            onPointerMove: onRulerMove,
+            onPointerLeave: cancelHover,
+            onPointerDown: onRulerClick,
+          }}
         />
 
         <SeamLane
@@ -1015,7 +1050,6 @@ export function SeamStripBar({
           atStart={atStart}
           atEnd={atEnd}
           offset={offset}
-          playheadPx={playheadPx}
           ghostX={hover === null ? null : hover.x}
           hover={panning ? null : hover}
           previewAnchor={previewAnchor}
