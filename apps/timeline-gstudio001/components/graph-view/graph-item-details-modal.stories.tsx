@@ -3976,3 +3976,55 @@ export const TheTransportSitsOnTheControlRow: Story = {
     expect(rowHeight).toBeGreaterThanOrEqual(pill);
   },
 };
+
+/**
+ * THE CARD THAT IS LEAVING KEEPS ITS PICTURE UNTIL IT HAS GONE.
+ *
+ * Whether a panel draws its contents or renders as an empty box of the right
+ * width was read straight off the current centre, so a step blanked the far
+ * card instantly — while it was still on screen, in full view, sliding out as
+ * an empty rectangle. A black hole opened on one side of the row for the whole
+ * 420ms and read as a rendering fault rather than as motion.
+ *
+ * Caught on a screen recording rather than by a test, which is the reason this
+ * one exists: nothing about it is visible in a settled frame, and both ends of
+ * the step are correct.
+ *
+ * Asserted DURING the slide, so the assertion has to happen before the timer
+ * that releases the union expires — hence no `waitFor` around it. What it
+ * checks is the panel's contents, not its box: a spare still occupies its
+ * width, so geometry alone cannot tell the two apart.
+ */
+export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panelFor = (name: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]")).find(
+        (panel) => panel.textContent?.includes(name),
+      ) ?? null;
+
+    // Settled on the middle clip: the clip to its right is a real panel.
+    await waitFor(() => expect(panelFor("Subject")).not.toBeNull());
+    expect(panelFor("After")).not.toBeNull();
+
+    // Step BACK, which sends "After" out of the window on the right.
+    const back = document.querySelector<HTMLButtonElement>('[data-seam-step="back"]')!;
+    fireEvent.click(back);
+
+    // IMMEDIATELY — this is the frame the bug lived in. The card has left the
+    // window around the new centre and must still be drawing itself.
+    const leaving = panelFor("After");
+    expect(leaving).not.toBeNull();
+
+    // ASKED OF VISIBILITY, not of the children. A spare keeps its whole
+    // subtree and its box — the row's centring is arithmetic over uniform
+    // neighbour widths, so collapsing one would shift every panel between it
+    // and the middle — and hides it with `visibility: hidden`. So the picture
+    // and the readout are still in the DOM either way, and a test that looked
+    // for them passed against the bug it was written for.
+    const box = leaving!.closest("[data-item-details-spare]");
+    expect(`spare while leaving: ${box !== null}`).toBe("spare while leaving: false");
+    expect(getComputedStyle(leaving!).visibility).toBe("visible");
+  },
+};
