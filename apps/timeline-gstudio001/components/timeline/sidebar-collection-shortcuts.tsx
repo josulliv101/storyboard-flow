@@ -249,7 +249,7 @@ export function CollectionShortcutsGroup({
         className="flex w-full flex-col items-stretch gap-0"
       >
         {projectId === undefined ? null : <ProjectHomeShortcut projectId={projectId} />}
-        {shortcuts.map((shortcut) => {
+        {shortcuts.map((shortcut, index) => {
           const tooltipId = `sidebar-tooltip-collection-${shortcut.nodeId}`;
           return (
             <button
@@ -290,7 +290,28 @@ export function CollectionShortcutsGroup({
                       // Decorative: the button already says "Open <title>", and
                       // a second reading of the same collection would be noise.
                       alt=""
-                      loading="lazy"
+                      // THE ONES ALREADY ON SCREEN ARE NOT DEFERRED.
+                      //
+                      // The rail is `h-screen` and these sit near its top, so
+                      // the leading few are inside the first viewport on every
+                      // load — and `loading=lazy` on an image the browser can
+                      // already see delays a request it could have started
+                      // immediately, waiting for layout to decide something
+                      // that is not in question (#470).
+                      //
+                      // COUNTED, not blanket. The list is every TOP-LEVEL
+                      // collection with no cap, so a large project could put
+                      // dozens here and eager-loading all of them would trade
+                      // one deferred request for dozens of competing ones.
+                      // Four is what clears the fold at the rail's spacing;
+                      // past that they are genuinely below it and lazy is
+                      // right.
+                      //
+                      // No `fetchpriority`: these are 32px and will never be
+                      // the LCP element — the board's card artwork is, and it
+                      // carries the hint. Marking these high would only take
+                      // bandwidth from it.
+                      loading={index < 4 ? "eager" : "lazy"}
                       decoding="async"
                       className={THUMBNAIL_IMAGE_CLASS}
                     />

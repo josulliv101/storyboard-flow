@@ -200,6 +200,16 @@ function SegmentFrames({
 const BOX_INSET_PX = 2.5;
 
 /**
+ * Half the active-clip triangle's width.
+ *
+ * It is drawn as two transparent side borders under a solid top one, so the
+ * glyph's width is twice this and its tip sits at its centre. Named because
+ * three places have to agree on it — both borders and the clamp that keeps the
+ * mark inside the bar — and they were three separate `5`s.
+ */
+const MARK_HALF_PX = 5;
+
+/**
  * WHAT SEPARATES TWO BOXES ONCE THEY HOLD PICTURES.
  *
  * The gap between boxes is `BOX_INSET_PX` either side — five pixels of the
@@ -692,9 +702,27 @@ export function SeamLane({
               data-seam-active-mark={centreClipId}
               aria-hidden="true"
               style={{
-                left: viewportX(segment.leftPx + segment.widthPx / 2),
-                borderLeft: "5px solid transparent",
-                borderRight: "5px solid transparent",
+                // HELD INSIDE THE BAR, like the rule under it.
+                //
+                // The rule was clamped first and the triangle deliberately was
+                // not: it points at a PLACE, and an off-screen place seemed a
+                // different question from an over-long measurement. It is not.
+                // A mark drawn past the end of the bar is not reporting a
+                // position at all — there is no track under it to be a position
+                // ON, so it reads as a stray glyph sitting on the panel beside
+                // the bar.
+                //
+                // CENTRED ON `left` because of the `-translate-x-1/2` below, so
+                // the inset is the triangle's HALF-width: 5px either side of
+                // centre is exactly what the two 5px transparent borders draw.
+                // Clamped to that, the tip stops flush with the end of the bar
+                // instead of hanging over it, and it lands on the clamped end
+                // of the rule rather than off the end of it.
+                left: `clamp(${MARK_HALF_PX}px, ${viewportX(
+                  segment.leftPx + segment.widthPx / 2,
+                )}px, calc(100% - ${MARK_HALF_PX}px))`,
+                borderLeft: `${MARK_HALF_PX}px solid transparent`,
+                borderRight: `${MARK_HALF_PX}px solid transparent`,
                 borderTop: "6px solid rgba(250, 250, 250, 0.95)",
               }}
               className="pointer-events-none absolute -top-[9px] z-20 h-0 w-0 -translate-x-1/2"

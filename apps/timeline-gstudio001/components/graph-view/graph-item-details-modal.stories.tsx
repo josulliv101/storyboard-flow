@@ -1271,9 +1271,20 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
         .filter((panel) => panel.dataset.itemDetailsPanel !== "centre")
         .some((panel) => (panel.querySelector(selector)?.getBoundingClientRect().height ?? 0) > 0);
     await press("5");
-    await waitFor(() => expect(neighbourShows("[data-trim-overview]")).toBe(false));
-    expect(visible("[data-tag-editor]")).toBe(false);
-    expect(visible("[data-item-details-undo]")).toBe(false);
+    // ALL THREE IN ONE WAIT, because they all describe the SAME settled state.
+    //
+    // Only the first used to wait and the other two read whatever frame they
+    // landed on. Pressing "5" re-renders three panels and their controls drop
+    // out as the width crosses each threshold — the trim strip goes first, so
+    // waiting on it alone can return while a tag editor or an undo button is
+    // still mounted. It passed almost always and failed under load, which is
+    // the shape that costs an afternoon: the run that fails is never the run
+    // that changed anything.
+    await waitFor(() => {
+      expect(neighbourShows("[data-trim-overview]")).toBe(false);
+      expect(visible("[data-tag-editor]")).toBe(false);
+      expect(visible("[data-item-details-undo]")).toBe(false);
+    });
     // Still aligned, and still identically bordered — among peers, as above.
     const middleAt = panels().findIndex(
       (panel) => panel.dataset.itemDetailsPanel === "centre",
@@ -2965,14 +2976,31 @@ export const ASkippedClipIsHatchedOnTheBar: Story = {
  * hundred, so the subject cannot fit no matter where the strip stops, and the
  * overhang is a property of the fixture rather than of the timing.
  */
-const OVERSIZED_SUBJECT_SCENE: GraphNodeSpec = {
+/**
+ * A subject too wide for the track, whose MIDDLE is off the end of it too.
+ *
+ * One scene for both marks, because they fail under different conditions and
+ * only this shape poses both at once.
+ *
+ * THE RULE runs the clip's whole width, so any clip longer than the track
+ * over-runs it. THE TRIANGLE sits at the clip's middle, and a centred clip's
+ * middle is the track's middle however long the clip is — so it only leaves
+ * the bar when the strip is HELD AT AN EDGE and cannot centre. Hence the
+ * subject FIRST: the strip stops at the start of the film, and the mark is
+ * drawn wherever the clip's middle lands.
+ *
+ * 400s is ~3600px against a track of about 1280, so the rule over-runs by a
+ * couple of screens and the triangle wants to be some 1800px in — a screen's
+ * width past the end of the film.
+ */
+const SUBJECT_AT_THE_EDGE_SCENE: GraphNodeSpec = {
   kind: "collection",
   id: "root",
   name: "Root",
   children: [
-    { kind: "media" as const, id: "clip-before", name: "Before", src: plate("B", "hsl(20, 60%, 70%)"), durationSeconds: 6 },
-    { kind: "media" as const, id: "subject", name: "Subject", src: plate("S", "hsl(200, 60%, 70%)"), durationSeconds: 240 },
-    { kind: "media" as const, id: "clip-after", name: "After", src: plate("A", "hsl(120, 60%, 70%)"), durationSeconds: 6 },
+    { kind: "media" as const, id: "subject", name: "Subject", src: plate("S", "hsl(200, 60%, 70%)"), durationSeconds: 400 },
+    { kind: "media" as const, id: "clip-b", name: "B", src: plate("B", "hsl(20, 60%, 70%)"), durationSeconds: 6 },
+    { kind: "media" as const, id: "clip-c", name: "C", src: plate("C", "hsl(120, 60%, 70%)"), durationSeconds: 6 },
   ],
 };
 
@@ -2991,7 +3019,7 @@ const OVERSIZED_SUBJECT_SCENE: GraphNodeSpec = {
  * and through every frame of a pan.
  */
 export const TheActiveRuleIsClippedToTheBar: Story = {
-  render: () => <SeamHarness scene={OVERSIZED_SUBJECT_SCENE} />,
+  render: () => <SeamHarness scene={SUBJECT_AT_THE_EDGE_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
     await waitFor(() => expect(seamBoxes().length).toBeGreaterThan(0));
@@ -2999,7 +3027,9 @@ export const TheActiveRuleIsClippedToTheBar: Story = {
 
     const lane = seamSurface().getBoundingClientRect();
     const rule = document.querySelector<HTMLElement>("[data-seam-active-span]");
+    const mark = document.querySelector<HTMLElement>("[data-seam-active-mark]");
     expect(rule).not.toBeNull();
+    expect(mark).not.toBeNull();
 
     // THE FIXTURE ACTUALLY POSES THE PROBLEM. Without this the containment
     // below would pass on a clip that fit all along, which is how every other
@@ -3007,14 +3037,39 @@ export const TheActiveRuleIsClippedToTheBar: Story = {
     const marked = centreBox().getBoundingClientRect();
     expect(marked.width).toBeGreaterThan(lane.width);
 
-    // BOTH ENDS. Half a pixel of slack for subpixel rounding, and no more —
-    // the bug this covers was 235px of overhang.
-    const drawn = rule!.getBoundingClientRect();
-    expect(drawn.left).toBeGreaterThanOrEqual(lane.left - 0.5);
-    expect(drawn.right).toBeLessThanOrEqual(lane.right + 0.5);
+    // WHAT THIS STORY CANNOT POSE, said plainly: the TRIANGLE leaving the bar.
+    // It sits at the clip's middle, and the bar CENTRES the active clip — so
+    // that middle is the track's middle however long the clip is (measured
+    // here: 600 in a track ending at 1176). The triangle only leaves the bar
+    // once the bar has been PANNED away from the active clip, which the bar
+    // deliberately allows: "a change of subject brings the new clip into view
+    // if it is off the side, and otherwise leaves the bar exactly where you
+    // put it".
+    //
+    // So the containment below is an INVARIANT here rather than a regression
+    // test for the triangle — it holds either way in this fixture. The
+    // triangle's clamp was verified by driving its `left` past both ends and
+    // measuring: at 5000px it lands flush with the track's right edge, at
+    // -3000px flush with the left. Reproducing it as a story needs a simulated
+    // pan, which belongs with the e2e that already drives real drags.
 
-    // AND IT IS STILL A RULE. Clamped to nothing would also satisfy the two
-    // bounds above, so the mark has to survive the clamping that trimmed it.
-    expect(drawn.width).toBeGreaterThan(0);
+    // BOTH ENDS, BOTH MARKS. Half a pixel of slack for subpixel rounding and
+    // no more — the bug this covers was 326px of overhang on the rule, and the
+    // triangle was left hanging off the end in the same way afterwards.
+    for (const drawn of [rule!.getBoundingClientRect(), mark!.getBoundingClientRect()]) {
+      expect(drawn.left).toBeGreaterThanOrEqual(lane.left - 0.5);
+      expect(drawn.right).toBeLessThanOrEqual(lane.right + 0.5);
+      // AND THEY ARE STILL MARKS. Clamped to nothing would satisfy the two
+      // bounds above, so each has to survive the clamping that trimmed it.
+      expect(drawn.width).toBeGreaterThan(0);
+    }
+
+    // THE TRIANGLE STAYS ON ITS RULE. They are one mark — a pointer with a
+    // span — so a triangle clamped to the track while the rule stopped
+    // somewhere else would read as two unrelated things at the same height.
+    const ruleBox = rule!.getBoundingClientRect();
+    const markBox = mark!.getBoundingClientRect();
+    expect(markBox.left).toBeGreaterThanOrEqual(ruleBox.left - 0.5);
+    expect(markBox.right).toBeLessThanOrEqual(ruleBox.right + 0.5);
   },
 };
