@@ -120,7 +120,23 @@ function SegmentFrames({
     return (
       <span
         data-seam-filmstrip={clipId}
-        className="absolute inset-0 flex"
+        // EVERY FRAME IS FRAMED, not just every clip.
+        //
+        // The cells butted together, so a clip's strip read as one long
+        // smeared picture and the only light lines on the bar were at the clip
+        // boundaries. On a strip of film every frame has an edge — that
+        // repeating light rhythm at a finer interval than the shots is most of
+        // what makes the thing recognisable as film rather than as a row of
+        // tiles.
+        //
+        // A GAP WITH THE LIGHT BEHIND IT, rather than a border on each cell: a
+        // border would be inside the cell's own box and would eat into the
+        // picture, and at these widths every pixel of picture counts. The gap
+        // lets the strip's own colour through, which is the same trick the gap
+        // between two clips already uses — one pixel here against five there,
+        // so a frame edge never reads as a cut.
+        className="absolute inset-0 flex gap-px"
+        style={{ backgroundColor: FRAMED_CELL_EDGE }}
         aria-hidden="true"
       >
         {cells.map((url, index) => (
@@ -277,6 +293,17 @@ const BOX_INSET_PX = 2.5;
  */
 const FRAMED_GAP_COLOUR = "rgba(9, 9, 11, 0.95)";
 const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(244, 244, 245, 0.90)";
+/**
+ * The line between two FRAMES of the same clip.
+ *
+ * Brighter than the ring around a clip and a third of its width, which is the
+ * whole hierarchy: a frame edge is a hairline you read as texture, a clip edge
+ * is a line you read as a cut. Reversing the two — or making them equal —
+ * would turn every sampled frame into something that looks like a shot
+ * boundary, and the bar's one job is showing you where the shots actually
+ * change.
+ */
+const FRAMED_CELL_EDGE = "rgba(250, 250, 250, 0.82)";
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */

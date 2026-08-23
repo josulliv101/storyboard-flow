@@ -2299,6 +2299,24 @@ export const ThePlaybarCanDrawAFilmstrip: Story = {
     expect(first.left).toBeCloseTo(box.left, 0);
     expect(last.right).toBeCloseTo(box.right, 0);
 
+    // AND EVERY FRAME IS FRAMED, not just every clip.
+    //
+    // The cells butted together once, so a clip's strip read as one long
+    // smeared picture and the only light lines on the bar were at the shot
+    // boundaries. On a strip of film every frame has an edge, and that
+    // repeating rhythm at a finer interval than the cuts is most of what makes
+    // the bar recognisable as film rather than as a row of tiles.
+    const strip = cells[0]!.parentElement!;
+    const cellEdge = getComputedStyle(strip).backgroundColor;
+    expect(Math.min(...cellEdge.match(/[\d.]+/g)!.slice(0, 3).map(Number))).toBeGreaterThan(160);
+    // A HAIRLINE, and THINNER THAN THE RING AROUND THE CLIP. That order is the
+    // hierarchy: a frame edge is texture, a clip edge is a cut. Equal weights
+    // would make every sampled frame look like a shot boundary, which is the
+    // one thing the bar exists to show.
+    const between = cells[1]!.getBoundingClientRect().left - cells[0]!.getBoundingClientRect().right;
+    expect(between).toBeGreaterThan(0);
+    expect(between).toBeLessThan(1.5);
+
     // Square-ish: about one cell per bar-height, which is what makes them read
     // as frames in a strip rather than as stripes.
     expect(Math.abs(first.width - first.height)).toBeLessThan(first.height);
