@@ -29,6 +29,7 @@ export function SeamMinimap({
   clips,
   colourOf,
   centreClipId,
+  panelClipIds,
   totalSeconds,
   windowFromSeconds,
   windowToSeconds,
@@ -49,6 +50,24 @@ export function SeamMinimap({
    * yours.
    */
   centreClipId: string;
+  /**
+   * The clips on screen as panels — the same set the film strip draws pictures
+   * for with frames switched off.
+   *
+   * A SECOND, LESSER TIER, and it has to be lesser. The map already answers
+   * "which one is mine" in white, and marking two or three clips the same way
+   * would replace one answer with three and leave the subject to be worked out
+   * from position. So these come up to full strength and keep their own
+   * colour: enough to read as a group against a dimmed run, not enough to
+   * compete with the thing inside them.
+   *
+   * NOT PICTURES, which is where this stops being "the same as the strip". A
+   * segment here is a few pixels tall and often one wide — the film strip can
+   * answer "which shot" with a frame because it has room for one, and the map
+   * cannot, so it answers the only question it has room for: which part of the
+   * sequence you are in.
+   */
+  panelClipIds?: ReadonlySet<string>;
   totalSeconds: number;
   /** The span the bar above is showing, in absolute seconds. */
   windowFromSeconds: number;
@@ -132,11 +151,14 @@ export function SeamMinimap({
         {clips.map((clip, index) => {
           if (clip.showingSeconds <= 0) return null;
           const isCentre = clip.id === centreClipId;
+          // ON SCREEN BUT NOT THE SUBJECT — the panels either side of it.
+          const isFlanking = !isCentre && panelClipIds?.has(clip.id) === true;
           return (
             <span
               key={clip.id}
               data-seam-mini-segment={clip.id}
               data-seam-mini-segment-live={isCentre ? "" : undefined}
+              data-seam-mini-segment-onscreen={isCentre || isFlanking ? "" : undefined}
               style={{
                 flexGrow: clip.showingSeconds,
                 // THE SUBJECT IS WHITE, and that is the whole mark.
@@ -169,7 +191,18 @@ export function SeamMinimap({
                 // read as hanging off the strip rather than as the one raised
                 // out of it. 6px to 8px inside a 14px rail, so it has the room
                 // and nothing clips.
-                isCentre ? "-my-px opacity-100" : "opacity-70",
+                //
+                // THE FLANKING PANELS COME UP TO FULL STRENGTH AND NO FURTHER:
+                // their own colour, the run's own height. Against a dimmed run
+                // that is enough to read the three as a group, and it leaves
+                // the two things that say SUBJECT — white, and the extra
+                // pixel — belonging to one segment. Brightness groups; shape
+                // and colour single out.
+                isCentre
+                  ? "-my-px opacity-100"
+                  : isFlanking
+                    ? "opacity-100"
+                    : "opacity-70",
               ].join(" ")}
             />
           );

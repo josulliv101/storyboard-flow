@@ -1824,6 +1824,43 @@ export const TheMinimapMovesTheWindow: Story = {
     const ink = marked.backgroundColor.match(/[\d.]+/g)!.slice(0, 3).map(Number);
     expect(Math.min(...ink)).toBeGreaterThan(200);
 
+    // ── AND THE PANELS EITHER SIDE, ONE TIER DOWN ────────────────────────
+    //
+    // The map marks what is ON SCREEN, the same set the film strip draws
+    // pictures for — but as a lesser mark, and lesser is the point. Marking
+    // three clips the way the subject is marked would replace one answer with
+    // three and leave "which is mine" to be worked out from position. So these
+    // come up to full strength and keep their own colour and height:
+    // brightness groups them, and white plus the extra pixel still single out
+    // the one inside.
+    const onScreenSegments = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-mini-segment-onscreen]"),
+    );
+    const flanking = onScreenSegments.filter(
+      (segment) => !segment.hasAttribute("data-seam-mini-segment-live"),
+    );
+    expect(flanking.length).toBeGreaterThan(0);
+    for (const segment of flanking) {
+      const style = getComputedStyle(segment);
+      // Undimmed, so they read as a group against the run…
+      expect(Number(style.opacity)).toBe(1);
+      // …and NOT white, so they never read as the subject.
+      expect(style.backgroundColor).not.toBe(getComputedStyle(live[0]!).backgroundColor);
+    }
+
+    // THE MAP AND THE STRIP AGREE ABOUT WHAT IS ON SCREEN. Two components, one
+    // set, and nothing would tell you they had drifted — the bar would draw a
+    // picture for one clip while the map brightened another, and both would
+    // look deliberate.
+    const named = (nodes: readonly HTMLElement[], attribute: string) =>
+      nodes.map((node) => node.getAttribute(attribute)).sort();
+    expect(named(onScreenSegments, "data-seam-mini-segment")).toEqual(
+      named(
+        Array.from(document.querySelectorAll<HTMLElement>("[data-seam-segment-onscreen]")),
+        "data-seam-segment",
+      ),
+    );
+
     // Taller than its neighbours, and on the SAME CENTRE LINE — grown both
     // ways rather than hanging off the bottom of the run.
     const others = Array.from(

@@ -982,6 +982,7 @@ export function SeamStripBar({
         clips={clips}
         colourOf={boxColourOf}
         centreClipId={centreClipId}
+        panelClipIds={panelClipIds}
         totalSeconds={totalSeconds}
         windowFromSeconds={windowFromSeconds}
         windowToSeconds={windowToSeconds}
