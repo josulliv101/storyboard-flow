@@ -733,7 +733,7 @@ export function SeamLane({
             left:
               previewAnchor === "pinned"
                 ? "50%"
-                : `clamp(9rem, ${viewportX(hover.x)}px, calc(100% - 9rem))`,
+                : `clamp(12rem, ${viewportX(hover.x)}px, calc(100% - 12rem))`,
           }}
           // BELOW THE WHOLE BAR, not just below the boxes: at `top-9` it lay
           // across the ruler and the minimap, hiding the two things that say
@@ -752,7 +752,7 @@ export function SeamLane({
           // below rather than floating over a gap: a heavier border, a deeper
           // shadow and a near-opaque ground, so it reads as something in front
           // rather than something printed on what it covers.
-          className="pointer-events-none absolute top-20 z-20 flex w-72 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
+          className="pointer-events-none absolute top-20 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
         >
           {hover.posterSrc === undefined ? null : (
             // A bare <img>: the preview is a thumbnail of a source the app
@@ -761,11 +761,24 @@ export function SeamLane({
             <img
               src={hover.posterSrc}
               alt=""
-              // `aspect-video` rather than a fixed height, so every shot in the
-              // card is the same shape whatever its own frame is — a row of
-              // previews that changed height as the pointer moved would be the
-              // card itself flickering.
-              className="aspect-video w-full rounded object-cover"
+              // THE FRAME'S OWN SHAPE, whole.
+              //
+              // It was forced to 16:9 and cropped to fill, on the reasoning
+              // that a card changing height as the pointer moved would be the
+              // card itself flickering. That holds for a row of mixed shapes
+              // and costs too much here: this project's shots are 896x384, so
+              // 16:9 was cutting the sides off every one of them — the preview
+              // was showing less of the frame than the box it came from. A
+              // preview that crops is answering a question about composition
+              // with a different composition.
+              //
+              // `h-auto` with no ratio, so the poster's intrinsic dimensions
+              // decide: scope stays scope, 16:9 stays 16:9, and nothing is
+              // trimmed. The card grows and shrinks with it, which is the
+              // honest trade and much less distracting now `PIN` exists — a
+              // stationary card resizing reads as the picture changing, where
+              // a moving one resizing reads as a wobble.
+              className="h-auto w-full rounded"
             />
           )}
           <span className="min-w-0">
