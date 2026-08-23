@@ -354,22 +354,19 @@ function pointerAt(clientX: number, clientY: number) {
  * entirely. `hold` leaves the pointer down, for the stories about what happens
  * DURING a drag.
  */
-function scrubToClientX(clientX: number, options?: { hold?: boolean; travelFrom?: number }): void {
-  const surface = seamSurface();
-  const box = surface.getBoundingClientRect();
-  const y = box.top + box.height / 2;
-  const from = clientX - (options?.travelFrom ?? 12);
-  fireEvent.pointerDown(surface, pointerAt(from, y));
-  fireEvent.pointerMove(surface, pointerAt(clientX, y));
-  if (options?.hold === true) return;
-  fireEvent.pointerUp(surface, pointerAt(clientX, y));
-}
-
-/** Let go of a held scrub, wherever the pointer was left. */
-function releaseScrub(clientX: number): void {
-  const surface = seamSurface();
-  const box = surface.getBoundingClientRect();
-  fireEvent.pointerUp(surface, pointerAt(clientX, box.top + box.height / 2));
+/**
+ * MOVE THE PLAYHEAD, which is the keyboard's job now.
+ *
+ * Dragging the boxes used to do this, and dragging them PANS the strip since
+ * the bar became a thing you pull along rather than a thing you scrub. So the
+ * stories that need a clock reach for the control that still moves it: the
+ * track is a `role="slider"` and its arrows seek a second at a time.
+ */
+function nudgePlayhead(seconds: number): void {
+  const track = seamTrack();
+  for (let step = 0; step < Math.abs(seconds); step += 1) {
+    fireEvent.keyDown(track, { key: seconds < 0 ? "ArrowLeft" : "ArrowRight" });
+  }
 }
 
 /** Press a box WITHOUT travelling, which is how you commit to a clip. */
@@ -397,7 +394,7 @@ function centreBox(): HTMLElement {
  * Wait until the strip has stopped moving.
  *
  * A change of subject can nudge the bar to bring the new clip into view, and
- * `scrubIntoBox` reads a box's position ON SCREEN. Measure mid-move and the
+ * A box's position is read ON SCREEN. Measure mid-move and the
  * two disagree by however far the strip still has to travel — which showed up
  * as scrubs landing at zero, because the mismatch pushed the target off the
  * front of the timeline and the clamp caught it.
@@ -479,22 +476,6 @@ async function settleStrip(): Promise<void> {
   );
 }
 
-/**
- * Scrub to a point inside `box`, `within` of the way across that clip.
- *
- * Aim at the BOX'S OWN x: the pointer and the boxes share a client coordinate
- * space, so a clip is at the same place on both and no conversion through the
- * strip's transform is needed — which is what makes this survive a pan and a
- * zoom that a fraction-of-the-timeline version would not.
- */
-function scrubIntoBox(
-  box: HTMLElement,
-  within = 0.5,
-  options?: { hold?: boolean },
-): void {
-  const target = box.getBoundingClientRect();
-  scrubToClientX(target.left + target.width * within, options);
-}
 
 /** Swipe the boxes, which moves the carousel three clips at a time. */
 function swipeBoxes(direction: "forward" | "back"): void {
@@ -783,54 +764,6 @@ export const OpensShowingItsOwnPicture: Story = {
   },
 };
 
-/**
- * THE PLAYHEAD STAYS INSIDE THE TRIMMED WINDOW.
- *
- * The regression: the line's position was measured as a fraction of what the
- * clip SHOWS, then drawn across a strip that renders the whole SOURCE. So it
- * swept the entire filmstrip — dimmed, trimmed-off material included — while
- * the picture only ever played the trimmed part. It reads precisely as being
- * able to scrub past the trim; the picture was fine and the line was lying
- * about it.
- *
- * Asserted against the amber window's own box rather than against a computed
- * number, because the thing that was wrong was an ASSUMPTION about what the
- * strip draws — and only the strip can settle that. A unit test agreeing with
- * my arithmetic would have agreed with the broken arithmetic too.
- */
-export const PlayheadStaysInsideTheTrim: Story = {
-  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
-  play: async () => {
-    await waitFor(() =>
-      expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
-    );
-    await waitFor(() => expect(seamTrack()).not.toBeNull());
-    // Scrub to a few points across the centre clip and check every one — into
-    // its own BOX, which is what "across the centre clip" means now that the
-    // bar carries the whole collection.
-    for (const ratio of [0.35, 0.5, 0.65]) {
-      await settleStrip();
-      scrubIntoBox(centreBox(), ratio);
-
-      const centre = document.querySelector('[data-item-details-panel="centre"]')!;
-      const line = await waitFor(() => {
-        const found = centre.querySelector<HTMLElement>("[data-seam-playhead-line]");
-        expect(found).not.toBeNull();
-        return found!;
-      });
-      const window_ = centre.querySelector<HTMLElement>("[data-trim-overview-window]");
-      expect(window_).not.toBeNull();
-
-      const lineBox = line.getBoundingClientRect();
-      const windowBox = window_!.getBoundingClientRect();
-      const centreX = lineBox.left + lineBox.width / 2;
-      // A pixel of slack for the line's own width and rounding; the window is
-      // a third of this strip, so a line escaping it misses by far more.
-      expect(centreX).toBeGreaterThanOrEqual(windowBox.left - 1);
-      expect(centreX).toBeLessThanOrEqual(windowBox.right + 1);
-    }
-  },
-};
 
 /**
  * THE RING SAYS WHICH PANEL IS THE SUBJECT, AND NEVER MOVES.
@@ -874,7 +807,7 @@ export const TheRingMarksWhoseFramesAreUp: Story = {
     const centreIndex = boxes.indexOf(centreBox());
     expect(centreIndex).toBeGreaterThan(0);
     await settleStrip();
-    scrubIntoBox(boxes[centreIndex - 1]!, 0.5, { hold: true });
+    nudgePlayhead(1);
     await waitFor(() =>
       expect(seamTrack().getAttribute("aria-valuenow")).not.toBe(null),
     );
@@ -912,7 +845,7 @@ export const OnlyTheLiveClipIsMarked: Story = {
     // And the sky-blue ring that used to follow the playhead is gone from
     // both — a colour this view no longer spends here.
     await settleStrip();
-    scrubIntoBox(centreBox());
+    nudgePlayhead(1);
     await waitFor(() => expect(seamTrack()).not.toBeNull());
     expect(getComputedStyle(centre).boxShadow).not.toMatch(/56, 189, 248/);
     expect(getComputedStyle(neighbour).boxShadow).not.toMatch(/56, 189, 248/);
@@ -1175,9 +1108,9 @@ export const TheNeighboursFadeBackDuringPlayback: Story = {
     expect(getComputedStyle(frameOf("centre")).opacity).toBe("1");
 
     await settleStrip();
-    scrubIntoBox(centreBox());
+    nudgePlayhead(1);
 
-    // Scrubbed: the neighbours pull back, in both opacity and colour…
+    // Engaged: the neighbours pull back, in both opacity and colour…
     // Scrubbed: the neighbours pull back, in both opacity and colour.
     //
     // ASSERTED AS "MOVING TOWARD" RATHER THAN "ARRIVED AT". This runner does
@@ -1200,65 +1133,6 @@ export const TheNeighboursFadeBackDuringPlayback: Story = {
   },
 };
 
-/**
- * EVERY CLIP IS SCRUBBABLE, AND THE COUNT HAS NOTHING TO DO WITH IT.
- *
- * This used to assert the opposite arithmetic: the bar covered the clips ON
- * SCREEN plus a lead into each neighbour, so widening the view lengthened the
- * run of time it reached, and the test measured that growth.
- *
- * That coupling was the bug. It meant the only clips you could scrub were the
- * ones you could already see, and a shot four cards away — visible on the bar,
- * plainly a box — did nothing when pressed. The clock covers the whole
- * collection now, so the bar's length is a property of the COLLECTION and the
- * count changes only how many cards are under it.
- *
- * Both halves are asserted, because either alone would pass for the wrong
- * reason: the total does not move when the count does, AND the far end of the
- * bar still scrubs at either count.
- */
-export const WiderViewsScrubEveryWholeClip: Story = {
-  render: () => <SeamHarness scene={LONG_SCENE} />,
-  play: async () => {
-    const picker = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-details-view-count]");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-    const barMax = () => Number(seamTrack().getAttribute("aria-valuemax"));
-    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
-    const press = async (label: string) => {
-      const button = Array.from(picker.querySelectorAll("button")).find(
-        (b) => b.textContent?.trim() === label,
-      )!;
-      fireEvent.click(button);
-      await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
-    };
-
-    await press("3");
-    const atThree = barMax();
-    expect(atThree).toBeGreaterThan(0);
-    // Every clip has a box, whatever is on screen.
-    const boxCount = seamBoxes().length;
-    expect(boxCount).toBeGreaterThan(3);
-
-    // The LAST clip — as far from the middle as this collection goes, and
-    // certainly without a card at three up.
-    await settleStrip();
-    scrubIntoBox(seamBoxes()[boxCount - 1]!, 0.5);
-    await waitFor(() => expect(at()).toBeGreaterThan(atThree * 0.6));
-
-    // Five up: more cards, same timeline.
-    await press("5");
-    expect(barMax()).toBe(atThree);
-    expect(seamBoxes().length).toBe(boxCount);
-
-    // And the far end still answers.
-    await settleStrip();
-    scrubIntoBox(seamBoxes()[boxCount - 1]!, 0.2);
-    await waitFor(() => expect(at()).toBeGreaterThan(atThree * 0.5));
-  },
-};
 
 /**
  * ADDING A TAG IS AN ICON AT THE END OF THE TAGS, NOT A ROW.
@@ -1484,65 +1358,6 @@ export const TheBarLabelsItsSectionsWithFrames: Story = {
   },
 };
 
-/**
- * THE MONITOR GROWS WHILE YOU DRAG THE BAR.
- *
- * At three panels the middle one is already most of the screen and nothing
- * happens. At nine it is a couple of hundred pixels — fine as a frame beside
- * its neighbours, useless as the thing you are watching while you drag a
- * playhead through a cut. Scrubbing is exactly when the monitor stops being
- * one of several pictures and becomes the only one that matters.
- *
- * It grows by TRANSFORM rather than by width: the strip's slide is computed
- * from a uniform panel width, so a centre panel that actually got wider would
- * put every landing off by the difference.
- */
-export const TheMonitorGrowsWhileScrubbing: Story = {
-  render: () => <SeamHarness scene={LONG_SCENE} />,
-  play: async () => {
-    const picker = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-details-view-count]");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-    // The WIDEST count, read off the picker rather than typed: this story is
-    // about the monitor growing out of a small panel, so it wants whatever the
-    // narrowest panel currently is, not a number that was once the maximum.
-    const widest = Array.from(picker.querySelectorAll("button")).at(-1)!;
-    fireEvent.click(widest);
-    await waitFor(() => expect(widest.getAttribute("aria-pressed")).toBe("true"));
-
-    const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
-    const width = () => Math.round(centre().getBoundingClientRect().width);
-
-    const resting = width();
-    expect(centre().hasAttribute("data-item-details-magnified")).toBe(false);
-
-    // The middle of the track, held: the gesture is the drag, so the monitor
-    // has to be up for as long as the pointer is down and not a moment past.
-    const surface = seamSurface().getBoundingClientRect();
-    const middle = surface.left + surface.width * 0.5;
-    scrubToClientX(middle, { hold: true });
-
-    // Bigger, and marked as such.
-    await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
-    await waitFor(() => expect(width()).toBeGreaterThan(resting + 10));
-
-    // And back down when the drag ends — this is the gesture, not a mode.
-    releaseScrub(middle);
-    await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(false));
-    await waitFor(() => expect(width()).toBe(resting));
-
-    // The neighbours never grow: they are the context you are looking PAST.
-    const neighbours = Array.from(
-      document.querySelectorAll('[data-item-details-panel="neighbour"]'),
-    );
-    scrubToClientX(middle, { hold: true });
-    await waitFor(() => expect(centre().hasAttribute("data-item-details-magnified")).toBe(true));
-    expect(neighbours.some((n) => n.hasAttribute("data-item-details-magnified"))).toBe(false);
-    releaseScrub(middle);
-  },
-};
 
 /**
  * EVERY PANEL OFFERS "PLAY THIS ONE", AT EVERY WIDTH.
@@ -1706,7 +1521,9 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     // below cannot tell "jumped to this clip" from "happened to already be
     // there" — the bar rests at the subject's own first frame.
     await settleStrip();
-    scrubIntoBox(centreBox(), 0.5);
+    // Four seconds in lands inside the SUBJECT: the bar runs Before (3s) then
+              // Subject (4s), so anything past 3 is in the middle clip.
+    nudgePlayhead(4);
     await waitFor(() => expect(at()).toBeGreaterThan(3));
 
     // The RIGHT-hand panel: "After". Its stretch of the bar starts at 7s —
@@ -1757,128 +1574,6 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
   },
 };
 
-/**
- * HOLDING AT AN EDGE RUNS THE STRIP UNDER THE POINTER.
- *
- * The track spans what is ON SCREEN, not what exists: on a project longer than
- * the bar can draw at the current zoom, the end of the track was the end of
- * the timeline you could reach in one gesture, with the rest of the order
- * sitting an inch off the side. You could step to it with the arrows or pan
- * there with the wheel first, both of which mean abandoning the drag you are
- * in the middle of.
- *
- * So the two ends of the track are a throttle. Hold inside 40px of the right
- * edge and the strip travels forward underneath; hold at the left and it
- * reverses. THE HAND DOES NOT MOVE during any of that, which is why this is a
- * frame loop and not something hung off pointermove — an implementation
- * reading the moves travels only while the hand jitters.
- *
- * Five claims, and the last three are what make it a control rather than a
- * hazard: the middle of the track does nothing, letting go stops it, and a
- * gesture that travelled this far is not mistaken for a tap on whatever
- * arrived under the finger.
- */
-export const HoldingAtAnEdgeRunsTheStrip: Story = {
-  render: () => <SeamHarness scene={OVERFLOWING_SCENE} />,
-  play: async () => {
-    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
-    const stripLeft = () =>
-      document.querySelector<HTMLElement>("[data-seam-strip]")!.getBoundingClientRect().left;
-    const subject = () => centreBox().getAttribute("data-seam-segment");
-
-    // Held presses with NO travel at all, which is the gesture: everything
-    // that moves is moved by the bar, not by the hand.
-    const press = (clientX: number) => {
-      const surface = seamSurface();
-      const box = surface.getBoundingClientRect();
-      fireEvent.pointerDown(surface, pointerAt(clientX, box.top + box.height / 2));
-    };
-    const release = (clientX: number) => {
-      const surface = seamSurface();
-      const box = surface.getBoundingClientRect();
-      fireEvent.pointerUp(surface, pointerAt(clientX, box.top + box.height / 2));
-    };
-    const rest = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
-    await settleStrip();
-    const startedOn = subject();
-
-    // THE PRECONDITION THIS STORY IS ABOUT. If the strip fitted in the track
-    // there would be nothing off the side to reach, and every assertion below
-    // would pass for the wrong reason.
-    const trackWidth = seamSurface().getBoundingClientRect().width;
-    const pps = Number(seamTrack().getAttribute("data-seam-pps"));
-    const totalPx = Number(seamTrack().getAttribute("aria-valuemax")) * pps;
-    expect(totalPx).toBeGreaterThan(trackWidth * 1.5);
-
-    // ── THE MIDDLE OF THE TRACK IS AN ORDINARY SCRUBBER ───────────────────
-    const box = seamSurface().getBoundingClientRect();
-    press(box.left + box.width / 2);
-    const middleT = at();
-    const middleX = stripLeft();
-    await rest(300);
-    expect(at()).toBe(middleT);
-    expect(stripLeft()).toBe(middleX);
-    release(box.left + box.width / 2);
-
-    // ── THE RIGHT EDGE RUNS FORWARD ───────────────────────────────────────
-    press(box.right - 12);
-    const pressedAt = at();
-    await waitFor(() => expect(at()).toBeGreaterThan(pressedAt + 1), { timeout: 2000 });
-
-    // THE CLOCK ADVANCES BECAUSE THE STRIP MOVES, not because the press landed
-    // further along. Measured between two readings taken once the run is
-    // already going, so the press's own snap-to-cut is not inside the window —
-    // and stated as the two AGREEING rather than as a pixel count, so the
-    // claim survives a change of zoom instead of being calibrated to one.
-    const fromAt = at();
-    const fromX = stripLeft();
-    await waitFor(() => expect(at()).toBeGreaterThan(fromAt + 2), { timeout: 2000 });
-    const ranPx = fromX - stripLeft();
-    expect(ranPx).toBeGreaterThan(5);
-    expect(Math.abs(ranPx - (at() - fromAt) * pps)).toBeLessThan(2);
-
-    // ── LETTING GO STOPS IT, AND LANDS ON WHAT IT RAN TO ──────────────────
-    release(box.right - 12);
-    const stoppedAt = at();
-    await rest(300);
-
-    // THE CLOCK STOPS DEAD, WHICH IS WHAT "STOPS IT" MEANS. The strip does
-    // not, and must not be asserted to: letting go lands the row on the clip
-    // the playhead reached, and the bar then slides to re-centre on it. That
-    // slide is a different motion from the run — it has an end, and the run
-    // did not — so what this checks is that the RUN stopped, and then that the
-    // slide settles rather than continuing.
-    expect(at()).toBe(stoppedAt);
-    await settleStrip();
-    const settledX = stripLeft();
-    await rest(200);
-    expect(stripLeft()).toBe(settledX);
-    // WHERE THE PLAYHEAD FINISHED, NOT WHERE THE HAND IS. The hand never
-    // moved, so this is the case that would go wrong if the release resolved
-    // a clip from the pointer's x: the strip ran a long way underneath a
-    // stationary finger, and what is under it now is not what was under it
-    // when the press began. The view answers from its own clock instead.
-    expect(subject()).not.toBe(startedOn);
-
-    // ── AND THE LEFT EDGE REVERSES ────────────────────────────────────────
-    // MEASURED AGAIN. The release above landed the row on a new clip, and the
-    // bar re-pans around it — so the geometry read at the top of this story
-    // describes a bar that no longer exists.
-    const after = seamSurface().getBoundingClientRect();
-    press(after.left + 12);
-    const pressedBackAt = at();
-    await waitFor(() => expect(at()).toBeLessThan(pressedBackAt - 1), { timeout: 2000 });
-    const backFrom = at();
-    const backFromX = stripLeft();
-    await waitFor(() => expect(at()).toBeLessThan(backFrom - 2), { timeout: 2000 });
-    const backPx = stripLeft() - backFromX;
-    expect(backPx).toBeGreaterThan(5);
-    expect(Math.abs(backPx - (backFrom - at()) * pps)).toBeLessThan(2);
-    release(after.left + 12);
-  },
-};
 
 /**
  * ── THE BAR IS A WINDOW ONTO THE WHOLE PROJECT ────────────────────────────
@@ -1978,55 +1673,6 @@ export const TheWheelPansAndZoomsAboutThePointer: Story = {
   },
 };
 
-/**
- * A SCRUB LANDING NEAR A CUT MEANS THE CUT.
- *
- * The cut is the thing anyone is ever aiming at on this bar — it is what the
- * whole view is for — and it is one pixel wide. Without a snap, "put the
- * playhead on the start of that shot" is a test of the reader's mouse hand,
- * and the answer is almost always a frame or two out in a direction they
- * cannot see.
- *
- * PIXELS, NOT SECONDS, is what makes it survive the zoom above: seven pixels
- * is seven pixels at 5px a second and at 40, where a tolerance in seconds
- * would swallow whole clips at one end and be unreachable at the other.
- */
-export const AScrubNearACutTakesTheCut: Story = {
-  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
-  play: async () => {
-    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
-    await settleStrip();
-    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
-    const pps = Number(seamTrack().getAttribute("data-seam-pps"));
-
-    // A box with room either side of it, so "just before" and "just after" are
-    // both inside the same clip's neighbourhood and not off the end of the bar.
-    const target = seamBoxes()[4]!.getBoundingClientRect();
-    // The cut is the box's own leading edge, less the inset every box is
-    // pulled in by — see BOX_INSET_PX in the lane.
-    const cut = target.left - 2.5;
-
-    // HELD THROUGHOUT. These are three readings of one scale, so the bar
-    // underneath them has to be the same bar: a release would land the row on
-    // the clip just scrubbed to, and the next measurement would be taken
-    // against a strip that had moved. Nothing here is about committing.
-    scrubToClientX(cut - 3, { hold: true });
-    const fromBefore = at();
-    scrubToClientX(cut + 3, { hold: true });
-    const fromAfter = at();
-
-    // BOTH SIDES LAND ON THE SAME INSTANT, which is the cut. Six pixels apart
-    // on screen, zero seconds apart on the clock.
-    expect(fromBefore).toBe(fromAfter);
-
-    // A press with room around it is left exactly where it was put, so the
-    // snap is a tolerance and not a quantiser: 40px further along is 40px
-    // further along, to the second.
-    scrubToClientX(cut + 40, { hold: true });
-    expect(at()).toBeGreaterThan(fromAfter);
-    expect(Math.abs(at() - fromAfter - 40 / pps)).toBeLessThan(0.05);
-  },
-};
 
 /**
  * THE RULER SAYS WHAT SCALE YOU ARE AT, AND WHERE EACH COLLECTION STARTS.
@@ -2747,137 +2393,6 @@ export const TheBarReachIsASetting: Story = {
   },
 };
 
-/**
- * LETTING GO IS THE COMMIT — AND THE ROW DOES NOT SCROLL TO IT.
- *
- * A drag and a press that does not travel are still told apart (distance, not
- * timing), but they LAND the same way, because they are the same sentence: you
- * put the playhead somewhere and took your hand off it.
- *
- * THE MIDDLE CARD DOES NOT MOVE, and that is the point. It has been the
- * monitor for the whole scrub, so it is already showing the clip being landed
- * on — sliding the row to that clip would animate a change that has already
- * happened, and move the one thing on screen that did not need to. So the row
- * cuts, the middle card stays exactly where it is with exactly the picture it
- * had, and the panels either side fade in with their new contents.
- *
- * STEPPING IS THE OTHER CASE and keeps its slide: landing on the clip directly
- * beside this one is the same single move the arrows and the swipe make, and
- * there the middle card really is becoming something else.
- *
- * THE FRAME COMES WITH IT, read off the panel rather than the bar. The bar is
- * a window with a reach either side of the subject, so it is rebuilt around
- * wherever you land and its own seconds are not comparable across the journey.
- * The panel reports the clip's OWN time, which is.
- */
-export const LettingGoOfTheBarLandsTheStrip: Story = {
-  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
-  play: async () => {
-    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
-    await settleStrip();
-    await settleRow();
-    const subject = () => centreBox().getAttribute("data-seam-segment");
-    const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
-    const strip = () => document.querySelector<HTMLElement>("[data-details-strip]")!;
-    const boxIndex = () => seamBoxes().indexOf(centreBox());
-    const centrePanel = () =>
-      document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
-    const seatX = () => centrePanel().getBoundingClientRect().left;
-    const shownFrame = () =>
-      Number(centrePanel().getAttribute("data-item-details-at"));
-    const swapping = () =>
-      document.querySelectorAll("[data-item-details-swapping]").length;
-
-    // Hold the scrub, read the frame at the moment before the release, let go.
-    const dragToBox = async (box: HTMLElement) => {
-      const rect = box.getBoundingClientRect();
-      const x = rect.left + rect.width * 0.5;
-      scrubToClientX(x, { hold: true });
-      await waitFor(() => expect(at()).toBeGreaterThan(0));
-      const reporting = Array.from(
-        document.querySelectorAll<HTMLElement>("[data-item-details-at]"),
-      );
-      const heldFrame = Number(reporting[0]!.getAttribute("data-item-details-at"));
-
-      // TWO PANELS ARE ON THIS FRAME, AND THAT IS THE POINT. The centre is
-      // monitoring the clip being scrubbed to, and that clip's OWN panel is
-      // already showing the same moment rather than resting on its first
-      // frame. Without the second, the release reads as: the right frame, a
-      // cut, the FIRST frame, and a skip back — because the panel arriving in
-      // the middle has a decoded frame already and it is the wrong one.
-      expect(reporting.length).toBe(2);
-      expect(
-        reporting.map((panel) => Number(panel.getAttribute("data-item-details-at"))),
-      ).toEqual([heldFrame, heldFrame]);
-      const surface = seamSurface();
-      const surfaceBox = surface.getBoundingClientRect();
-      fireEvent.pointerUp(surface, pointerAt(x, surfaceBox.top + surfaceBox.height / 2));
-      return heldFrame;
-    };
-
-    expect(subject()).toBe("subject");
-    const restingSeat = seatX();
-
-    // ── A LANDING SEVERAL CLIPS OFF CUTS, AND THE MIDDLE STAYS PUT ────────
-    // TWO CLIPS, WHICH IS INSIDE `MOUNTED_RADIUS` AND OUTSIDE A STEP. Both
-    // halves matter: past one clip so it cuts and fades rather than stepping,
-    // and near enough that the target's panel EXISTS during the scrub, which
-    // is what the pre-seek below can be observed on. A landing beyond the
-    // mount window has no panel to pre-seek and is covered instead by the
-    // poster the fresh element paints — see `monitorPosterUrl`.
-    const target = seamBoxes()[boxIndex() + 2]!;
-    const letGo = await dragToBox(target);
-    await waitFor(() => expect(subject()).not.toBe("subject"));
-
-    // ALREADY THERE. This is the assertion a slide fails: mid-travel the
-    // middle card is panels away from its seat and only arrives later.
-    expect(seatX()).toBeCloseTo(restingSeat, 0);
-    // And it stays — nothing is easing towards anything.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(seatX()).toBeCloseTo(restingSeat, 0);
-
-    // THE PANELS EITHER SIDE ARE WHAT MOVED, so they are what fades.
-    expect(swapping()).toBeGreaterThan(0);
-
-    // AND NOTHING ELSE ANIMATES WHILE THEY DO. A landing leaves the clock
-    // engaged, so every neighbour is newly `dimmed` and would start its own
-    // 300ms opacity-and-GRAYSCALE transition in the same frame the fade
-    // begins. Two nested opacity animations is one too many, and a filter over
-    // a video still fetching its first frame is repainted from the decoder
-    // every tick — which is why this was smooth on stills and juddered on
-    // video. The incoming panel arrives already dimmed and already drained.
-    const fading = document.querySelector<HTMLElement>(
-      "[data-item-details-swapping] [data-item-details-frame]",
-    )!;
-    expect(getComputedStyle(fading).transitionProperty).toBe("none");
-    expect(
-      centrePanel().hasAttribute("data-item-details-swapping"),
-    ).toBe(false);
-
-    expect(subject()).toBe(target.getAttribute("data-seam-segment"));
-    expect(shownFrame()).toBeCloseTo(letGo, 2);
-    // The fade lets go of itself.
-    await waitFor(() => expect(swapping()).toBe(0));
-
-    // ── AND A NEIGHBOUR IS STILL A STEP ───────────────────────────────────
-    const landedOn = subject();
-    const next = seamBoxes()[boxIndex() + 1]!;
-    clickBox(next);
-    await waitFor(() => expect(subject()).not.toBe(landedOn));
-    // No fade: one clip along is the move the arrows and the swipe make, and
-    // it travels.
-    expect(swapping()).toBe(0);
-    const travellingFrom = strip().getBoundingClientRect().left;
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(strip().getBoundingClientRect().left).not.toBe(travellingFrom);
-
-    // THE SCRIM NEVER SCROLLS. It crops a row thousands of pixels wide, so if
-    // it were a scroll container the browser would scroll it to reveal the
-    // newly focused panel — on top of the transform the row has already made,
-    // putting the chosen card off the left edge. Zero is `overflow-clip`.
-    expect(strip().parentElement!.scrollLeft).toBe(0);
-  },
-};
 
 /**
  * THE BAR TAKES THE KEYBOARD.

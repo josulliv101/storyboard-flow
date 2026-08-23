@@ -188,43 +188,6 @@ function SegmentFrames({
 }
 
 
-/**
- * The playhead's head, and its twitch when the scrub lands on a cut.
- *
- * DRIVEN FROM SCRIPT, NOT A KEYFRAME. A `@keyframes` would have to be
- * declared in a stylesheet, and this component is rendered into a portal from
- * two hosts with two different Tailwind entry points — the app's and
- * Storybook's — so a rule added to one of them is a rule the other silently
- * does not have. An animation the component brings with it cannot be missing
- * in one host and present in the other, and it is inspectable from a test
- * through `getAnimations()`.
- *
- * Skips its first run: mounting the playhead is not a snap.
- */
-function SnapPulse({ snapKey }: Readonly<{ snapKey: number }>) {
-  const ref = useRef<HTMLSpanElement | null>(null);
-  useEffect(() => {
-    const element = ref.current;
-    if (element === null || snapKey === 0) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const animation = element.animate(
-      [
-        { transform: "scale(1)" },
-        { transform: "scale(2.1)" },
-        { transform: "scale(1)" },
-      ],
-      { duration: 180, easing: "ease-out" },
-    );
-    return () => animation.cancel();
-  }, [snapKey]);
-  return (
-    <span
-      ref={ref}
-      data-seam-playhead-head
-      className="block h-1.5 w-1.5 rounded-full bg-red-500"
-    />
-  );
-}
 
 /**
  * How far each box is pulled in from its clip's true extent, per side.
@@ -370,11 +333,9 @@ export function SeamLane({
   centreClipId,
   offset,
   playheadPx,
-  snapKey,
   ghostX,
   hover,
   previewAnchor = "follow",
-  chip,
   handlers,
   atStart,
   atEnd,
@@ -388,7 +349,6 @@ export function SeamLane({
   offset: number;
   playheadPx: number | null;
   /** Bumped on every snap, so the playhead can acknowledge one. */
-  snapKey: number;
   /** Where an un-pressed pointer is hovering, in strip pixels. */
   ghostX: number | null;
   hover: SeamHover | null;
@@ -396,7 +356,6 @@ export function SeamLane({
    *  `graph-seam-preview-anchor`. */
   previewAnchor?: PreviewAnchor;
   /** The time under the playhead while it is being dragged. */
-  chip: string | null;
   handlers: React.ComponentProps<"div">;
   /** Whether the bar's first clip is the project's first — see `SeamEndCap`.
    *  False when the reach has cropped the window short of it, because then
@@ -649,9 +608,15 @@ export function SeamLane({
                 what ACKNOWLEDGES A SNAP. A snap moves the playhead by a few
                 pixels at most and is otherwise invisible, so without this you
                 cannot tell the bar helped from your hand being accurate. */}
-              <span className="absolute -top-1 left-1/2 -translate-x-1/2">
-                <SnapPulse snapKey={snapKey} />
-              </span>
+              {/* The head of the line, so the playhead reads as a position
+                  that was put there rather than a border between two boxes.
+                  It used to pulse when a drag snapped to a cut; there is no
+                  drag on the playhead any more, so there is no snap to
+                  acknowledge. */}
+              <span
+                data-seam-playhead-head
+                className="absolute -top-1 left-1/2 block h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500"
+              />
             </span>
           )}
         </div>
@@ -690,19 +655,6 @@ export function SeamLane({
         );
       })()}
 
-      {/* THE TIME, ON THE PLAYHEAD, while it is being dragged. ABOVE the
-          boxes, not on them: it names the frame you are looking at, and a
-          label laid over that frame answers the question by covering it. */}
-      {chip !== null && playheadPx !== null && (
-        <span
-          data-seam-chip
-          aria-hidden="true"
-          style={{ left: viewportX(playheadPx) }}
-          className="pointer-events-none absolute -top-[22px] z-10 -translate-x-1/2 rounded border border-zinc-700 bg-zinc-950/95 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-zinc-100 shadow-lg"
-        >
-          {chip}
-        </span>
-      )}
 
       {/* WHAT IS UNDER THE POINTER. A name and a frame, which together answer
           "is that the shot I am looking for" without moving the playhead to
@@ -752,19 +704,24 @@ export function SeamLane({
           // below rather than floating over a gap: a heavier border, a deeper
           // shadow and a near-opaque ground, so it reads as something in front
           // rather than something printed on what it covers.
-          // BELOW THE WHOLE BLOCK, and this number tracks the block's height.
+          // TIGHT UNDER THE FILM STRIP, and over whatever is beneath it.
           //
-          // It was 80px, which cleared the ruler and the controls row when the
-          // minimap sat last. The minimap moved up under the film strip and
-          // the controls moved to the bottom, so 80 now lands ON the controls —
-          // a card over the transport is a card you cannot press play through.
-          // Measured: track ends at 52, minimap 66–80, controls 88–116.
+          // It sat below the whole block, clear of the ruler, the minimap and
+          // the controls. That put a 264px card a long way from the 30px box it
+          // was describing, so pairing the two was a journey across everything
+          // in between — the preview and its subject were the two things
+          // furthest apart on screen.
           //
-          // The symptom of this drifting again is the card overlapping the row
-          // beneath the bar rather than sitting under it, which is quiet enough
-          // to miss — the same way the scrim's own top padding has to keep pace
-          // with this block.
-          className="pointer-events-none absolute top-32 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
+          // It overlaps the minimap and the controls now, which is the right
+          // trade: those are read between gestures, and this is read DURING
+          // one. It is `pointer-events-none`, so the transport underneath stays
+          // pressable through it, and it is gone the moment the pointer leaves
+          // the boxes.
+          //
+          // Sitting just under the ruler at 56px rather than against the boxes:
+          // the ruler is the scale the box widths mean anything against, and
+          // covering it would answer "which shot" while hiding "how long".
+          className="pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
         >
           {hover.posterSrc === undefined ? null : (
             // A bare <img>: the preview is a thumbnail of a source the app

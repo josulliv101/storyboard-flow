@@ -267,10 +267,6 @@ function DetailsFilmstripModal({
   const [swapping, setSwapping] = useState(false);
   const swapRef = useRef(false);
   const [playing, setPlaying] = useState(false);
-  // A DRAG IS IN PROGRESS ON THE BAR. Distinct from `scrubbed`, which stays
-  // true once the clock has been touched: this is the gesture itself, and it
-  // is what the monitor grows for.
-  const [scrubbing, setScrubbing] = useState(false);
   // THE HOVER CARD IS UP. The row goes back for it — see the strip's own
   // className. A separate flag from `scrubbing` because the two are different
   // moments: a scrub is a gesture with the pointer down and the card hidden,
@@ -1071,7 +1067,6 @@ function DetailsFilmstripModal({
               // three land in one place and cannot drift apart.
               onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
               onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
-              onScrubbingChange={setScrubbing}
               onPreviewingChange={setPreviewing}
               // The clock spans every clip, so a point on the rail IS a point
               // on the clock and needs no conversion.
@@ -1083,15 +1078,6 @@ function DetailsFilmstripModal({
               // Splitting them would mean a few pixels of travel decided
               // whether you kept your place in the shot.
               onCommitClip={(clipId) => landOn(clipId, position)}
-              // WHEREVER THE PLAYHEAD FINISHED, which is not always under the
-              // pointer: holding at an edge runs the strip along beneath a
-              // hand that is standing still. `position` is the view's own
-              // answer to where the clock is, so the drag does not have to
-              // carry one.
-              onScrubEnd={() => {
-                if (position === null) return;
-                landOn(position.clipId, position);
-              }}
               onScrubSeconds={(seconds) => {
                 setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
@@ -1114,10 +1100,7 @@ function DetailsFilmstripModal({
         className={[
           "pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1",
           "rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm",
-          // Out of the way while the clock is being dragged: how many cards
-          // are up is not a question anyone is asking mid-scrub.
           "transition-opacity duration-200",
-          scrubbing ? "opacity-20" : "opacity-100",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -1214,9 +1197,6 @@ function DetailsFilmstripModal({
               node={media}
               centre={index === centre}
               swapping={swapping}
-              // Everything but the picture goes out while the clock is being
-              // dragged — see `scrubFocus`.
-              scrubFocus={scrubbing && index === centre}
               clipLabel={`clip ${index + 1}`}
               playingHere={playingHere}
               onPlayFromStart={
@@ -1267,15 +1247,6 @@ function DetailsFilmstripModal({
               // could be in sync with anything.
               playing={index === centre && playing}
               live={position?.clipId === id}
-              // Only the monitor grows, and only while the bar is being
-              // dragged: the neighbours are context, and enlarging them would
-              // be enlarging the thing you are trying to look past.
-              magnified={index === centre && scrubbing}
-              // The proxy follows the seeking, not the centring: a neighbour
-              // tracking the playhead is doing the same expensive thing the
-              // centre is, and a full-res seek per pointer move is what the
-              // proxy exists to avoid.
-              scrubbing={scrubbing && (index === centre || position?.clipId === id)}
               swipe={swipe}
               // MOUNTED, BUT NOT ON SCREEN.
               //

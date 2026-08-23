@@ -103,8 +103,7 @@ cannot drift by a subpixel.
   because the centring is arithmetic over uniform neighbour widths, but they
   paint nothing. Without that they show as a sliver down each side, since
   `count` panels now fill the viewport exactly.
-- **View count is 3 or 5**, picked bottom-right. The picker dims to 20%
-  opacity while scrubbing.
+- **View count is 3 or 5**, picked bottom-right.
 - **Two widths, not one.** The clip being worked on is **1.75×** its
   neighbours, and every panel is fully visible:
 
@@ -156,8 +155,6 @@ All of it is live on every panel, not just the centre:
 | State | Trigger | Effect |
 |---|---|---|
 | `dimmed` | clock engaged, panel is not centre | opacity + grayscale, 300ms |
-| `scrubFocus` | mid-drag, panel is centre | everything except `[data-item-details-frame]` drops to opacity 15% |
-| `magnified` | mid-drag, panel is centre | `transform: scale()` aiming at **620px**, capped at **2.2×** |
 | `live` | the playhead is inside this clip | red ring |
 | `swapping` | arrived via a bar landing | 300ms fade-in |
 
@@ -237,19 +234,29 @@ row, and a `SeamMinimap`.
 
 | Input | Does |
 |---|---|
-| **Drag the boxes** | Scrub. Snaps to a cut when near one, with a one-shot pulse on the playhead head |
+| **Drag the boxes** | **Pan the film.** One-to-one with the hand, measured from where the press landed. Commits to nothing |
 | **Click a box** | Commit — make that clip the centre |
-| **Release a drag** | **Also commits**, landing on wherever the playhead finished |
 | **Wheel** | Pan. Dominant axis, so a trackpad swipe and a mouse notch both work |
 | **⌘/Ctrl + wheel** | Zoom about the pointer |
-| **Hold within 40px of an edge** | The strip runs under a stationary pointer, ramped by depth up to 16px/frame |
-| **Hover a box** | Preview: name, collection, `time / duration`, poster |
-| **Drag the minimap** | Pan the bar there. Never seeks — that is the bar's job |
+| **Hover a box** | Preview card: the frame at that moment, name, collection, `time / duration` |
+| **Drag the minimap** | Pan the bar there. Never seeks — the playhead is not the minimap's business |
 
 Click vs. drag is decided by **travel (4px)**, not timing — a slow deliberate
-scrub must not also count as a tap on wherever it started. The edge-run sets the
-`moved` flag itself, or an edge-scrub across half the project would end as a
-click on whatever clip happened to arrive under a still finger.
+pan must not also count as a tap on whatever it started over.
+
+**There is no pointer scrub.** Dragging used to move the playhead, which made
+the middle card a monitor for the duration — so reaching for the bar to look
+further along the sequence changed what you were working on and had to be
+undone afterwards. Dragging now pulls the strip along like a length of film on
+a bench: the playhead stays put, the panels below never change, and letting go
+commits to nothing.
+
+What went with it: snap-to-cut and its pulse, the edge-run that drove the strip
+under a stationary pointer, the magnified monitor, the low-res scrub proxy, the
+time chip on the playhead, and land-on-release.
+
+**The playhead now moves by** the keyboard (`←` `→` a second at a time, `Home`,
+`End`), playback, and a panel's own play button.
 
 The wheel listener is **native and non-passive**. React registers `onWheel`
 passively at the root, so `preventDefault` from a synthetic handler is ignored

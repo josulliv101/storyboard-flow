@@ -12,7 +12,6 @@ import {
   fitPixelsPerSecond,
   offsetAfterZoom,
   seamRulerTicks,
-  snapToCut,
   zoomByWheel,
   type SeamBarClip,
 } from "./graph-seam-bar-layout";
@@ -81,20 +80,8 @@ import type { PreviewAnchor } from "./graph-seam-preview-anchor";
  * exactly where you put it.
  */
 
-/**
- * How near an end of the track the pointer has to get before the strip starts
- * travelling under it, and how fast it goes when it does.
- *
- * The speed ramps with depth into the zone rather than being a constant, so
- * the edge is a throttle and not a switch: a pointer resting just inside it
- * creeps along at a readable pace, one pushed hard against the very end runs
- * at `MAX`, and the two are the same gesture at different depths.
- */
-const EDGE_PAN_ZONE_PX = 40;
-const EDGE_PAN_MAX_PX_PER_FRAME = 16;
-const EDGE_PAN_GAIN = 0.4;
-
-/** Travel that turns a press on the boxes from a click into a scrub. */
+/** Travel that turns a press on the boxes from a grab into a pan. Below it the
+ *  press is a CLICK, and a click still chooses a clip. */
 const CLICK_SLOP_PX = 4;
 
 /**
@@ -104,14 +91,6 @@ const CLICK_SLOP_PX = 4;
  */
 const FOLLOW_LEAD_PX = 56;
 const FOLLOW_TRAIL_PX = 72;
-
-function edgePanVelocity(clientX: number, track: DOMRect): number {
-  const intoLeft = track.left + EDGE_PAN_ZONE_PX - clientX;
-  if (intoLeft > 0) return -Math.min(EDGE_PAN_MAX_PX_PER_FRAME, intoLeft * EDGE_PAN_GAIN);
-  const intoRight = clientX - (track.right - EDGE_PAN_ZONE_PX);
-  if (intoRight > 0) return Math.min(EDGE_PAN_MAX_PX_PER_FRAME, intoRight * EDGE_PAN_GAIN);
-  return 0;
-}
 
 function readSeconds(value: number): string {
   return `${value.toFixed(2)}s`;
@@ -141,8 +120,6 @@ export function SeamStripBar({
   onStepForward,
   onScrubSeconds,
   onCommitClip,
-  onScrubEnd,
-  onScrubbingChange,
   onPreviewingChange,
   atStart,
   atEnd,
@@ -168,17 +145,6 @@ export function SeamStripBar({
   onScrubSeconds: (value: number) => void;
   /** A box was CLICKED — make that clip the centred one. */
   onCommitClip: (clipId: string) => void;
-  /**
-   * A DRAG ENDED. No clip id, deliberately: where the playhead finished is not
-   * always under the pointer — holding at an edge runs the strip along while
-   * the hand stays put — so the bar would have to re-derive a position it does
-   * not own. The view already resolves the playhead to a clip and a time; this
-   * only tells it when to act on that.
-   */
-  onScrubEnd?: () => void;
-  /** True while a drag is live on the bar, false when it ends — the view
-   *  grows the monitor for the duration. */
-  onScrubbingChange?: (active: boolean) => void;
   /**
    * True while the hover card is up.
    *
@@ -278,17 +244,18 @@ export function SeamStripBar({
     return sum > 0 ? sum : totalSeconds;
   }, [clips, centreClipId, totalSeconds]);
 
-  useEffect(() => {
-    if (trackWidth <= 0) return;
-    // ONCE. Re-fitting on every width change would undo a zoom whenever the
-    // window moved, and re-fitting on a change of subject would undo one every
-    // time you stepped a clip.
-    setPxPerSecond(
-      (current) => current ?? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth),
-    );
-  }, [trackWidth, subjectCollectionSeconds]);
-
-  const scale = pxPerSecond ?? 9;
+  // THE OPENING FIT IS A FALLBACK, NOT A WRITE.
+  //
+  // It used to be an effect that set the scale once the track had been
+  // measured, which is a setState in an effect — a cascading render, and the
+  // thing the lint rule is right about. Derived instead, exactly as the pan
+  // below is: `pxPerSecond` stays null until somebodyZOOMS or presses `fit`,
+  // and until then the scale is computed from the width. Same "once" guarantee
+  // with no second render — a re-measure cannot undo a zoom, because once
+  // there IS a zoom the fallback is not consulted.
+  const scale =
+    pxPerSecond ??
+    (trackWidth > 0 ? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth) : 9);
   const strip = useMemo(() => buildSeamStrip(clips, scale), [clips, scale]);
 
   // ONE NEUTRAL FOR EVERY BOX unless the tint is switched on. Substituted here
@@ -319,8 +286,6 @@ export function SeamStripBar({
   // set, playback stops dragging the bar around under the reader.
   const [followSuspended, setFollowSuspended] = useState(false);
 
-  const [scrubbing, setScrubbing] = useState(false);
-  const [snapKey, setSnapKey] = useState(0);
   const [hover, setHover] = useState<SeamHover | null>(null);
   // WHICH FIT THE BAR IS SITTING AT, if any. Seeded to `clip` because that is
   // what the opening fit does — the button is lit on arrival because it
@@ -354,21 +319,10 @@ export function SeamStripBar({
   // without listing them as dependencies and re-arming themselves between
   // frames. Several of these props are inline arrows in the view — a new
   // function on every render — and depending on one would do exactly that.
-  const pointerXRef = useRef(0);
   const panPxRef = useRef<number | null>(null);
   const offsetRef = useRef(0);
   const scaleRef = useRef(9);
   const totalPxRef = useRef(0);
-  const onScrubSecondsRef = useRef(onScrubSeconds);
-  useEffect(() => {
-    panPxRef.current = panPx;
-    offsetRef.current = offset;
-    scaleRef.current = scale;
-    totalPxRef.current = strip.totalPx;
-    panLimitRef.current = panLimit;
-    onScrubSecondsRef.current = onScrubSeconds;
-  });
-
   // HOW FAR THE STRIP MAY BE PUSHED EITHER WAY.
   //
   // A native scroller clamps at both ends for free, and the bar's transform
@@ -383,6 +337,16 @@ export function SeamStripBar({
   // the one alignment the bar exists to hold.
   const panLimit = Math.max(trackWidth / 2, centreAtPx);
   const panLimitRef = useRef(0);
+  const onScrubSecondsRef = useRef(onScrubSeconds);
+  useEffect(() => {
+    panPxRef.current = panPx;
+    offsetRef.current = offset;
+    scaleRef.current = scale;
+    totalPxRef.current = strip.totalPx;
+    panLimitRef.current = panLimit;
+    onScrubSecondsRef.current = onScrubSeconds;
+  });
+
 
   /** Move the pan without waiting for a render to tell the loops about it. */
   const setOffset = useCallback((next: number) => {
@@ -393,12 +357,6 @@ export function SeamStripBar({
     setPanPx(clamped);
   }, []);
 
-  const seekToStripX = useCallback((stripX: number) => {
-    if (scaleRef.current <= 0) return;
-    const at = Math.min(Math.max(stripX, 0), totalPxRef.current);
-    onScrubSecondsRef.current(at / scaleRef.current);
-  }, []);
-
   /** Local x within the track, which is the space every gesture works in. */
   const localX = useCallback((clientX: number) => {
     const element = trackRef.current;
@@ -407,27 +365,18 @@ export function SeamStripBar({
   }, []);
 
   // ── SCRUBBING ────────────────────────────────────────────────────────────
-  const pressRef = useRef<{ pointerId: number; x: number; moved: boolean } | null>(null);
-  const lastSnapRef = useRef<number | null>(null);
-
-  const scrubToClientX = useCallback(
-    (clientX: number) => {
-      const raw = localX(clientX) - offsetRef.current;
-      const snapped = snapToCut(strip, raw);
-      // ACKNOWLEDGE A SNAP ONCE, not on every frame that stays on it. A
-      // playhead twitching sixty times a second while the hand sat still
-      // would be a fault indicator, not a confirmation.
-      if (snapped === raw) {
-        lastSnapRef.current = null;
-      } else if (lastSnapRef.current !== snapped) {
-        lastSnapRef.current = snapped;
-        setSnapKey((key) => key + 1);
-      }
-      seekToStripX(snapped);
-    },
-    [localX, seekToStripX, strip],
-  );
-
+  const pressRef = useRef<{
+    pointerId: number;
+    x: number;
+    /** The pan the strip was at when the hand landed. Every move is measured
+     *  from here rather than accumulated, so a dropped event cannot make the
+     *  film drift away from the pointer over a long drag. */
+    offset: number;
+    moved: boolean;
+  } | null>(null);
+  // A HAND IS ON THE FILM. Distinct from a wheel pan: this one has an end
+  // event, so it does not need the timer `wheeling` does.
+  const [panning, setPanning] = useState(false);
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (!event.isPrimary || event.button !== 0) return;
@@ -436,16 +385,28 @@ export function SeamStripBar({
       } catch {
         /* untrusted pointer (stories) — the moves still arrive here */
       }
-      pressRef.current = { pointerId: event.pointerId, x: event.clientX, moved: false };
-      pointerXRef.current = event.clientX;
-      lastSnapRef.current = null;
+      // GRAB THE FILM. A press used to put the playhead where you pointed and
+      // drag it from there, which made the middle card a monitor for the
+      // duration — so reaching for the bar to look further along the sequence
+      // changed what you were working on and had to be undone afterwards.
+      //
+      // Dragging now moves the STRIP, the way you would pull a length of film
+      // along a bench: the playhead stays where it is, nothing below changes,
+      // and letting go commits to nothing. Clicking a box still chooses one,
+      // which is the gesture that always meant "go here".
+      pressRef.current = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        offset: offsetRef.current,
+        moved: false,
+      };
       setHover(null);
-      setScrubbing(true);
-      setFollowSuspended(false);
-      onScrubbingChange?.(true);
-      scrubToClientX(event.clientX);
+      setPanning(true);
+      // A DELIBERATE PAN, so playback stops dragging the bar back under the
+      // hand — the same rule the wheel already follows.
+      setFollowSuspended(true);
     },
-    [onScrubbingChange, scrubToClientX],
+    [],
   );
 
   const showHover = useCallback(
@@ -506,10 +467,13 @@ export function SeamStripBar({
       }
       if (event.pointerId !== press.pointerId) return;
       if (Math.abs(event.clientX - press.x) > CLICK_SLOP_PX) press.moved = true;
-      pointerXRef.current = event.clientX;
-      scrubToClientX(event.clientX);
+      // THE FILM FOLLOWS THE HAND, ONE TO ONE. Measured from where the press
+      // landed rather than accumulated per event, so the point of film under
+      // the finger stays under it however long the drag runs — an accumulating
+      // version drifts by whatever a dropped or coalesced move was worth.
+      setOffset(press.offset + (event.clientX - press.x));
     },
-    [scrubToClientX, showHover],
+    [setOffset, showHover],
   );
 
   const endPress = useCallback(
@@ -517,68 +481,25 @@ export function SeamStripBar({
       const press = pressRef.current;
       pressRef.current = null;
       if (press === null) return;
-      setScrubbing(false);
-      onScrubbingChange?.(false);
+      setPanning(false);
       // A PRESS THAT DID NOT TRAVEL IS A CLICK, and a click on a box makes
       // that clip active. Distinguished by travel rather than by timing,
-      // because a slow deliberate scrub must not also count as a tap on
-      // wherever it started.
-      if (press.moved) {
-        // A DRAG NOW LANDS TOO. Letting go used to leave the row where it was
-        // and only the monitor travelling, so the shot you had scrubbed to was
-        // on screen but not the one you were working on — you had to go and
-        // fetch it. Releasing is the commit.
-        onScrubEnd?.();
-        return;
-      }
+      // because a slow deliberate pan must not also count as a tap on whatever
+      // it started over.
+      //
+      // A DRAG COMMITS TO NOTHING. That is the whole point of it being a pan:
+      // you pull the film along to see what is there, and what you were
+      // working on is exactly where you left it. Letting go used to land the
+      // row on wherever the playhead had reached, which meant a look cost you
+      // your place and a trip back.
+      if (press.moved) return;
       const stripX = localX(event.clientX) - offsetRef.current;
       const landedOn = stripPositionAt(strip, stripX)?.clipId ?? null;
       if (landedOn !== null && landedOn !== centreClipId) onCommitClip(landedOn);
     },
-    [centreClipId, localX, onCommitClip, onScrubEnd, onScrubbingChange, strip],
+    [centreClipId, localX, onCommitClip, strip],
   );
 
-  // ── HOLDING AT AN EDGE RUNS THE STRIP UNDER THE POINTER ──────────────────
-  //
-  // The track only spans what is on screen, so without this the end of it is
-  // the end of the timeline you can reach in one gesture, with the rest of the
-  // order sitting an inch off the side.
-  //
-  // A FRAME LOOP RATHER THAN THE POINTER MOVES, because the hand is STILL —
-  // holding at an edge fires no further pointermove events at all, and an
-  // implementation reading the moves would travel only while the hand
-  // jittered.
-  useEffect(() => {
-    if (!scrubbing) return;
-    let frame = requestAnimationFrame(function tick() {
-      frame = requestAnimationFrame(tick);
-      const element = trackRef.current;
-      if (element === null || scaleRef.current <= 0) return;
-      const box = element.getBoundingClientRect();
-      const velocity = edgePanVelocity(pointerXRef.current, box);
-      if (velocity === 0) return;
-
-      const next = offsetRef.current - velocity;
-      // IT STOPS AT THE ENDS BY ASKING WHERE THE POINTER NOW POINTS, not by
-      // clamping the transform. The offset that puts the last clip under the
-      // pointer is a function of the pan, the track width and the scale, and
-      // the one number that has to stay in range is the time being scrubbed
-      // to — so that is the number the guard is written against.
-      const stripX = pointerXRef.current - box.left - next;
-      if (stripX < 0 || stripX > totalPxRef.current) return;
-
-      // THE FILM MOVED UNDER THE POINTER, so this is a drag even though the
-      // hand never left the spot it landed on. Without this an edge-scrub
-      // across half the project would end in a CLICK — committing to whatever
-      // clip happened to arrive under a stationary finger.
-      const press = pressRef.current;
-      if (press !== null) press.moved = true;
-
-      setOffset(next);
-      seekToStripX(stripX);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [scrubbing, seekToStripX, setOffset]);
 
   // ── WHEEL: PAN, OR ZOOM ABOUT THE POINTER ────────────────────────────────
   //
@@ -651,22 +572,26 @@ export function SeamStripBar({
   // does not get dragged to the middle: the bar is a map you have positioned,
   // and stepping a clip is not a request to throw that away. Skipped while the
   // pan is still null, because the fallback is already centring it.
-  const [broughtIntoView, setBroughtIntoView] = useState(centreClipId);
+  // A REF, NOT STATE. Nothing renders from this — it only remembers which
+  // subject has already been brought into view so the nudge runs once per
+  // change. As state it was a setState inside an effect, which is a second
+  // render for a value no one draws.
+  const broughtIntoViewRef = useRef(centreClipId);
   useEffect(() => {
-    if (broughtIntoView === centreClipId) return;
-    setBroughtIntoView(centreClipId);
+    if (broughtIntoViewRef.current === centreClipId) return;
+    broughtIntoViewRef.current = centreClipId;
     setFollowSuspended(false);
     if (panPxRef.current === null) return;
     const segment = strip.segments.find((candidate) => candidate.clipId === centreClipId);
     if (segment === undefined) return;
     nudgeIntoView(segment.leftPx + segment.widthPx / 2);
-  }, [broughtIntoView, centreClipId, nudgeIntoView, strip]);
+  }, [centreClipId, nudgeIntoView, strip]);
 
-  // DERIVED, NOT ANNOUNCED AT EACH SITE. `hover` is cleared from five places —
-  // pointer down, pointer leave, a wheel, the start of a scrub, and a position
-  // that resolves to no clip — and a missed one would leave the panels dimmed
-  // with no card up to explain why. Watching the value catches all of them.
-  const previewing = hover !== null && !scrubbing;
+  // DERIVED, NOT ANNOUNCED AT EACH SITE. `hover` is cleared from four places —
+  // pointer down, pointer leave, a wheel, and a position that resolves to no
+  // clip — and a missed one would leave the panels dimmed with no card up to
+  // explain why. Watching the value catches all of them.
+  const previewing = hover !== null;
   useEffect(() => {
     onPreviewingChange?.(previewing);
   }, [previewing, onPreviewingChange]);
@@ -774,7 +699,14 @@ export function SeamStripBar({
         // browser's own focus ring drew a pale outline around the whole track
         // the moment you touched it, which read as a border the bar did not
         // have a second earlier.
-        className="relative flex-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        // `z-30`, so what OVERFLOWS this element paints above the minimap and
+        // the controls below it. The hover card is absolutely positioned inside
+        // the lane and now hangs well past the track's own 52px; without a
+        // stacking order the two later siblings would paint over it, since DOM
+        // order decides among elements that never asked. The track's own box
+        // does not reach them, and the card is `pointer-events-none`, so
+        // nothing under it stops being clickable.
+        className="relative z-30 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
         <SeamLane
           laneRef={laneRef}
@@ -786,11 +718,9 @@ export function SeamStripBar({
           atEnd={atEnd}
           offset={offset}
           playheadPx={playheadPx}
-          snapKey={snapKey}
           ghostX={hover === null ? null : hover.x}
-          hover={scrubbing ? null : hover}
+          hover={panning ? null : hover}
           previewAnchor={previewAnchor}
-          chip={scrubbing ? readSeconds(atSeconds) : null}
           handlers={{
             onPointerDown,
             onPointerMove,
@@ -837,12 +767,13 @@ export function SeamStripBar({
         windowToSeconds={windowToSeconds}
         playheadSeconds={playheadSeconds}
         onPanToSeconds={panToSeconds}
-        // EASE THE WINDOW WHEN NOTHING IS DRIVING IT. A scrub can run the
-        // strip under a stationary pointer and a wheel pans it directly; both
-        // have to arrive exactly where the hand is. A fit, a step or a landing
-        // moves it somewhere else in a single frame, and that is the jump
-        // worth animating.
-        settled={!scrubbing && !wheeling}
+        // EASE THE WINDOW WHEN NOTHING IS DRIVING IT. A hand on the film and
+        // a wheel both move the strip directly, and the rectangle has to arrive
+        // exactly where they put it — easing would leave it trailing the film
+        // it is supposed to be reporting. A fit, a step or a landing moves it
+        // somewhere else in a single frame, and that is the jump worth
+        // animating.
+        settled={!panning && !wheeling}
       />
 
       {/* THE CONTROLS UNDER BOTH BARS, and the transport in the middle of it.
