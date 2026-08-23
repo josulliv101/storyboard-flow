@@ -19,7 +19,7 @@ export default function TimelineLoading() {
   return (
     <div
       aria-label="Loading project"
-      className="graph-view-theme mx-auto flex w-full max-w-[1400px] flex-col gap-5"
+      className="graph-view-theme flex w-full flex-col gap-5"
     >
       <GraphViewLoadingSkeleton />
     </div>

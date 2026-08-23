@@ -1080,7 +1080,19 @@ export function SeamStripBar({
           // is moving under the pointer, and a mark claiming to be "here" is
           // the one thing that is not true mid-drag.
           ghostX={hover === null || panning ? null : hover.x}
-          playheadPx={playheadPx}
+          // ONLY WHILE SOMETHING IS RUNNING. The clock holds a position from
+          // the moment anything touches it — a scrub, a step, a press on the
+          // scale — so the red line used to sit on the bar permanently,
+          // claiming "playback is here" about a transport that had been
+          // stopped for an hour. It is the only saturated thing on the bar,
+          // and a permanent alarm colour is one that has stopped meaning
+          // anything.
+          //
+          // GATED AT THE RULER, not at the clock. The position itself is still
+          // tracked and still correct — the follow effect below reads it to
+          // keep a playing bar under the playhead, and pressing play has to
+          // resume from somewhere. This decides only whether it is DRAWN.
+          playheadPx={playing ? playheadPx : null}
           handlers={{
             onPointerMove: onRulerMove,
             onPointerLeave: (event) => { cancelHover(); clearHoveredClip(); void event; },

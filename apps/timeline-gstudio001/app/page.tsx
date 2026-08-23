@@ -204,7 +204,7 @@ export default function Home() {
   const initialLoading = isLoading && projects.length === 0;
 
   return (
-    <div className="mx-auto grid w-full max-w-[1400px] gap-6 pt-7 animate-fade-in">
+    <div className="grid w-full gap-6 pt-7 animate-fade-in">
       <header className="flex flex-col gap-4 border-b border-zinc-800 pb-5 md:flex-row md:items-end md:justify-between">
         <div className="grid min-w-0 flex-1 gap-2">
           <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.24em] text-blue-400">

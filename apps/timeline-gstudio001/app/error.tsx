@@ -35,7 +35,7 @@ export default function AppError({
   }, [error]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-5 p-6">
+    <div className="flex w-full flex-col gap-5 p-6">
       <div
         role="alert"
         className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-300"
