@@ -1225,7 +1225,17 @@ export const TagsAreAddedFromAnIcon: Story = {
     const add = editor.querySelector<HTMLButtonElement>("[data-tag-add]")!;
     expect(add).not.toBeNull();
     // It sits AFTER the chips, which is where the next tag would go.
-    expect(add.previousElementSibling?.hasAttribute("data-tag-chip") ?? true).toBe(true);
+    //
+    // Asked as a question about DOCUMENT ORDER rather than about who the
+    // previous sibling is. The chips now live in a scroller of their own, so
+    // that the row can be exactly one line high without clipping this
+    // button's popover — which makes the button's previous sibling the
+    // scroller, not a chip, while the thing being claimed is unchanged.
+    for (const chip of Array.from(editor.querySelectorAll("[data-tag-chip]"))) {
+      expect(
+        Boolean(chip.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING),
+      ).toBe(true);
+    }
 
     fireEvent.click(add);
     const field = await waitFor(() => {
@@ -1382,9 +1392,22 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
     // that changed anything.
     await waitFor(() => {
       expect(neighbourShows("[data-trim-overview]")).toBe(false);
-      expect(visible("[data-tag-editor]")).toBe(false);
       expect(visible("[data-item-details-undo]")).toBe(false);
     });
+
+    // THE TAG ROW IS THE ONE CONTROL THAT NO LONGER SHEDS, and it stopped
+    // for the sake of something this story is also about: alignment.
+    //
+    // It used to be gated at 30rem like the rest, which meant that at a 1280
+    // canvas the wide centre kept its tags while the narrow neighbours
+    // dropped theirs. Everything below the filmstrip then differed in height
+    // by that row, and because the cards hang from a common bottom, the
+    // neighbours' strips sat 37px off the centre's — the three trim windows
+    // this view exists to compare were on three different lines.
+    //
+    // So it is always present and always one line high. A narrow panel could
+    // not be tagged at all before, so this shed nothing to gain it.
+    expect(visible("[data-tag-editor]")).toBe(true);
     // AND THE FILMSTRIP FILLS THE BOX IT WAS MEASURED FROM.
     //
     // Its width is a NUMBER, handed down so frames can be laid out, and it was
@@ -3777,5 +3800,179 @@ export const TheBarThumbnailStartsAfterTheTrim: Story = {
 
     // Left as it was found, for whichever story runs next in this browser.
     framesTo("STRIP");
+  },
+};
+
+/**
+ * THE THREE TRIM STRIPS SIT ON ONE LINE.
+ *
+ * The pictures are deliberately different sizes — the subject's is bigger
+ * because it is the one being judged — but the CONTROLS beneath them are
+ * identical in size and purpose, and comparing a trim against its neighbours'
+ * is most of what this view is for.
+ *
+ * Centred, they were not comparable. The taller subject extended equally above
+ * and below its neighbours, and every row below the picture inherited half the
+ * height difference: measured at 1920, the well, the filmstrip, the in/out
+ * fields and the tags all sat 76px lower on the centre than on the clips either
+ * side of it. Three filmstrips on three different lines.
+ *
+ * Hanging the cards from a common bottom fixes it for free, because everything
+ * from the strip down is the same height in every card. Asserted on the STRIP
+ * rather than on the card box, because the card box agreeing is the mechanism
+ * and the strips agreeing is the point — a future layout that aligned them some
+ * other way should still pass.
+ *
+ * A DELIBERATE DEPARTURE from the design this view follows, which top-aligns
+ * the three and lets the strips fall wherever the picture heights leave them.
+ */
+export const TheTrimStripsShareOneLine: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    await waitFor(() => expect(panels().length).toBeGreaterThan(2));
+
+    const topsOf = (selector: string) =>
+      panels()
+        .map((panel) => panel.querySelector<HTMLElement>(selector))
+        .filter((el): el is HTMLElement => el !== null)
+        .map((el) => el.getBoundingClientRect().top);
+
+    // THE MECHANISM, asserted unconditionally: the cards hang from one line.
+    const bottoms = panels().map((panel) => panel.getBoundingClientRect().bottom);
+    expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThan(1);
+
+    // Every clip in this scene is a windowed video, so every panel draws a strip.
+    const strips = topsOf("[data-trim-strip-slot]");
+    expect(strips.length).toBe(panels().length);
+
+    // AND THE CONSEQUENCE. This holds only while the rows BELOW the strip
+    // are the same height in every card, so those rows were made invariant
+    // rather than hoped about:
+    //
+    //   - the layer picker moved ABOVE the strip, because it appears only on
+    //     a clip that is on a lane, so below it would push one card's strip
+    //     up by its own height;
+    //   - the tag row lost its 30rem gate and stopped wrapping, because at a
+    //     1280 canvas the 560px centre kept its tags while the 320px
+    //     neighbours dropped theirs and their strips sat 37px lower — the tag
+    //     row and its gap, exactly.
+    //
+    // Asserted at whatever width the runner gives us, which is the point:
+    // this used to be a claim that was only true on a wide canvas.
+    const belowStrip = panels().map((panel) => {
+      const strip = panel.querySelector<HTMLElement>("[data-trim-strip-slot]")!;
+      return panel.getBoundingClientRect().bottom - strip.getBoundingClientRect().top;
+    });
+    expect(Math.max(...belowStrip) - Math.min(...belowStrip)).toBeLessThan(1);
+
+    // Sub-pixel tolerance: laid out by flex, not from a shared number.
+    expect(Math.max(...strips) - Math.min(...strips)).toBeLessThan(1);
+    const wells = topsOf("[data-item-details-readout]");
+    expect(Math.max(...wells) - Math.min(...wells)).toBeLessThan(1);
+
+    // The tag row is there on EVERY card, not just the wide one — the fix
+    // added capability rather than removing it, and a revert to the gate
+    // would show up here first.
+    const tagRows = panels().map((panel) => panel.querySelector("[data-tag-editor]"));
+    expect(tagRows.filter(Boolean).length).toBe(panels().length);
+
+    // And the pictures are still allowed to differ. If THIS fails, the strips
+    // line up because the cards became identical — which is a different view
+    // from the one being tested here.
+    const pictures = panels()
+      .map((panel) => panel.querySelector<HTMLElement>("[data-item-details-frame]"))
+      .filter((el): el is HTMLElement => el !== null)
+      .map((el) => el.getBoundingClientRect().height);
+    expect(Math.max(...pictures) - Math.min(...pictures)).toBeGreaterThan(20);
+  },
+};
+
+/**
+ * THE BAR REACHES AS FAR AS THE CARDS DO.
+ *
+ * The bar was capped at `7xl` on the reasoning that it is a map and should be
+ * WIDER than the panels it describes — true while the panels were capped too.
+ * Once the app stopped limiting its own width the panels went full-viewport and
+ * the cap stayed, inverting the intent: measured at 1920, the cards ran 1872px
+ * against the bar's 1280, so the cards overhung the ruler that measures them by
+ * 296px on each side and the top of the view read as a floating island.
+ *
+ * Asserted against the SCRIM's padded width rather than against the card row,
+ * because that is the edge both are supposed to meet — and a card row that
+ * narrowed for its own reasons should not quietly take the bar with it.
+ */
+export const TheBarSpansTheFullWidth: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const scale = document.querySelector<HTMLElement>("[data-seam-ruler-scale]")!;
+    const controls = document.querySelector<HTMLElement>("[data-seam-controls]")!;
+
+    // `px-6` on the scrim — 24px each side, and nothing else may narrow them.
+    // Compared as strings so a failure names which edge of which row moved.
+    const PAD = 24;
+    for (const [name, element] of [
+      ["ruler", scale],
+      ["controls", controls],
+    ] as const) {
+      const box = element.getBoundingClientRect();
+      expect(`${name} left ${Math.round(box.left)}`).toBe(`${name} left ${PAD}`);
+      expect(`${name} right ${Math.round(box.right)}`).toBe(
+        `${name} right ${window.innerWidth - PAD}`,
+      );
+    }
+  },
+};
+
+/**
+ * THE TRANSPORT IS ON THE CONTROL ROW, NOT UNDER IT.
+ *
+ * The play assembly carried a 36px top margin, put there to drop it clear of
+ * the bars above while the badges either side stayed where the ruler left them.
+ * What that produced was a control row with a hole in the middle: `frames`,
+ * `card`, the clock, `fit` and `reach` on one line, and the one control anyone
+ * reaches for without reading sitting 36px below them on a second.
+ *
+ * Asserted as SHARED CENTRES rather than shared tops, because the transport is
+ * legitimately taller than the badges — it is a 42px pill against a 28px tray,
+ * and a shared top would be the wrong shape of alignment to ask for.
+ */
+export const TheTransportSitsOnTheControlRow: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const centreY = (selector: string) => {
+      const box = document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+      return box.top + box.height / 2;
+    };
+    const transport = centreY("[data-seam-transport]");
+    for (const group of [
+      "[data-details-bar-frames]",
+      "[data-details-bar-card]",
+      "[data-seam-fit]",
+      "[data-details-bar-reach]",
+    ]) {
+      expect(`${group} offset ${Math.round(centreY(group) - transport)}`).toBe(
+        `${group} offset 0`,
+      );
+    }
+
+    // The transport IS the tallest thing on the row — if this stops being true
+    // the row has been rebuilt around something else and the centring above is
+    // no longer describing what it thinks it is.
+    const rowHeight = document
+      .querySelector<HTMLElement>("[data-seam-controls]")!
+      .getBoundingClientRect().height;
+    const pill = document
+      .querySelector<HTMLElement>("[data-seam-transport]")!
+      .getBoundingClientRect().height;
+    expect(pill).toBeGreaterThan(
+      document.querySelector<HTMLElement>("[data-details-bar-reach]")!.getBoundingClientRect()
+        .height,
+    );
+    expect(rowHeight).toBeGreaterThanOrEqual(pill);
   },
 };

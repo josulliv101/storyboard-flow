@@ -609,17 +609,16 @@ export function DetailsPanel({
           trimOut={trimOut}
         />
 
-        <ItemDetailsTrimStrip
-          node={node}
-          windowed={windowed}
-          video={video}
-          trimIn={trimIn}
-          trimOut={trimOut}
-          showing={showing}
-          live={live}
-          playhead={playhead}
-        />
+        {/* ABOVE THE TRIM BLOCK, and that placement is load-bearing.
 
+            Everything below the filmstrip has to be the SAME HEIGHT in every
+            panel, because the cards hang from a common bottom and that is
+            what puts the three strips on one line. This control appears only
+            for a clip on a lane with a picture — so it is present on some
+            cards and not others, and underneath the strip it would push one
+            card's strip up by its own height and break the line it sits on.
+            Above the strip it lands in the part of the card that is already
+            allowed to differ. */}
         {/* WHERE IT DRAWS, for a clip that is under the picture. Only shown
             when it is actually on a lane and actually has a picture: the
             control describes a rectangle inside the frame, and neither the
@@ -637,6 +636,18 @@ export function DetailsPanel({
           </div>
         )}
 
+        <ItemDetailsTrimStrip
+          node={node}
+          windowed={windowed}
+          video={video}
+          trimIn={trimIn}
+          trimOut={trimOut}
+          showing={showing}
+          live={live}
+          playhead={playhead}
+        />
+
+
         {/* Tags. Here rather than on the card because the card's content
             renders inside a <button>, where these remove buttons and the text
             field would be invalid HTML — the card shows them, this edits them.
@@ -649,7 +660,23 @@ export function DetailsPanel({
             the control describes itself, and at nine panels the heading was
             nine lines of the word. One hairline stays, because the panel still
             needs a foot to sit on. */}
-        <div className="hidden border-t border-white/10 pt-2 @min-[30rem]:block">
+        {/* ALWAYS, AND ALWAYS ONE LINE HIGH.
+
+            This was gated at 30rem, which made it the last thing standing
+            between the three filmstrips and a shared line: at a 1280 canvas
+            the 560px centre kept its tags and the 320px neighbours dropped
+            theirs, so the neighbours' strips sat 37px lower — the tag row and
+            its gap, exactly. A row that is present on one card and absent on
+            another cannot sit under something that has to align.
+
+            Un-gating it is not enough on its own: tags wrap, and a clip may
+            carry up to MAX_TAGS_PER_CLIP of them, so a wrapping row is a
+            variable-height row and breaks the line just as thoroughly. The
+            chips scroll sideways instead — see graph-tag-editor.tsx.
+
+            Both changes ADD capability rather than removing it: a narrow
+            panel could not be tagged at all before. */}
+        <div className="border-t border-white/10 pt-2">
           <TagEditor nodeId={node.id} />
         </div>
       </div>

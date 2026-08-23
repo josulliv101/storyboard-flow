@@ -135,13 +135,33 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
   };
 
   return (
-    <div className="relative flex flex-wrap items-center gap-1.5" data-tag-editor>
+    <div className="relative flex items-center gap-1.5" data-tag-editor>
       {/* NO EMPTY-STATE SENTENCE. The field below it says "Add a tag…" in
             its own placeholder, so the line was telling you what the control
             already tells you — and in the details strip it appeared once per
             panel, up to nine times on one screen, which is how a helpful
             sentence turns into noise. An empty row of chips reads as empty
             without being told. */}
+        {/* THE CHIPS SCROLL; THE CONTROLS DO NOT.
+
+            ONE LINE, ALWAYS, so this row's height cannot change with the
+            number of tags. The panel above hangs its filmstrip on that being
+            true: the three cards share a bottom edge, so anything of varying
+            height below the strip moves one card's strip off the line the
+            other two are on. Wrapping was the alternative, and wrapping is
+            exactly what broke it.
+
+            THE `+` BUTTON AND ITS POPOVER STAY OUTSIDE THIS BOX. An overflow
+            container clips on BOTH axes — `overflow-x: auto` makes the block
+            direction `auto` too — so a popover anchored inside one opens into
+            a scroll box a few pixels tall and is never seen. That is the
+            whole reason the chips are wrapped here rather than the row.
+
+            NOT `flex-1`. Grown to fill, an EMPTY scroller takes the whole row
+            and strands the `+` button against the far edge of the card, yards
+            from the chips it appends to. Shrink-only leaves it hugging its
+            content and still scrolling once there is too much. */}
+        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tags.map((tag) => (
           <span
             key={tag}
@@ -155,7 +175,7 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
             // something exact here, and a judgement is neither editable
             // data nor the playhead.
             className={[
-              "flex items-center gap-1 rounded py-0.5 pr-0.5 pl-1.5",
+              "flex shrink-0 items-center gap-1 rounded py-0.5 pr-0.5 pl-1.5",
               "text-[11px] leading-none font-medium ring-1",
               JUDGEMENT_TAGS.has(tag) ? TAG_JUDGEMENT : TAG_FACT,
             ].join(" ")}
@@ -172,6 +192,7 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
             </button>
           </span>
         ))}
+        </div>
 
         {/* AT THE END OF THE TAGS, which is where the next one would go. A
             control that adds to a list belongs at the end of that list; parked
@@ -190,7 +211,7 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
           // it was a sixth tag in a row of five, and the eye had to read
           // the glyph to find out it was not one. A broken outline says
           // empty-and-fillable before anything is read.
-          className="flex size-5 items-center justify-center rounded border border-dashed border-white/20 text-zinc-500 transition-colors hover:border-white/30 hover:bg-white/5 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex size-5 shrink-0 items-center justify-center rounded border border-dashed border-white/20 text-zinc-500 transition-colors hover:border-white/30 hover:bg-white/5 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Plus aria-hidden="true" className="size-3" />
         </button>

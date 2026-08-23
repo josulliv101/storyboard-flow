@@ -1200,7 +1200,10 @@ export function SeamStripBar({
         // which put the ensemble visibly high in its own band even though the
         // row itself was centred. Equal air on both sides is what makes it look
         // centred, and only one of those two numbers existed.
-        className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 pb-2"
+        // `pt-3 pb-2` — the row needs air ABOVE it now that the transport no
+        // longer brings its own. Measured against the design: about 23px
+        // between the minimap and the top of the controls.
+        className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 pt-3 pb-2"
       >
         {/* HIDDEN, NOT WRAPPED, on a narrow view. Wrapping this row costs the
             strip below a line of height it has to be told about — see the
@@ -1224,12 +1227,18 @@ export function SeamStripBar({
             stay there when a setting changes width. */}
         <div
           data-seam-transport
-          // DROPPED CLEAR OF THE BARS ABOVE. `mt-9` is 36px, on the assembly
-          // rather than on the row: the badges either side keep sitting where
-          // the ruler leaves them, and only the transport takes the air.
+          // ON THE ROW, NOT BELOW IT. This carried `mt-9` — 36px on the
+          // assembly rather than on the row — to drop the transport clear of
+          // the bars above while the badges either side stayed where the
+          // ruler left them. What it actually produced was a control row
+          // with a hole in the middle: two groups on one line and the play
+          // button on a second, 36px lower, reading as its own half-row.
           //
-          // Landed at 20 first and went to 36. Whatever this number becomes,
-          // the scrim's top padding owes it TWICE over — see the note there.
+          // The row is already `items-center`, so with the margin gone the
+          // transport centres against `frames`, `card`, the clock, `fit` and
+          // `reach` — one line of controls, which is what the design it
+          // follows has. The air the margin was buying now comes from the
+          // row's own spacing, where it applies to everything equally.
           // TIGHT AROUND THE BUTTON. Six pixels of padding and a 32px button put
           // the transport in a 46px pill where the white circle occupied
           // barely two thirds of the height — it read as a small control
@@ -1237,7 +1246,7 @@ export function SeamStripBar({
           // arranged around. Three pixels and a 36px button takes it to
           // 42, and the circle now fills the pill the way it does in the
           // design it came from.
-          className={["mt-9 flex items-center gap-1 rounded-full border p-[3px]", HAIRLINE, SURFACE_WELL].join(" ")}
+          className={["flex items-center gap-1 rounded-full border p-[3px]", HAIRLINE, SURFACE_WELL].join(" ")}
         >
           {/* STEP ONE CLIP, either way, bracketing the thing they move.
               Disabled rather than hidden at the ends: a control that vanishes
