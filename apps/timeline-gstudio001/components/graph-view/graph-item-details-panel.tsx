@@ -23,7 +23,8 @@ import {
 import {
   DETAILS_CHROME_MS,
   DETAILS_HANDOFF_MS,
-  detailsStepTransition,
+  DETAILS_RESIZE_MS,
+  detailsResizeTransition,
 } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { formatSeconds } from "@/lib/format-duration";
@@ -375,7 +376,7 @@ export function DetailsPanel({
           // a `duration-*`/`ease-*` pair so the curve is the one value all
           // three read, instead of a cubic-bezier copied into three class
           // strings and drifting from two of them.
-          ...(swapping ? {} : { transition: detailsStepTransition("width") }),
+          ...(swapping ? {} : { transition: detailsResizeTransition("width") }),
           ...(spare ? { visibility: "hidden" as const } : {}),
         }}
       >
@@ -413,7 +414,8 @@ export function DetailsPanel({
           // wears it in between, so there is one subject at every frame of the
           // step — which is the point, because the SIZES are crossing at that
           // moment and cannot say which card is which.
-          transitionDuration: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
+          ["--chrome-ms" as string]: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
+          ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_RESIZE_MS}ms`,
           ...(focusHandoff === "arriving"
             ? { ["--focus-delay" as string]: `${DETAILS_HANDOFF_MS}ms` }
             : {}),
@@ -497,8 +499,23 @@ export function DetailsPanel({
           // `motion-reduce:transition-none` still wins — an inline
           // `transition-delay` would outrank the utility that turns the whole
           // thing off.
-          "transition-[box-shadow,border-color,background-color,transform]",
-          "ease-[cubic-bezier(0.32,0.72,0,1)] [transition-delay:var(--focus-delay,0ms)]",
+          // HEIGHT IS IN THE LIST NOW, and it is the reason a step used to look
+          // wrong. It was in nobody's transition, so a card promoted to subject
+          // grew from 368px to 519 — measured at 1920 — in a single frame,
+          // moving its top edge 151px while its width was easing over the step
+          // and the row was starting to travel. One dimension gliding and the
+          // other teleporting is what the eye caught.
+          //
+          // FOUR CLOCKS ON ONE ELEMENT, so the lists are written per property.
+          // The chrome runs on the handoff (and waits its delay when arriving);
+          // height runs on the resize phase and must NOT wait, or the card
+          // would still be growing after the row had begun to move. Driven by
+          // variables rather than an inline `transition` so that
+          // `motion-reduce:transition-none` still outranks the lot.
+          "transition-[box-shadow,border-color,background-color,transform,height]",
+          "ease-[cubic-bezier(0.32,0.72,0,1)]",
+          "[transition-duration:var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--resize-ms)]",
+          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,0ms]",
           "motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //

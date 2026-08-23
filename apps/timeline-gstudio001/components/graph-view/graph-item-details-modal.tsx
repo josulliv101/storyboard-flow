@@ -32,7 +32,12 @@ import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
-import { DETAILS_STEP_MS, detailsStepTransition } from "./graph-details-motion";
+import {
+  DETAILS_RESIZE_MS,
+  DETAILS_SLIDE_MS,
+  detailsSlideTransition,
+  detailsStepTransition,
+} from "./graph-details-motion";
 import { SegmentedControl } from "./graph-details-segmented";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
@@ -370,7 +375,10 @@ function DetailsFilmstripModal({
     // The slide's own clock, plus a frame — releasing on the same tick can
     // blank the card on its last painted frame, which is the bug in
     // miniature.
-    const timer = setTimeout(() => setLeavingCentre(null), DETAILS_STEP_MS + 40);
+    const timer = setTimeout(
+      () => setLeavingCentre(null),
+      DETAILS_RESIZE_MS + DETAILS_SLIDE_MS + 40,
+    );
     return () => clearTimeout(timer);
   }, [centre]);
 
@@ -1240,7 +1248,14 @@ function DetailsFilmstripModal({
           transform: rowTransform,
           // THE STEP'S OWN TIMING, shared with the panel widths and the film
           // strip — see . One press, one motion.
-          transition: dragPx === 0 ? detailsStepTransition("transform, opacity") : undefined,
+          // PHASE TWO. The row does not begin travelling until the cards have
+          // finished resizing — see `detailsSlideTransition`. Opacity is not
+          // part of the choreography (it is the hover-preview fade), so it
+          // keeps the plain step timing and starts immediately.
+          transition:
+            dragPx === 0
+              ? `${detailsSlideTransition("transform")}, ${detailsStepTransition("opacity")}`
+              : undefined,
         }}
       >
         {ids.map((id, index) => {

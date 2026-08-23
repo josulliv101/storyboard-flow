@@ -4057,9 +4057,19 @@ export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
     const panels = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
-    const timing = (panel: HTMLElement) => {
+    // PER PROPERTY, because this element now runs several clocks at once:
+    // the chrome on the handoff, height on the resize phase. A bare
+    // `transitionDelay` is a comma-separated list of five values here, and
+    // reading it whole compares the wrong things.
+    const timing = (panel: HTMLElement, property = "box-shadow") => {
       const style = getComputedStyle(panel);
-      return { duration: style.transitionDuration, delay: style.transitionDelay };
+      const at = style.transitionProperty.split(",").map((name) => name.trim()).indexOf(property);
+      const pick = (value: string) =>
+        value.split(",").map((entry) => entry.trim())[at] ?? "";
+      return {
+        duration: pick(style.transitionDuration),
+        delay: pick(style.transitionDelay),
+      };
     };
 
     // Settled: nobody is waiting on anybody.
@@ -4092,5 +4102,62 @@ export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
     expect(Number.parseFloat(departing.duration)).toBeLessThanOrEqual(
       Number.parseFloat(timing(arriving).delay) + 0.001,
     );
+  },
+};
+
+/**
+ * THE CARDS FINISH RESIZING BEFORE THE ROW STARTS MOVING.
+ *
+ * A step used to do both at once, and what made that read wrong was not the
+ * overlap — it was that only half the resize was animated. Width eased over the
+ * step; HEIGHT was in nobody's transition list and snapped. Measured at 1920, a
+ * card promoted to subject goes from 368px tall to 519, and since the cards hang
+ * from a common bottom that is a 151px jump of its top edge, in one frame, at
+ * the moment the row began to travel.
+ *
+ * Separating the two is free: the cards that change size are ADJACENT and swap
+ * the same number of pixels, so nothing else in the row moves while they do it.
+ * The subject grows in place, then the row slides to centre it.
+ *
+ * Asserted as declarations rather than as sampled geometry. The claim is about
+ * ORDER, and sampling positions mid-flight is a race — worse here than usual,
+ * because the interesting window is 190ms long.
+ */
+export const TheResizeFinishesBeforeTheSlideBegins: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panel = document.querySelector<HTMLElement>("[data-item-details-panel]")!;
+    const outer = panel.parentElement!;
+    const strip = document.querySelector<HTMLElement>("[data-details-strip]")!;
+
+    // HEIGHT IS ANIMATED AT ALL. This is the whole bug, in one assertion.
+    const panelStyle = getComputedStyle(panel);
+    expect(panelStyle.transitionProperty).toContain("height");
+
+    // Width and height run on the same clock, so the card changes shape as one
+    // thing rather than as two.
+    const properties = panelStyle.transitionProperty.split(",").map((name) => name.trim());
+    const durations = panelStyle.transitionDuration.split(",").map((value) => value.trim());
+    const heightDuration = durations[properties.indexOf("height")];
+    expect(`height ${heightDuration}`).toBe(
+      `height ${getComputedStyle(outer).transitionDuration.split(",")[0]!.trim()}`,
+    );
+
+    // AND THE SLIDE WAITS FOR IT. The strip's transform is delayed by exactly
+    // the resize, which is what makes this a sequence rather than an overlap.
+    const stripProperties = getComputedStyle(strip)
+      .transitionProperty.split(",")
+      .map((name) => name.trim());
+    const stripDelays = getComputedStyle(strip)
+      .transitionDelay.split(",")
+      .map((value) => value.trim());
+    const transformDelay = stripDelays[stripProperties.indexOf("transform")];
+    expect(`slide waits ${transformDelay}`).toBe(`slide waits ${heightDuration}`);
+
+    // The resize must not itself be waiting on anything, or the card would
+    // still be growing after the row had begun to move.
+    const delays = panelStyle.transitionDelay.split(",").map((value) => value.trim());
+    expect(`height delay ${delays[properties.indexOf("height")]}`).toBe("height delay 0s");
   },
 };

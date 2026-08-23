@@ -52,6 +52,51 @@ export const DETAILS_STEP_MS = 420;
 /** The step's easing, as a CSS value. */
 export const DETAILS_STEP_EASING = DETAILS_STEP_EASE;
 
+/**
+ * A STEP IS TWO PHASES NOW: THE CARDS RESIZE, AND THEN THE ROW SLIDES.
+ *
+ * They used to happen together, and the reason that read badly was not the
+ * overlap itself — it was that only HALF of the resize was animated. Width
+ * eased over the step; height was in nobody's transition list and snapped.
+ * Measured at 1920: a card going from neighbour to subject is 368px tall and
+ * becomes 519, and since the cards hang from a common bottom that is a 151px
+ * jump of the top edge, in one frame, at the exact moment the row began to
+ * travel. One dimension gliding while the other teleports is what the eye was
+ * catching.
+ *
+ * Animating height alongside width would have fixed the snap and left three
+ * things moving at once. Separating them is the better answer, and it is free:
+ * the two cards that change size are ADJACENT and swap the same number of
+ * pixels, so while they resize nothing else in the row moves at all. The
+ * subject grows in place; then the row slides to centre it.
+ *
+ * Sequenced with a plain transition-delay rather than a state machine — the
+ * slide simply does not begin until the resize has finished.
+ */
+export const DETAILS_RESIZE_MS = 190;
+
+/** The travel, once the sizes have settled. */
+export const DETAILS_SLIDE_MS = 260;
+
+/** Phase one: the cards change size, in place. */
+export function detailsResizeTransition(properties: string): string {
+  return properties
+    .split(",")
+    .map((property) => `${property.trim()} ${DETAILS_RESIZE_MS}ms ${DETAILS_STEP_EASE}`)
+    .join(", ");
+}
+
+/** Phase two: the row travels, after phase one has finished. */
+export function detailsSlideTransition(properties: string): string {
+  return properties
+    .split(",")
+    .map(
+      (property) =>
+        `${property.trim()} ${DETAILS_SLIDE_MS}ms ${DETAILS_STEP_EASE} ${DETAILS_RESIZE_MS}ms`,
+    )
+    .join(", ");
+}
+
 /** `transition` shorthand for a property that moves with a step. */
 export function detailsStepTransition(properties: string): string {
   return properties
