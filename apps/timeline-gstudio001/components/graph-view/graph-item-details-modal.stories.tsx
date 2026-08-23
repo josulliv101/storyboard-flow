@@ -4106,28 +4106,25 @@ export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
 };
 
 /**
- * THE WIDTH TRAVELS WITH THE ROW; ONLY THE HEIGHT WAITS.
+ * THE CARD CHANGES SHAPE ON ONE CLOCK.
  *
- * A step used to animate width while HEIGHT snapped — it was in nobody's
- * transition list. Measured at 1920, a card promoted to subject goes from 368px
- * tall to 519, and since the cards hang from a common bottom that is a 151px
- * jump of its top edge, in a single frame, exactly as the row began to travel.
- * One dimension gliding while the other teleported is what looked wrong.
+ * Height was in nobody's transition list to begin with, so a card promoted to
+ * subject jumped from 368px tall to 519 in a single frame — measured at 1920 —
+ * while its width eased over the step. Animating it fixed the snap and opened a
+ * subtler fault: height ran on its own shorter, delayed clock, arranged so it
+ * LANDED with the width.
  *
- * Both full orderings were built and rejected before landing here. Resize-first
- * made the subject grow before it had anywhere to go. Slide-first left it 184px
- * right of centre — half the 368px between the two widths, because the row's
- * offset is computed from a uniform neighbour width and only centres the subject
- * once the subject IS the wide card — and made it close that gap by growing.
+ * Landing together is not travelling together. For the first two thirds of every
+ * step the card grew wider without growing taller — all 368px of width against
+ * none of its 151px of height — so its proportions distorted the whole way
+ * across and the height then did its entire move in the last third.
  *
- * So WIDTH has to travel with the row: the landing position depends on it.
- * HEIGHT does not, and it is the jarring one, so it is the only thing held back.
- *
- * Asserted as declarations. The claim is about ORDER, and neither browser pane
- * will sample a transition — requestAnimationFrame is throttled in both, so a
- * timed probe returns one frame and then nothing.
+ * Both axes now share the step's delay, duration and curve, so a card getting
+ * bigger simply gets bigger. Asserted against the ROW as well, because the shape
+ * change and the travel are one movement and drifting apart is exactly the
+ * failure this replaces.
  */
-export const TheWidthTravelsWithTheRowAndTheHeightFollows: Story = {
+export const TheCardChangesShapeOnOneClock: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
@@ -4142,36 +4139,17 @@ export const TheWidthTravelsWithTheRowAndTheHeightFollows: Story = {
         .map((name) => name.trim())
         .indexOf(property);
       const pick = (value: string) => value.split(",").map((v) => v.trim())[at] ?? "";
-      return { duration: pick(style.transitionDuration), delay: pick(style.transitionDelay) };
+      return `${pick(style.transitionDuration)} after ${pick(style.transitionDelay)}`;
     };
 
-    // HEIGHT IS ANIMATED AT ALL. This is the original bug, in one assertion.
+    // HEIGHT IS ANIMATED AT ALL. The original fault, in one assertion.
     expect(getComputedStyle(panel).transitionProperty).toContain("height");
 
-    // WIDTH AND THE ROW TRAVEL TOGETHER — same clock, neither waiting.
+    // AND BOTH AXES MOVE AS ONE, on the same clock the row travels on.
     const travel = entry(strip, "transform");
-    const width = entry(outer, "width");
-    expect(`width ${width.duration}/${width.delay}`).toBe(
-      `width ${travel.duration}/${travel.delay}`,
-    );
-    expect(`row waits ${travel.delay}`).toBe("row waits 0s");
-
-    // AND THE HEIGHT FOLLOWS, on its own shorter clock...
-    const height = entry(panel, "height");
-    expect(Number.parseFloat(height.delay)).toBeGreaterThan(0);
-    expect(Number.parseFloat(height.duration)).toBeLessThan(
-      Number.parseFloat(travel.duration),
-    );
-
-    // ...BUT LANDS ON THE SAME FRAME. They used to finish 80ms apart, and that
-    // tail was what felt wrong: everything else had settled and one edge was
-    // still creeping, so the step ended twice and the second ending was the one
-    // you noticed. Asserted to the millisecond, because the delay is derived by
-    // subtraction precisely so this cannot drift.
-    const finishes = Number.parseFloat(height.delay) + Number.parseFloat(height.duration);
-    expect(`height lands at ${finishes.toFixed(2)}s`).toBe(
-      `height lands at ${Number.parseFloat(travel.duration).toFixed(2)}s`,
-    );
+    expect(`height ${entry(panel, "height")}`).toBe(`height ${travel}`);
+    expect(`width ${entry(outer, "width")}`).toBe(`width ${travel}`);
+    expect(`row ${travel}`).toBe(`row ${travel.split(" after ")[0]} after 0s`);
   },
 };
 

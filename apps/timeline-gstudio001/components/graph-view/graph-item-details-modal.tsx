@@ -36,11 +36,7 @@ import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
-import {
-  DETAILS_HEIGHT_DELAY_MS,
-  DETAILS_HEIGHT_MS,
-  detailsStepTransition,
-} from "./graph-details-motion";
+import { DETAILS_STEP_MS, detailsStepTransition } from "./graph-details-motion";
 import { SegmentedControl } from "./graph-details-segmented";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
@@ -384,10 +380,7 @@ function DetailsFilmstripModal({
     // The slide's own clock, plus a frame — releasing on the same tick can
     // blank the card on its last painted frame, which is the bug in
     // miniature.
-    const timer = setTimeout(
-      () => setLeavingCentre(null),
-      DETAILS_HEIGHT_DELAY_MS + DETAILS_HEIGHT_MS + 40,
-    );
+    const timer = setTimeout(() => setLeavingCentre(null), DETAILS_STEP_MS + 40);
     return () => clearTimeout(timer);
   }, [centre]);
 

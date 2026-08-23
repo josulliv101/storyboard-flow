@@ -129,29 +129,18 @@ export function detailsStepTransition(properties: string): string {
 export const DETAILS_CHROME_MS = 210;
 
 /**
- * How long the height change takes, once it starts.
+ * THE CARD CHANGES SHAPE ON ONE CLOCK — the same one the row travels on.
  *
- * Shorter than the step, because it is a correction rather than a journey —
- * 151px against the row's 507. At this duration it peaks around 1482px/s,
- * comfortably under the row's own 1919, so the thing that waits is also the
- * quieter of the two.
+ * Height used to run on its own: a 160ms move delayed by 260, arranged so it
+ * LANDED with the width. Landing together is not the same as travelling
+ * together, and it was the wrong half of the problem. For the first 260ms the
+ * card grew wider without growing taller — measured at 1920, 368px of width
+ * with none of its 151px of height — so its proportions distorted throughout,
+ * and then the height did its whole move in the last third and caught up.
+ *
+ * A card getting bigger should get bigger. Same delay, same duration, same
+ * curve on both axes: the shape stays a card the whole way across.
  */
-export const DETAILS_HEIGHT_MS = 160;
-
-/**
- * When it starts — DERIVED, so that width and height LAND TOGETHER.
- *
- * They used to finish 80ms apart: width and the row's travel stopped at 420ms
- * and the height ran on to 500. That tail is the whole of what felt off. Every
- * other part of the step had settled and one edge was still creeping, so the
- * motion ended twice and the second ending was the one you noticed.
- *
- * Written as a subtraction rather than as its own number so the two cannot
- * drift apart again: change either clock and they still land on the same frame.
- * The height still WAITS — it starts at 260ms, well over halfway through the
- * travel — it simply stops when everything else does.
- */
-export const DETAILS_HEIGHT_DELAY_MS = DETAILS_STEP_MS - DETAILS_HEIGHT_MS;
 
 /**
  * How long the subject's chrome takes to LEAVE the card losing it, and how

@@ -23,8 +23,7 @@ import {
 import {
   DETAILS_CHROME_MS,
   DETAILS_HANDOFF_MS,
-  DETAILS_HEIGHT_DELAY_MS,
-  DETAILS_HEIGHT_MS,
+  DETAILS_STEP_MS,
   detailsStepTransition,
 } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
@@ -420,12 +419,11 @@ export function DetailsPanel({
           // step — which is the point, because the SIZES are crossing at that
           // moment and cannot say which card is which.
           ["--chrome-ms" as string]: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
-          // HEIGHT IS THE ONE THING THAT WAITS. Width travels with the row
-          // because the landing position depends on it; height does not, and it
-          // is the change that was jarring — 151px of it lands on the top edge,
-          // since the cards hang from a common bottom.
-          ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_HEIGHT_MS}ms`,
-          ["--height-delay" as string]: swapping ? "0ms" : `${DETAILS_HEIGHT_DELAY_MS}ms`,
+          // BOTH AXES ON THE STEP'S OWN CLOCK. Height had its own shorter,
+          // delayed one — arranged to LAND with the width — and that is not the
+          // same as travelling with it: the card spent the first two thirds of
+          // every step getting wider without getting taller.
+          ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_STEP_MS}ms`,
           ...(focusHandoff === "arriving"
             ? { ["--focus-delay" as string]: `${DETAILS_HANDOFF_MS}ms` }
             : {}),
@@ -528,7 +526,7 @@ export function DetailsPanel({
           // not the hard ease-out it replaces.
           "ease-[cubic-bezier(0.37,0,0.63,1)]",
           "[transition-duration:var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--resize-ms)]",
-          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,var(--height-delay,0ms)]",
+          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,0ms]",
           "motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //
