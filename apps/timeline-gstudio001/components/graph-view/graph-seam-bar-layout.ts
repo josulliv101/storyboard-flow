@@ -179,24 +179,13 @@ export type SeamTick = Readonly<{
  */
 const TICK_LADDER = [1, 2, 5, 10, 15, 30, 60, 120, 300] as const;
 const MIN_TICK_GAP_PX = 46;
-/** How close a time tick may come to a collection tick's own mark. */
-const TICK_CLASH_PX = 26;
-/**
- * Roughly how wide a collection label renders, per character, at the ruler's
- * 9px type — and the ceiling the label is truncated at.
- *
- * An estimate, because this is arithmetic and the text is not measurable from
- * here. It only has to be close: the label is LEFT-ALIGNED on its tick, so a
- * long name like "Loading Dock" reaches ~70px to the right of a mark whose
- * clash zone was 26, and the first time tick past that zone printed its "75s"
- * straight through the end of the word. Over-reserving costs one time tick on
- * a ruler that has a dozen; under-reserving costs the collection name, which
- * is the label that cannot be worked out from anything else on screen.
- */
-const LABEL_PX_PER_CHAR = 5.6;
-const LABEL_MAX_PX = 128;
-/** The breathing room a time tick keeps past the end of a name. */
-const LABEL_TAIL_PX = 8;
+// THE CLASH CONSTANTS ARE GONE, with the suppression that used them.
+//
+// They reserved the width a collection name would take so a time tick could be
+// dropped rather than printed through it — an estimate of rendered text, made
+// in a module with no DOM, and the kind of number that is wrong on the day the
+// type changes. The names have their own band above the scale now, so nothing
+// up here has to guess how wide a word is.
 
 export function tickStepSeconds(pxPerSecond: number): number {
   if (!Number.isFinite(pxPerSecond) || pxPerSecond <= 0) return TICK_LADDER.at(-1)!;
@@ -207,10 +196,17 @@ export function tickStepSeconds(pxPerSecond: number): number {
 /**
  * Every mark the ruler draws, in one pass.
  *
- * COLLECTION TICKS WIN TIES. A time tick says "ninety seconds", which you can
- * work out; a collection tick says "Van Interior starts here", which you
- * cannot. When they land within `TICK_CLASH_PX` of each other the time tick
- * is dropped, rather than both being drawn into the same smudge.
+ * ONE TICK PER STEP, AND EVERY COLLECTION BOUNDARY — nothing is dropped.
+ *
+ * Time ticks used to be suppressed wherever a collection name would have been
+ * printed over one. The name won, on the reasoning that a second is derivable
+ * and "Van Interior starts here" is not, and that was right while both shared
+ * a line. The cost was a scale with holes in it exactly where a collection
+ * starts, which is where you are most likely to be reading it.
+ *
+ * The names have their own band above the scale now, so there is nothing to
+ * collide with: names up there, seconds down here, and the tick marks between
+ * them belonging to both.
  */
 export function seamRulerTicks(params: {
   strip: SeamStrip;
@@ -228,18 +224,10 @@ export function seamRulerTicks(params: {
     collectionTicks.push({ x: segment.leftPx, label: clip.collectionName, kind: "collection" });
   }
 
-  // The span each collection tick claims: its mark, plus the width its name
-  // takes up to the right of it.
-  const claimed = collectionTicks.map((tick) => ({
-    from: tick.x - TICK_CLASH_PX,
-    to: tick.x + Math.min(LABEL_MAX_PX, tick.label.length * LABEL_PX_PER_CHAR) + LABEL_TAIL_PX,
-  }));
-
   const step = tickStepSeconds(strip.pxPerSecond);
   const timeTicks: SeamTick[] = [];
   for (let seconds = step; seconds * strip.pxPerSecond <= strip.totalPx; seconds += step) {
     const x = seconds * strip.pxPerSecond;
-    if (claimed.some((span) => x > span.from && x < span.to)) continue;
     timeTicks.push({ x, label: `${Math.round(seconds)}s`, kind: "time" });
   }
 

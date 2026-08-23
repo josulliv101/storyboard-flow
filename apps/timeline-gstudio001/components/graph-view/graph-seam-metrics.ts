@@ -20,9 +20,30 @@
  */
 export const BOX_INSET_PX = 2.5;
 
-/** How tall the ruler's band is. The fades over the film begin where it ends,
- *  and the active clip's mark sits above it. */
+/** How tall the SCALE band is — the numbers, the tick marks, the blocks. */
 export const SEAM_RULER_HEIGHT_PX = 20;
+
+/**
+ * The band above the scale, holding the collection names and nothing else.
+ *
+ * They used to sit in the scale among the seconds, which put two kinds of
+ * label — one naming a place, one measuring time — on one line competing for
+ * the same pixels. Lifted out, each row says one thing: names above, numbers
+ * below, and the tick marks in between belonging to both.
+ *
+ * 14px is the 10px lettering plus its leading and no more; this is a caption
+ * strip, not a second scale.
+ */
+export const SEAM_COLLECTION_BAND_PX = 14;
+
+/**
+ * The whole ruler block, names and scale together.
+ *
+ * What everything OUTSIDE measures from: the fades over the film begin where
+ * this ends, and the active clip's mark sits above it. Derived, so moving
+ * either band moves them with it.
+ */
+export const SEAM_RULER_TOTAL_PX = SEAM_COLLECTION_BAND_PX + SEAM_RULER_HEIGHT_PX;
 
 /**
  * How tall the film is.
@@ -80,4 +101,4 @@ export const MARK_RULER_GAP_PX = 2;
  * of burying it.
  */
 export const MARK_TOP_OFFSET_PX =
-  SEAM_RULER_HEIGHT_PX + MARK_HEIGHT_PX + MARK_RULER_GAP_PX;
+  SEAM_RULER_TOTAL_PX + MARK_HEIGHT_PX + MARK_RULER_GAP_PX;
