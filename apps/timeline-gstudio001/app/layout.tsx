@@ -6,7 +6,19 @@ import { SpeedInsights } from '@vercel/speed-insights/next';
 import { AuthGate } from '@/components/auth/auth-gate';
 import { AuthProvider } from '@/components/auth/auth-provider';
 import { getAuthUser } from '@/lib/firebase-auth-session';
+import { cookies } from 'next/headers';
 import { TimelineSidebar } from '@/components/timeline/timeline-sidebar';
+// From the framework-neutral module, NOT from `timeline-sidebar` — that one is
+// a client component, and the server calling into it fails at request time
+// while typechecking perfectly.
+import {
+  RAIL_WIDTH_VAR,
+  railExpandedFromCookies,
+} from '@/components/timeline/sidebar-rail-preference';
+import {
+  RAIL_OPEN_WIDTH_PX,
+  RAIL_WIDTH_PX,
+} from '@/components/timeline/sidebar-icon-styles';
 import { Toaster } from '@/components/core/sonner';
 import './globals.css'; // Global styles
 
@@ -49,11 +61,31 @@ export const metadata: Metadata = {
 // blocking the whole tree on a client fetch for it — see `initialUser`.
 export default async function RootLayout({children}: {children: React.ReactNode}) {
   const user = await getAuthUser();
+  // THE RAIL'S WIDTH, BEFORE ANYTHING PAINTS.
+  //
+  // The preference used to live only in `localStorage`, which the server
+  // cannot read — so the rail rendered collapsed on every load and widened on
+  // hydration, shoving `main` 188px sideways. That one shift was 0.135 of a
+  // 0.16 CLS (#471). A cookie is the only copy of the preference that travels
+  // with the REQUEST, which is what makes a correct first paint possible at
+  // all; this layout was already dynamic for the session, so reading it costs
+  // nothing extra.
+  const railExpanded = railExpandedFromCookies((await cookies()).toString());
   // `dark` is what switches on every `dark:` utility — the variant is rebound
   // to this class in globals.css, precisely so the app stops following the
   // reader's OS theme.
   return (
-    <html lang="en" className={`dark ${grandstander.variable}`}>
+    <html
+      lang="en"
+      className={`dark ${grandstander.variable}`}
+      // PUBLISHED HERE so the surfaces BESIDE the rail are offset correctly in
+      // the server's own markup. The sidebar keeps writing this on every
+      // toggle — the server will not hear about one until the next request —
+      // but it can no longer be the FIRST writer, because an effect runs after
+      // paint and anything reading the variable would have spent that paint at
+      // the wrong offset.
+      style={{ [RAIL_WIDTH_VAR]: `${railExpanded ? RAIL_OPEN_WIDTH_PX : RAIL_WIDTH_PX}px` } as React.CSSProperties}
+    >
       <body suppressHydrationWarning>
         {/* App-wide: the sidebar renders on every route, so anything it
             toasts needs a surface here rather than inside one view. */}
@@ -62,7 +94,7 @@ export default async function RootLayout({children}: {children: React.ReactNode}
           <AuthGate>
             <div className="relative flex min-h-screen overflow-x-clip bg-zinc-950 font-sans text-white">
               <Suspense fallback={null}>
-                <TimelineSidebar />
+                <TimelineSidebar initialRailExpanded={railExpanded} />
               </Suspense>
               {/* Scroll anchoring is disabled page-wide (see globals.css):
                   the preview pane mounting at main's top must not scroll

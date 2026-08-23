@@ -53,6 +53,12 @@ import { withViewTransition } from "@/lib/view-transition";
 
 import { SidebarCollectionShortcuts } from "./sidebar-collection-shortcuts";
 import {
+  RAIL_COOKIE_MAX_AGE_SECONDS,
+  RAIL_EXPANDED_COOKIE,
+  RAIL_WIDTH_VAR,
+  railExpandedFromCookies,
+} from "./sidebar-rail-preference";
+import {
   SidebarLabelsInlineContext,
   SidebarTooltipLabel,
 } from "./sidebar-tooltip-label";
@@ -61,52 +67,10 @@ import {
  *  be a preference in name only. */
 const RAIL_EXPANDED_STORAGE_KEY = "sw:sidebar-expanded";
 
-/**
- * The same preference, as a COOKIE, because the server has to know it.
- *
- * localStorage is invisible to the server, so every load rendered the rail
- * collapsed and expanded it on hydration — a 187px shove of everything beside
- * it, and 0.135 of a 0.16 CLS on its own (#471). No amount of client-side
- * cleverness fixes that: the first paint has to be right, and only something
- * that travels with the REQUEST can make it right.
- *
- * READ AS THE SOURCE OF TRUTH on both sides, rather than mirrored alongside
- * localStorage. Two stores that can disagree are a hydration mismatch waiting
- * for the first person whose copies drift — cleared site data, an old tab, a
- * private window. One store cannot disagree with itself. localStorage is still
- * WRITTEN, and still read as a fallback, purely so a rail already open before
- * this change stays open on the load that introduces it.
- *
- * SEMANTICS ARE UNCHANGED. A cookie is per-browser and so is localStorage, and
- * this is read at LOAD, never live — so the note below about two windows
- * keeping their own widths still holds. What a cookie adds is only that the
- * server can see it.
- *
- * `SameSite=Lax` and a year: a display preference, sent on top-level
- * navigations, which is exactly when the server needs it.
- */
-const RAIL_EXPANDED_COOKIE = "sw_rail_expanded";
-const RAIL_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
-
-/** Parse the rail cookie out of a `document.cookie` / request header string. */
-export function railExpandedFromCookies(header: string | undefined): boolean {
-  if (!header) return false;
-  for (const part of header.split(";")) {
-    const [name, ...rest] = part.trim().split("=");
-    if (name === RAIL_EXPANDED_COOKIE) return rest.join("=") === "true";
-  }
-  return false;
-}
-
-/**
- * Published to the document so surfaces BESIDE the rail can be offset by it.
- *
- * The trash drawer hardcoded `ml-[72px]`, which is correct exactly while the
- * rail cannot change width — so opening the rail would have slid it
- * underneath. A variable is the seam: one writer here, and any number of
- * readers that keep working when this number moves again.
- */
-const RAIL_WIDTH_VAR = "--sw-rail-width";
+// The cookie, the CSS variable and the parser live in `sidebar-rail-preference`
+// — a module with no `"use client"`, so the root layout can read the same
+// preference this file writes. See the note at the top of that file for why
+// importing them from here instead fails only at request time.
 
 /** Fires when THIS window toggles the rail — the only notification there is,
  *  see below. Without it the toggle would not re-render the window that
@@ -767,7 +731,19 @@ const UTILITY_ITEMS: UtilityItem[] = [
   },
 ];
 
-export function TimelineSidebar() {
+export function TimelineSidebar({
+  initialRailExpanded = false,
+}: Readonly<{
+  /**
+   * What the SERVER rendered the rail as, read from the cookie in the root
+   * layout.
+   *
+   * Defaulted rather than required so a story or a test can mount the rail
+   * without one, and `false` is the honest default: no cookie means nobody has
+   * ever toggled it, which is the collapsed rail.
+   */
+  initialRailExpanded?: boolean;
+}> = {}) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const [isTrashOpen, setIsTrashOpen] = useState(false);
@@ -868,21 +844,38 @@ export function TimelineSidebar() {
   // `useState(false)` corrected by a mount effect — is a synchronous setState
   // inside an effect, which lints as a cascading render and is a real one: the
   // rail paints collapsed and then jumps. `useSyncExternalStore` reads the
-  // stored value during the first client render instead, and its SERVER
-  // snapshot is the collapsed default, which is what keeps SSR and hydration
-  // agreeing about a value the server cannot see.
+  // stored value during the first client render instead.
   //
-  // Subscribing to `storage` is what an effect could not have done at all: two
-  // tabs open on this app now agree about the rail.
+  // ITS SERVER SNAPSHOT IS WHAT THE SERVER ACTUALLY RENDERED, not a hard-coded
+  // `false`. That constant was the whole of #471: the preference lived only in
+  // `localStorage`, so every load painted the rail collapsed and widened it on
+  // hydration — an 188px shove of everything beside it, and 0.135 of a 0.16
+  // CLS on its own. The cookie is what made a first paint possible; passing it
+  // in here is what makes the first paint AGREE with it.
   const railExpanded = useSyncExternalStore(
     subscribeRailExpanded,
     readRailExpanded,
-    () => false,
+    () => initialRailExpanded,
   );
+  useEffect(() => {
+    // MIGRATION, ONE LOAD ONLY. A rail left open before the cookie existed has
+    // the preference in `localStorage` where the server cannot see it, so that
+    // one load still renders collapsed and still shifts. Writing the cookie
+    // now is what makes it the last load that does — without this the shift
+    // survives forever for anyone who never touches the toggle again.
+    if (railExpanded && !document.cookie.includes(RAIL_EXPANDED_COOKIE)) {
+      writeRailCookie(true);
+    }
+  }, [railExpanded]);
   useEffect(() => {
     // The offset every surface beside the rail reads. Written on the document
     // rather than the aside because those surfaces are its SIBLINGS, not its
     // descendants — a variable set here would not inherit to them.
+    //
+    // The LAYOUT sets this too, from the same cookie, so it is already correct
+    // in the server's markup and nothing beside the rail moves on hydration.
+    // This effect is what keeps it correct AFTER a toggle, which the server
+    // will not hear about until the next request.
     document.documentElement.style.setProperty(
       RAIL_WIDTH_VAR,
       `${railExpanded ? RAIL_OPEN_WIDTH_PX : RAIL_WIDTH_PX}px`,

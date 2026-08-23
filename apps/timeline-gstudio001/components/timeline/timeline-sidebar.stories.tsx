@@ -28,6 +28,23 @@ import { RAIL_OPEN_WIDTH_PX, RAIL_WIDTH_PX } from "./sidebar-icon-styles";
 
 const STORAGE_KEY = "sw:sidebar-expanded";
 
+/**
+ * FORGET THE RAIL COMPLETELY, both stores.
+ *
+ * The preference is a COOKIE now, because the server has to render the right
+ * width on the first paint (#471) — and a cookie outlives the story that set
+ * it, where `localStorage.removeItem` alone does not. Clearing only the old
+ * store left a toggled-open rail behind for whatever ran next, which failed as
+ * `expected 260 to be 72` in a story that had done nothing wrong.
+ *
+ * `max-age=0` on the same path it was written with: a cookie is only cleared
+ * by a cookie, and only if the path matches.
+ */
+function forgetRailPreference(): void {
+  document.cookie = "sw_rail_expanded=; path=/; max-age=0";
+  window.localStorage.removeItem(STORAGE_KEY);
+}
+
 const USER = {
   uid: "u-story",
   email: "editor@example.test",
@@ -98,7 +115,7 @@ const settledWidth = async (element: HTMLElement, expected: number) => {
 export const Collapsed: Story = {
   render: () => {
     stubFetch();
-    window.localStorage.removeItem(STORAGE_KEY);
+    forgetRailPreference();
     return <Harness />;
   },
   play: async ({ canvasElement }) => {
@@ -113,11 +130,64 @@ export const Collapsed: Story = {
   },
 };
 
-/** OPENED, so the names sit beside the glyphs. */
+/**
+ * OPENED, so the names sit beside the glyphs — FROM `localStorage` ALONE.
+ *
+ * Which is now the MIGRATION path rather than the ordinary one. The cookie is
+ * the source of truth (#471), and this sets only the old store, so it stands
+ * for the rail of someone who last toggled it before the cookie existed: their
+ * preference has to survive the upgrade rather than silently reset to
+ * collapsed. Cleared first, so the assertion cannot be met by a cookie some
+ * earlier story left behind.
+ */
 export const Expanded: Story = {
   render: () => {
     stubFetch();
+    forgetRailPreference();
     window.localStorage.setItem(STORAGE_KEY, "true");
+    return <Harness />;
+  },
+  play: async ({ canvasElement }) => {
+    const aside = rail(canvasElement);
+    expect(aside).toHaveAttribute("data-sidebar-expanded", "true");
+    await settledWidth(aside, RAIL_OPEN_WIDTH_PX);
+    // AND THE UPGRADE IS WRITTEN DOWN. The rail backfills the cookie on mount,
+    // so this is the LAST load that renders from `localStorage` — without it
+    // the server would go on guessing collapsed forever for anyone who never
+    // touches the toggle again, and the shift this all exists to remove would
+    // survive for exactly the people who had already chosen the open rail.
+    await waitFor(() => {
+      expect(document.cookie).toContain("sw_rail_expanded=true");
+    });
+  },
+};
+
+/**
+ * THE COOKIE WINS, and it is what the first client render reads.
+ *
+ * The preference moved to a cookie so the SERVER could render the right width
+ * on the first paint (#471) — the rail used to read `localStorage`, which the
+ * server cannot see, so every load painted it collapsed and widened it on
+ * hydration: 188px of `main` moving sideways, and 0.135 of a 0.16 CLS from
+ * that one shift.
+ *
+ * The two stores are set to DISAGREE here. A rail still reading the old one
+ * would come up collapsed, which is exactly the state that used to cause the
+ * shift, so this fails if the precedence is ever put back.
+ *
+ * NOT AN ASSERTION ABOUT `initialRailExpanded`, deliberately.
+ * `useSyncExternalStore` only consults its server snapshot while hydrating,
+ * and a story renders client-only — so a story asserting the prop would be
+ * asserting a branch that never runs here. The parse the server actually does
+ * is covered in `sidebar-rail-preference.test.ts`, and the rendered markup was
+ * measured against the running app.
+ */
+export const TheCookieDecidesTheWidth: Story = {
+  render: () => {
+    stubFetch();
+    forgetRailPreference();
+    window.localStorage.setItem(STORAGE_KEY, "false");
+    document.cookie = "sw_rail_expanded=true; path=/; max-age=31536000; samesite=lax";
     return <Harness />;
   },
   play: async ({ canvasElement }) => {
@@ -141,7 +211,7 @@ export const Expanded: Story = {
 export const TheToggleOpensAndCloses: Story = {
   render: () => {
     stubFetch();
-    window.localStorage.removeItem(STORAGE_KEY);
+    forgetRailPreference();
     return <Harness />;
   },
   play: async ({ canvasElement }) => {
@@ -188,7 +258,7 @@ export const TheToggleOpensAndCloses: Story = {
 export const RepeatedTogglingStaysInStep: Story = {
   render: () => {
     stubFetch();
-    window.localStorage.removeItem(STORAGE_KEY);
+    forgetRailPreference();
     return <Harness />;
   },
   play: async ({ canvasElement }) => {
