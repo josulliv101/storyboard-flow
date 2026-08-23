@@ -2516,12 +2516,18 @@ export const F2RenamesOnlyTheOpenedClip: Story = {
 };
 
 /**
- * THE BAR'S OWN CONTROLS SIT BETWEEN ITS TWO BARS.
+ * THE TWO BARS ARE ADJACENT, AND THE CONTROLS SIT UNDER BOTH.
  *
- * The scrub bar is the cut, the minimap is the project, and the row between
- * them drives both: the transport, the clock, and the two settings that say
- * how much the bar shows and what its boxes are made of. Everything that acts
- * on the bar is in one place, and it is the place both bars can be read from.
+ * The controls were between them once, on the reasoning that a row driving
+ * both belongs equally close to each. What that missed is that the two bars
+ * are more use to EACH OTHER than either is to the buttons: the film strip is
+ * a window and the minimap is the map it moves over, so a row of controls
+ * between them put a thing and its own index at opposite ends of the block.
+ *
+ * They are adjacent now — a box and its place in the sequence read in one
+ * glance — and everything that acts on either sits underneath. The controls
+ * are the row you reach for, not the row you read, and they lose nothing by
+ * being under what they act on.
  *
  * THE TRANSPORT IS CENTRED ON THE TRACK, not between its neighbours. A flex
  * row would centre it against whatever sits either side, so it would drift as
@@ -2529,7 +2535,7 @@ export const F2RenamesOnlyTheOpenedClip: Story = {
  * setting is a play button you have to look for. The three-column grid puts it
  * in the middle of the bar and leaves it there.
  */
-export const TheBarsControlsSitBetweenIts: Story = {
+export const TheTwoBarsAreAdjacent: Story = {
   render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-controls]")).not.toBeNull());
@@ -2537,12 +2543,16 @@ export const TheBarsControlsSitBetweenIts: Story = {
     const box = (selector: string) =>
       document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
 
-    // ── ORDER: cut, controls, project ─────────────────────────────────────
+    // ── ORDER: cut, project, controls ─────────────────────────────────────
     const track = box("[data-seam-track]");
     const controls = box("[data-seam-controls]");
     const minimap = box("[data-seam-minimap]");
-    expect(track.bottom).toBeLessThanOrEqual(controls.top + 0.5);
-    expect(controls.bottom).toBeLessThanOrEqual(minimap.top + 0.5);
+    expect(track.bottom).toBeLessThanOrEqual(minimap.top + 0.5);
+    expect(minimap.bottom).toBeLessThanOrEqual(controls.top + 0.5);
+    // AND NOTHING COMES BETWEEN THEM. The gap between the two bars is the
+    // stack's own spacing and nothing else — the assertion that would fail if
+    // anything were ever slotted back in there.
+    expect(minimap.top - track.bottom).toBeLessThan(24);
 
     // ── THE TRANSPORT IS CENTRED ON THE TRACK ─────────────────────────────
     const transport = box("[data-seam-transport]");

@@ -752,7 +752,19 @@ export function SeamLane({
           // below rather than floating over a gap: a heavier border, a deeper
           // shadow and a near-opaque ground, so it reads as something in front
           // rather than something printed on what it covers.
-          className="pointer-events-none absolute top-20 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
+          // BELOW THE WHOLE BLOCK, and this number tracks the block's height.
+          //
+          // It was 80px, which cleared the ruler and the controls row when the
+          // minimap sat last. The minimap moved up under the film strip and
+          // the controls moved to the bottom, so 80 now lands ON the controls —
+          // a card over the transport is a card you cannot press play through.
+          // Measured: track ends at 52, minimap 66–80, controls 88–116.
+          //
+          // The symptom of this drifting again is the card overlapping the row
+          // beneath the bar rather than sitting under it, which is quiet enough
+          // to miss — the same way the scrim's own top padding has to keep pace
+          // with this block.
+          className="pointer-events-none absolute top-32 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
         >
           {hover.posterSrc === undefined ? null : (
             // A bare <img>: the preview is a thumbnail of a source the app

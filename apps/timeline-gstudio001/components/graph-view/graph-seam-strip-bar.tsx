@@ -797,10 +797,39 @@ export function SeamStripBar({
         <SeamRuler ticks={ticks} offset={offset} />
       </div>
 
-      {/* ONE ROW BETWEEN THE TWO BARS, and the transport in the middle of it.
-          The scrub bar above is the cut; the minimap below is the project; the
-          controls that drive both sit between them where they are equally
-          about each.
+      {/* THE WHOLE PROJECT, DIRECTLY UNDER THE FILM STRIP.
+          The two are the same object at two scales — this cut, and where that
+          cut is in the project — and reading one against the other is the
+          whole point of having both. They were separated by the controls row,
+          which put a line of buttons between a window and the map of what it
+          is a window ONTO: the rectangle and the boxes it corresponds to were
+          the two things furthest apart in the block.
+          Nothing lands between them now, so the eye can go straight from a box
+          to its place in the sequence. */}
+      <SeamMinimap
+        clips={clips}
+        colourOf={boxColourOf}
+        totalSeconds={totalSeconds}
+        windowFromSeconds={windowFromSeconds}
+        windowToSeconds={windowToSeconds}
+        playheadSeconds={playheadSeconds}
+        onPanToSeconds={panToSeconds}
+        // EASE THE WINDOW WHEN NOTHING IS DRIVING IT. A scrub can run the
+        // strip under a stationary pointer and a wheel pans it directly; both
+        // have to arrive exactly where the hand is. A fit, a step or a landing
+        // moves it somewhere else in a single frame, and that is the jump
+        // worth animating.
+        settled={!scrubbing && !wheeling}
+      />
+
+      {/* THE CONTROLS UNDER BOTH BARS, and the transport in the middle of it.
+          They sat between the two, on the reasoning that a row driving both
+          belongs equally close to each. What that missed is that the two bars
+          are more use to each other than either is to the buttons: one is a
+          window and the other is the map it moves over, so anything between
+          them is between a thing and its own index. The controls are the row
+          you reach for, not the row you read, and they lose nothing by sitting
+          under what they act on.
 
           A THREE-COLUMN GRID, not a flex row with `justify-between`. The
           transport has to be centred on the BAR, and a flex row centres it
@@ -919,25 +948,6 @@ export function SeamStripBar({
         </div>
       </div>
 
-      {/* THE WHOLE PROJECT, under the controls rather than tucked inside the
-          track. It is a different scale from the bar above — that one shows a
-          stretch, this one shows all of it — and stacking them with the
-          controls between says so. */}
-      <SeamMinimap
-        clips={clips}
-        colourOf={boxColourOf}
-        totalSeconds={totalSeconds}
-        windowFromSeconds={windowFromSeconds}
-        windowToSeconds={windowToSeconds}
-        playheadSeconds={playheadSeconds}
-        onPanToSeconds={panToSeconds}
-        // EASE THE WINDOW WHEN NOTHING IS DRIVING IT. A scrub can run the
-        // strip under a stationary pointer and a wheel pans it directly; both
-        // have to arrive exactly where the hand is. A fit, a step or a landing
-        // moves it somewhere else in a single frame, and that is the jump
-        // worth animating.
-        settled={!scrubbing && !wheeling}
-      />
     </div>
   );
 }
