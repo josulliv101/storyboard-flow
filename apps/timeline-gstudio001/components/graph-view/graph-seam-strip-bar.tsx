@@ -26,6 +26,7 @@ import {
   stripXFor,
 } from "./graph-seam-strip";
 import { formatClock } from "@/lib/format-duration";
+import { monitorPosterUrl } from "@/lib/video-frame-url";
 
 /**
  * The bar over the carousel: the whole project in playback order, as a
@@ -443,7 +444,35 @@ export function SeamStripBar({
         meta: `${clip.collectionName === null ? "" : `${clip.collectionName} · `}${readSeconds(
           at.secondsIntoClip,
         )} / ${readSeconds(clip.showingSeconds)}`,
-        ...(clip.posterSrc === undefined ? {} : { posterSrc: clip.posterSrc }),
+        // THE FRAME UNDER THE POINTER, not the clip's opening frame.
+        //
+        // It showed `posterSrc` — one picture per clip — so moving along a
+        // ten-second take changed the time in the caption and nothing else.
+        // The card is answering "what is HERE", and a still of the shot's first
+        // frame answers "what is this clip", which the box's own strip already
+        // said. Reading across a long take is most of what the hover is for.
+        //
+        // QUANTISED TO A QUARTER SECOND. The URL is a Cloudinary frame grab, so
+        // every distinct time is a distinct fetch, and a pointer crossing a
+        // wide box at sixty frames a second would ask for a few hundred of
+        // them. A quarter second is finer than the eye tracks while sweeping
+        // and coarse enough that a second pass over the same clip is answered
+        // from cache.
+        //
+        // VIDEO ONLY. A still has one image and no timeline to sample; asking
+        // for a frame offset into it would rewrite a perfectly good image URL
+        // into one that names a moment the file does not have.
+        ...(clip.posterSrcs === undefined
+          ? clip.posterSrc === undefined
+            ? {}
+            : { posterSrc: clip.posterSrc }
+          : {
+              posterSrc:
+                monitorPosterUrl(
+                  clip.posterSrcs[0],
+                  Math.round(((clip.trimInSeconds ?? 0) + at.secondsIntoClip) * 4) / 4,
+                ) ?? clip.posterSrc,
+            }),
       });
     },
     [clips, localX, strip],

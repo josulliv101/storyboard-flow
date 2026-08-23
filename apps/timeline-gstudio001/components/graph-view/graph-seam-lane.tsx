@@ -706,27 +706,60 @@ export function SeamLane({
         <span
           data-seam-preview
           aria-hidden="true"
-          style={{ left: viewportX(hover.x) }}
+          // KEPT INSIDE THE TRACK.
+          //
+          // It is centred on the box being pointed at, which walks it off the
+          // side as soon as that box is near either end — and the wider this
+          // card got, the more of the bar had that problem. At 288px a hover
+          // anywhere in the first or last 144 pixels was reading a card with
+          // its edge cut off, which is worst exactly where the picture is the
+          // whole point.
+          //
+          // `clamp` against percentages rather than a measured width: the
+          // percentage resolves against this element's containing block, which
+          // IS the track, so the bound follows a resize with no observer and no
+          // re-render. 9rem is half the card.
+          style={{
+            left: `clamp(9rem, ${viewportX(hover.x)}px, calc(100% - 9rem))`,
+          }}
           // BELOW THE WHOLE BAR, not just below the boxes: at `top-9` it lay
           // across the ruler and the minimap, hiding the two things that say
           // where the box being previewed actually is.
-          className="pointer-events-none absolute top-20 z-20 flex max-w-64 -translate-x-1/2 items-center gap-2 rounded-md border border-zinc-700 bg-zinc-950/95 p-1.5 shadow-xl"
+          // STACKED, SO THE PICTURE CAN BE THE SIZE OF THE ANSWER.
+          //
+          // It was a 56x32 thumbnail beside two lines of text — barely larger
+          // than the frame being pointed at, which made the preview a worse
+          // copy of the thing that prompted it. The question a hover asks is
+          // "which shot is that", and the only part of this card that answers
+          // it is the picture; the name and the time are confirmation. So the
+          // picture gets the full width of the card and the words go
+          // underneath.
+          //
+          // AND IT STANDS OFF THE PAGE, because it now overlaps the panels
+          // below rather than floating over a gap: a heavier border, a deeper
+          // shadow and a near-opaque ground, so it reads as something in front
+          // rather than something printed on what it covers.
+          className="pointer-events-none absolute top-20 z-20 flex w-72 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
         >
           {hover.posterSrc === undefined ? null : (
             // A bare <img>: the preview is a thumbnail of a source the app
             // already holds a URL for, and next/image would add a loader
-            // round-trip on every hover for a 56px picture.
+            // round-trip on every hover for one picture.
             <img
               src={hover.posterSrc}
               alt=""
-              className="h-8 w-14 shrink-0 rounded-sm object-cover"
+              // `aspect-video` rather than a fixed height, so every shot in the
+              // card is the same shape whatever its own frame is — a row of
+              // previews that changed height as the pointer moved would be the
+              // card itself flickering.
+              className="aspect-video w-full rounded object-cover"
             />
           )}
           <span className="min-w-0">
-            <span className="block truncate text-[11px] text-zinc-100">
+            <span className="block truncate text-xs font-medium text-zinc-100">
               {hover.name}
             </span>
-            <span className="mt-0.5 block truncate font-mono text-[10px] tabular-nums text-zinc-500">
+            <span className="mt-0.5 block truncate font-mono text-[11px] tabular-nums text-zinc-400">
               {hover.meta}
             </span>
           </span>
