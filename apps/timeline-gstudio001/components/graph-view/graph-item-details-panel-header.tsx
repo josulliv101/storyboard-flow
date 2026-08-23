@@ -3,6 +3,14 @@
 import { useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
+import {
+  TEXT_LABEL,
+  TEXT_VALUE,
+  TEXT_VALUE_DIM,
+  TITLE_FOCUS,
+  TITLE_SIDE,
+} from "./graph-details-design";
+
 import { InlineNameEditor } from "./graph-inline-rename";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import {
@@ -30,15 +38,24 @@ import {
 export function ItemDetailsPanelHeader({
   name,
   clipLabel,
-  trimReadout,
+  showingLabel,
+  sourceLabel,
+  focused,
   nodeId,
   rename,
 }: Readonly<{
   name: string;
   /** `clip 4` — its position in playback order, not its index in the row. */
   clipLabel: string | null;
-  /** `7.83 / 10.13s`, or just the duration where there is no source window. */
-  trimReadout: string;
+  /** How much of the clip is in play — the bright half. */
+  showingLabel: string;
+  /** How long the whole source runs, or null where there is no source
+   *  window to be a fraction of. */
+  sourceLabel: string | null;
+  /** Whether this is the panel being worked in. Drives the title's weight
+   *  and nothing else: a neighbour's name is there to say which clip it
+   *  is, not to be read. */
+  focused: boolean;
   nodeId: string;
   rename: Readonly<{
     editing: boolean;
@@ -60,9 +77,17 @@ export function ItemDetailsPanelHeader({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-[11px] text-zinc-500">{clipLabel}</span>
+        <span className={["truncate", TEXT_LABEL].join(" ")}>{clipLabel}</span>
         <div className="flex shrink-0 items-center gap-1.5">
-          <span className="font-mono text-[11px] tabular-nums text-zinc-400">{trimReadout}</span>
+          {/* The pair reads as one value — `3.47s / 5.17s` — so the
+              separator stays inside the wrapper and the whole thing is one
+              run of text to anything reading it. */}
+          <span>
+            <span className={TEXT_VALUE}>{showingLabel}</span>
+            {sourceLabel === null ? null : (
+              <span className={TEXT_VALUE_DIM}>{" / " + sourceLabel}</span>
+            )}
+          </span>
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger
               data-item-details-menu
@@ -107,7 +132,8 @@ export function ItemDetailsPanelHeader({
           title={`Rename ${name}`}
           className={[
             "w-full cursor-text truncate rounded-md px-1 py-0.5 text-left",
-            "text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-800/70",
+            focused ? TITLE_FOCUS : TITLE_SIDE,
+            "transition-colors hover:bg-zinc-800/70",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
           ].join(" ")}
         >

@@ -33,6 +33,7 @@ import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import { detailsStepTransition } from "./graph-details-motion";
+import { SegmentedControl } from "./graph-details-segmented";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
@@ -981,145 +982,86 @@ function DetailsFilmstripModal({
               // bar's own controls row alongside the transport and the clock.
               settingsLeft={
                 <>
-                <div
-                  data-details-bar-frames
-                  role="group"
-                  aria-label="What the bar's boxes draw"
-                  className="flex items-center gap-1"
-                >
-                  <span className="mr-1 font-mono text-[10px] text-zinc-500">frames</span>
-                  {/* THREE BADGES, TWO SETTINGS. Whether the boxes draw frames
-                      and which kind are separate answers, but as controls they
-                      are one question — a picture of what the bar is made of —
-                      and a row that reads OFF · COVER · STRIP says it in the
-                      shape the reach beside it already uses.
+                  {/* THREE SEGMENTS, TWO SETTINGS. Whether the boxes draw
+                      frames and which kind are separate answers, but as
+                      controls they are one question — a picture of what the
+                      bar is made of — and OFF · COVER · STRIP says it in the
+                      shape every other group in this row now uses.
 
                       OFF DOES NOT WIPE THE STYLE. It sets `shown` and leaves
                       `style` alone, so coming back lands on the kind you were
                       using: switching frames off and on stays a comparison you
                       can make twice rather than a choice you re-enter. That is
-                      the whole reason the two are stored apart even though they
-                      are pressed together. */}
-                  {(["off", ...PLAYBAR_THUMBNAIL_STYLES] as const).map((option) => {
-                    const active = option === "off" ? !frames.shown : frames.shown && frames.style === option;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() =>
-                          chooseFrames(
-                            option === "off"
-                              ? { ...frames, shown: false }
-                              : { shown: true, style: option },
-                          )
-                        }
-                        title={
-                          option === "off"
-                            ? "Plain boxes"
-                            : option === "cover"
-                              ? "One frame filling each box"
-                              : "A strip of frames across each clip"
-                        }
-                        className={[
-                          "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
-                          active
-                            ? "bg-zinc-100 text-zinc-900"
-                            : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-                        ].join(" ")}
-                      >
-                        {/* `STRIP`, not `FILMSTRIP`: these badges sit beside a
-                            reach picker of two- and three-character tokens, and
-                            one nine-character label would set the row's rhythm
-                            for the sake of a word the title attribute already
-                            says in full. */}
-                        {option === "filmstrip" ? "STRIP" : option.toUpperCase()}
-                      </button>
-                    );
-                  })}
+                      the whole reason the two are stored apart even though
+                      they are pressed together. */}
+                  <SegmentedControl
+                    label="frames"
+                    ariaLabel="What the bar's boxes draw"
+                    groupAttribute="data-details-bar-frames"
+                    segments={(["off", ...PLAYBAR_THUMBNAIL_STYLES] as const).map((option) => ({
+                      value: option,
+                      // `STRIP`, not `FILMSTRIP`: these sit beside a reach
+                      // picker of two- and three-character tokens, and one
+                      // nine-character label would set the row's rhythm for
+                      // the sake of a word the title already says in full.
+                      label: option === "filmstrip" ? "STRIP" : option.toUpperCase(),
+                      title:
+                        option === "off"
+                          ? "Plain boxes"
+                          : option === "cover"
+                            ? "One frame filling each box"
+                            : "A strip of frames across each clip",
+                      active:
+                        option === "off" ? !frames.shown : frames.shown && frames.style === option,
+                    }))}
+                    onSelect={(option) =>
+                      chooseFrames(
+                        option === "off" ? { ...frames, shown: false } : { shown: true, style: option },
+                      )
+                    }
+                  />
 
-                </div>
-
-                {/* WHERE THE HOVER CARD SITS.
-                    ITS OWN GROUP, next to `frames` rather than inside it. They
-                    sit together because they are the same kind of question —
-                    what this bar does while you read it — and because the card
-                    only exists to show the frames the control beside it turned
-                    on. But "what the boxes draw" and "where the preview sits"
-                    are two settings, and folding the second into the first
-                    group gave that group five buttons under an aria-label
-                    describing three of them.
-
-                    `PIN` parks it dead centre under the bar so the pointer
-                    scrubs and the picture changes in place. That matters now
-                    the card is big enough to judge a frame in: a large picture
-                    sliding around under a moving pointer is the one
-                    arrangement in which you cannot judge anything, because the
-                    eye spends the sweep re-finding it. The cost is that a card
-                    away from the box is less obviously ABOUT that box, which
-                    is why this is a choice and not a change. */}
-                <span aria-hidden="true" className="mx-1 h-3 w-px bg-white/10" />
-                <div
-                  data-details-bar-card
-                  role="group"
-                  aria-label="Where the hover preview sits"
-                  className="flex items-center gap-1"
-                >
-                  <span className="mr-1 font-mono text-[10px] text-zinc-500">card</span>
-                  {PREVIEW_ANCHORS.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      aria-pressed={option === previewAnchor}
-                      onClick={() => choosePreviewAnchor(option)}
-                      title={
+                  {/* WHERE THE HOVER CARD SITS — its own group, next to
+                      `frames` rather than inside it. They sit together because
+                      they are the same kind of question (what this bar does
+                      while you read it), but "what the boxes draw" and "where
+                      the preview sits" are two settings, and folding the
+                      second into the first gave that group five buttons under
+                      an aria-label describing three of them. */}
+                  <span aria-hidden="true" className="mx-1 h-3 w-px bg-white/10" />
+                  <SegmentedControl
+                    label="card"
+                    ariaLabel="Where the hover preview sits"
+                    groupAttribute="data-details-bar-card"
+                    segments={PREVIEW_ANCHORS.map((option) => ({
+                      value: option,
+                      label: option === "follow" ? "FOLLOW" : "PIN",
+                      title:
                         option === "follow"
                           ? "The preview follows the pointer"
-                          : "The preview stays under the middle of the bar"
-                      }
-                      className={[
-                        "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
-                        option === previewAnchor
-                          ? "bg-zinc-100 text-zinc-900"
-                          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-                      ].join(" ")}
-                    >
-                      {option === "follow" ? "FOLLOW" : "PIN"}
-                    </button>
-                  ))}
-                </div>
+                          : "The preview stays under the middle of the bar",
+                      active: option === previewAnchor,
+                    }))}
+                    onSelect={choosePreviewAnchor}
+                  />
                 </>
               }
               settingsRight={
-              <div
-                  data-details-bar-reach
-                role="group"
-                aria-label="Clips either side on the bar"
-                className="flex items-center gap-1"
-            >
-                <span className="mr-1 font-mono text-[10px] text-zinc-500">reach</span>
-                {BAR_REACHES.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    aria-pressed={option === reach}
-                    onClick={() => chooseReach(option)}
-                    title={
+                <SegmentedControl
+                  label="reach"
+                  ariaLabel="Clips either side on the bar"
+                  groupAttribute="data-details-bar-reach"
+                  segments={BAR_REACHES.map((option) => ({
+                    value: option,
+                    label: barReachLabel(option),
+                    title:
                       option === "all"
                         ? "Reach the whole sequence"
-                        : `Reach ${option} clips either side`
-                    }
-                    className={[
-                      "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
-                      option === reach
-                        ? "bg-zinc-100 text-zinc-900"
-                        : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-                    ].join(" ")}
-                  >
-                    {barReachLabel(option)}
-                  </button>
-                ))}
-            </div>
+                        : "Reach " + option + " clips either side",
+                    active: option === reach,
+                  }))}
+                  onSelect={chooseReach}
+                />
               }
               previewAnchor={previewAnchor}
               atStart={barWindow.ids[0] === ids[0]}
@@ -1160,33 +1102,24 @@ function DetailsFilmstripModal({
           timeline is on screen — a question you answer once and then work,
           not a control you reach for while judging a seam. */}
       <div
-        data-details-view-count
-        role="group"
-        aria-label="Clips on screen"
-        className={[
-          "pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1",
-          "rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm",
-          "transition-opacity duration-200",
-        ].join(" ")}
+        className="pointer-events-auto absolute right-6 bottom-6 z-10 transition-opacity duration-200"
         onPointerDown={(event) => event.stopPropagation()}
       >
-        {VIEW_COUNTS.map((count) => (
-          <button
-            key={count}
-            type="button"
-            aria-pressed={count === viewCount}
-            onClick={() => chooseViewCount(count)}
-            title={`Show ${count} clips`}
-            className={[
-              "min-w-8 rounded px-2 py-1 font-mono text-[11px] tabular-nums transition-colors",
-              count === viewCount
-                ? "bg-zinc-100 text-zinc-900"
-                : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-            ].join(" ")}
-          >
-            {count}
-          </button>
-        ))}
+        {/* NO LABEL. Every other group in the view wears one, and this is the
+            single exception: `3 · 5` sits alone in a corner with nothing to be
+            confused with, and the words "clips on screen" are already in its
+            aria-label and in every segment's title. */}
+        <SegmentedControl
+          ariaLabel="Clips on screen"
+          groupAttribute="data-details-view-count"
+          segments={VIEW_COUNTS.map((count) => ({
+            value: count,
+            label: count,
+            title: "Show " + count + " clips",
+            active: count === viewCount,
+          }))}
+          onSelect={chooseViewCount}
+        />
       </div>
 
       {/* The STRIP: one row, translated. Centred by the scrim, then offset by

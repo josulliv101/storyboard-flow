@@ -16,6 +16,8 @@ import {
   type SeamBarClip,
 } from "./graph-seam-bar-layout";
 import { SEAM_LANE_HEIGHT_PX, SeamLane, type SeamHover } from "./graph-seam-lane";
+import { HAIRLINE, SURFACE_WELL } from "./graph-details-design";
+import { SegmentedControl } from "./graph-details-segmented";
 import { SeamMinimap } from "./graph-seam-minimap";
 import { SEAM_RULER_TOTAL_PX, SeamRuler } from "./graph-seam-ruler";
 import {
@@ -1228,7 +1230,14 @@ export function SeamStripBar({
           //
           // Landed at 20 first and went to 36. Whatever this number becomes,
           // the scrim's top padding owes it TWICE over — see the note there.
-          className="mt-9 flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/70 p-1.5"
+          // TIGHT AROUND THE BUTTON. Six pixels of padding and a 32px button put
+          // the transport in a 46px pill where the white circle occupied
+          // barely two thirds of the height — it read as a small control
+          // parked in a large tray rather than as the thing the row is
+          // arranged around. Three pixels and a 36px button takes it to
+          // 42, and the circle now fills the pill the way it does in the
+          // design it came from.
+          className={["mt-9 flex items-center gap-1 rounded-full border p-[3px]", HAIRLINE, SURFACE_WELL].join(" ")}
         >
           {/* STEP ONE CLIP, either way, bracketing the thing they move.
               Disabled rather than hidden at the ends: a control that vanishes
@@ -1263,15 +1272,15 @@ export function SeamStripBar({
             onClick={onTogglePlay}
             aria-label={playing ? "Pause" : "Play across the cut"}
             title="Play / pause (space)"
-            className="grid h-8 w-8 place-items-center rounded-full bg-zinc-100 text-zinc-900 shadow-sm transition-colors outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-500"
+            className="grid h-9 w-9 place-items-center rounded-full bg-zinc-100 text-zinc-900 shadow-sm transition-colors outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             {playing ? (
-              <Pause aria-hidden="true" className="h-4 w-4" />
+              <Pause aria-hidden="true" className="h-4 w-4 fill-current" />
             ) : (
               // Nudged right by a hair: a triangle's optical centre is left of
               // its bounding box, so a centred play glyph reads as sitting
               // slightly back in the circle.
-              <Play aria-hidden="true" className="h-4 w-4 translate-x-[1px]" />
+              <Play aria-hidden="true" className="h-4 w-4 translate-x-[1px] fill-current" />
             )}
           </button>
 
@@ -1302,9 +1311,9 @@ export function SeamStripBar({
             data-seam-clock
             className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
           >
-            <span className="text-blue-400">{formatClock(atSeconds)}</span>
+            <span className="text-blue-300">{formatClock(atSeconds)}</span>
             {" / "}
-            <span className="text-blue-400/70">{formatClock(totalSeconds)}</span>
+            <span>{formatClock(totalSeconds)}</span>
           </span>
 
           {/* FIT: the two scales worth one press.
@@ -1313,34 +1322,22 @@ export function SeamStripBar({
               only by rolling until they happened to arrive. Both are one
               `fitPixelsPerSecond` call the bar was already making on open;
               this just gives them a button. */}
-          <div
-            data-seam-fit
-            role="group"
-            aria-label="Fit the bar to"
-            className="hidden shrink-0 items-center gap-1 md:flex"
-          >
-            <span className="mr-1 font-mono text-[10px] text-zinc-500">fit</span>
-            {(["clip", "all"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                aria-pressed={mode === fitMode}
-                onClick={() => fitTo(mode)}
-                title={
+          <div className="hidden shrink-0 md:flex">
+            <SegmentedControl
+              label="fit"
+              ariaLabel="Fit the bar to"
+              groupAttribute="data-seam-fit"
+              segments={(["clip", "all"] as const).map((mode) => ({
+                value: mode,
+                label: mode,
+                title:
                   mode === "clip"
                     ? "Fit this clip's collection"
-                    : "Fit everything the bar reaches"
-                }
-                className={[
-                  "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
-                  mode === fitMode
-                    ? "bg-zinc-100 text-zinc-900"
-                    : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-                ].join(" ")}
-              >
-                {mode}
-              </button>
-            ))}
+                    : "Fit everything the bar reaches",
+                active: mode === fitMode,
+              }))}
+              onSelect={fitTo}
+            />
           </div>
 
           <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsRight}</div>

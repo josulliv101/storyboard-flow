@@ -4,6 +4,15 @@ import { useRef } from "react";
 import { AudioLines, Pause, Play } from "lucide-react";
 
 import {
+  RADIUS_MEDIA,
+  RADIUS_WELL,
+  SURFACE_WELL,
+  TEXT_DATA,
+  TEXT_LABEL,
+  TEXT_VALUE,
+} from "./graph-details-design";
+
+import {
   hasSourceWindow,
   type MediaNode,
   type VideoMediaNode,
@@ -150,13 +159,22 @@ export function ItemDetailsMonitor({
       }}
       onClick={centre ? undefined : () => onAdvance(node.id as string)}
       className={[
-        "relative overflow-hidden rounded-md bg-black",
+        "relative overflow-hidden bg-black",
+        RADIUS_MEDIA,
         // `flex-1` only makes sense against a fixed panel height. Once the
         // panel fits its content there is nothing to fill, so the picture
         // states its own shape instead.
         "aspect-video w-full @min-[30rem]:aspect-auto @min-[30rem]:w-auto",
         DETAILS_HERO_FILL_CLASS,
         centre ? "" : "cursor-pointer",
+        // A NEIGHBOUR'S PICTURE SITS BACK, by a single step of brightness.
+        // Dimming the card's chrome alone is not enough — the pictures are
+        // the brightest things in the view, so three at equal strength read
+        // as three subjects. Eight percent is under the threshold where you
+        // would call it dimmed and over the one where the eye stops
+        // treating them as equals. Composes with the playback fade below:
+        // both are filters, so they multiply rather than fight.
+        centre ? "" : "brightness-[0.92]",
         // FADED, AND THE COLOUR GOES WITH IT. Opacity alone still leaves a
         // recognisable picture competing for the eye; draining the colour
         // as well puts the neighbours firmly in the past tense while the
@@ -340,7 +358,7 @@ export function ItemDetailsMonitor({
         in/out fields further down so a panel reads as one column of facts. */}
     <div
       data-item-details-readout
-      className="flex items-center gap-3 rounded-md bg-zinc-900/80 px-2 py-1.5"
+      className={["flex items-center gap-3 px-2 py-1.5", RADIUS_WELL, SURFACE_WELL].join(" ")}
     >
       {onPlayFromStart !== null && (
         <button
@@ -361,8 +379,13 @@ export function ItemDetailsMonitor({
           }}
           className={[
             "grid h-6 w-6 shrink-0 place-items-center rounded-full",
-            "bg-zinc-800 text-zinc-100 ring-1 ring-white/15",
-            "transition-colors hover:bg-zinc-700 hover:text-white",
+            // A GLYPH, NOT A CHIP. This used to be a filled circle with a
+            // ring — at three or five panels that is three to five little
+            // buttons competing with the one big play control the row is
+            // built around. White belongs to that button; this one is a
+            // mark that brightens when you reach for it.
+            "text-zinc-500",
+            "transition-colors hover:bg-white/10 hover:text-zinc-100",
             "focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none",
           ].join(" ")}
         >
@@ -388,9 +411,9 @@ export function ItemDetailsMonitor({
       {centre && (
         <span
           data-item-details-cut
-          className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+          className={["shrink-0", TEXT_LABEL].join(" ")}
         >
-          cut <span className="text-zinc-300">{formatSeconds(monitor?.seconds ?? 0)}</span>
+          cut <span className={TEXT_VALUE}>{formatSeconds(monitor?.seconds ?? 0)}</span>
         </span>
       )}
 
@@ -402,9 +425,9 @@ export function ItemDetailsMonitor({
       {video && (
         <span
           data-item-details-src
-          className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+          className={["shrink-0", TEXT_LABEL].join(" ")}
         >
-          src <span className="text-blue-300">{formatSeconds(rawTime)}</span>
+          src <span className={TEXT_DATA}>{formatSeconds(rawTime)}</span>
         </span>
       )}
     </div>
