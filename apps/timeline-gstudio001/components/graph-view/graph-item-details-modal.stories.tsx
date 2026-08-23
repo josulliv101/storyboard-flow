@@ -1275,6 +1275,44 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
       const others = boxes.filter((_, index) => index !== middle);
       expect(new Set(others).size).toBe(1);
     });
+    // ── AND THE HEIGHT RULE IS ABOUT ROLE, NOT WIDTH ─────────────────────
+    //
+    // The panel's height used to be a container query alone: over 30rem you
+    // took a fixed 68vh, under it you fitted your picture. That is a PROXY for
+    // "am I the subject", and it breaks on a large screen — at 2560x1440 a
+    // neighbour is 544px wide, clears the query, and takes the same 979px the
+    // centre does, so the 1.75 width ratio produces no height difference at
+    // all.
+    //
+    // Asserted on the CLASS rather than the rendered height, because a story
+    // canvas cannot be 2560 wide: what must hold is that the two roles ask for
+    // different heights, which is the thing a revert to one shared rule would
+    // undo. The measurement itself was taken against the running app — 979
+    // against 546, a 1.79 height ratio beside a 1.76 width ratio.
+    {
+      const heightRule = (panel: HTMLElement) =>
+        Array.from(panel.classList).filter((name) => name.includes("h-[")).join(" ");
+      const centrePanel = panels().find(
+        (panel) => panel.dataset.itemDetailsPanel === "centre",
+      )!;
+      const neighbourPanel = panels().find(
+        (panel) => panel.dataset.itemDetailsPanel === "neighbour",
+      )!;
+      expect(heightRule(centrePanel)).not.toBe("");
+      expect(heightRule(neighbourPanel)).not.toBe("");
+      expect(heightRule(centrePanel)).not.toBe(heightRule(neighbourPanel));
+      // Every neighbour asks for the SAME height — they must match each other,
+      // and fitting each to its own picture (the first attempt here) gave four
+      // different heights at five-up.
+      expect(
+        new Set(
+          panels()
+            .filter((panel) => panel.dataset.itemDetailsPanel === "neighbour")
+            .map(heightRule),
+        ).size,
+      ).toBe(1);
+    }
+
     const centreFrame = panels()
       .find((panel) => panel.dataset.itemDetailsPanel === "centre")!
       .querySelector<HTMLElement>("[data-item-details-frame]")!;

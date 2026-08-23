@@ -482,15 +482,49 @@ export function DetailsPanel({
           centre
             ? "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.22)]"
             : "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
+          // ── HEIGHT: THE SUBJECT TAKES THE SCREEN, THE REST FIT THEIR
+          //    PICTURE ────────────────────────────────────────────────────
+          //
           // A FIXED 68vh WHILE THE PANEL IS FULL, and fitted to its picture
           // once it is not. Stripped of its controls a panel is a frame and a
           // name, and holding it at two thirds of the screen leaves most of it
           // black — tall empty columns either side of the one you are looking
           // at, which is the "weird" in a five-up view rather than the
-          // controls being gone. Every panel is the same width and the same
-          // aspect, so fitting them keeps them identical to each other, which
-          // is the property that matters.
-          "@min-[30rem]:h-[68vh] @min-[30rem]:max-h-full h-auto",
+          // controls being gone.
+          //
+          // THE CENTRE ALONE TAKES THE FIXED HEIGHT, and that is the fix for a
+          // large viewport. The rule was a container query on WIDTH — over
+          // 30rem a panel took the 68vh — which is a proxy for "is this panel
+          // full", and the proxy breaks on a big screen: at 2560x1440 a
+          // NEIGHBOUR is 544px wide, clears the query, and takes the same
+          // 979px the centre does. Measured there: all three panels 979 tall,
+          // all three frames 728, and the 1.75 width ratio producing no height
+          // difference at all.
+          //
+          // Below that size it worked by accident — the neighbours were under
+          // 30rem, fitted their pictures, and came out shorter. Asking the
+          // question directly ("are you the subject?") rather than inferring
+          // it from width gives the same answer at every size.
+          //
+          // A SMALLER FIXED HEIGHT FOR THE NEIGHBOURS, not a fitted one.
+          // Letting them fit was the first attempt and it broke the property
+          // that matters for them: they must match EACH OTHER, and fitting
+          // makes each one as tall as its own picture — measured at five-up,
+          // four neighbours at four different heights, which reads as a broken
+          // row rather than as emphasis.
+          //
+          // 38.9vh is 68 divided by the 1.75 the widths already use, so a
+          // neighbour is the centre scaled down by the same factor in both
+          // axes rather than by one in width and another in height. Verified
+          // at 2560x1440: 979 against 546, a height ratio of 1.79 beside a
+          // width ratio of 1.76.
+          //
+          // Both keep the container query, so a genuinely NARROW panel still
+          // fits its picture — that is the five-up case the original rule was
+          // written for, and it is a different question from this one.
+          centre
+            ? "@min-[30rem]:h-[68vh] @min-[30rem]:max-h-full h-auto"
+            : "@min-[30rem]:h-[38.9vh] @min-[30rem]:max-h-full h-auto",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
