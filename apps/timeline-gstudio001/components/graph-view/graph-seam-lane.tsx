@@ -83,8 +83,34 @@ function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: numb
 }
 
 
-/** Roughly the bar's own height (`h-9`), so a cell reads as a square. */
-const FILMSTRIP_CELL_PX = 36;
+/**
+ * HOW TALL THE FILM IS.
+ *
+ * 36px for a long time, which made the frames inside it 30 — small enough
+ * that a thumbnail told you a shot was dark or bright and very little else,
+ * and the strip is the one place you are meant to recognise a shot by looking
+ * at it. 48 puts the pictures at 42, which is where a face in a medium shot
+ * stops being a smudge.
+ *
+ * ONE NUMBER, because four things are measured from it: the lane itself, the
+ * fades over its ends, the filmstrip cell size that keeps a cell square, and
+ * the hover card's offset below it. They were four literals, and a bar that
+ * grew while its fades did not is a gradient floating in the middle of the
+ * film.
+ */
+export const SEAM_LANE_HEIGHT_PX = 48;
+
+/**
+ * How far below the film the hover card hangs.
+ *
+ * Measured from the lane's BOTTOM rather than written as one offset from its
+ * top, so the card keeps its distance when the film changes height instead of
+ * climbing into it.
+ */
+export const SEAM_PREVIEW_GAP_PX = 20;
+
+/** One cell per bar-height, so a filmstrip cell reads as a square. */
+const FILMSTRIP_CELL_PX = SEAM_LANE_HEIGHT_PX;
 /** Past this the cells stretch rather than multiply — see `SegmentFrames`. */
 const MAX_FILMSTRIP_CELLS = 12;
 
@@ -490,7 +516,8 @@ export function SeamLane({
       // have to escape it: a time chip drawn INSIDE the boxes covers the frames
       // it is reporting on, which is the one thing you are looking at while you
       // drag.
-      className="relative h-9 cursor-ew-resize touch-none select-none"
+      style={{ height: SEAM_LANE_HEIGHT_PX }}
+      className="relative cursor-ew-resize touch-none select-none"
     >
       <div className="absolute inset-0 overflow-hidden">
         <div
@@ -861,6 +888,7 @@ function SeamPreviewCard({
       // block, which IS the track, so the bound follows a resize with no
       // observer and no re-render. 9rem is half the card.
       style={{
+        top: SEAM_LANE_HEIGHT_PX + SEAM_PREVIEW_GAP_PX,
         left:
           previewAnchor === "pinned"
             ? "50%"
@@ -910,7 +938,7 @@ function SeamPreviewCard({
       // The entrance animation is withheld with it. Left running it would
       // play out against a card nobody can see and arrive already over.
       className={[
-        "pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50",
+        "pointer-events-none absolute z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50",
         hover.posterSrc === undefined || posterReady
           ? "animate-seam-preview-in visible"
           : "invisible",

@@ -875,10 +875,13 @@ function DetailsFilmstripModal({
       // added 20 for 20 and recovered half the slack (2 → 12, still short of
       // the 16 floor).
       //
-      // So the arithmetic is 224 + 2 × margin: 20px of margin took this to
-      // 16.5rem, and 36px takes it to 18.5rem (224 + 72 = 296). Move the
-      // transport again and this moves by twice as much, in the same
-      // direction.
+      // So the arithmetic is 224 + 2 × (whatever the block grew by): 20px of
+      // transport margin took this to 16.5rem, 36px to 18.5rem (224 + 72 =
+      // 296), and the film strip growing from 36px to 48px takes it to 20rem
+      // (296 + 24 = 320). Anything that makes the bar taller moves this by
+      // twice as much, in the same direction — and the failure is always the
+      // same one, `TheTwoBarsAreAdjacent` reporting the gap to the centre card
+      // collapsing below its floor.
       // `overflow-clip`, NOT `overflow-hidden`. Both crop, but `hidden` makes
       // this a SCROLL CONTAINER — and the row is thirteen thousand pixels
       // wide, so there is a great deal for it to scroll. Landing on a new clip
@@ -888,7 +891,7 @@ function DetailsFilmstripModal({
       // row that had itself moved 1728px, which put the card just chosen
       // entirely off the left edge. `clip` crops without ever being
       // scrollable, so the transform stays the only thing that moves the row.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[18.5rem] pb-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[20rem] pb-6 backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim
