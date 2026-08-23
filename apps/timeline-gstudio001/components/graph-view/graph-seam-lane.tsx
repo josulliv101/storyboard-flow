@@ -277,33 +277,65 @@ const BOX_INSET_PX = 2.5;
  *
  * ── AND IT IS A FILM STRIP, SO IT LOOKS LIKE ONE ────────────────────────
  *
- * The two tones are the same idea whichever way round they go: a gap reads
- * BOTH light and dark, so one of them always has contrast against whatever is
- * beside it. Which one is the ring and which is the core is therefore free —
- * and the ring being the LIGHT one is what makes a run of boxes read as
- * frames on a strip of film rather than as tiles in a chart.
+ * THE STRIP IS THE PALE THING AND THE FRAMES SIT IN IT. That is what a strip
+ * of film is: a light base with pictures printed on it and a margin of base
+ * showing on every side of every frame. So the background here is near-white
+ * and each box casts a thin DARK ring, which keeps the two-tone rule intact —
  *
- *     two bright frames   white │ PALE dark PALE │ white   ← the core shows
- *     two dark frames     black │ pale DARK pale │ black   ← the rings show
+ *     two bright frames   white │ DARK pale DARK │ white   ← the rings show
+ *     two dark frames     black │ dark PALE dark │ black   ← the core shows
  *
- * So the strip's own background is near-black and each box casts a pale ring
- * into the gap either side of it. Every gap still reads pale · dark · pale, no
- * arrangement of neighbours leaves both tones without contrast, and the thing
- * it now resembles is the thing it is.
+ * — while making the bar read as film rather than as tiles in a chart.
+ *
+ * IT WAS INVERTED FOR A WHILE, near-black base with pale rings, on the
+ * reasoning that either polarity satisfies the contrast rule so the choice was
+ * free. The contrast rule was satisfied; the resemblance was not. A dark strip
+ * with light lines in it looks like a chart with gridlines. Film is light with
+ * dark frame lines, and the difference between those two is the whole point of
+ * the treatment.
+ *
+ * THE VERTICAL INSET IS WHAT MAKES EITHER OF THEM VISIBLE, and its absence is
+ * why this went unnoticed through several attempts — see `BOX_INSET_Y_PX`.
+ * Without room above and below, the only base showing is a sliver between
+ * clips, and no choice of colour reads as anything at all.
  */
-const FRAMED_GAP_COLOUR = "rgba(9, 9, 11, 0.95)";
-const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(244, 244, 245, 0.90)";
+const FRAMED_GAP_COLOUR = "rgba(238, 238, 241, 0.96)";
+const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(0, 0, 0, 0.82)";
 /**
  * The line between two FRAMES of the same clip.
  *
- * Brighter than the ring around a clip and a third of its width, which is the
- * whole hierarchy: a frame edge is a hairline you read as texture, a clip edge
- * is a line you read as a cut. Reversing the two — or making them equal —
- * would turn every sampled frame into something that looks like a shot
- * boundary, and the bar's one job is showing you where the shots actually
- * change.
+ * FAINT ON PURPOSE — 40% where the film base around a clip is opaque. That
+ * difference IS the hierarchy, and it is the only thing keeping the treatment
+ * honest: a frame edge is texture you read as film, a clip edge is a line you
+ * read as a CUT. At full strength the two are indistinguishable, so every
+ * sampled frame inside a long take looks like a shot boundary — which is
+ * precisely the thing the bar exists to show you and would now be lying about.
+ *
+ * Only the interior lines. The clip's own edge stays solid, because that one
+ * is answering the other question.
  */
-const FRAMED_CELL_EDGE = "rgba(250, 250, 250, 0.82)";
+const FRAMED_CELL_EDGE = "rgba(250, 250, 250, 0.4)";
+
+/**
+ * How far each box is pulled in from the TOP and BOTTOM of the lane once it
+ * holds frames.
+ *
+ * Without it the film strip has no top or bottom edge, and that is a bug
+ * rather than a nuance. A box is `inset-y-0` — exactly the lane's height — and
+ * the lane is `overflow-hidden`, so a ring painted OUTSIDE the box has nowhere
+ * to go vertically and is clipped away entirely. What survives is the left and
+ * right of each ring, which reads as a row of thin separators rather than as
+ * frames: every horizontal edge of the treatment was being thrown away.
+ *
+ * Giving the box a vertical inset puts the strip's own colour above and below
+ * each frame as well as between them, which is what a strip of film actually
+ * looks like — a frame has margin on all four sides, not two.
+ *
+ * ONLY WHEN FRAMES ARE ON. Over plain grey the boxes should still fill the
+ * bar: there the height is not carrying anything and shortening it would just
+ * make the bar quieter for no reason.
+ */
+const BOX_INSET_Y_PX = 3;
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */
@@ -485,8 +517,14 @@ export function SeamLane({
                   // See `FRAMED_BOX_EDGE`: the ring is the dark half of the
                   // gap, and the strip's own background is the pale half.
                   ...(thumbnails.shown ? { boxShadow: FRAMED_BOX_EDGE } : {}),
+                  // ROOM FOR THE RING TO EXIST. See `BOX_INSET_Y_PX`: the lane
+                  // clips, so without this the frame's top and bottom edges
+                  // are painted straight off the element.
+                  ...(thumbnails.shown
+                    ? { top: BOX_INSET_Y_PX, bottom: BOX_INSET_Y_PX }
+                    : { top: 0, bottom: 0 }),
                 }}
-                className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]"
+                className="absolute flex items-center justify-center overflow-hidden rounded-[3px]"
               >
                 {thumbnails.shown ? (
                   <SegmentFrames
@@ -522,35 +560,6 @@ export function SeamLane({
             );
           })}
 
-          {/* THE CLIP THE CARDS ARE ON, ringed rather than dotted.
-              A dot inside the box marked the centre for a while and had to
-              fight whatever picture was behind it. A ring is drawn on the
-              box's own edge, where there is never any content — so it reads at
-              every zoom, on any footage, and at widths where a 12px dot would
-              not have fitted at all. Red because it is the same red as the
-              playhead: both answer "which clip is the view about", one in
-              space and one in time.
-
-              OUTSIDE the segment list so it can sit above every box including
-              its neighbours' rings, and so a one-pixel-wide clip still gets a
-              visible mark. */}
-          {(() => {
-            const segment = strip.segments.find((found) => found.clipId === centreClipId);
-            if (segment === undefined || segment.widthPx <= 0) return null;
-            return (
-              <span
-                data-seam-marker
-                aria-hidden="true"
-                className="pointer-events-none absolute z-20 rounded-[4px] ring-2 ring-red-500"
-                style={{
-                  left: segment.leftPx + BOX_INSET_PX - 1,
-                  width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2) + 2,
-                  top: -1,
-                  bottom: -1,
-                }}
-              />
-            );
-          })()}
 
           {/* AND SAID AGAIN ABOVE THE BOX, in red.
               The hatching says a clip is skipped once you are looking at it;
@@ -571,7 +580,12 @@ export function SeamLane({
                 style={{
                   left: segment.leftPx + BOX_INSET_PX,
                   width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
-                  top: -6,
+                  // INSIDE THE LANE. At -6 this sat above the lane's top edge,
+                  // and the lane clips — so the one mark saying a clip gets
+                  // skipped was painted off the element and never appeared at
+                  // all. It lives in the margin above the frame now, which is
+                  // the space the film-strip inset created.
+                  top: 0,
                 }}
               />
             );
@@ -637,6 +651,39 @@ export function SeamLane({
           )}
         </div>
       </div>
+
+      {/* THE CLIP THE CARDS ARE ON, POINTED AT FROM ABOVE.
+          A red ring around its box did this for a while, and it was the wrong
+          shape of answer twice over. A ring encloses an AREA, so at a wide
+          reach — where a box is eight pixels across — the mark becomes most of
+          the clip and stops reading as a mark at all. And red is the
+          playhead's colour: two different "you are here" claims in one colour,
+          one about time and one about which shot, is one too many.
+          A triangle points at a PLACE. Its size has nothing to do with the
+          clip's duration, so it reads identically at every zoom, and white
+          against the dark band above the film base is the one thing up there.
+          OUTSIDE THE CLIPPING WRAPPER, which is why this is a sibling of the
+          boxes rather than a child: the strip is `overflow-hidden` and anything
+          above the film base would be cut off. The chip and the hover preview
+          escape the same way, and `viewportX` is how all three stay with the
+          strip while living outside it. */}
+      {(() => {
+        const segment = strip.segments.find((found) => found.clipId === centreClipId);
+        if (segment === undefined || segment.widthPx <= 0) return null;
+        return (
+          <span
+            data-seam-active-mark={centreClipId}
+            aria-hidden="true"
+            style={{
+              left: viewportX(segment.leftPx + segment.widthPx / 2),
+              borderLeft: "5px solid transparent",
+              borderRight: "5px solid transparent",
+              borderTop: "6px solid rgba(250, 250, 250, 0.95)",
+            }}
+            className="pointer-events-none absolute -top-[9px] z-10 h-0 w-0 -translate-x-1/2"
+          />
+        );
+      })()}
 
       {/* THE TIME, ON THE PLAYHEAD, while it is being dragged. ABOVE the
           boxes, not on them: it names the frame you are looking at, and a

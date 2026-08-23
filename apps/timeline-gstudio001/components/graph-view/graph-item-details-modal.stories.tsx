@@ -1456,19 +1456,31 @@ export const TheBarLabelsItsSectionsWithFrames: Story = {
 
     // And exactly one box is marked as the one in the middle.
     //
-    // The mark is a RING ON THE BOX'S EDGE now, not a dot inside it — a dot had
-    // to fight whatever picture the box was drawing and could not fit at all in
-    // a narrow one. So it is a sibling overlay rather than a child, and what
-    // ties it to the centre is that it sits exactly on that box.
+    // A TRIANGLE ABOVE IT, not a ring around it. Two things were wrong with the
+    // ring: it enclosed an AREA, so at a wide reach — where a box is a few
+    // pixels across — the mark became most of the clip and stopped reading as a
+    // mark; and it was RED, which is the playhead's colour, putting two
+    // different "you are here" claims in one hue, one about time and one about
+    // which shot. A triangle points at a place, and its size has nothing to do
+    // with the clip's duration, so it reads the same at every zoom.
     expect(document.querySelectorAll("[data-seam-segment-live]").length).toBe(1);
-    const marker = document.querySelector<HTMLElement>("[data-seam-marker]");
-    expect(marker).not.toBeNull();
-    const ring = marker!.getBoundingClientRect();
+    const mark = document.querySelector<HTMLElement>("[data-seam-active-mark]");
+    expect(mark).not.toBeNull();
+    expect(mark!.getAttribute("data-seam-active-mark")).toBe(
+      centreBox().getAttribute("data-seam-segment"),
+    );
+    // ON THE MIDDLE OF THAT BOX, and ABOVE the film base rather than on it.
+    // The strip clips, so this lives outside the clipping wrapper — the same
+    // escape the time chip and the hover preview use — and a version drawn
+    // inside would simply not be there.
+    const tip = mark!.getBoundingClientRect();
     const marked = centreBox().getBoundingClientRect();
-    // Within a couple of pixels: the ring is drawn a hair outside the box so
-    // the stroke sits on the edge rather than over the picture.
-    expect(Math.abs(ring.left - marked.left)).toBeLessThanOrEqual(2);
-    expect(Math.abs(ring.right - marked.right)).toBeLessThanOrEqual(2);
+    expect(Math.abs((tip.left + tip.width / 2) - (marked.left + marked.width / 2)))
+      .toBeLessThanOrEqual(1);
+    expect(tip.bottom).toBeLessThanOrEqual(marked.top);
+    // White, because the band above the film base is the dark part of the bar.
+    const tone = getComputedStyle(mark!).borderTopColor.match(/[\d.]+/g)!.slice(0, 3);
+    expect(Math.min(...tone.map(Number))).toBeGreaterThan(200);
   },
 };
 
@@ -2218,19 +2230,22 @@ export const ThePlaybarCanDrawFrames: Story = {
     // beside it. Asserted as BOTH being present, because either alone is the
     // bug.
     //
-    // THE POLARITY FLIPPED WITH THE REDESIGN and the invariant did not. It was
-    // a pale strip with dark rings; it is now a near-black strip with pale
-    // rings, because a run of boxes edged in white is what makes the bar read
-    // as frames on a strip of film rather than as tiles in a chart. Which tone
-    // is the ring is free — that there are two of them is not.
+    // AND THE PALE ONE IS THE STRIP, which is not a free choice even though
+    // the contrast rule would be satisfied either way.
+    //
+    // It was inverted for a while — near-black base, pale rings — on exactly
+    // that reasoning. The contrast held and the resemblance did not: a dark
+    // strip with light lines in it looks like a chart with gridlines. A strip
+    // of film is a LIGHT BASE with pictures printed on it and dark frame
+    // lines, and the whole point of this treatment is the resemblance.
     const gap = getComputedStyle(
       document.querySelector<HTMLElement>("[data-seam-strip]")!,
     ).backgroundColor;
-    const core = gap.match(/[\d.]+/g)!.slice(0, 3).map(Number);
-    expect(Math.max(...core)).toBeLessThan(90);
+    const base = gap.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    expect(Math.min(...base)).toBeGreaterThan(160);
 
     const ring = boxStyle.boxShadow.match(/[\d.]+/g)!.slice(0, 3).map(Number);
-    expect(Math.min(...ring)).toBeGreaterThan(160);
+    expect(Math.max(...ring)).toBeLessThan(90);
     // OUTSIDE the box, which is what puts it in the gap rather than over the
     // picture — and what keeps it costing no layout.
     expect(boxStyle.boxShadow).not.toMatch(/inset/);
@@ -2242,6 +2257,24 @@ export const ThePlaybarCanDrawFrames: Story = {
     const spread = Number(boxStyle.boxShadow.match(/([\d.]+)px(?!.*px)/)![1]);
     expect(spread).toBeGreaterThan(1);
     expect(spread).toBeLessThan(2.5);
+
+    // AND THE RING HAS SOMEWHERE TO PAINT ON ALL FOUR SIDES.
+    //
+    // This is the assertion that would have caught the real bug, and it hid
+    // for a long time because everything ABOUT the ring was correct: the right
+    // colour, the right width, present in the DOM, reported by
+    // `getComputedStyle`. It was simply invisible on two of its four sides.
+    //
+    // A box was `inset-y-0` — exactly the lane's height — and the lane is
+    // `overflow-hidden`, so a shadow painted OUTSIDE the box had no vertical
+    // room and was clipped away. What survived was the left and right of each
+    // ring, which reads as a row of thin separators rather than as film. A
+    // frame on a strip has margin on all four sides, not two.
+    const lane = document.querySelector<HTMLElement>("[data-seam-strip]")!.parentElement!;
+    const laneBox = lane.getBoundingClientRect();
+    const boxRect = seamBoxes()[0]!.getBoundingClientRect();
+    expect(boxRect.top - laneBox.top).toBeGreaterThanOrEqual(spread);
+    expect(laneBox.bottom - boxRect.bottom).toBeGreaterThanOrEqual(spread);
 
     framesTo("OFF");
     await waitFor(() =>
