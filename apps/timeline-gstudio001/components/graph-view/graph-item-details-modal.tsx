@@ -32,7 +32,11 @@ import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
-import { detailsStepTransition } from "./graph-details-motion";
+import {
+  DETAILS_HEIGHT_DELAY_MS,
+  DETAILS_HEIGHT_MS,
+  detailsStepTransition,
+} from "./graph-details-motion";
 import { SegmentedControl } from "./graph-details-segmented";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
@@ -344,6 +348,46 @@ function DetailsFilmstripModal({
   // whole clip between two leads — exactly what this always did — and the same
   // rule gives seven at nine.
   const half = Math.floor(viewCount / 2);
+
+  // THE PANEL THAT IS LEAVING STAYS A PANEL UNTIL IT HAS LEFT.
+  //
+  // Whether a panel draws its contents or renders as an empty box of the
+  // right width was read straight off the CURRENT centre — so the moment a
+  // step changed it, the far card fell outside the window and blanked. It
+  // was still on screen for the whole 420ms slide, in full view, sliding out
+  // as an empty rectangle: a black hole opening on one side of the row for
+  // the entire transition, which is the most visible thing wrong with the
+  // step and reads as a rendering fault rather than as motion.
+  //
+  // It is NOT a mounting problem — `MOUNTED_RADIUS` already keeps a spare
+  // pair built either side, so the card exists throughout. It was only ever
+  // being told it was off screen a third of a second too early.
+  //
+  // So the window is the UNION of where it was and where it is going, held
+  // for as long as the slide takes. The card leaves with its picture on.
+  const [leavingCentre, setLeavingCentre] = useState<number | null>(null);
+  const centreWas = useRef(centre);
+  useEffect(() => {
+    if (centreWas.current === centre) return;
+    setLeavingCentre(centreWas.current);
+    centreWas.current = centre;
+    // The slide's own clock, plus a frame — releasing on the same tick can
+    // blank the card on its last painted frame, which is the bug in
+    // miniature.
+    const timer = setTimeout(
+      () => setLeavingCentre(null),
+      DETAILS_HEIGHT_DELAY_MS + DETAILS_HEIGHT_MS + 40,
+    );
+    return () => clearTimeout(timer);
+  }, [centre]);
+
+  /** Off screen for BOTH the centre it left and the one it is arriving at. */
+  const isSpare = useCallback(
+    (index: number) =>
+      Math.abs(index - centre) > half &&
+      (leavingCentre === null || Math.abs(index - leavingCentre) > half),
+    [centre, half, leavingCentre],
+  );
   const wholeClips = useMemo(() => {
     const clips: MediaNode[] = [];
     for (let index = centre - half + 1; index <= centre + half - 1; index += 1) {
@@ -1203,6 +1247,10 @@ function DetailsFilmstripModal({
           transform: rowTransform,
           // THE STEP'S OWN TIMING, shared with the panel widths and the film
           // strip — see . One press, one motion.
+          // PHASE TWO. The row does not begin travelling until the cards have
+          // finished resizing — see `detailsSlideTransition`. Opacity is not
+          // part of the choreography (it is the hover-preview fade), so it
+          // keeps the plain step timing and starts immediately.
           transition: dragPx === 0 ? detailsStepTransition("transform, opacity") : undefined,
         }}
       >
@@ -1307,7 +1355,19 @@ function DetailsFilmstripModal({
               // zero-width: the row's centring assumes every non-centre panel
               // is one neighbour wide, so collapsing these would shift every
               // panel between them and the middle.
-              spare={Math.abs(index - centre) > half}
+              spare={isSpare(index)}
+              // WHO IS TAKING THE MARK AND WHO IS GIVING IT UP, for as long as
+              // the step runs. Null once it has settled, so a panel that simply
+              // IS the centre transitions like anything else.
+              focusHandoff={
+                leavingCentre === null || leavingCentre === centre
+                  ? null
+                  : index === centre
+                    ? "arriving"
+                    : index === leavingCentre
+                      ? "departing"
+                      : null
+              }
               width={index === centre ? panelWidths.centre : panelWidths.neighbour}
               // Engaged, and not the one being watched. Uses the same gate as
               // the playhead lines and the ring, so the whole view agrees on

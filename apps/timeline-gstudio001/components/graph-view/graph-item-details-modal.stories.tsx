@@ -3976,3 +3976,194 @@ export const TheTransportSitsOnTheControlRow: Story = {
     expect(rowHeight).toBeGreaterThanOrEqual(pill);
   },
 };
+
+/**
+ * THE CARD THAT IS LEAVING KEEPS ITS PICTURE UNTIL IT HAS GONE.
+ *
+ * Whether a panel draws its contents or renders as an empty box of the right
+ * width was read straight off the current centre, so a step blanked the far
+ * card instantly — while it was still on screen, in full view, sliding out as
+ * an empty rectangle. A black hole opened on one side of the row for the whole
+ * 420ms and read as a rendering fault rather than as motion.
+ *
+ * Caught on a screen recording rather than by a test, which is the reason this
+ * one exists: nothing about it is visible in a settled frame, and both ends of
+ * the step are correct.
+ *
+ * Asserted DURING the slide, so the assertion has to happen before the timer
+ * that releases the union expires — hence no `waitFor` around it. What it
+ * checks is the panel's contents, not its box: a spare still occupies its
+ * width, so geometry alone cannot tell the two apart.
+ */
+export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panelFor = (name: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]")).find(
+        (panel) => panel.textContent?.includes(name),
+      ) ?? null;
+
+    // Settled on the middle clip: the clip to its right is a real panel.
+    await waitFor(() => expect(panelFor("Subject")).not.toBeNull());
+    expect(panelFor("After")).not.toBeNull();
+
+    // Step BACK, which sends "After" out of the window on the right.
+    const back = document.querySelector<HTMLButtonElement>('[data-seam-step="back"]')!;
+    fireEvent.click(back);
+
+    // IMMEDIATELY — this is the frame the bug lived in. The card has left the
+    // window around the new centre and must still be drawing itself.
+    const leaving = panelFor("After");
+    expect(leaving).not.toBeNull();
+
+    // ASKED OF VISIBILITY, not of the children. A spare keeps its whole
+    // subtree and its box — the row's centring is arithmetic over uniform
+    // neighbour widths, so collapsing one would shift every panel between it
+    // and the middle — and hides it with `visibility: hidden`. So the picture
+    // and the readout are still in the DOM either way, and a test that looked
+    // for them passed against the bug it was written for.
+    const box = leaving!.closest("[data-item-details-spare]");
+    expect(`spare while leaving: ${box !== null}`).toBe("spare while leaving: false");
+    expect(getComputedStyle(leaving!).visibility).toBe("visible");
+  },
+};
+
+/**
+ * ONLY ONE CARD WEARS THE MARK AT A TIME, INCLUDING MID-STEP.
+ *
+ * A step grows one card and shrinks another simultaneously, and around the
+ * crossing they are near enough the same size that neither reads as the
+ * subject. On a frame-by-frame playback the eye has nothing to follow through
+ * the middle of the step.
+ *
+ * THE WIDTHS ARE NOT WHAT GOT STAGGERED, and that is the interesting part.
+ * Both cards change by exactly the same amount in opposite directions, so
+ * animating them together holds the row's total width constant; offsetting them
+ * would make it dip by that amount — 236px, measured at 1920 — and every card
+ * to the right of the pair would slide out and back. The geometry has to stay
+ * simultaneous.
+ *
+ * So the CHROME is handed off instead, which costs no layout: the outgoing card
+ * drops its surface and border inside the handoff window, and the incoming one
+ * waits exactly that long before taking them.
+ *
+ * Asserted as timings rather than as painted colour, because the thing being
+ * claimed is about ORDER, and a colour sampled mid-transition is a race.
+ */
+export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    // PER PROPERTY, because this element now runs several clocks at once:
+    // the chrome on the handoff, height on the resize phase. A bare
+    // `transitionDelay` is a comma-separated list of five values here, and
+    // reading it whole compares the wrong things.
+    const timing = (panel: HTMLElement, property = "box-shadow") => {
+      const style = getComputedStyle(panel);
+      const at = style.transitionProperty.split(",").map((name) => name.trim()).indexOf(property);
+      const pick = (value: string) =>
+        value.split(",").map((entry) => entry.trim())[at] ?? "";
+      return {
+        duration: pick(style.transitionDuration),
+        delay: pick(style.transitionDelay),
+      };
+    };
+
+    // Settled: nobody is waiting on anybody.
+    for (const panel of panels()) {
+      expect(timing(panel).delay).toBe("0s");
+    }
+    // The surface is part of the mark, so it has to be part of the transition —
+    // it used to snap while the border eased.
+    expect(getComputedStyle(panels()[0]!).transitionProperty).toContain("background-color");
+
+    const before = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    )!;
+    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-seam-step="back"]')!);
+
+    // DEPARTING drops it immediately, over the shorter window.
+    const departing = timing(before);
+    expect(`departing delay ${departing.delay}`).toBe("departing delay 0s");
+    expect(`departing duration ${departing.duration}`).toBe("departing duration 0.14s");
+
+    // ARRIVING waits that window out before taking anything.
+    const arriving = panels().find(
+      (panel) => panel.getAttribute("data-item-details-panel") === "centre",
+    )!;
+    expect(arriving).not.toBe(before);
+    expect(`arriving delay ${timing(arriving).delay}`).toBe("arriving delay 0.14s");
+
+    // The one does not begin until the other has finished: no frame of the step
+    // has two marked cards, which is the whole claim.
+    expect(Number.parseFloat(departing.duration)).toBeLessThanOrEqual(
+      Number.parseFloat(timing(arriving).delay) + 0.001,
+    );
+  },
+};
+
+/**
+ * THE WIDTH TRAVELS WITH THE ROW; ONLY THE HEIGHT WAITS.
+ *
+ * A step used to animate width while HEIGHT snapped — it was in nobody's
+ * transition list. Measured at 1920, a card promoted to subject goes from 368px
+ * tall to 519, and since the cards hang from a common bottom that is a 151px
+ * jump of its top edge, in a single frame, exactly as the row began to travel.
+ * One dimension gliding while the other teleported is what looked wrong.
+ *
+ * Both full orderings were built and rejected before landing here. Resize-first
+ * made the subject grow before it had anywhere to go. Slide-first left it 184px
+ * right of centre — half the 368px between the two widths, because the row's
+ * offset is computed from a uniform neighbour width and only centres the subject
+ * once the subject IS the wide card — and made it close that gap by growing.
+ *
+ * So WIDTH has to travel with the row: the landing position depends on it.
+ * HEIGHT does not, and it is the jarring one, so it is the only thing held back.
+ *
+ * Asserted as declarations. The claim is about ORDER, and neither browser pane
+ * will sample a transition — requestAnimationFrame is throttled in both, so a
+ * timed probe returns one frame and then nothing.
+ */
+export const TheWidthTravelsWithTheRowAndTheHeightFollows: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    const panel = document.querySelector<HTMLElement>("[data-item-details-panel]")!;
+    const outer = panel.parentElement!;
+    const strip = document.querySelector<HTMLElement>("[data-details-strip]")!;
+
+    const entry = (element: HTMLElement, property: string) => {
+      const style = getComputedStyle(element);
+      const at = style.transitionProperty
+        .split(",")
+        .map((name) => name.trim())
+        .indexOf(property);
+      const pick = (value: string) => value.split(",").map((v) => v.trim())[at] ?? "";
+      return { duration: pick(style.transitionDuration), delay: pick(style.transitionDelay) };
+    };
+
+    // HEIGHT IS ANIMATED AT ALL. This is the original bug, in one assertion.
+    expect(getComputedStyle(panel).transitionProperty).toContain("height");
+
+    // WIDTH AND THE ROW TRAVEL TOGETHER — same clock, neither waiting.
+    const travel = entry(strip, "transform");
+    const width = entry(outer, "width");
+    expect(`width ${width.duration}/${width.delay}`).toBe(
+      `width ${travel.duration}/${travel.delay}`,
+    );
+    expect(`row waits ${travel.delay}`).toBe("row waits 0s");
+
+    // AND THE HEIGHT FOLLOWS, on its own shorter clock.
+    const height = entry(panel, "height");
+    expect(Number.parseFloat(height.delay)).toBeGreaterThan(0);
+    expect(Number.parseFloat(height.duration)).toBeLessThan(
+      Number.parseFloat(travel.duration),
+    );
+    // It starts as the travel is finishing rather than after a gap — most of a
+    // hard ease-out's distance is covered early.
+    expect(Number.parseFloat(height.delay)).toBeLessThan(Number.parseFloat(travel.duration));
+  },
+};

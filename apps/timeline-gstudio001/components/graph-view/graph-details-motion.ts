@@ -52,6 +52,34 @@ export const DETAILS_STEP_MS = 420;
 /** The step's easing, as a CSS value. */
 export const DETAILS_STEP_EASING = DETAILS_STEP_EASE;
 
+/**
+ * WIDTH, HEIGHT AND THE ROW'S TRAVEL ALL MOVE TOGETHER, ON THIS CLOCK.
+ *
+ * Both orderings were built and looked at. Resize-then-slide made the subject
+ * grow before it had anywhere to go; slide-then-resize landed it 184px right of
+ * centre — half the 368px between the two widths, because the row's offset is
+ * computed from a uniform neighbour width and only centres the subject once the
+ * subject IS the wide card — and left it to close that gap by growing.
+ *
+ * Simultaneous was right all along. What was actually wrong was that only HALF
+ * of it was animated: width eased over the step and HEIGHT was in nobody's
+ * transition list, so a card promoted to subject jumped from 368px tall to 519
+ * in a single frame — and because the cards hang from a common bottom, that
+ * moved its top edge 151px at the exact moment the row began to travel. One
+ * dimension gliding while the other teleported is the whole of what looked
+ * wrong; the ordering was never the problem.
+ *
+ * WIDTH TRAVELS WITH THE ROW; HEIGHT WAITS. The card has to be the right WIDTH
+ * when it lands — the row's offset is computed from a uniform neighbour width
+ * and only centres the subject once the subject is the wide card, so a width
+ * that arrived late would leave the card 184px off centre and creeping. Height
+ * is under no such obligation: nothing about the horizontal landing depends on
+ * it, and it is the change that was jarring, because the cards hang from a
+ * common bottom and 151px of it lands on the top edge.
+ *
+ * So the vertical change is held back until the horizontal one has effectively
+ * finished, and gets a clock of its own.
+ */
 /** `transition` shorthand for a property that moves with a step. */
 export function detailsStepTransition(properties: string): string {
   return properties
@@ -69,3 +97,44 @@ export function detailsStepTransition(properties: string): string {
  * alongside it.
  */
 export const DETAILS_CHROME_MS = 210;
+
+/**
+ * When the height change starts, measured from the top of the step.
+ *
+ * Not the full {@link DETAILS_STEP_MS}, which would read as a pause. The step's
+ * curve is a hard ease-out — it does most of its travel early — so by 300ms the
+ * row has visibly stopped even though it has 120ms of settle left. Starting
+ * here reads as the card adjusting once it has arrived, rather than as two
+ * animations with a gap between them.
+ */
+export const DETAILS_HEIGHT_DELAY_MS = 300;
+
+/** And how long it then takes. Short: it is a correction, not a journey. */
+export const DETAILS_HEIGHT_MS = 200;
+
+/**
+ * How long the subject's chrome takes to LEAVE the card losing it, and how
+ * long the card gaining it waits before claiming it.
+ *
+ * A step grows one card and shrinks another at the same time, and for the few
+ * frames either side of the crossing they are near enough the same size that
+ * neither reads as the subject. Watched back frame by frame, the eye has
+ * nothing to follow through the middle of the step.
+ *
+ * THE FIX IS NOT TO STAGGER THE WIDTHS. Both cards change by exactly the same
+ * amount in opposite directions, so animating them together keeps the row's
+ * total width invariant; offsetting them makes it dip by that amount — 236px
+ * at 1920 — and every card to the right of the pair slides out and back. The
+ * geometry has to stay simultaneous.
+ *
+ * So the HANDOFF is staggered instead, which costs no layout at all. The
+ * outgoing card drops its surface and border inside this window; the incoming
+ * one waits it out before taking them. The two never wear the mark at once,
+ * so there is exactly one subject at every frame of the step even while the
+ * sizes are crossing.
+ *
+ * A third of the step. Long enough to read as a handoff rather than a
+ * simultaneous swap, short enough that the arriving card is fully marked well
+ * before it stops moving.
+ */
+export const DETAILS_HANDOFF_MS = 140;
