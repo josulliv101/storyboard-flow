@@ -17,7 +17,7 @@ import {
 } from "./graph-seam-bar-layout";
 import { SEAM_LANE_HEIGHT_PX, SeamLane, type SeamHover } from "./graph-seam-lane";
 import { SeamMinimap } from "./graph-seam-minimap";
-import { SEAM_RULER_HEIGHT_PX, SeamRuler } from "./graph-seam-ruler";
+import { SEAM_RULER_TOTAL_PX, SeamRuler } from "./graph-seam-ruler";
 import {
   buildSeamStrip,
   stripCentreOffset,
@@ -1040,14 +1040,14 @@ export function SeamStripBar({
           aria-hidden="true"
           data-seam-fade="left"
           hidden={offset >= -0.5}
-          style={{ top: SEAM_RULER_HEIGHT_PX, height: SEAM_LANE_HEIGHT_PX }}
+          style={{ top: SEAM_RULER_TOTAL_PX, height: SEAM_LANE_HEIGHT_PX }}
           className="pointer-events-none absolute left-0 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
         />
         <span
           aria-hidden="true"
           data-seam-fade="right"
           hidden={strip.totalPx + offset <= trackWidth + 0.5}
-          style={{ top: SEAM_RULER_HEIGHT_PX, height: SEAM_LANE_HEIGHT_PX }}
+          style={{ top: SEAM_RULER_TOTAL_PX, height: SEAM_LANE_HEIGHT_PX }}
           className="pointer-events-none absolute right-0 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
         />
       </div>

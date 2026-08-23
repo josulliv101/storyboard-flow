@@ -918,7 +918,7 @@ function DetailsFilmstripModal({
       // row that had itself moved 1728px, which put the card just chosen
       // entirely off the left edge. `clip` crops without ever being
       // scrollable, so the transform stays the only thing that moves the row.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[20rem] pb-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[21.75rem] pb-6 backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim

@@ -1,6 +1,11 @@
 "use client";
 
-import { BOX_INSET_PX, SEAM_RULER_HEIGHT_PX } from "./graph-seam-metrics";
+import {
+  BOX_INSET_PX,
+  SEAM_COLLECTION_BAND_PX,
+  SEAM_RULER_HEIGHT_PX,
+  SEAM_RULER_TOTAL_PX,
+} from "./graph-seam-metrics";
 import type { SeamTick } from "./graph-seam-bar-layout";
 
 /**
@@ -11,7 +16,7 @@ import type { SeamTick } from "./graph-seam-bar-layout";
  * begin exactly where the ruler stops or they cover the last row of labels.
  * Two places, one number.
  */
-export { SEAM_RULER_HEIGHT_PX };
+export { SEAM_RULER_HEIGHT_PX, SEAM_RULER_TOTAL_PX };
 
 /**
  * ── THE CLIPS, DRAWN AGAIN IN THE SCALE ─────────────────────────────────────
@@ -151,9 +156,9 @@ export function SeamRuler({
       // control, but hiding an element you can interact with is the one thing
       // `aria-hidden` must never do.
       aria-hidden={interactive ? undefined : "true"}
-      style={{ height: SEAM_RULER_HEIGHT_PX }}
+      style={{ height: SEAM_RULER_TOTAL_PX }}
       className={[
-        "relative overflow-hidden",
+        "relative",
         // `pointer-events-none` ONLY while it is decoration. As the hover
         // target it has to receive the pointer — and `touch-none`, because the
         // strip below claims every gesture and a ruler that scrolled the
@@ -162,6 +167,48 @@ export function SeamRuler({
       ].join(" ")}
       {...(handlers ?? {})}
     >
+      {/* ── THE NAMES, ON THEIR OWN LINE ABOVE THE SCALE ─────────────────
+          Same x as ever — the same `offset` and the same tick position — so a
+          name still starts exactly where its collection does. Only the height
+          changed.
+
+          ITS OWN CLIPPING BOX, so a long name running off the end of the bar
+          is cut at the bar's edge rather than at the scale's. The two bands
+          scroll as one and crop as one. */}
+      <div
+        data-seam-ruler-names
+        className="absolute inset-x-0 top-0 overflow-hidden"
+        style={{ height: SEAM_COLLECTION_BAND_PX }}
+      >
+        <div
+          className="absolute inset-y-0 left-0 w-full"
+          style={{ transform: `translateX(${offset}px)` }}
+        >
+          {ticks.map((tick) =>
+            tick.kind !== "collection" ? null : (
+              <span
+                key={`name-${tick.x}-${tick.label}`}
+                data-seam-tick-name={tick.kind}
+                style={{ left: tick.x }}
+                // Left-ALIGNED to the tick rather than centred on it. A
+                // collection label names the thing that starts HERE, and a
+                // centred one hangs half of itself over the collection that
+                // just ended — which reads as belonging to the wrong side of
+                // the seam.
+                className="absolute top-1/2 max-w-32 -translate-y-1/2 truncate font-mono text-[10px] leading-none tracking-wider whitespace-nowrap text-zinc-200"
+              >
+                {tick.label}
+              </span>
+            ),
+          )}
+        </div>
+      </div>
+
+      <div
+        data-seam-ruler-scale
+        className="absolute inset-x-0 bottom-0 overflow-hidden"
+        style={{ height: SEAM_RULER_HEIGHT_PX }}
+      >
       <div
         className="absolute inset-y-0 left-0 w-full"
         style={{ transform: `translateX(${offset}px)` }}
@@ -230,43 +277,31 @@ export function SeamRuler({
                 tick.kind === "collection" ? "h-1.5 bg-white/45" : "h-1 bg-white/25",
               ].join(" ")}
             />
-            {/* Left-ALIGNED to the tick rather than centred on it. A
-                collection label names the thing that starts HERE, and a
-                centred one hangs half of itself over the collection that just
-                ended — which reads as belonging to the wrong side of the
-                seam. */}
-            <span
-              className={[
-                // CENTRED IN THE BAND, not hung from its top.
+            {/* THE SECONDS, AND ONLY THE SECONDS. A collection's name is drawn
+                in the band above — see there for why the two rows are
+                separate. Rendering it here as well would be the same word
+                twice at two heights. */}
+            {tick.kind === "collection" ? null : (
+              <span
+                // CENTRED IN THE BAND, not hung from its top. At the top it sat
+                // against the edge with the rest of the band empty beneath it,
+                // so the row read as text with a margin under it rather than
+                // as a scale. `-translate-y-1/2` against `top-1/2` rather than
+                // a flex box, because the tick container is a zero-width
+                // anchor at the boundary with no box to centre anything in.
                 //
-                // At the top it sat against the edge with the whole rest of
-                // the band empty beneath it, so the row read as text with a
-                // margin under it rather than as a scale. Centred, the label
-                // sits in the middle of the block it names and the tick mark
-                // still has the bottom edge to itself — `-translate-y-1/2`
-                // against `top-1/2` rather than a flex box, because the tick
-                // container is a zero-width anchor at the boundary and has no
-                // box to centre anything in.
-                "absolute top-1/2 left-0 max-w-32 -translate-y-1/2 truncate text-[10px] leading-none whitespace-nowrap",
-                // READABLE, which the time labels were not. They were
-                // `text-zinc-600` at 9px — grey on near-black, at a size where
-                // the strokes are a pixel wide, so the numbers were legible
-                // only by being where numbers were expected. 10px and
-                // `zinc-400` is still quiet enough to stay a scale rather than
-                // a row of content, and can actually be read.
-                //
-                // The collection names keep their extra weight and letter
-                // spacing: they are the landmark, and the numbers are the
-                // grid they sit on.
-                tick.kind === "collection"
-                  ? "font-mono tracking-wider text-zinc-200"
-                  : "font-mono tabular-nums text-zinc-400",
-              ].join(" ")}
-            >
-              {tick.label}
-            </span>
+                // READABLE, which these were not. They were `text-zinc-600` at
+                // 9px — grey on near-black at a size where the strokes are a
+                // pixel wide, so the numbers were legible only by being where
+                // numbers were expected.
+                className="absolute top-1/2 left-0 max-w-32 -translate-y-1/2 truncate font-mono text-[10px] leading-none tabular-nums whitespace-nowrap text-zinc-400"
+              >
+                {tick.label}
+              </span>
+            )}
           </span>
         ))}
+      </div>
       </div>
     </div>
   );

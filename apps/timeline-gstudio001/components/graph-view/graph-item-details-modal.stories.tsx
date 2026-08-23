@@ -1751,10 +1751,16 @@ export const TheRulerNamesTheCollections: Story = {
     await waitFor(() => expect(document.querySelector("[data-seam-ruler]")).not.toBeNull());
     await settleStrip();
 
+    // A COLLECTION NAME LIVES IN ITS OWN BAND now, above the scale — the two
+    // rows say one thing each, names and numbers. The tick MARK keeps the
+    // `data-seam-tick` name down in the scale, so the label needs a selector of
+    // its own rather than a marker that carries text only some of the time.
     const labels = (kind: string) =>
-      Array.from(document.querySelectorAll<HTMLElement>("[data-seam-tick=" + kind + "]")).map(
-        (tick) => tick.textContent?.trim() ?? "",
-      );
+      Array.from(
+        document.querySelectorAll<HTMLElement>(
+          kind === "collection" ? "[data-seam-tick-name]" : `[data-seam-tick=${kind}]`,
+        ),
+      ).map((tick) => tick.textContent?.trim() ?? "");
 
     expect(labels("collection")).toEqual(["Kitchen Interior", "Loading Dock"]);
 
@@ -1853,12 +1859,29 @@ export const TheRulerNamesTheCollections: Story = {
     // Hung from the top they read as text with a margin under it rather than
     // as a scale; centred, each sits in the middle of the block it names and
     // the tick mark keeps the bottom edge to itself.
-    const anyLabel = document.querySelector<HTMLElement>("[data-seam-tick] span:nth-child(2)");
+    // A TIME label, centred in the SCALE band — which is no longer the whole
+    // ruler. The names have a band of their own above it, so measuring against
+    // the outer box would put the target 7px out and fail for a reason that is
+    // not about centring.
+    const scale = document
+      .querySelector<HTMLElement>("[data-seam-ruler-scale]")!
+      .getBoundingClientRect();
+    const anyLabel = document.querySelector<HTMLElement>('[data-seam-tick="time"] span:last-child');
     expect(anyLabel).not.toBeNull();
     const labelBox = anyLabel!.getBoundingClientRect();
     expect(
-      Math.abs((labelBox.top + labelBox.height / 2) - (band.top + band.height / 2)),
+      Math.abs((labelBox.top + labelBox.height / 2) - (scale.top + scale.height / 2)),
     ).toBeLessThan(1.5);
+
+    // AND THE NAMES SIT ABOVE THE SCALE, which is the whole point of the split:
+    // two rows saying one thing each rather than two kinds of label competing
+    // for one line.
+    const names = document
+      .querySelector<HTMLElement>("[data-seam-ruler-names]")!
+      .getBoundingClientRect();
+    expect(names.bottom).toBeLessThanOrEqual(scale.top + 0.5);
+    const aName = document.querySelector<HTMLElement>("[data-seam-tick-name]")!;
+    expect(names.top <= aName.getBoundingClientRect().top + 0.5).toBe(true);
 
     // Seconds, and enough of them to read a scale from.
     const times = labels("time");
@@ -2880,7 +2903,7 @@ export const TheBarIsGreyUntilTheTintIsSwitchedOn: Story = {
     // alone: the strip, the ruler and the minimap.
     expect(document.querySelectorAll("[data-seam-divider]").length).toBe(1);
     expect(
-      Array.from(document.querySelectorAll<HTMLElement>('[data-seam-tick="collection"]')).map(
+      Array.from(document.querySelectorAll<HTMLElement>('[data-seam-tick-name]')).map(
         (tick) => tick.textContent?.trim(),
       ),
     ).toEqual(["Kitchen Interior", "Loading Dock"]);

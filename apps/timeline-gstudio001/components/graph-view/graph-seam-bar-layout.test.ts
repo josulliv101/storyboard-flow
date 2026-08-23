@@ -178,13 +178,18 @@ describe("seamRulerTicks", () => {
     ]);
   });
 
-  it("clears the whole WIDTH of a collection label, not just its mark", () => {
-    // The label is left-aligned on its tick, so it reaches to the RIGHT — and
-    // a clash zone measured around the mark alone let the next time tick print
-    // straight through the end of the word. Forty seconds at 10px a second:
-    // the 5s ladder wants a tick every 50px, "Van Interior" starts at x=200
-    // and reaches about 75px past it, so the two ticks inside that reach give
-    // way and the one beyond it does not.
+  // ── NOTHING IS SUPPRESSED ANY MORE ──────────────────────────────────────
+  //
+  // Two tests used to live here asserting the opposite: that a time tick was
+  // dropped wherever a collection name would have printed over it, both on the
+  // mark itself and across the width the word was estimated to take.
+  //
+  // That was right while the names shared a line with the seconds, and the
+  // cost was a scale with holes in it exactly where a collection starts —
+  // which is where you are most likely to be reading it. The names moved to
+  // their own band above the scale, so there is nothing to collide with and
+  // nothing up here has to guess how wide a word renders.
+  it("keeps every time tick, including under a collection label", () => {
     const clips: readonly SeamBarClip[] = [
       clip("a", 20, "kitchen", "Kitchen"),
       clip("b", 20, "van", "Van Interior"),
@@ -192,18 +197,37 @@ describe("seamRulerTicks", () => {
     const times = seamRulerTicks({ strip: buildSeamStrip(clips, 10), clips })
       .filter((tick) => tick.kind === "time")
       .map((tick) => tick.x);
-    expect(times).not.toContain(200);
-    expect(times).not.toContain(250);
+    // "Van Interior" starts at x=200 and used to clear 200 and 250 with it.
+    expect(times).toContain(200);
+    expect(times).toContain(250);
     expect(times).toContain(300);
   });
 
-  it("gives way to a collection tick on its own mark as well", () => {
+  it("keeps the tick beside a seam, which the clash zone used to eat", () => {
     const times = seamRulerTicks({ strip: STRIP, clips: CLIPS })
       .filter((tick) => tick.kind === "time")
       .map((tick) => tick.x);
-    // 60 is the seam itself; 50 is inside the mark's own clash zone.
-    expect(times).not.toContain(60);
-    expect(times).not.toContain(50);
+    // The seam is at x=60 and the ladder steps by 50px here, so no time tick
+    // ever landed ON it — 50 is the one that did, and it sat inside the old
+    // mark's 26px clash zone and was dropped.
+    expect(times).toContain(50);
+    expect(times).toContain(100);
+    // And the seam still gets its own mark, from the collection pass.
+    expect(
+      seamRulerTicks({ strip: STRIP, clips: CLIPS })
+        .filter((tick) => tick.kind === "collection")
+        .map((tick) => tick.x),
+    ).toContain(60);
+  });
+
+  it("runs the ladder unbroken, so the scale has no holes in it", () => {
+    const times = seamRulerTicks({ strip: STRIP, clips: CLIPS })
+      .filter((tick) => tick.kind === "time")
+      .map((tick) => tick.x)
+      .sort((a, b) => a - b);
+    // Every gap is the same step — the shape a suppressed tick breaks.
+    const gaps = new Set(times.slice(1).map((x, index) => x - times[index]!));
+    expect(gaps.size).toBe(1);
   });
 
   it("never runs a tick past the end of the strip", () => {
