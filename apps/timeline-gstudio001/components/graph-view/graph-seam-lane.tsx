@@ -166,6 +166,36 @@ function SegmentFrames({
     return urls.length === 0 ? null : urls;
   }, [clip, style, widthPx]);
 
+  /**
+   * THE ONE FRAME, TAKEN AFTER THE TRIM RATHER THAN BEFORE IT.
+   *
+   * The cover thumbnail drew `posterSrc` — the encode's opening frame — so a
+   * clip trimmed past a slate, a countdown, or a second of black showed
+   * exactly the thing the trim exists to discard. The box says "this shot",
+   * and the frame it showed was one the cut does not contain.
+   *
+   * THE FILMSTRIP ALREADY GOT THIS RIGHT, which is the tell: it samples across
+   * `[trimIn, trimIn + showing]`, so switching a bar from STRIP to COVER moved
+   * the picture backwards in time. Same range, same helper, one slot.
+   *
+   * A SINGLE SLOT IS ALREADY DEFINED TO SAMPLE THE START — see
+   * `videoFrameUrls`, where it is the documented exception to the
+   * slot-centre rule precisely so a lone thumbnail says "this is that shot"
+   * rather than showing its midpoint. Nothing new is asked of it here.
+   *
+   * Falls back to the base poster for anything with no frame list: a still, a
+   * fixture, an upload still in flight. That is the picture it had before.
+   */
+  const cover = useMemo(() => {
+    if (clip?.posterSrcs === undefined) return posterSrc;
+    return (
+      videoFrameUrls(clip.posterSrcs, 1, {
+        trimInSeconds: clip.trimInSeconds ?? 0,
+        effectiveSeconds: clip.showingSeconds,
+      })[0] ?? posterSrc
+    );
+  }, [clip, posterSrc]);
+
   if (cells !== null) {
     return (
       <span
@@ -212,12 +242,12 @@ function SegmentFrames({
     );
   }
 
-  if (posterSrc === undefined) return null;
+  if (cover === undefined) return null;
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       data-seam-thumbnail={clipId}
-      src={posterSrc}
+      src={cover}
       alt=""
       aria-hidden="true"
       // COVER, and no more. The box's width is its duration and its height is

@@ -522,9 +522,39 @@ export function DetailsPanel({
           // Both keep the container query, so a genuinely NARROW panel still
           // fits its picture — that is the five-up case the original rule was
           // written for, and it is a different question from this one.
+          // `min-h-0` IS WHAT MAKES `max-h-full` MEAN ANYTHING. A flex item's
+          // default `min-height: auto` refuses to shrink below its content, so
+          // the cap was quietly losing to a panel whose header, frame and
+          // controls added up to more — the height was honoured and the LIMIT
+          // was not. Measured before: a 619px panel in a 484px band, ending
+          // 16px past the bottom of the window and 75px into the view-count
+          // control.
+          //
+          // The same fix `DETAILS_HERO_FILL_CLASS` already applies one level
+          // down, for the same reason and with the same failure mode.
+          "min-h-0",
+          // AND THE CAP IS AGAINST THE VIEWPORT, not against `100%`.
+          //
+          // `max-h-full` was inert here and the reason is worth keeping: a
+          // percentage max-height resolves against the PARENT, and this
+          // panel's parent is auto-sized to the panel — both measured 619px,
+          // so the cap was 100% of the thing it was meant to be capping.
+          // Circular, and silently so.
+          //
+          // The scrim reserves two bands, `pt-[21.75rem]` for the bar above
+          // and `pb-[4.875rem]` to clear the view-count control below. Their
+          // sum is what a panel may not exceed, and it is written here as one
+          // number because the alternative — threading `min-h-0 max-h-full`
+          // through the two auto-sized ancestors — puts a height constraint on
+          // the row that carries the strip's pan transform.
+          //
+          // KEEP IN STEP WITH THE SCRIM. 21.75 + 4.875 = 26.625rem. The
+          // failure if they drift is the panel running into the control again,
+          // which is what this fixed.
+          "max-h-[calc(100vh-26.625rem)]",
           centre
-            ? "@min-[30rem]:h-[68vh] @min-[30rem]:max-h-full h-auto"
-            : "@min-[30rem]:h-[38.9vh] @min-[30rem]:max-h-full h-auto",
+            ? "@min-[30rem]:h-[68vh] h-auto"
+            : "@min-[30rem]:h-[38.9vh] h-auto",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >

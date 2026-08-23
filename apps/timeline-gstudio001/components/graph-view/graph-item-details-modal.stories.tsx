@@ -3656,3 +3656,91 @@ export const TheActiveRuleIsClippedToTheBar: Story = {
     expect(markBox.right).toBeLessThanOrEqual(ruleBox.right + 0.5);
   },
 };
+
+/**
+ * A CLIP WHOSE POSTER CAN ACTUALLY BE ADDRESSED BY TIME.
+ *
+ * Every other seam fixture uses `plate()`, which is a data URI — and the frame
+ * builder is deliberately provider-neutral, returning anything it cannot
+ * address unchanged. So a data-URI poster proves nothing about trim: it comes
+ * back identical whether the trim was applied or ignored.
+ *
+ * These posters are Cloudinary-SHAPED — `/video/upload/` with a public id —
+ * which is the one thing `cloudinaryVideoFrameUrl` looks for. Nothing is
+ * fetched: the assertion reads the `so_` transform in the URL, and a broken
+ * image in the story canvas is the expected state.
+ *
+ * 2.5s of trim on a 10s source, so the offset is unmistakable — a thumbnail
+ * taken before the trim reads `so_0` or carries no offset at all.
+ */
+const CLOUDINARY_TRIMMED_SCENE: GraphNodeSpec = {
+  kind: "collection",
+  id: "root",
+  name: "Root",
+  children: [
+    {
+      kind: "media" as const,
+      mediaKind: "video" as const,
+      id: "subject",
+      name: "Trimmed",
+      src: "https://res.cloudinary.com/demo/video/upload/trimmed.mp4",
+      posterSrcs: ["https://res.cloudinary.com/demo/video/upload/trimmed.jpg"],
+      fullDurationSeconds: 10,
+      trimInSeconds: 2.5,
+      trimOutSeconds: 1,
+    },
+  ],
+};
+
+/**
+ * THE BAR'S THUMBNAIL IS THE FIRST FRAME OF THE CUT, NOT OF THE FILE.
+ *
+ * The cover thumbnail drew the encode's opening frame, so a clip trimmed past
+ * a slate, a countdown or a second of black showed exactly the thing the trim
+ * exists to discard — the box says "this shot" and the picture was one the cut
+ * does not contain.
+ *
+ * THE FILMSTRIP ALREADY GOT THIS RIGHT, which is what gave it away: it samples
+ * across the visible range, so switching a bar from STRIP to COVER moved the
+ * picture backwards in time. Both styles are asserted here for that reason —
+ * agreeing with each other is the property, not just each being trimmed.
+ */
+export const TheBarThumbnailStartsAfterTheTrim: Story = {
+  render: () => <SeamHarness scene={CLOUDINARY_TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    await settleStrip();
+
+    const offsets = () =>
+      Array.from(document.querySelectorAll<HTMLImageElement>("[data-seam-thumbnail]")).map(
+        (frame) => {
+          const found = /[/,]so_([\d.]+)/.exec(frame.getAttribute("src") ?? "");
+          return found === null ? null : Number(found[1]);
+        },
+      );
+
+    framesTo("COVER");
+    const cover = await waitFor(() => {
+      const found = offsets();
+      expect(found.length).toBe(1);
+      return found;
+    });
+    // AT THE TRIM, not at the file's head. The single-slot rule samples the
+    // START of the visible range deliberately — a lone thumbnail says "this is
+    // that shot", where the slot-centre rule would show its midpoint.
+    expect(cover[0]).toBe(2.5);
+
+    framesTo("STRIP");
+    await waitFor(() => expect(offsets().length).toBeGreaterThan(1));
+    const strip = offsets().filter((value): value is number => value !== null);
+    // EVERY cell inside the cut, and the first no earlier than the trim. The
+    // clip is 10s with 2.5 off the front and 1 off the back, so the visible
+    // range is 2.5 to 9.
+    expect(strip.length).toBeGreaterThan(1);
+    expect(Math.min(...strip)).toBeGreaterThanOrEqual(2.5);
+    expect(Math.max(...strip)).toBeLessThanOrEqual(9);
+
+    // Left as it was found, for whichever story runs next in this browser.
+    framesTo("STRIP");
+  },
+};
