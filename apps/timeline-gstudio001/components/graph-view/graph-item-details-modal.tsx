@@ -926,7 +926,18 @@ function DetailsFilmstripModal({
       // straight through it and 16px past the bottom of the window besides.
       // 4.875rem is 78px: the control's 24px offset, its own 34px, and 20px of
       // clearance so the panel stops short of it rather than against it.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[21.75rem] pb-[4.875rem] backdrop-blur-sm"
+      // 14.75rem, DOWN FROM 21.75. The band was sized to clear the bar with
+      // room to spare and left 62px of air between the controls row and the
+      // card under it — inside the 16..80 the guard allows, but at the loose
+      // end of it, and the guard's own note says the failure nobody reports
+      // is the view sitting lower than it needs to. The design this follows
+      // runs about 27px there. Four rem buys 32px of movement, not 64: this
+      // box is `items-center`, so padding at the top is shared with the
+      // bottom when the row re-centres in what is left. That halving is why
+      // the number looks too large for the space it controls. Three further rem
+      // came off when the transport lost its 36px margin and joined the control
+      // row: a shorter bar leaves more slack, in the same doubled proportion.
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[14.75rem] pb-[4.875rem] backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim
@@ -960,12 +971,21 @@ function DetailsFilmstripModal({
           className="pointer-events-auto absolute inset-x-0 top-16 z-20 px-6 pt-4"
           onPointerDown={(event) => event.stopPropagation()}
         >
-          {/* WIDER THAN THE ROW BELOW IT, deliberately. The panels are
-              sized to be worked in and cap out; the bar is a map and gets
-              more useful the more of the project it can show at a legible
-              scale — at `5xl` a twenty-clip reach was boxes a few pixels
-              wide. */}
-          <div className="mx-auto w-full max-w-7xl">
+          {/* THE SAME WIDTH AS THE ROW BELOW IT.
+
+              This was capped at `7xl` on the reasoning that the bar is a
+              map and gets more useful the more of the project it can show,
+              so it should be WIDER than the panels — which was true while
+              the panels were capped too.
+
+              They are not any more, and the cap inverted the intent it was
+              written for: measured at 1920 the cards ran 1872px and the bar
+              1280, so the cards overhung the thing they belong to by 296px
+              on each side. A ruler that does not reach as far as the row it
+              measures reads as a floating island rather than as the top of
+              one panel. Sharing the edge costs the bar nothing — it only
+              ever gets wider. */}
+          <div className="mx-auto w-full">
             <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
             <SeamStripBar
               clips={barClips}
@@ -1128,7 +1148,30 @@ function DetailsFilmstripModal({
         ref={stripRef}
         data-details-strip
         className={[
-          "flex items-center",
+          // BOTTOM-ALIGNED, so the trim strips share a line.
+          //
+          // Centred, the taller subject extended equally above and below
+          // its neighbours — measured at 1920: 76px each way — and every
+          // row BELOW the picture inherited that offset. The transport
+          // well, the filmstrip, the in/out fields and the tags each sat
+          // 76px lower on the centre than on the clips either side of it.
+          //
+          // That is the wrong thing to centre. The pictures are different
+          // sizes on purpose — the subject's is bigger because it is the
+          // one being judged — but the CONTROLS under them are identical
+          // in size and function, and comparing a trim against its
+          // neighbours' is most of what this view is for. Reading three
+          // filmstrips on three different lines makes that a hunt.
+          //
+          // Hanging the cards from a common bottom lands them all on one
+          // line for free: everything from the strip down is the same
+          // height in every card (126px from strip-top to card-bottom,
+          // measured), so a shared bottom IS a shared strip line.
+          //
+          // This is a deliberate departure from the design it follows,
+          // which top-aligns the three and lets the strips fall where the
+          // picture heights leave them.
+          "flex items-end",
           // NO TRANSITION WHILE A FINGER IS ON IT. A drag has to track the
           // hand exactly; easing it would put the film a fixed distance
           // behind wherever the pointer actually is, which reads as lag
