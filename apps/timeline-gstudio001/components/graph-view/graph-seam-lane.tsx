@@ -640,6 +640,20 @@ export function SeamLane({
       {(() => {
         const segment = strip.segments.find((found) => found.clipId === centreClipId);
         if (segment === undefined || segment.widthPx <= 0) return null;
+        // WHERE THE SPAN WOULD REACH, before the lane gets a say.
+        //
+        // Living outside the clipping wrapper is what keeps the triangle from
+        // being cut off, and it is the same reason the rule under it ran past
+        // the ends of the bar: nothing was trimming it. So it trims itself.
+        //
+        // CLAMPED IN CSS rather than from a measured width. This span's
+        // containing block is the lane, so `100%` IS the visible playbar — the
+        // ends stay honest through a resize and through every frame of a pan
+        // without this component observing either, and there is no width held
+        // in state that could fall behind the truth.
+        const spanLeftPx = viewportX(segment.leftPx + BOX_INSET_PX);
+        const spanRightPx =
+          spanLeftPx + Math.max(2, segment.widthPx - BOX_INSET_PX * 2);
         return (
           <>
             {/* AND HOW LONG IT RUNS. The triangle says WHICH clip and nothing
@@ -657,8 +671,12 @@ export function SeamLane({
               data-seam-active-span={centreClipId}
               aria-hidden="true"
               style={{
-                left: viewportX(segment.leftPx + BOX_INSET_PX),
-                width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                // BOTH ENDS HELD INSIDE THE LANE. `max(0px, …)` is the start,
+                // `min(100%, …)` the end, and the width is what survives
+                // between them — which collapses to zero rather than going
+                // negative once the clip is entirely past an edge.
+                left: `max(0px, ${spanLeftPx}px)`,
+                width: `max(0px, calc(min(100%, ${spanRightPx}px) - max(0px, ${spanLeftPx}px)))`,
                 top: -7,
                 height: 2,
                 // HALF STRENGTH. The triangle is the mark and this is its
