@@ -271,6 +271,11 @@ function DetailsFilmstripModal({
   // true once the clock has been touched: this is the gesture itself, and it
   // is what the monitor grows for.
   const [scrubbing, setScrubbing] = useState(false);
+  // THE HOVER CARD IS UP. The row goes back for it — see the strip's own
+  // className. A separate flag from `scrubbing` because the two are different
+  // moments: a scrub is a gesture with the pointer down and the card hidden,
+  // this is a pointer resting on the bar with a picture open under it.
+  const [previewing, setPreviewing] = useState(false);
   // HOW MANY CLIPS ARE ON SCREEN. Remembered for the session rather than the
   // page: it is a way of working — reading one cut closely, or scanning a
   // sequence — and having it snap back to three every time you open a clip
@@ -1067,6 +1072,7 @@ function DetailsFilmstripModal({
               onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
               onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
               onScrubbingChange={setScrubbing}
+              onPreviewingChange={setPreviewing}
               // The clock spans every clip, so a point on the rail IS a point
               // on the clock and needs no conversion.
               //
@@ -1151,8 +1157,21 @@ function DetailsFilmstripModal({
           // A BAR LANDING has no transition at all, which the layout effect
           // above does to the node rather than from here.
           dragPx === 0
-            ? "transition-transform ease-out motion-reduce:transition-none"
+            ? "transition-[transform,opacity] ease-out motion-reduce:transition-none"
             : "",
+          // BACK, WHILE THE PREVIEW IS UP.
+          //
+          // The hover card is now a picture big enough to judge a frame in,
+          // and it is drawn OVER this row rather than in a gap above it. Three
+          // bright panels behind it compete with the one thing being looked
+          // at — and the card is answering a question about a clip that is
+          // usually not one of the three, so the panels are not even context
+          // for it.
+          //
+          // Pulled back rather than hidden: they are still where you are
+          // working, and the point of the hover is to check something WITHOUT
+          // leaving that. The row comes straight back when the pointer does.
+          previewing ? "opacity-40" : "",
         ].join(" ")}
         style={{
           gap: PANEL_GAP,

@@ -143,6 +143,7 @@ export function SeamStripBar({
   onCommitClip,
   onScrubEnd,
   onScrubbingChange,
+  onPreviewingChange,
   atStart,
   atEnd,
   settingsLeft,
@@ -178,6 +179,19 @@ export function SeamStripBar({
   /** True while a drag is live on the bar, false when it ends — the view
    *  grows the monitor for the duration. */
   onScrubbingChange?: (active: boolean) => void;
+  /**
+   * True while the hover card is up.
+   *
+   * The view pulls the panels back for it — the card is a picture big enough
+   * to judge, and it now overlaps the row it is drawn over, so three bright
+   * panels behind it are competing with the one thing being looked at.
+   *
+   * Reported as a BOOLEAN rather than the hover itself: the row does not care
+   * which clip is under the pointer, only that something is, and handing it
+   * the hover would re-render every panel on every pointer move across the
+   * bar.
+   */
+  onPreviewingChange?: (active: boolean) => void;
   /** Whether the bar's first and last clips are the project's — the reach can
    *  crop the window short of either, and then there IS more either side. */
   atStart: boolean;
@@ -647,6 +661,15 @@ export function SeamStripBar({
     if (segment === undefined) return;
     nudgeIntoView(segment.leftPx + segment.widthPx / 2);
   }, [broughtIntoView, centreClipId, nudgeIntoView, strip]);
+
+  // DERIVED, NOT ANNOUNCED AT EACH SITE. `hover` is cleared from five places —
+  // pointer down, pointer leave, a wheel, the start of a scrub, and a position
+  // that resolves to no clip — and a missed one would leave the panels dimmed
+  // with no card up to explain why. Watching the value catches all of them.
+  const previewing = hover !== null && !scrubbing;
+  useEffect(() => {
+    onPreviewingChange?.(previewing);
+  }, [previewing, onPreviewingChange]);
 
   const ticks = useMemo(() => seamRulerTicks({ strip, clips }), [strip, clips]);
 

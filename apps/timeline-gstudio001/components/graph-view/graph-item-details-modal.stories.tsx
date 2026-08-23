@@ -3307,6 +3307,48 @@ export const TheHoverCardCanBePinned: Story = {
   },
 };
 
+/**
+ * THE PANELS GO BACK WHILE THE PREVIEW IS UP.
+ *
+ * The hover card is a picture big enough to judge a frame in, and it is drawn
+ * OVER the row rather than in a gap above it. Three bright panels behind it
+ * compete with the one thing being looked at — and the card is usually about a
+ * clip that is not one of the three, so they are not even context for it.
+ *
+ * NOT DURING A SCRUB, which is the distinction worth asserting. A scrub hides
+ * the card and grows the monitor, so the middle panel is exactly what you are
+ * watching; pulling the row back there would dim the thing the gesture exists
+ * to show you.
+ */
+export const ThePanelsRecedeBehindThePreview: Story = {
+  render: () => <SeamHarness scene={TRIMMED_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(seamTrack()).not.toBeNull());
+    await settleStrip();
+    const row = () => document.querySelector<HTMLElement>("[data-details-strip]")!;
+    const dimmed = () => row().className.includes("opacity-40");
+    const lane = document.querySelector<HTMLElement>("[data-seam-boxes]")!;
+    const box = seamBoxes()[1]!.getBoundingClientRect();
+    const centre = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+
+    expect(dimmed()).toBe(false);
+
+    // Pointing at a box brings the card up, and the row goes back for it.
+    fireEvent.pointerMove(lane, pointerAt(centre.x, centre.y));
+    await waitFor(() => expect(document.querySelector("[data-seam-preview]")).not.toBeNull());
+    expect(dimmed()).toBe(true);
+    // Both properties ease, so the row does not snap dark while it slides.
+    expect(getComputedStyle(row()).transitionProperty).toContain("opacity");
+
+    // Pressing starts a scrub: the card goes, the monitor grows, and the row
+    // comes back — the panel being watched must not be the dim one.
+    fireEvent.pointerDown(lane, pointerAt(centre.x, centre.y));
+    await waitFor(() => expect(document.querySelector("[data-seam-preview]")).toBeNull());
+    expect(dimmed()).toBe(false);
+    fireEvent.pointerUp(lane, pointerAt(centre.x, centre.y));
+  },
+};
+
 const SKIPPED_SCENE: GraphNodeSpec = {
   kind: "collection",
   id: "root",
