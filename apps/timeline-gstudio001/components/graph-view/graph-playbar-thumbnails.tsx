@@ -34,12 +34,14 @@ export type PlaybarThumbnails = Readonly<{
 /**
  * Whether the play bar draws frames instead of grey boxes, and how.
  *
- * OFF BY DEFAULT, and the default is the argument for it being a setting.
+ * FILM BY DEFAULT, and the trade is the argument for it staying a setting.
  * A bar of frames answers "which shot is that" without a hover, which is the
- * whole reason to want it. What it costs is the thing the grey bar is good at:
- * box widths are durations, and a run of even grey reads as rhythm — where the
- * cuts fall, which shots are long, where the pace changes. Put pictures in
- * them and the eye reads the pictures, because it always will.
+ * whole reason to want it, and it is the first question anyone asks of the
+ * bar. What it costs is the thing the grey bar is good at: box widths are
+ * durations, and a run of even grey reads as rhythm — where the cuts fall,
+ * which shots are long, where the pace changes. Put pictures in them and the
+ * eye reads the pictures, because it always will. So `OFF` is one press away,
+ * and it is worth keeping there.
  *
  * TWO SETTINGS, NOT THREE STATES IN ONE. "Show frames" and "which kind" are
  * separate questions and stay separate controls: the style survives being
@@ -50,9 +52,12 @@ export type PlaybarThumbnails = Readonly<{
  * consumer is several layers down inside a portalled dialog, the value is
  * constant across the board, and it changes only when someone opens a menu.
  *
- * DEFAULTS TO OFF WITH NO PROVIDER, so a bar rendered outside the board — a
- * story, most of all — behaves like the shipped default rather than throwing
- * or silently opting in.
+ * STILL OFF WITH NO PROVIDER, which is deliberately NOT the shipped default
+ * any more. The two answer different questions: the remembered value is what
+ * the details view opens on, and this is what a bar rendered with no view
+ * around it does. Frames cost a request per cell, so something mounting this
+ * component standalone — a story, a probe, anything that has not asked — gets
+ * the cheap bar rather than silently fetching a hundred thumbnails.
  */
 const PlaybarThumbnailsContext = createContext<PlaybarThumbnails>({
   shown: false,
@@ -94,8 +99,22 @@ export function usePlaybarThumbnails(): PlaybarThumbnails {
  * details modal and opening another clip does not reset them — the modal
  * unmounts, and state inside it would go with it.
  */
-let rememberedShown = false;
-let rememberedStyle: PlaybarThumbnailStyle = "cover";
+// THE BAR OPENS AS FILM.
+//
+// It opened grey, on the argument that a run of even boxes reads as RHYTHM —
+// where the cuts fall, which shots are long, where the pace changes — and that
+// pictures override that because the eye always reads pictures first. That is
+// still true, and it is now the thing you switch TO rather than the thing you
+// start from: `OFF` is one press away and the reading it gives is worth
+// keeping reachable.
+//
+// What decided it the other way is that the bar's first job is telling you
+// WHICH shot is where, and a row of grey rectangles cannot do that at all —
+// it needs a hover per box to answer the question the bar is looked at for.
+// Rhythm is what you read second, once you already know what you are looking
+// at.
+let rememberedShown = true;
+let rememberedStyle: PlaybarThumbnailStyle = "filmstrip";
 
 export function lastPlaybarThumbnails(): PlaybarThumbnails {
   return { shown: rememberedShown, style: rememberedStyle };

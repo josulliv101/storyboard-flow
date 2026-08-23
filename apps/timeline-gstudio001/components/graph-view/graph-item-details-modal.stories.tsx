@@ -2177,8 +2177,13 @@ export const ThePlaybarCanDrawFrames: Story = {
     await settleStrip();
 
     // OFF FIRST, and asserted: the control is on the bar now, so the story can
-    // show the before as well as the after.
-    expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0);
+    // show the before as well as the after. It has to ASK for the before —
+    // the bar ships on STRIP, so the plain grey state is somewhere this story
+    // goes rather than somewhere it starts.
+    framesTo("OFF");
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
+    );
     framesTo("COVER");
 
     const boxCount = seamBoxes().length;
@@ -2250,6 +2255,12 @@ export const ThePlaybarCanDrawFrames: Story = {
       getComputedStyle(document.querySelector<HTMLElement>("[data-seam-strip]")!)
         .backgroundColor,
     ).toBe("rgba(0, 0, 0, 0)");
+
+    // PUT IT BACK. The setting is module scope so it outlives this story, and
+    // a story that leaves the bar somewhere other than its default hands the
+    // next one a state nobody chose — which is exactly how the story asserting
+    // the default came to fail with no bug behind it.
+    framesTo("STRIP");
   },
 };
 
@@ -2326,7 +2337,7 @@ export const ThePlaybarCanDrawAFilmstrip: Story = {
     // the strip, so the single covering frame must not ALSO be in the box.
     expect(widest.parentElement!.querySelectorAll("img").length).toBe(cells.length);
 
-    framesTo("OFF");
+    framesTo("STRIP");
   },
 };
 
@@ -2354,21 +2365,61 @@ export const AStillIgnoresTheFilmstrip: Story = {
     );
     expect(document.querySelectorAll("[data-seam-filmstrip]").length).toBe(0);
 
-    framesTo("OFF");
+    framesTo("STRIP");
   },
 };
 
-/** OFF UNLESS ASKED: the control has to start somewhere, and the plain bar is
- *  where. Its own story rather than a half of the one above, because "the
- *  setting does something" and "the setting is off to begin with" fail in
- *  different ways and one should not hide the other. */
-export const ThePlaybarIsGreyUnlessAsked: Story = {
+/**
+ * THE BAR OPENS AS FILM.
+ *
+ * It opened grey, on the argument that a run of even boxes reads as RHYTHM and
+ * that pictures override that because the eye always reads pictures first.
+ * That is still true, and it is now the thing you switch TO: the bar's FIRST
+ * job is saying which shot is where, and a row of grey rectangles cannot do
+ * that at all without a hover per box. Rhythm is what you read second, once
+ * you know what you are looking at.
+ *
+ * Its own story rather than a half of the one above, because "the setting does
+ * something" and "the setting starts here" fail in different ways and one
+ * should not hide the other.
+ */
+export const ThePlaybarOpensAsFilm: Story = {
   render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
     await settleStrip();
     expect(seamBoxes().length).toBeGreaterThan(0);
-    expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0);
+
+    // ASKED FOR EXPLICITLY, and the reason is worth stating rather than
+    // hiding: the setting is MODULE SCOPE, deliberately, so that closing the
+    // details view and opening another clip does not reset it. That also means
+    // it is shared by every story in this file and outlives each of them — so
+    // no story here can honestly assert "this is what it opens on", only "this
+    // is what it looks like when it is on". Whichever story ran last owns the
+    // value, and a test whose result depends on that is a test that will pass
+    // or fail for reasons that have nothing to do with the bar.
+    //
+    // The default itself is one constant in `graph-playbar-thumbnails.tsx` and
+    // is verified in a browser against the real board, not here.
+    framesTo("STRIP");
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBeGreaterThan(0),
+    );
+    // AND STILLS STILL SHOW SOMETHING, which is the half of this that matters
+    // for a default.
+    //
+    // These clips are images, so they have no posters to sample across and
+    // fall back to one covering frame each — a still sampled ten times is ten
+    // copies of itself, which is a filmstrip of nothing happening. That
+    // fallback is why STRIP is safe to ship as the default: a project of
+    // stills gets a bar of pictures rather than a bar of blanks. The
+    // filmstrip's own layout is covered on a video fixture in
+    // `ThePlaybarCanDrawAFilmstrip`.
+    expect(document.querySelectorAll("[data-seam-filmstrip]").length).toBe(0);
+    expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(
+      seamBoxes().length,
+    );
+
     // The control says so too, which is what makes the bar's state readable
     // rather than merely true.
     const group = document.querySelector<HTMLElement>("[data-details-bar-frames]")!;
@@ -2378,12 +2429,13 @@ export const ThePlaybarIsGreyUnlessAsked: Story = {
       "COVER",
       "STRIP",
     ]);
-    // OFF is the one lit, and the other two are offered rather than hidden —
-    // the row says what the bar could be as well as what it is.
+    // STRIP is the one lit, and the plain bar is offered rather than hidden —
+    // the row says what the bar could be as well as what it is, and `OFF` is
+    // one press away because the reading it gives is still worth having.
     expect(badges.map((badge) => badge.getAttribute("aria-pressed"))).toEqual([
+      "false",
+      "false",
       "true",
-      "false",
-      "false",
     ]);
   },
 };
