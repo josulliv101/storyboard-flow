@@ -2872,6 +2872,7 @@ export const TheBarMarksTheEndsOfTheProject: Story = {
 export const TheBarSlidesIntoPositionOnAMove: Story = {
   render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
   play: async () => {
+    await withoutViewTransitions(async () => {
     await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
     await settleStrip();
     const stripX = () =>
@@ -2998,6 +2999,7 @@ export const TheBarSlidesIntoPositionOnAMove: Story = {
     // durations drifting apart is a number to notice in review, where four
     // things silently on `ease-out` is not. The clock lives in one place
     // (`graph-details-motion`) so there is a single value to read.
+    });
   },
 };
 
@@ -4032,6 +4034,8 @@ export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
 /**
  * ONLY ONE CARD WEARS THE MARK AT A TIME, INCLUDING MID-STEP.
  *
+ * Asserted against the CSS path — see `withoutViewTransitions`.
+ *
  * A step grows one card and shrinks another simultaneously, and around the
  * crossing they are near enough the same size that neither reads as the
  * subject. On a frame-by-frame playback the eye has nothing to follow through
@@ -4051,9 +4055,36 @@ export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
  * Asserted as timings rather than as painted colour, because the thing being
  * claimed is about ORDER, and a colour sampled mid-transition is a race.
  */
+/**
+ * Runs a story against the CSS-transition path, with view transitions taken
+ * away.
+ *
+ * This branch hands a step to `document.startViewTransition` where the browser
+ * has one, and the browser then owns the motion: the panels and the row stand
+ * their own animations down, so anything asserting those declarations mid-step
+ * is describing the FALLBACK. Headless Chromium has the API, so without this
+ * those stories would silently stop testing the thing they name.
+ *
+ * Deleting the method is the supported way to ask for the fallback — it is what
+ * `canViewTransition` checks, and it is what a browser without the API looks
+ * like from the inside.
+ */
+async function withoutViewTransitions(run: () => Promise<void> | void): Promise<void> {
+  // Cast THROUGH unknown: the DOM lib declares this as required, so an
+  // intersection would keep it required and refuse to have it taken away.
+  const doc = document as unknown as { startViewTransition?: unknown };
+  const had = doc.startViewTransition;
+  doc.startViewTransition = undefined;
+  try {
+    await run();
+  } finally {
+    doc.startViewTransition = had;
+  }
+}
 export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
+    await withoutViewTransitions(async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
     const panels = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
@@ -4102,6 +4133,7 @@ export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
     expect(Number.parseFloat(departing.duration)).toBeLessThanOrEqual(
       Number.parseFloat(timing(arriving).delay) + 0.001,
     );
+    });
   },
 };
 

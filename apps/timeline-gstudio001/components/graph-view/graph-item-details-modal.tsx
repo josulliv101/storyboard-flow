@@ -42,7 +42,7 @@ import {
   detailsStepTransition,
 } from "./graph-details-motion";
 import { SegmentedControl } from "./graph-details-segmented";
-import { withViewTransition } from "@/lib/view-transition";
+import { canViewTransition, withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
 import type { SeamBarClip } from "./graph-seam-bar-layout";
@@ -352,6 +352,32 @@ function DetailsFilmstripModal({
   // whole clip between two leads — exactly what this always did — and the same
   // rule gives seven at nine.
   const half = Math.floor(viewCount / 2);
+
+  // EVERY STEP GOES THROUGH HERE, so the transition cannot end up attached to
+  // the buttons but not the swipe, or to the swipe but not a neighbour click.
+  //
+  // While one runs, the panels and the row stand their own animations DOWN.
+  // The browser is animating snapshots of the before and after states; the
+  // live DOM underneath is already at its destination, and letting its own
+  // 420ms transitions run as well would play the move twice — once in the
+  // snapshot and again underneath it as the snapshot lifts.
+  //
+  // The flag is set INSIDE the callback so it lands in the same flushed
+  // update as the step itself, and therefore in the `after` snapshot.
+  const [viaViewTransition, setViaViewTransition] = useState(false);
+  const stepTo = useCallback(
+    (id: string) => {
+      if (!canViewTransition()) {
+        onOpenNeighbour(id);
+        return;
+      }
+      void withViewTransition(() => {
+        setViaViewTransition(true);
+        onOpenNeighbour(id);
+      }).then(() => setViaViewTransition(false));
+    },
+    [onOpenNeighbour],
+  );
 
   // THE PANEL THAT IS LEAVING STAYS A PANEL UNTIL IT HAS LEFT.
   //
@@ -876,8 +902,8 @@ function DetailsFilmstripModal({
           hasPrevious,
           hasNext,
         });
-        if (intent === "next") onOpenNeighbour(ids[centre + 1]!);
-        else if (intent === "previous") onOpenNeighbour(ids[centre - 1]!);
+        if (intent === "next") stepTo(ids[centre + 1]!);
+        else if (intent === "previous") stepTo(ids[centre - 1]!);
       },
       onPointerCancel: () => {
         dragRef.current = null;
@@ -895,7 +921,7 @@ function DetailsFilmstripModal({
         event.preventDefault();
       },
     }),
-    [centre, hasNext, hasPrevious, ids, onOpenNeighbour],
+    [centre, hasNext, hasPrevious, ids, stepTo],
   );
 
   // WHERE THE PLAYHEAD IS, read across from the clock. The clock says "this
@@ -1147,8 +1173,8 @@ function DetailsFilmstripModal({
               onTogglePlay={() => setPlaying((was) => !was)}
               // The same step the swipe and the neighbour-click make, so all
               // three land in one place and cannot drift apart.
-              onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
-              onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
+              onStepBack={hasPrevious ? () => stepTo(ids[centre - 1]!) : null}
+              onStepForward={hasNext ? () => stepTo(ids[centre + 1]!) : null}
               onPreviewingChange={setPreviewing}
               // The clock spans every clip, so a point on the rail IS a point
               // on the clock and needs no conversion.
@@ -1264,7 +1290,10 @@ function DetailsFilmstripModal({
           // finished resizing — see `detailsSlideTransition`. Opacity is not
           // part of the choreography (it is the hover-preview fade), so it
           // keeps the plain step timing and starts immediately.
-          transition: dragPx === 0 ? detailsStepTransition("transform, opacity") : undefined,
+          transition:
+            dragPx === 0 && !viaViewTransition
+              ? detailsStepTransition("transform, opacity")
+              : undefined,
         }}
       >
         {ids.map((id, index) => {
@@ -1371,6 +1400,7 @@ function DetailsFilmstripModal({
               spare={isSpare(index)}
               // Held still while the row moves — see the filmstrip's own note.
               stepping={leavingCentre !== null}
+              viaViewTransition={viaViewTransition}
               // WHO IS TAKING THE MARK AND WHO IS GIVING IT UP, for as long as
               // the step runs. Null once it has settled, so a panel that simply
               // IS the centre transitions like anything else.
@@ -1392,7 +1422,7 @@ function DetailsFilmstripModal({
                 scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
               }
               onClose={onClose}
-              onAdvance={onOpenNeighbour}
+              onAdvance={stepTo}
             />
           );
         })}

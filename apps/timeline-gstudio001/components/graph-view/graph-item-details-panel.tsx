@@ -69,6 +69,7 @@ export function DetailsPanel({
   width,
   focusHandoff = null,
   stepping = false,
+  viaViewTransition = false,
   spare = false,
   dimmed = false,
   scrubFocus = false,
@@ -211,6 +212,16 @@ export function DetailsPanel({
   /** Whether the row is mid-step. Passed down so the filmstrip can hold its
    *  measurement still rather than chase an animating width. */
   stepping?: boolean;
+  /**
+   * Whether a view transition is carrying this step.
+   *
+   * When it is, this panel animates NOTHING of its own: the browser is
+   * tweening a snapshot of where it was against one of where it now is, and
+   * the live element underneath is already at its destination. Leaving its own
+   * transitions running would play the move twice — once inside the snapshot
+   * and again underneath as the snapshot lifts.
+   */
+  viaViewTransition?: boolean;
   /**
    * Pull this panel's picture back, because the clock is running and it is not
    * the one being watched.
@@ -381,7 +392,18 @@ export function DetailsPanel({
           // a `duration-*`/`ease-*` pair so the curve is the one value all
           // three read, instead of a cubic-bezier copied into three class
           // strings and drifting from two of them.
-          ...(swapping ? {} : { transition: detailsStepTransition("width") }),
+          ...(swapping || viaViewTransition
+            ? {}
+            : { transition: detailsStepTransition("width") }),
+          // NAMED BY CLIP, NOT BY SLOT. Pairing is by name, so naming the
+          // positions would pair one clip's card against a different clip's and
+          // crossfade each slot in place — nothing would travel. Named by
+          // identity, the card that was the subject genuinely glides out to the
+          // neighbour slot while its replacement glides in.
+          //
+          // Sanitised because a node id is any string and this has to be a CSS
+          // identifier.
+          viewTransitionName: `clip-${(node.id as string).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
           ...(spare ? { visibility: "hidden" as const } : {}),
         }}
       >

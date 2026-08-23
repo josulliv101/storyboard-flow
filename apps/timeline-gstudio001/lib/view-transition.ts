@@ -29,6 +29,19 @@ type ViewTransitionDocument = Document & {
  * required, not decorative: the browser captures the "after" state the moment
  * the callback returns, and a normal React update would still be queued.
  */
+/**
+ * Whether a view transition would actually run, asked at the moment of the
+ * gesture rather than during render.
+ *
+ * Deliberately NOT a hook. A render-time capability check differs between the
+ * server and the client and desynchronises hydration; this is only ever read
+ * inside an event handler, where the DOM is real and the answer is honest.
+ */
+export function canViewTransition(): boolean {
+  const doc = document as ViewTransitionDocument;
+  return Boolean(doc.startViewTransition) && !prefersReducedMotion();
+}
+
 export function withViewTransition(mutate: () => void): Promise<void> {
   const doc = document as ViewTransitionDocument;
   if (!doc.startViewTransition || prefersReducedMotion()) {
