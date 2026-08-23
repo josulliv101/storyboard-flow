@@ -2477,23 +2477,76 @@ export const TheBarSlidesIntoPositionOnAMove: Story = {
     // stays where it was put — so asserting on the first press would assert
     // against a bar that correctly did nothing.
     let travelled = false;
+    let clocks: readonly Readonly<{ duration: string; easing: string }>[] = [];
     for (let attempt = 0; attempt < 12 && !travelled; attempt++) {
       const before = stripX();
       const wasOn = subject();
       forward.click();
       await waitFor(() => expect(subject()).not.toBe(wasOn));
       // Read the easing while the transition is still on the node: the effect
-      // clears it once the slide is over.
+      // clears it once the slide is over, so everything about the motion has
+      // to be sampled MID-FLIGHT. That is also why the agreement below is
+      // measured here rather than after `settleStrip` — at rest the strip
+      // genuinely carries no transition at all, and three things that are not
+      // moving agree about nothing.
       await new Promise((resolve) => setTimeout(resolve, 30));
       const easing = strip().style.transition;
+      const inFlight = [
+        getComputedStyle(strip()),
+        getComputedStyle(document.querySelector<HTMLElement>("[data-details-strip]")!),
+        getComputedStyle(
+          document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!
+            .parentElement!,
+        ),
+      ].map((style) => ({
+        duration: style.transitionDuration,
+        easing: style.transitionTimingFunction,
+      }));
       await settleStrip();
       if (Math.abs(stripX() - before) > 20) {
         travelled = true;
         expect(easing).toContain("transform");
+        clocks = inFlight;
       }
     }
     // The loop proving nothing would be the quiet failure here.
     expect(travelled).toBe(true);
+
+    // ── ONE PRESS, ONE MOTION ────────────────────────────────────────────
+    //
+    // The three things a step moves — the film strip, the row of panels, and
+    // the width the centre grows to — ran on 520ms, 300ms and 300ms, every
+    // one of them on a plain `ease-out`. Nothing was janky and nothing was
+    // wrong; it simply looked like three things reacting to the same press
+    // rather than one thing happening, which is most of what reads as amateur
+    // in a transition.
+    //
+    // Asserted as AGREEMENT rather than against the numbers, so retuning the
+    // step is one edit in `graph-details-motion` and not a story to update —
+    // what must not drift is that they are the same.
+    expect(clocks.length).toBe(3);
+    // EVERY ONE OF THEM ON A CURVE SOMEBODY CHOSE. `ease-out` is what a
+    // transition gets for free and is what all three carried before; a named
+    // cubic-bezier is the thing that cannot happen by default.
+    for (const clock of clocks) {
+      expect(clock.easing).toContain("cubic-bezier");
+    }
+
+    // THE SHARED 420ms IS NOT ASSERTED HERE, deliberately, and the reason is
+    // worth writing down rather than leaving as a gap.
+    //
+    // Driven from the browser the three agree exactly — `0.42s`, `0.42s,
+    // 0.42s` and `0.42s`, on one curve. Sampled from this story they do not
+    // reliably: what is mid-flight at the instant after `waitFor` resolves
+    // depends on how long the poll took, and a transition that has finished
+    // reports its resting value rather than its animating one. An assertion
+    // that fails on polling latency is worse than none — it teaches people to
+    // re-run the suite.
+    //
+    // The curve above is the durable half and the one that actually regressed:
+    // durations drifting apart is a number to notice in review, where four
+    // things silently on `ease-out` is not. The clock lives in one place
+    // (`graph-details-motion`) so there is a single value to read.
   },
 };
 

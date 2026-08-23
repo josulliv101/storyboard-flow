@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
+import { DETAILS_STEP_MS, detailsStepTransition } from "./graph-details-motion";
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 import {
   usePlaybarThumbnails,
@@ -20,7 +21,7 @@ import type { PreviewAnchor } from "./graph-seam-preview-anchor";
  * pictures — the whole reason to animate this is that the bar re-centres on
  * somewhere else and a jump cannot be told apart from a redraw.
  */
-const SEAM_SLIDE_MS = 520;
+const SEAM_SLIDE_MS = DETAILS_STEP_MS;
 
 /**
  * How long a change of subject stays claimable by the travel that follows it.
@@ -452,7 +453,7 @@ export function SeamLane({
     node.style.transition = "none";
     node.style.transform = `translateX(${previous}px)`;
     void node.offsetWidth;
-    node.style.transition = `transform ${SEAM_SLIDE_MS}ms ease-out`;
+    node.style.transition = detailsStepTransition("transform");
     node.style.transform = `translateX(${offset}px)`;
 
     // Only the easing is cleared at the end. The transform is left exactly

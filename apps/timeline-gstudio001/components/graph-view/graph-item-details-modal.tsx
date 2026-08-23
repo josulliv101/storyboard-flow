@@ -32,6 +32,7 @@ import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
+import { detailsStepTransition } from "./graph-details-motion";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
@@ -1167,7 +1168,7 @@ function DetailsFilmstripModal({
           // A BAR LANDING has no transition at all, which the layout effect
           // above does to the node rather than from here.
           dragPx === 0
-            ? "transition-[transform,opacity] ease-out motion-reduce:transition-none"
+            ? "transition-[transform,opacity] motion-reduce:transition-none"
             : "",
           // BACK, WHILE THE PREVIEW IS UP.
           //
@@ -1186,7 +1187,9 @@ function DetailsFilmstripModal({
         style={{
           gap: PANEL_GAP,
           transform: rowTransform,
-          transitionDuration: "300ms",
+          // THE STEP'S OWN TIMING, shared with the panel widths and the film
+          // strip — see . One press, one motion.
+          transition: dragPx === 0 ? detailsStepTransition("transform, opacity") : undefined,
         }}
       >
         {ids.map((id, index) => {
