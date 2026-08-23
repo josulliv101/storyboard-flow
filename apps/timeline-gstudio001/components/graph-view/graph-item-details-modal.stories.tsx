@@ -1623,6 +1623,20 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     nudgePlayhead(4);
     await waitFor(() => expect(at()).toBeGreaterThan(3));
 
+    // ── THE PLAYHEAD IS DRAWN ONLY WHILE SOMETHING RUNS ──────────────────
+    //
+    // The clock holds a position from the moment anything touches it, so the
+    // red line used to sit on the bar permanently — claiming "playback is
+    // here" about a transport stopped an hour ago. It is the only saturated
+    // thing up there, and a permanent alarm colour is one that has stopped
+    // meaning anything.
+    //
+    // Asserted HERE, after a nudge has moved the clock well off zero: the
+    // point is that a known position is deliberately not drawn, which a check
+    // taken before anything touched the clock could pass for the wrong reason.
+    expect(document.querySelector("[data-seam-playhead]")).toBeNull();
+    expect(document.querySelector("[data-seam-playhead-head]")).toBeNull();
+
     // The RIGHT-hand panel: "After". Its stretch of the bar starts at 7s —
     // "Before" whole (3s), then "Subject" whole (4s).
     //
@@ -1660,6 +1674,19 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     // pressed. This is the whole shape of the feature: one clock, one screen.
     expect(decodeURIComponent(monitorSrc())).toContain("AFTER");
 
+    // AND NOW THE PLAYHEAD IS DRAWN, because something is actually running.
+    //
+    // SYNCHRONOUS, WITH NO WAIT. The transport has been running since the
+    // click above, so there is nothing to wait FOR — and a `waitFor` here is
+    // not free: it let playback advance between the assertions that follow and
+    // the moment they describe, which failed the pause check two lines down on
+    // a state that had moved on. The whole story is one running clock, so
+    // anything inserted into it has to cost nothing.
+    expect(document.querySelector("[data-seam-playhead]")).not.toBeNull();
+    expect(document.querySelector("[data-seam-playhead-head]")).not.toBeNull();
+    // In the SCALE, not through the film — the two facts travel together.
+    expect(document.querySelector("[data-seam-ruler] [data-seam-playhead]")).not.toBeNull();
+
     // PRESSED AGAIN, IT PAUSES — and does not rewind. Pausing is the same
     // contract as the bar's button, so the two controls cannot disagree.
     fireEvent.click(playOf(panels()[2]!));
@@ -1668,6 +1695,14 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     );
     expect(at()).toBeGreaterThanOrEqual(6);
     expect(playOf(panels()[2]!).getAttribute("aria-label")).toMatch(/^Play /);
+
+    // AND THE PLAYHEAD GOES WITH THE PLAYBACK, not with the position. The
+    // clock is still at six seconds — the line above asserts it — and the red
+    // line is gone anyway, which is the point: it reports that something is
+    // RUNNING, and a permanent alarm colour on a stopped transport is one that
+    // has stopped meaning anything.
+    expect(document.querySelector("[data-seam-playhead]")).toBeNull();
+    expect(document.querySelector("[data-seam-playhead-head]")).toBeNull();
   },
 };
 

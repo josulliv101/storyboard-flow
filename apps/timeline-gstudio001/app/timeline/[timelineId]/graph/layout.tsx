@@ -47,7 +47,21 @@ export default async function GraphViewLayout({
     // past the container instead of overflowing inside it, killing
     // pan-to-scroll. Column flex stretches children to this container's
     // definite width, which is what the strip's overflow-x needs.
-    <div className="graph-view-theme mx-auto flex w-full max-w-[1400px] flex-col gap-5">
+    //
+    // NO WIDTH CAP. This was `mx-auto max-w-[1400px]`, which is the right
+    // instinct for a page of prose and the wrong one for this: the board is a
+    // strip you pan and a bar you read along, and both are worth exactly as
+    // much horizontal room as the screen has. Capped, a 2560px monitor spent
+    // 1160px of itself on two black margins beside the one row anybody was
+    // looking at.
+    //
+    // The `mx-auto` went with it rather than being left in — centring is a
+    // no-op once nothing is narrower than its container, and a no-op that
+    // looks like a decision is the kind of thing that gets copied forward.
+    //
+    // The page gutter is the root layout's `px-8` on `<main>`, which is where
+    // it belongs: one number for every route rather than a cap per page.
+    <div className="graph-view-theme flex w-full flex-col gap-5">
       <ClientGraphView projectId={timelineId} bootstrap={bootstrap} />
       {children}
     </div>
