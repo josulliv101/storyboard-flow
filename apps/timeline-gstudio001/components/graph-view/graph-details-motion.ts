@@ -78,22 +78,22 @@ export const DETAILS_RESIZE_MS = 190;
 /** The travel, once the sizes have settled. */
 export const DETAILS_SLIDE_MS = 260;
 
-/** Phase one: the cards change size, in place. */
+/** Phase TWO: the cards change size, once the row has stopped moving. */
 export function detailsResizeTransition(properties: string): string {
-  return properties
-    .split(",")
-    .map((property) => `${property.trim()} ${DETAILS_RESIZE_MS}ms ${DETAILS_STEP_EASE}`)
-    .join(", ");
-}
-
-/** Phase two: the row travels, after phase one has finished. */
-export function detailsSlideTransition(properties: string): string {
   return properties
     .split(",")
     .map(
       (property) =>
-        `${property.trim()} ${DETAILS_SLIDE_MS}ms ${DETAILS_STEP_EASE} ${DETAILS_RESIZE_MS}ms`,
+        `${property.trim()} ${DETAILS_RESIZE_MS}ms ${DETAILS_STEP_EASE} ${DETAILS_SLIDE_MS}ms`,
     )
+    .join(", ");
+}
+
+/** Phase ONE: the row travels, at the old sizes. */
+export function detailsSlideTransition(properties: string): string {
+  return properties
+    .split(",")
+    .map((property) => `${property.trim()} ${DETAILS_SLIDE_MS}ms ${DETAILS_STEP_EASE}`)
     .join(", ");
 }
 

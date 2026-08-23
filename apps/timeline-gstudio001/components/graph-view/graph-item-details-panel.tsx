@@ -24,6 +24,7 @@ import {
   DETAILS_CHROME_MS,
   DETAILS_HANDOFF_MS,
   DETAILS_RESIZE_MS,
+  DETAILS_SLIDE_MS,
   detailsResizeTransition,
 } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
@@ -416,6 +417,7 @@ export function DetailsPanel({
           // moment and cannot say which card is which.
           ["--chrome-ms" as string]: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
           ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_RESIZE_MS}ms`,
+          ["--resize-delay" as string]: swapping ? "0ms" : `${DETAILS_SLIDE_MS}ms`,
           ...(focusHandoff === "arriving"
             ? { ["--focus-delay" as string]: `${DETAILS_HANDOFF_MS}ms` }
             : {}),
@@ -515,7 +517,7 @@ export function DetailsPanel({
           "transition-[box-shadow,border-color,background-color,transform,height]",
           "ease-[cubic-bezier(0.32,0.72,0,1)]",
           "[transition-duration:var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--resize-ms)]",
-          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,0ms]",
+          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,var(--resize-delay,0ms)]",
           "motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //

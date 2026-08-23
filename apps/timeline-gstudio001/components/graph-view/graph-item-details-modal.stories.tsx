@@ -4106,7 +4106,7 @@ export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
 };
 
 /**
- * THE CARDS FINISH RESIZING BEFORE THE ROW STARTS MOVING.
+ * THE ROW FINISHES MOVING BEFORE THE CARDS RESIZE.
  *
  * A step used to do both at once, and what made that read wrong was not the
  * overlap — it was that only half the resize was animated. Width eased over the
@@ -4115,15 +4115,22 @@ export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
  * from a common bottom that is a 151px jump of its top edge, in one frame, at
  * the moment the row began to travel.
  *
- * Separating the two is free: the cards that change size are ADJACENT and swap
- * the same number of pixels, so nothing else in the row moves while they do it.
- * The subject grows in place, then the row slides to centre it.
+ * Separated, then ordered by eye: resize-then-slide was tried first and still
+ * read wrong, so the row travels first and the cards change size once it has
+ * stopped.
+ *
+ * WHAT THAT COSTS, measured rather than assumed. The row's offset is computed
+ * from a uniform neighbour width, so it lands the subject centred only once the
+ * subject is the wide card. Slide first and the subject arrives 184px right of
+ * centre — exactly half the 368px between the two widths — and closes that gap
+ * as it grows. Both phases carry it the same way, so there is no reversal: it
+ * travels, then grows into position.
  *
  * Asserted as declarations rather than as sampled geometry. The claim is about
  * ORDER, and sampling positions mid-flight is a race — worse here than usual,
  * because the interesting window is 190ms long.
  */
-export const TheResizeFinishesBeforeTheSlideBegins: Story = {
+export const TheRowSlidesBeforeTheCardsResize: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
@@ -4144,20 +4151,23 @@ export const TheResizeFinishesBeforeTheSlideBegins: Story = {
       `height ${getComputedStyle(outer).transitionDuration.split(",")[0]!.trim()}`,
     );
 
-    // AND THE SLIDE WAITS FOR IT. The strip's transform is delayed by exactly
-    // the resize, which is what makes this a sequence rather than an overlap.
-    const stripProperties = getComputedStyle(strip)
-      .transitionProperty.split(",")
+    // THE SLIDE GOES FIRST, so it waits for nothing.
+    const stripStyle = getComputedStyle(strip);
+    const stripProperties = stripStyle.transitionProperty
+      .split(",")
       .map((name) => name.trim());
-    const stripDelays = getComputedStyle(strip)
-      .transitionDelay.split(",")
+    const stripDelays = stripStyle.transitionDelay.split(",").map((value) => value.trim());
+    const stripDurations = stripStyle.transitionDuration
+      .split(",")
       .map((value) => value.trim());
-    const transformDelay = stripDelays[stripProperties.indexOf("transform")];
-    expect(`slide waits ${transformDelay}`).toBe(`slide waits ${heightDuration}`);
+    const at = stripProperties.indexOf("transform");
+    expect(`slide waits ${stripDelays[at]}`).toBe("slide waits 0s");
 
-    // The resize must not itself be waiting on anything, or the card would
-    // still be growing after the row had begun to move.
+    // AND THE RESIZE WAITS FOR THE SLIDE — by exactly its duration, which is
+    // what makes this a sequence rather than an overlap.
     const delays = panelStyle.transitionDelay.split(",").map((value) => value.trim());
-    expect(`height delay ${delays[properties.indexOf("height")]}`).toBe("height delay 0s");
+    expect(`height waits ${delays[properties.indexOf("height")]}`).toBe(
+      `height waits ${stripDurations[at]}`,
+    );
   },
 };
