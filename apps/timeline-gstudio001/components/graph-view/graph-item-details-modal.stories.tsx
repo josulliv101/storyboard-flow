@@ -793,40 +793,61 @@ export const OpensShowingItsOwnPicture: Story = {
 
 
 /**
- * THE RING SAYS WHICH PANEL IS THE SUBJECT, AND NEVER MOVES.
+ * HOW A PANEL IS MARKED AS THE SUBJECT, read the way the eye reads it.
+ *
+ * The mark is the border's ALPHA — 0.16 on the subject against 0.07 on a
+ * neighbour — so the question "is this one marked" is really "is its edge
+ * brighter than the others". Comparing the two rather than matching a colour
+ * string keeps the assertion about the DIFFERENCE, which is the only part
+ * anyone can see, and keeps it honest if the palette is ever retuned.
+ *
+ * Tailwind emits these as `oklab(... / A)`, so the alpha is the last number in
+ * the string; a colour with no alpha at all is fully opaque.
+ */
+function borderAlpha(panel: HTMLElement): number {
+  const parts = getComputedStyle(panel).borderTopColor.match(/[\d.]+/g) ?? [];
+  return parts.length >= 4 ? Number(parts[parts.length - 1]) : 1;
+}
+
+/** The subject's edge, against the brightest edge any neighbour is wearing. */
+function subjectIsMarked(): boolean {
+  const centre = document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
+  const neighbours = Array.from(
+    document.querySelectorAll<HTMLElement>('[data-item-details-panel="neighbour"]'),
+  );
+  if (neighbours.length === 0) return borderAlpha(centre) > 0;
+  return borderAlpha(centre) > Math.max(...neighbours.map(borderAlpha));
+}
+
+/**
+ * THE MARK SAYS WHICH PANEL IS THE SUBJECT, AND NEVER MOVES.
  *
  * It used to follow the playhead: whichever clip's frames were on the monitor
- * wore the ring, so during a run-up it sat on a neighbour. The idea was to tie
- * the line moving through the bar to the panel it belonged to.
+ * wore it, so during a run-up it sat on a neighbour. The idea was to tie the
+ * line moving through the bar to the panel it belonged to.
  *
  * In use it read as flicker — a halo hopping between panels as the clock
  * crossed a seam, drawing the eye to the frame it was meant to be quietly
  * identifying. The bar has a playhead and a marked box for saying where
  * playback is, and two answers to one question is one too many.
  *
- * So the ring answers the simpler question it is well shaped for, constantly:
+ * So the mark answers the simpler question it is well shaped for, constantly:
  * which of these panels is the one you opened. Asserted as an INVARIANT rather
  * than a transition — it must not move when the clock does, which is the whole
  * change.
  */
-export const TheRingMarksWhoseFramesAreUp: Story = {
+export const TheSubjectMarkStandsStillWhileTheClockMoves: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
-    const centre = () => document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
-    const neighbours = () =>
-      Array.from(document.querySelectorAll<HTMLElement>('[data-item-details-panel="neighbour"]'));
-    const ringed = (panel: HTMLElement) =>
-      getComputedStyle(panel).boxShadow.includes("255, 255, 255");
 
-    expect(ringed(centre())).toBe(true);
-    expect(neighbours().some(ringed)).toBe(false);
+    expect(subjectIsMarked()).toBe(true);
 
     // Move the clock right across a seam and onto another clip's frames. The
-    // monitor changes; the ring does not.
+    // monitor changes; the mark does not.
     //
     // HELD, NOT RELEASED. Letting go now lands the row on whatever the
-    // playhead reached, and this story is about the ring during the look —
+    // playhead reached, and this story is about the mark during the look —
     // the state where the monitor is showing one clip and the subject is
     // still another. Releasing would collapse the two and the assertion
     // would be trivially true.
@@ -838,44 +859,58 @@ export const TheRingMarksWhoseFramesAreUp: Story = {
     await waitFor(() =>
       expect(seamTrack().getAttribute("aria-valuenow")).not.toBe(null),
     );
-    expect(ringed(centre())).toBe(true);
-    expect(neighbours().some(ringed)).toBe(false);
+    expect(subjectIsMarked()).toBe(true);
   },
 };
 
 /**
  * ONE MARK, AND IT DOES NOT COMPETE WITH THE PICTURES.
  *
- * Panels are identical but for the ring on the subject. The opened clip wore a
+ * Panels are identical but for their focus falloff: the subject sits on a
+ * lighter surface behind a brighter edge, and its neighbours recede. It wore a
  * heavy white border for a while — the loudest mark on the screen, spent on
- * the one fact the layout already tells you — and then two pixels of sky with
- * a 36px halo, which had to shout because it was moving. Standing still, a
- * hairline is enough.
+ * the one fact the layout already tells you — then two pixels of sky with a
+ * 36px halo, which had to shout because it was moving, and then a white ring.
+ * Standing still, two clicks of contrast are enough.
  *
- * Geometry is untouched by it either way: a box-shadow paints outside the box,
- * so the panel that wears one is exactly as wide as the ones that do not.
+ * GEOMETRY IS UNTOUCHED. Only the border's COLOUR changes with focus, never
+ * its width: a 2px edge on the subject would push its picture down a pixel and
+ * shorten it by two, and comparing frames ACROSS panels is what this view is
+ * for.
+ *
+ * BOTH HALVES ARE ASSERTED. Surface and border move together because either
+ * alone is too quiet to survive a screen full of pictures, so a change that
+ * silently dropped one would leave a mark that still technically exists and no
+ * longer reads.
  */
-export const OnlyTheLiveClipIsMarked: Story = {
+export const OnlyTheSubjectPanelIsMarked: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
     const centre = document.querySelector<HTMLElement>('[data-item-details-panel="centre"]')!;
     const neighbour = document.querySelector<HTMLElement>('[data-item-details-panel="neighbour"]')!;
 
-    // Same box, different shadow: the ring costs no width.
+    // Same box, brighter edge: the mark costs no width.
     expect(getComputedStyle(centre).borderTopWidth).toBe(
       getComputedStyle(neighbour).borderTopWidth,
     );
-    expect(getComputedStyle(centre).boxShadow).toMatch(/255, 255, 255/);
-    expect(getComputedStyle(neighbour).boxShadow).not.toMatch(/255, 255, 255/);
+    expect(borderAlpha(centre)).toBeGreaterThan(borderAlpha(neighbour));
 
-    // And the sky-blue ring that used to follow the playhead is gone from
-    // both — a colour this view no longer spends here.
+    // ...and a lighter surface under it.
+    expect(getComputedStyle(centre).backgroundColor).not.toBe(
+      getComputedStyle(neighbour).backgroundColor,
+    );
+
+    // The white ring and the sky-blue one that used to follow the playhead are
+    // both gone: the shadow lifts the row off the board and says nothing about
+    // which panel you are in, so it is the SAME on every panel.
     await settleStrip();
     nudgePlayhead(1);
     await waitFor(() => expect(seamTrack()).not.toBeNull());
+    expect(getComputedStyle(centre).boxShadow).toBe(
+      getComputedStyle(neighbour).boxShadow,
+    );
     expect(getComputedStyle(centre).boxShadow).not.toMatch(/56, 189, 248/);
-    expect(getComputedStyle(neighbour).boxShadow).not.toMatch(/56, 189, 248/);
   },
 };
 

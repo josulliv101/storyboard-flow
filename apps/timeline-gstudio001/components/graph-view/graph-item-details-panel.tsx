@@ -13,6 +13,13 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
+import {
+  HAIRLINE,
+  HAIRLINE_STRONG,
+  RADIUS_CARD,
+  SURFACE_CARD,
+  SURFACE_CARD_FOCUS,
+} from "./graph-details-design";
 import { DETAILS_CHROME_MS, detailsStepTransition } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { formatSeconds } from "@/lib/format-duration";
@@ -443,7 +450,14 @@ export function DetailsPanel({
           // actually IS rather than on how many there are. Five panels on a
           // large monitor have more room each than three on an iPad, and a
           // rule counting panels gets that backwards.
-          "relative flex w-full flex-col gap-2 rounded-lg bg-zinc-950 p-4 focus-visible:outline-none",
+          "relative flex w-full flex-col gap-2 p-4 focus-visible:outline-none",
+          RADIUS_CARD,
+          // FOCUS FALLOFF, carried by the surface and the border moving
+          // together. Either alone is too quiet to survive a screen full of
+          // pictures; both together are still quieter than the white ring
+          // this replaces, which was the loudest mark in the view and was
+          // spent on the one fact the layout already tells you.
+          centre ? SURFACE_CARD_FOCUS : SURFACE_CARD,
           // THE CHROME, on the step's curve but half its clock. A ring and a
           // shadow do not travel, so matching the step's duration would leave
           // a border still resolving after the panel it borders had arrived —
@@ -466,7 +480,13 @@ export function DetailsPanel({
           // The one mark that survives is the red one, and it earns its place
           // by saying something that changes: whose frames are on screen right
           // now. It is a box-shadow, so it costs no layout either.
-          "border border-zinc-700",
+          // ONE PIXEL ON EVERY PANEL, always. A 2px border on the centre pushed
+          // its picture down a pixel and shortened it by two, which matters
+          // precisely because comparing frames ACROSS panels is what this
+          // view is for. Only the colour changes with focus, and colour
+          // costs no layout.
+          "border",
+          centre ? HAIRLINE_STRONG : HAIRLINE,
           // ONE shadow utility per state, both spelled out. Layering a glow on
           // top of `shadow-2xl` would mean two classes setting `box-shadow`,
           // and which one wins is a question about stylesheet order rather
@@ -479,9 +499,10 @@ export function DetailsPanel({
           // not: one hairline of white at low opacity is enough to say which
           // panel is the subject, and it leaves the pictures to be the bright
           // things on screen.
-          centre
-            ? "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.22)]"
-            : "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
+          // THE DROP SHADOW IS THE SAME ON EVERY PANEL now that the border
+          // carries focus. It lifts the row off the board; it does not say
+          // which panel you are working in.
+          "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)]",
           // ── HEIGHT: THE SUBJECT TAKES THE SCREEN, THE REST FIT THEIR
           //    PICTURE ────────────────────────────────────────────────────
           //
@@ -561,11 +582,13 @@ export function DetailsPanel({
         <ItemDetailsPanelHeader
           name={node.name}
           clipLabel={clipLabel ?? null}
-          trimReadout={
-            video
-              ? `${formatSeconds(showing)} / ${formatSeconds(fullDuration)}`
-              : formatSeconds(showing)
-          }
+          // TWO HALVES, NOT ONE STRING. How much of the clip is in play
+          // and how long the source runs are a bright fact and a dim one,
+          // and joining them here would have forced the header to draw
+          // them in one weight.
+          showingLabel={formatSeconds(showing)}
+          sourceLabel={video ? formatSeconds(fullDuration) : null}
+          focused={centre}
           nodeId={node.id as string}
           rename={rename}
         />

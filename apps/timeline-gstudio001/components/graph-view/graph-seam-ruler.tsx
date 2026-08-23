@@ -317,6 +317,16 @@ export function SeamRuler({
                   : isHovered
                     ? RULER_BLOCK_HOVER_COLOUR
                     : RULER_BLOCK_COLOUR,
+                // A STROKE ALONG THE TOP OF THE ACTIVE BLOCK, and only
+                // there. The clip below it wears a white outline; this is
+                // the same line, continued up into the scale, so the two
+                // read as one column rather than as a tinted rectangle
+                // that happens to sit above an outlined box. Inset rather
+                // than a border because a border would change the block's
+                // size and shift every tick beside it.
+                boxShadow: isCentre
+                  ? "inset 0 1px 0 0 rgba(255, 255, 255, 0.55)"
+                  : undefined,
               }}
               // INSET FROM THE BOTTOM, not flush to it. The tick marks hang
               // from that edge and a block reaching it would have them ending

@@ -10,6 +10,14 @@ import {
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
+import {
+  RADIUS_INNER,
+  SURFACE_WELL,
+  TEXT_DATA,
+  TEXT_LABEL,
+  TEXT_VALUE,
+} from "./graph-details-design";
+
 // The typed half of trimming: the same `update-media` the grips dispatch,
 // reached with a keyboard instead of a pointer. Lifted out of the modal so
 // the panel is layout and these are the input rules.
@@ -81,9 +89,9 @@ export function TrimNumbers({
   };
 
   return (
-    <div className="flex items-center gap-3 font-mono text-[11px] text-zinc-400">
+    <div className="flex items-center gap-3">
       <SecondsField label="in" value={inPoint} disabled={disabled} onCommit={(raw) => commit("in", raw)} />
-      <span aria-hidden="true" className="text-zinc-600">
+      <span aria-hidden="true" className={TEXT_LABEL}>
         →
       </span>
       <SecondsField label="out" value={outPoint} disabled={disabled} onCommit={(raw) => commit("out", raw)} />
@@ -94,7 +102,7 @@ export function TrimNumbers({
           the source is in play". Same value, two questions; `ml-auto` rather
           than a spacer so it stays put when the fields resize. */}
       {durationLabel === undefined ? null : (
-        <span className="ml-auto tabular-nums text-zinc-300">{durationLabel}</span>
+        <span className={["ml-auto", TEXT_VALUE].join(" ")}>{durationLabel}</span>
       )}
       {/* "of 12.00s" used to trail this row. The panel's own header already
           reads "4.00s of 12.00s", two inches above and in the same units, so
@@ -125,7 +133,7 @@ function SecondsField({
   // drag, an undo).
   return (
     <label className="flex items-center gap-1.5">
-      <span className="text-zinc-500">{label}</span>
+      <span className={TEXT_LABEL}>{label}</span>
       <input
         key={value}
         type="text"
@@ -145,7 +153,17 @@ function SecondsField({
           }
         }}
         onBlur={(event) => onCommit(event.target.value)}
-        className="w-14 rounded-sm bg-zinc-900 px-1.5 py-0.5 text-right tabular-nums text-blue-300/90 outline-none ring-1 ring-zinc-700 focus:ring-blue-500/70 disabled:opacity-40"
+        // A FIELD, AND IT LOOKS LIKE ONE. Same well, same radius and the
+        // same hairline as every other recessed thing in the view — the
+        // blue is what says you can type in it, so the box only has to say
+        // "box".
+        className={[
+          "w-14 px-1.5 py-0.5 text-right outline-none focus:ring-blue-500/70 disabled:opacity-40",
+          RADIUS_INNER,
+          SURFACE_WELL,
+          "ring-1 ring-white/[0.07]",
+          TEXT_DATA,
+        ].join(" ")}
       />
 
     </label>

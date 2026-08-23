@@ -10,6 +10,7 @@ import { MAX_TAGS_PER_CLIP, MAX_TAG_LENGTH, normalizeTags } from "@storyboard/ti
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { isTagWriteRefusal, planTagWrite } from "@/lib/tag-write-plan";
 
+import { JUDGEMENT_TAGS, TAG_FACT, TAG_JUDGEMENT } from "./graph-details-design";
 import { useClipDetail, useGraphDetailsStore } from "./graph-details-context";
 
 // Editing tags is the ONE mutation in this view that does not go through a
@@ -145,7 +146,19 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
           <span
             key={tag}
             data-tag-chip={tag}
-            className="flex items-center gap-1 rounded bg-zinc-800 py-0.5 pr-0.5 pl-1.5 text-[11px] leading-none font-medium text-zinc-200 ring-1 ring-white/10"
+            // ONE CHIP IN THE ROW MEANS SOMETHING DIFFERENT. Most tags
+            // say what the clip IS — its scene, its model, its prompt
+            // version — and those are facts, all equal, all grey. A tag
+            // like `keeper` says what somebody DECIDED, and that is the
+            // one thing on the card worth finding without reading. Amber
+            // rather than blue or red: both of those already mean
+            // something exact here, and a judgement is neither editable
+            // data nor the playhead.
+            className={[
+              "flex items-center gap-1 rounded py-0.5 pr-0.5 pl-1.5",
+              "text-[11px] leading-none font-medium ring-1",
+              JUDGEMENT_TAGS.has(tag) ? TAG_JUDGEMENT : TAG_FACT,
+            ].join(" ")}
           >
             {tag}
             <button
@@ -173,7 +186,11 @@ export function TagEditor({ nodeId }: Readonly<{ nodeId: NodeId }>) {
           title={full ? `Limit of ${MAX_TAGS_PER_CLIP} tags reached` : "Add a tag"}
           data-tag-add
           onClick={() => setOpen((was) => !was)}
-          className="flex size-5 items-center justify-center rounded text-zinc-500 ring-1 ring-white/10 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          // DASHED, because it is a SLOT rather than a chip. Drawn solid
+          // it was a sixth tag in a row of five, and the eye had to read
+          // the glyph to find out it was not one. A broken outline says
+          // empty-and-fillable before anything is read.
+          className="flex size-5 items-center justify-center rounded border border-dashed border-white/20 text-zinc-500 transition-colors hover:border-white/30 hover:bg-white/5 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Plus aria-hidden="true" className="size-3" />
         </button>

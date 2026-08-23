@@ -10,6 +10,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { formatSeconds } from "@/lib/format-duration";
+import { TEXT_VALUE_DIM } from "./graph-details-design";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
 
 /**
@@ -185,9 +186,7 @@ export function ItemDetailsTrimStrip({
             since a waveformless black card and a still look alike. That is
             two words now, on the row that was already there. */}
         {!video && (
-          <span className="font-mono text-[11px] text-blue-300/90">
-            sound · {formatSeconds(showing)} long
-          </span>
+          <span className={TEXT_VALUE_DIM}>sound · {formatSeconds(showing)} long</span>
         )}
       </>
     ) : (
@@ -195,7 +194,7 @@ export function ItemDetailsTrimStrip({
       // audio — so it cannot say "still" for both. A voiceover is not a
       // still, and calling it one is the kind of wrong label nobody
       // reports and everybody notices.
-      <span className="font-mono text-[11px] text-blue-300/90">
+      <span className={TEXT_VALUE_DIM}>
         {node.mediaKind === "audio"
           ? `sound · ${formatSeconds(showing)} long`
           : `still · ${formatSeconds(showing)} on screen`}
