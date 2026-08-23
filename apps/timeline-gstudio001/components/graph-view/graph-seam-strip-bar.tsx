@@ -80,6 +80,15 @@ import type { PreviewAnchor } from "./graph-seam-preview-anchor";
  * exactly where you put it.
  */
 
+/**
+ * How long the pointer has to rest on a box before its preview appears.
+ *
+ * Long enough that crossing the bar on the way to grabbing it shows nothing,
+ * short enough that stopping to look does not feel like waiting. Only the
+ * first appearance waits; after that the card follows live.
+ */
+const HOVER_DWELL_MS = 220;
+
 /** Travel that turns a press on the boxes from a grab into a pan. Below it the
  *  press is a CLICK, and a click still chooses a clip. */
 const CLICK_SLOP_PX = 4;
@@ -287,6 +296,27 @@ export function SeamStripBar({
   const [followSuspended, setFollowSuspended] = useState(false);
 
   const [hover, setHover] = useState<SeamHover | null>(null);
+  // A SHORT DWELL BEFORE THE CARD APPEARS.
+  //
+  // Most trips across this bar are on the way to grabbing it. Popping a 264px
+  // card up the instant the pointer touches a box means every reach for the
+  // film flashes something you did not ask for and then takes it away — the
+  // interface twitching at a gesture that had not started yet.
+  //
+  // ONLY THE FIRST APPEARANCE WAITS. Once the card is up it tracks the pointer
+  // with no delay at all: the dwell is asking "did you mean to look at this",
+  // and once answered it must not be asked again on every box you cross.
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverPendingRef = useRef<SeamHover | null>(null);
+  const hoverShownRef = useRef(false);
+  const cancelHover = useCallback(() => {
+    if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = null;
+    hoverPendingRef.current = null;
+    hoverShownRef.current = false;
+    setHover(null);
+  }, []);
+  useEffect(() => cancelHover, [cancelHover]);
   // WHICH FIT THE BAR IS SITTING AT, if any. Seeded to `clip` because that is
   // what the opening fit does — the button is lit on arrival because it
   // describes where you already are, not somewhere you could go.
@@ -400,13 +430,13 @@ export function SeamStripBar({
         offset: offsetRef.current,
         moved: false,
       };
-      setHover(null);
+      cancelHover();
       setPanning(true);
       // A DELIBERATE PAN, so playback stops dragging the bar back under the
       // hand — the same rule the wheel already follows.
       setFollowSuspended(true);
     },
-    [],
+    [cancelHover],
   );
 
   const showHover = useCallback(
@@ -415,10 +445,10 @@ export function SeamStripBar({
       const at = stripPositionAt(strip, stripX);
       const clip = at === null ? undefined : clips.find((candidate) => candidate.id === at.clipId);
       if (at === null || clip === undefined) {
-        setHover(null);
+        cancelHover();
         return;
       }
-      setHover({
+      const next: SeamHover = {
         x: stripX,
         name: clip.name,
         meta: `${clip.collectionName === null ? "" : `${clip.collectionName} · `}${readSeconds(
@@ -453,9 +483,24 @@ export function SeamStripBar({
                   Math.round(((clip.trimInSeconds ?? 0) + at.secondsIntoClip) * 4) / 4,
                 ) ?? clip.posterSrc,
             }),
-      });
+      };
+      // Already up: follow immediately. The dwell is a question about
+      // INTENT, and it has been answered.
+      if (hoverShownRef.current) {
+        setHover(next);
+        return;
+      }
+      hoverPendingRef.current = next;
+      if (hoverTimerRef.current !== null) return;
+      hoverTimerRef.current = setTimeout(() => {
+        hoverTimerRef.current = null;
+        const pending = hoverPendingRef.current;
+        if (pending === null) return;
+        hoverShownRef.current = true;
+        setHover(pending);
+      }, HOVER_DWELL_MS);
     },
-    [clips, localX, strip],
+    [cancelHover, clips, localX, strip],
   );
 
   const onPointerMove = useCallback(
@@ -513,7 +558,7 @@ export function SeamStripBar({
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       setFollowSuspended(true);
-      setHover(null);
+      cancelHover();
       setWheeling(true);
       if (wheelStopRef.current !== null) clearTimeout(wheelStopRef.current);
       // Long enough to bridge the gap between notches of one scroll, short
@@ -540,7 +585,7 @@ export function SeamStripBar({
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);
-  }, [setOffset]);
+  }, [cancelHover, setOffset]);
 
   // ── KEEPING THE PLAYHEAD IN VIEW ─────────────────────────────────────────
   //
@@ -726,7 +771,7 @@ export function SeamStripBar({
             onPointerMove,
             onPointerUp: endPress,
             onPointerCancel: endPress,
-            onPointerLeave: () => setHover(null),
+            onPointerLeave: cancelHover,
           }}
         />
 
@@ -793,7 +838,12 @@ export function SeamStripBar({
           track above it and leaves it there. */}
       <div
         data-seam-controls
-        className="grid grid-cols-[1fr_auto_1fr] items-center gap-3"
+        // `pb-2` MATCHES THE `gap-2` ABOVE. This row is the last child of the
+        // bar's column, so it had 8px of stack gap over it and nothing under —
+        // which put the ensemble visibly high in its own band even though the
+        // row itself was centred. Equal air on both sides is what makes it look
+        // centred, and only one of those two numbers existed.
+        className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 pb-2"
       >
         {/* HIDDEN, NOT WRAPPED, on a narrow view. Wrapping this row costs the
             strip below a line of height it has to be told about — see the
@@ -802,7 +852,23 @@ export function SeamStripBar({
             what is being USED. */}
         <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsLeft}</div>
 
-        <div data-seam-transport className="flex items-center gap-1">
+        {/* THE TRANSPORT, AS ONE OBJECT AND THE BIGGEST THING IN THE ROW.
+            It was three small icon buttons with the same weight as the
+            settings either side of it, spaced like them and indistinguishable
+            from them at a glance — so the one control this view is actually
+            for looked like another toggle. It is now an ensemble: a single
+            rounded ground holding all three, which says they belong to each
+            other and not to the badges beside them.
+
+            AND IT LINES UP WITH THE PANEL IT DRIVES. The row is a
+            `1fr auto 1fr` grid so this sits on the middle of the TRACK, and the
+            track's middle is what the row below centres its subject on — so
+            the play button and the clip it plays are on the same vertical, and
+            stay there when a setting changes width. */}
+        <div
+          data-seam-transport
+          className="flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/70 p-1.5"
+        >
           {/* STEP ONE CLIP, either way, bracketing the thing they move.
               Disabled rather than hidden at the ends: a control that vanishes
               takes its own position with it and shifts the bar sideways. */}
@@ -813,23 +879,41 @@ export function SeamStripBar({
             onClick={() => onStepBack?.()}
             aria-label="Previous clip"
             title="Previous clip (⇧←)"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
+            className="grid h-7 w-7 place-items-center rounded-full text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
           >
             <ChevronLeft aria-hidden="true" className="h-4 w-4" />
           </button>
+
+          {/* THE CENTREPIECE. Filled rather than ghosted, and half again the
+              size of its neighbours: of everything in this row it is the one
+              control with a single obvious meaning, and the only one anyone
+              reaches for without reading first. Big enough to be that, and no
+              bigger — at 44px it stopped reading as a control in a row and
+              started reading as a button the row was arranged around.
+
+              ONE NUMBER FOR ALL THE AIR AROUND IT. The ring's padding and the
+              gaps between the three buttons are the same 6px, so the play
+              button has equal space on every side rather than 6px outside and
+              4px in — a difference small enough to read as "not quite centred"
+              without being large enough to name. */}
           <button
             type="button"
+            data-seam-play
             onClick={onTogglePlay}
             aria-label={playing ? "Pause" : "Play across the cut"}
             title="Play / pause (space)"
-            className="rounded-full p-1.5 text-zinc-300 outline-none hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500"
+            className="grid h-8 w-8 place-items-center rounded-full bg-zinc-100 text-zinc-900 shadow-sm transition-colors outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             {playing ? (
               <Pause aria-hidden="true" className="h-4 w-4" />
             ) : (
-              <Play aria-hidden="true" className="h-4 w-4" />
+              // Nudged right by a hair: a triangle's optical centre is left of
+              // its bounding box, so a centred play glyph reads as sitting
+              // slightly back in the circle.
+              <Play aria-hidden="true" className="h-4 w-4 translate-x-[1px]" />
             )}
           </button>
+
           <button
             type="button"
             data-seam-step="forward"
@@ -837,7 +921,7 @@ export function SeamStripBar({
             onClick={() => onStepForward?.()}
             aria-label="Next clip"
             title="Next clip (⇧→)"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
+            className="grid h-7 w-7 place-items-center rounded-full text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25"
           >
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </button>

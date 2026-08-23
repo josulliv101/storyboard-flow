@@ -641,17 +641,47 @@ export function SeamLane({
         const segment = strip.segments.find((found) => found.clipId === centreClipId);
         if (segment === undefined || segment.widthPx <= 0) return null;
         return (
-          <span
-            data-seam-active-mark={centreClipId}
-            aria-hidden="true"
-            style={{
-              left: viewportX(segment.leftPx + segment.widthPx / 2),
-              borderLeft: "5px solid transparent",
-              borderRight: "5px solid transparent",
-              borderTop: "6px solid rgba(250, 250, 250, 0.95)",
-            }}
-            className="pointer-events-none absolute -top-[9px] z-10 h-0 w-0 -translate-x-1/2"
-          />
+          <>
+            {/* AND HOW LONG IT RUNS. The triangle says WHICH clip and nothing
+                about its extent — it is the same 10px whether the shot is one
+                second or thirty, so at a glance the active clip has a position
+                and no size. A rule spanning the box gives it back, and it is
+                the one measurement the bar is built on: width is duration.
+
+                BEHIND THE TRIANGLE, and thinner, so the pair reads as one mark
+                — a pointer with a span rather than two things at the same
+                height. It uses the box's own inset, so its ends land exactly
+                where the clip's frames do rather than in the gaps either
+                side. */}
+            <span
+              data-seam-active-span={centreClipId}
+              aria-hidden="true"
+              style={{
+                left: viewportX(segment.leftPx + BOX_INSET_PX),
+                width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                top: -7,
+                height: 2,
+                // HALF STRENGTH. The triangle is the mark and this is its
+                // extent — at equal weight the pair read as two claims of the
+                // same importance, and the long one wins on area alone. Behind
+                // and quieter, it measures the mark rather than competing with
+                // it.
+                backgroundColor: "rgba(250, 250, 250, 0.5)",
+              }}
+              className="pointer-events-none absolute z-10 rounded-full"
+            />
+            <span
+              data-seam-active-mark={centreClipId}
+              aria-hidden="true"
+              style={{
+                left: viewportX(segment.leftPx + segment.widthPx / 2),
+                borderLeft: "5px solid transparent",
+                borderRight: "5px solid transparent",
+                borderTop: "6px solid rgba(250, 250, 250, 0.95)",
+              }}
+              className="pointer-events-none absolute -top-[9px] z-20 h-0 w-0 -translate-x-1/2"
+            />
+          </>
         );
       })()}
 
@@ -721,7 +751,7 @@ export function SeamLane({
           // Sitting just under the ruler at 56px rather than against the boxes:
           // the ruler is the scale the box widths mean anything against, and
           // covering it would answer "which shot" while hiding "how long".
-          className="pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
+          className="animate-seam-preview-in pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
         >
           {hover.posterSrc === undefined ? null : (
             // A bare <img>: the preview is a thumbnail of a source the app

@@ -2244,7 +2244,14 @@ export const TheTwoBarsAreAdjacent: Story = {
     // leaves, so the floor is set above it. Too much and the band is holding
     // space for a row that is no longer there, which nothing would ever
     // report: the view just sits lower than it needs to.
-    const slack = panel.top - minimap.bottom;
+    //
+    // MEASURED FROM THE CONTROLS, NOT THE MINIMAP. The controls row used to sit
+    // between the two bars and now sits under both, so the space below the
+    // minimap legitimately contains it — measuring there counts a row as slack
+    // and reports 84px of "waste" that is actually the transport.
+    const controlsRow = box("[data-seam-controls]");
+    expect(minimap.bottom).toBeLessThanOrEqual(controlsRow.top + 0.5);
+    const slack = panel.top - controlsRow.bottom;
     expect(slack).toBeGreaterThan(16);
     expect(slack).toBeLessThan(80);
   },
@@ -2849,9 +2856,14 @@ export const ThePanelsRecedeBehindThePreview: Story = {
     expect(dimmed()).toBe(false);
 
     // Pointing at a box brings the card up, and the row goes back for it.
+    // THE CARD WAITS BEFORE IT APPEARS — see `HOVER_DWELL_MS`. So does the dim
+    // that follows it, and it arrives a render later than the card because the
+    // bar reports the state and the view acts on it. Both are waited for
+    // rather than assumed, which is also the assertion that the dwell has not
+    // quietly become "never".
     fireEvent.pointerMove(lane, pointerAt(centre.x, centre.y));
     await waitFor(() => expect(document.querySelector("[data-seam-preview]")).not.toBeNull());
-    expect(dimmed()).toBe(true);
+    await waitFor(() => expect(dimmed()).toBe(true));
     // Both properties ease, so the row does not snap dark while it slides.
     expect(getComputedStyle(row()).transitionProperty).toContain("opacity");
 
@@ -2859,7 +2871,7 @@ export const ThePanelsRecedeBehindThePreview: Story = {
     // comes back — the panel being watched must not be the dim one.
     fireEvent.pointerDown(lane, pointerAt(centre.x, centre.y));
     await waitFor(() => expect(document.querySelector("[data-seam-preview]")).toBeNull());
-    expect(dimmed()).toBe(false);
+    await waitFor(() => expect(dimmed()).toBe(false));
     fireEvent.pointerUp(lane, pointerAt(centre.x, centre.y));
   },
 };

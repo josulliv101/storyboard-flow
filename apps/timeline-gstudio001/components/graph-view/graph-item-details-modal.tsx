@@ -846,11 +846,18 @@ function DetailsFilmstripModal({
       // them. This padding is the band they occupy: header (61px) plus the
       // bar block at top-16 with its own pt-4 (152px to its underside), plus
       // clearance, plus the reach picker's own row (mt-2 and a ~18px button)
-      // — which is why this is 13rem and not the 11rem it was before that
+      // — which is why this is 14rem and not the 11rem it was before that
       // picker existed. It grew when the bar did, and it has to keep pace: the
       // symptom of it not doing so is the minimap resting on the top edge of
       // the middle card, which is a quiet eight pixels rather than an obvious
       // fault.
+      //
+      // MEASURED, each time the bar changes shape. The transport became an
+      // ensemble with a 44px play button, which took the block from 116px to
+      // 142px — it starts at `top-16` plus its own `pt-4`, so it now ends 222px
+      // down and 13rem reserved only 208. Anything added to that block has to
+      // be measured and this raised, or the row below rides up into it on a
+      // short viewport.
       // `overflow-clip`, NOT `overflow-hidden`. Both crop, but `hidden` makes
       // this a SCROLL CONTAINER — and the row is thirteen thousand pixels
       // wide, so there is a great deal for it to scroll. Landing on a new clip
@@ -860,7 +867,7 @@ function DetailsFilmstripModal({
       // row that had itself moved 1728px, which put the card just chosen
       // entirely off the left edge. `clip` crops without ever being
       // scrollable, so the transform stays the only thing that moves the row.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[13rem] pb-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[14rem] pb-6 backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim

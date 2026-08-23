@@ -193,6 +193,33 @@ html body[data-scroll-locked] {
    control rather than appearing over the header. Short and eased-out: this is
    a report, and a report that makes an entrance is a report being read as an
    alert. */
+/* THE HOVER PREVIEW ARRIVING.
+   It waits a moment before it appears (see `HOVER_DWELL_MS`), and a card that
+   has just made you wait should not then snap into place — the pause and the
+   snap together read as a stutter. A short fade with a touch of rise says it
+   came from the box below it. Quick, because it has already spent its patience
+   budget on the dwell. */
+@keyframes seam-preview-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.animate-seam-preview-in {
+  animation: seam-preview-in 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-seam-preview-in {
+    animation: none;
+  }
+}
+
 @keyframes seam-note-in {
   from {
     opacity: 0;
