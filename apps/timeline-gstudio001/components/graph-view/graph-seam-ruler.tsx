@@ -1,5 +1,6 @@
 "use client";
 
+import { BOX_INSET_PX, SEAM_RULER_HEIGHT_PX } from "./graph-seam-metrics";
 import type { SeamTick } from "./graph-seam-bar-layout";
 
 /**
@@ -10,7 +11,43 @@ import type { SeamTick } from "./graph-seam-bar-layout";
  * begin exactly where the ruler stops or they cover the last row of labels.
  * Two places, one number.
  */
-export const SEAM_RULER_HEIGHT_PX = 20;
+export { SEAM_RULER_HEIGHT_PX };
+
+/**
+ * ── THE CLIPS, DRAWN AGAIN IN THE SCALE ─────────────────────────────────────
+ *
+ * The ruler carried numbers and collection names and nothing about the film
+ * under it, so reading "how long is that shot" meant finding a box's edges on
+ * one row and reading a number off another. A block per clip, at the same
+ * width and the same x, puts the two in one place: the run of blocks IS the
+ * run of boxes, and the numbers land on it.
+ *
+ * FAINT ENOUGH TO BE A GROUND, and no fainter. This is a scale rather than a
+ * second film strip, so the blocks make divisions findable and give the labels
+ * something to sit against without competing with the film they describe.
+ *
+ * 7% was past the point of being either: against this ground it read as an
+ * unevenness in the black rather than as a row of rectangles, so the thing it
+ * was drawn to make legible could not itself be seen. 16% is a shape you can
+ * find without hunting and still quiet enough that the eye goes to the film
+ * first.
+ */
+const RULER_BLOCK_COLOUR = "rgba(250, 250, 250, 0.16)";
+
+/**
+ * The active clip's block, and the one thing in this band with a hue.
+ *
+ * Sky is what the app already says "live" in — the seek rail's played time,
+ * the board's readout — so the active clip's block is that colour rather than
+ * a new one to learn. Kept translucent for the same reason the others are
+ * faint: it marks the stretch of scale belonging to the clip being worked on,
+ * and a solid bar would be a second claim competing with the white triangle
+ * and rule immediately below it.
+ *
+ * It is the only saturated thing up here, which is what makes it findable at a
+ * glance on a bar of two dozen blocks.
+ */
+const RULER_BLOCK_ACTIVE_COLOUR = "rgba(56, 189, 248, 0.30)";
 
 /**
  * The scale ABOVE the boxes: seconds, and where each collection starts.
@@ -54,10 +91,25 @@ export const SEAM_RULER_HEIGHT_PX = 20;
 export function SeamRuler({
   ticks,
   offset,
+  segments = [],
+  centreClipId = null,
   ghostX = null,
   handlers,
 }: Readonly<{
   ticks: readonly SeamTick[];
+  /**
+   * The film's own layout, so the scale can draw a block per clip at exactly
+   * the width and position of the box below it.
+   *
+   * The SAME numbers the lane lays its boxes out from, inset the same way —
+   * a block that agreed about width but not about the gap would sit a couple
+   * of pixels off every boundary, which at these sizes is the difference
+   * between a scale and a smear.
+   */
+  segments?: readonly Readonly<{ clipId: string; leftPx: number; widthPx: number }>[];
+  /** Which block wears the active treatment. Null draws none, which is what a
+   *  ruler rendered without a film under it should do. */
+  centreClipId?: string | null;
   /** The strip's own transform, so the ruler travels with the boxes. */
   offset: number;
   /**
@@ -114,10 +166,48 @@ export function SeamRuler({
         className="absolute inset-y-0 left-0 w-full"
         style={{ transform: `translateX(${offset}px)` }}
       >
-        {/* UNDER THE POINTER, and the same hairline the film draws. First in
-            the container so a tick mark and its label paint over it rather
-            than under — the line says where you are, and the label is what it
-            is pointing at. */}
+        {/* THE BLOCKS FIRST, so they are the GROUND the rest of the band sits
+            on. A tick, its label and the pointer's line all have to stay
+            readable over them, and the paint order is what guarantees that
+            rather than a stack of z-indexes to keep in step. */}
+        {segments.map((segment) => {
+          if (segment.widthPx <= 0) return null;
+          const isCentre = segment.clipId === centreClipId;
+          return (
+            <span
+              key={segment.clipId}
+              data-seam-ruler-block={segment.clipId}
+              data-seam-ruler-block-live={isCentre ? "" : undefined}
+              aria-hidden="true"
+              style={{
+                left: segment.leftPx + BOX_INSET_PX,
+                width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                // ONE TONE FOR THE RUN, and the active clip apart from it.
+                //
+                // Alternate fills were tried and dropped: they gave every
+                // boundary a change of tone, but they also made the band a
+                // pattern in its own right — a rhythm of light and dark that
+                // is not the film's rhythm, competing with the one thing the
+                // widths are actually saying. An even run is a ground, and a
+                // ground is what a scale wants to be.
+                backgroundColor: isCentre
+                  ? RULER_BLOCK_ACTIVE_COLOUR
+                  : RULER_BLOCK_COLOUR,
+              }}
+              // INSET FROM THE BOTTOM, not flush to it. The tick marks hang
+              // from that edge and a block reaching it would have them ending
+              // inside a filled rectangle rather than against the film — the
+              // marks are what point at the boundary, and they need the gap to
+              // point ACROSS.
+              className="absolute top-0 bottom-1.5 rounded-[2px]"
+            />
+          );
+        })}
+
+        {/* UNDER THE POINTER, and the same hairline the film draws. Painted
+            after the blocks so it reads over them — the line says where you
+            are, and a ground that covered it would be answering a quieter
+            question more loudly. */}
         {ghostX !== null && (
           <span
             aria-hidden="true"
@@ -147,7 +237,17 @@ export function SeamRuler({
                 seam. */}
             <span
               className={[
-                "absolute top-0 left-0 max-w-32 truncate text-[10px] leading-none whitespace-nowrap",
+                // CENTRED IN THE BAND, not hung from its top.
+                //
+                // At the top it sat against the edge with the whole rest of
+                // the band empty beneath it, so the row read as text with a
+                // margin under it rather than as a scale. Centred, the label
+                // sits in the middle of the block it names and the tick mark
+                // still has the bottom edge to itself — `-translate-y-1/2`
+                // against `top-1/2` rather than a flex box, because the tick
+                // container is a zero-width anchor at the boundary and has no
+                // box to centre anything in.
+                "absolute top-1/2 left-0 max-w-32 -translate-y-1/2 truncate text-[10px] leading-none whitespace-nowrap",
                 // READABLE, which the time labels were not. They were
                 // `text-zinc-600` at 9px — grey on near-black, at a size where
                 // the strokes are a pixel wide, so the numbers were legible

@@ -1758,6 +1758,108 @@ export const TheRulerNamesTheCollections: Story = {
 
     expect(labels("collection")).toEqual(["Kitchen Interior", "Loading Dock"]);
 
+    // ── A BLOCK PER CLIP, AND THE GAPS LEFT ALONE ────────────────────────
+    //
+    // The scale carries a faint block per clip so "how long is that shot" can
+    // be read in one place instead of two — the run of blocks IS the run of
+    // boxes. Which only works if they agree EXACTLY: a block off by a couple
+    // of pixels at these sizes is the difference between a scale and a smear.
+    const blocks = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-ruler-block]"),
+    );
+    expect(blocks.length).toBeGreaterThan(1);
+    for (const block of blocks) {
+      const id = block.getAttribute("data-seam-ruler-block")!;
+      const box = document.querySelector<HTMLElement>(
+        `[data-seam-segment="${CSS.escape(id)}"]`,
+      );
+      if (box === null) continue;
+      const blockAt = block.getBoundingClientRect();
+      const boxAt = box.getBoundingClientRect();
+      expect(Math.abs(blockAt.left - boxAt.left)).toBeLessThan(0.5);
+      expect(Math.abs(blockAt.right - boxAt.right)).toBeLessThan(0.5);
+    }
+
+    // AND NOTHING REACHES INTO THE GAP. The gap between two clips is the one
+    // part of the bar that says "these are separate", and it is drawn by
+    // absence — so a block that overran it by a pixel would close the seam the
+    // whole layout depends on. Asserted as clearance BETWEEN blocks rather
+    // than against a number, which is what "the gap stays empty" means.
+    const inOrder = [...blocks].sort(
+      (a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left,
+    );
+    for (let index = 0; index < inOrder.length - 1; index += 1) {
+      const gap =
+        inOrder[index + 1]!.getBoundingClientRect().left -
+        inOrder[index]!.getBoundingClientRect().right;
+      expect(gap).toBeGreaterThan(1);
+    }
+
+    // ── AND ONE OF THEM IS THE ACTIVE CLIP ───────────────────────────────
+    //
+    // The only saturated thing in the band, which is what makes it findable on
+    // a bar of two dozen blocks. Asserted as "different from the others" and
+    // as having a hue at all, rather than against an rgba string nobody would
+    // notice going stale.
+    const live = document.querySelectorAll<HTMLElement>("[data-seam-ruler-block-live]");
+    expect(live.length).toBe(1);
+    expect(live[0]!.getAttribute("data-seam-ruler-block")).toBe(
+      centreBox().getAttribute("data-seam-segment"),
+    );
+    const plain = blocks.find(
+      (block) => !block.hasAttribute("data-seam-ruler-block-live"),
+    )!;
+    const activeInk = getComputedStyle(live[0]!).backgroundColor;
+    expect(activeInk).not.toBe(getComputedStyle(plain).backgroundColor);
+    // A HUE, not a brighter grey: the channels have to disagree.
+    const [red, green, blue] = activeInk.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    expect(Math.max(red!, green!, blue!) - Math.min(red!, green!, blue!)).toBeGreaterThan(40);
+
+    // ── ONE TONE FOR THE RUN ─────────────────────────────────────────────
+    //
+    // Alternate fills were tried and dropped: they gave every boundary a
+    // change of tone, but they made the band a pattern in its own right — a
+    // rhythm of light and dark that is not the film's rhythm, competing with
+    // the one thing the widths are actually saying. Asserted as EVERY
+    // non-active block agreeing, which is what a stripe reintroduced by
+    // accident would fail.
+    const runInks = new Set(
+      blocks
+        .filter((block) => !block.hasAttribute("data-seam-ruler-block-live"))
+        .map((block) => getComputedStyle(block).backgroundColor),
+    );
+    expect(runInks.size).toBe(1);
+    // And it is a fill, not nothing — the blocks exist to be seen.
+    expect([...runInks][0]).not.toBe("rgba(0, 0, 0, 0)");
+    expect(activeInk).not.toBe("rgba(0, 0, 0, 0)");
+
+    // ── THE TRIANGLE CLEARED THE BAND, THE RULE DID NOT ──────────────────
+    //
+    // The mark used to sit inside the scale among its labels, three things
+    // claiming the same 20px. The rule stays: it measures the BOXES — width is
+    // duration — so it belongs against the film rather than above the scale.
+    const band = document.querySelector<HTMLElement>("[data-seam-ruler]")!.getBoundingClientRect();
+    const triangle = document
+      .querySelector<HTMLElement>("[data-seam-active-mark]")!
+      .getBoundingClientRect();
+    const rule = document
+      .querySelector<HTMLElement>("[data-seam-active-span]")!
+      .getBoundingClientRect();
+    expect(triangle.bottom).toBeLessThanOrEqual(band.top + 0.5);
+    expect(rule.top).toBeGreaterThan(band.top);
+
+    // ── AND THE LABELS SIT IN THE MIDDLE OF IT ───────────────────────────
+    //
+    // Hung from the top they read as text with a margin under it rather than
+    // as a scale; centred, each sits in the middle of the block it names and
+    // the tick mark keeps the bottom edge to itself.
+    const anyLabel = document.querySelector<HTMLElement>("[data-seam-tick] span:nth-child(2)");
+    expect(anyLabel).not.toBeNull();
+    const labelBox = anyLabel!.getBoundingClientRect();
+    expect(
+      Math.abs((labelBox.top + labelBox.height / 2) - (band.top + band.height / 2)),
+    ).toBeLessThan(1.5);
+
     // Seconds, and enough of them to read a scale from.
     const times = labels("time");
     expect(times.length).toBeGreaterThan(3);
@@ -1823,6 +1925,43 @@ export const TheMinimapMovesTheWindow: Story = {
     expect(Number(marked.opacity)).toBe(1);
     const ink = marked.backgroundColor.match(/[\d.]+/g)!.slice(0, 3).map(Number);
     expect(Math.min(...ink)).toBeGreaterThan(200);
+
+    // ── AND THE PANELS EITHER SIDE, ONE TIER DOWN ────────────────────────
+    //
+    // The map marks what is ON SCREEN, the same set the film strip draws
+    // pictures for — but as a lesser mark, and lesser is the point. Marking
+    // three clips the way the subject is marked would replace one answer with
+    // three and leave "which is mine" to be worked out from position. So these
+    // come up to full strength and keep their own colour and height:
+    // brightness groups them, and white plus the extra pixel still single out
+    // the one inside.
+    const onScreenSegments = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-mini-segment-onscreen]"),
+    );
+    const flanking = onScreenSegments.filter(
+      (segment) => !segment.hasAttribute("data-seam-mini-segment-live"),
+    );
+    expect(flanking.length).toBeGreaterThan(0);
+    for (const segment of flanking) {
+      const style = getComputedStyle(segment);
+      // Undimmed, so they read as a group against the run…
+      expect(Number(style.opacity)).toBe(1);
+      // …and NOT white, so they never read as the subject.
+      expect(style.backgroundColor).not.toBe(getComputedStyle(live[0]!).backgroundColor);
+    }
+
+    // THE MAP AND THE STRIP AGREE ABOUT WHAT IS ON SCREEN. Two components, one
+    // set, and nothing would tell you they had drifted — the bar would draw a
+    // picture for one clip while the map brightened another, and both would
+    // look deliberate.
+    const named = (nodes: readonly HTMLElement[], attribute: string) =>
+      nodes.map((node) => node.getAttribute(attribute)).sort();
+    expect(named(onScreenSegments, "data-seam-mini-segment")).toEqual(
+      named(
+        Array.from(document.querySelectorAll<HTMLElement>("[data-seam-segment-onscreen]")),
+        "data-seam-segment",
+      ),
+    );
 
     // Taller than its neighbours, and on the SAME CENTRE LINE — grown both
     // ways rather than hanging off the bottom of the run.
@@ -1933,9 +2072,39 @@ export const ThePlaybarCanDrawFrames: Story = {
     // the bar ships on STRIP, so the plain grey state is somewhere this story
     // goes rather than somewhere it starts.
     framesTo("OFF");
-    await waitFor(() =>
-      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
-    );
+    // GREY EXCEPT WHAT IS ON SCREEN. `OFF` is not "no pictures anywhere" — it
+    // is "no pictures in the RUN of the bar", which is the thing grey boxes
+    // are for: width is duration, and an even run of grey shows where the cuts
+    // fall and where the pace changes. That argument says nothing about the
+    // two or three clips whose frames are already filling the screen below,
+    // and drawing those anonymous is the bar declining to answer a question
+    // nobody is asking of it.
+    //
+    // So the count settles at the number of panels on screen, and every one of
+    // them is a box the row is showing.
+    await waitFor(() => {
+      const framed = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-seam-thumbnail]"),
+      );
+      expect(framed.length).toBeGreaterThan(0);
+      expect(framed.length).toBeLessThan(seamBoxes().length);
+      // Each one belongs to a box marked as being on screen — the marker and
+      // the picture cannot drift apart.
+      for (const picture of framed) {
+        expect(picture.closest("[data-seam-segment-onscreen]")).not.toBeNull();
+      }
+    });
+    // AND THE REST ARE STILL GREY. The claim is about the run, so it is
+    // asserted over the run rather than over the total.
+    expect(
+      document.querySelectorAll("[data-seam-segment]:not([data-seam-segment-onscreen])")
+        .length,
+    ).toBeGreaterThan(0);
+    for (const plain of document.querySelectorAll(
+      "[data-seam-segment]:not([data-seam-segment-onscreen])",
+    )) {
+      expect(plain.querySelector("[data-seam-thumbnail]")).toBeNull();
+    }
     framesTo("COVER");
 
     const boxCount = seamBoxes().length;
@@ -2017,13 +2186,30 @@ export const ThePlaybarCanDrawFrames: Story = {
     expect(laneBox.bottom - boxRect.bottom).toBeGreaterThanOrEqual(spread);
 
     framesTo("OFF");
-    await waitFor(() =>
-      expect(document.querySelectorAll("[data-seam-thumbnail]").length).toBe(0),
-    );
-    // AND IT GOES AWAY WITH THEM. Over flat grey the whole treatment is
+    // BACK TO THE RUN BEING GREY — every box except the panels on screen, as
+    // above. The pictures that remain are the clips you are looking at, which
+    // `OFF` was never an argument against.
+    const plainBoxes = () =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "[data-seam-segment]:not([data-seam-segment-onscreen])",
+        ),
+      );
+    await waitFor(() => {
+      expect(plainBoxes().length).toBeGreaterThan(0);
+      for (const plain of plainBoxes()) {
+        expect(plain.querySelector("[data-seam-thumbnail]")).toBeNull();
+      }
+    });
+    // AND THE TREATMENT GOES AWAY WITH THEM. Over flat grey the ring is
     // decoration answering a question nobody asked, and one more thing between
     // the reader and the rhythm the grey bar is for.
-    expect(getComputedStyle(seamBoxes()[0]!).boxShadow).toBe("none");
+    //
+    // Read off a box that is NOT on screen: the ring follows the PICTURE now
+    // rather than the setting, so the handful of boxes still drawing a frame
+    // keep their edge — a picture with no margin is the very thing that
+    // treatment exists to prevent.
+    expect(getComputedStyle(plainBoxes()[0]!).boxShadow).toBe("none");
     expect(
       getComputedStyle(document.querySelector<HTMLElement>("[data-seam-strip]")!)
         .backgroundColor,

@@ -159,6 +159,7 @@ type FitMode = "clip" | "all";
 
 export function SeamStripBar({
   clips,
+  panelClipIds,
   centreClipId,
   colourOf,
   playheadAt,
@@ -177,6 +178,11 @@ export function SeamStripBar({
 }: Readonly<{
   /** Every clip the bar can reach, in playback order. */
   clips: readonly SeamBarClip[];
+  /**
+   * The clips on screen as panels below — drawn as pictures even with frames
+   * switched off. See the note where this is built in the modal.
+   */
+  panelClipIds: ReadonlySet<string>;
   /** The clip under the middle card — marked, not centred. */
   centreClipId: string;
   /** Each clip's box colour, derived from where its collection sits in the
@@ -770,15 +776,96 @@ export function SeamStripBar({
   // change. As state it was a setState inside an effect, which is a second
   // render for a value no one draws.
   const broughtIntoViewRef = useRef(centreClipId);
+  /**
+   * BRING THE WHOLE ROW ON, not just the clip in the middle of it.
+   *
+   * The panels below are three clips, or five — and stepping used to bring
+   * only the subject onto the bar, which left the neighbours you are looking
+   * at with no box you could point to. The row and the bar disagreed about
+   * what "here" is, and the bar is the thing that says where here sits.
+   *
+   * The span is the first on-screen clip's left edge to the last one's right,
+   * found by walking the segments rather than by index: `panelClipIds` is a
+   * set, and the two ends are all this needs.
+   */
+  const panelSpan = useMemo(() => {
+    let from = Number.POSITIVE_INFINITY;
+    let to = Number.NEGATIVE_INFINITY;
+    for (const segment of strip.segments) {
+      if (!panelClipIds.has(segment.clipId)) continue;
+      from = Math.min(from, segment.leftPx);
+      to = Math.max(to, segment.leftPx + segment.widthPx);
+    }
+    return Number.isFinite(from) ? { from, to } : null;
+  }, [panelClipIds, strip]);
+
+  /**
+   * Pan the least distance that puts `from`..`to` on the track.
+   *
+   * WHEN IT WILL NOT FIT, IT FALLS BACK RATHER THAN GIVING UP. Five panels of
+   * a long cut, or three on a phone, can be wider than the track at the
+   * current zoom — and the honest answer there is not "show none of it". The
+   * span is centred instead, which puts as much of the row on screen as there
+   * is room for and keeps the subject among it.
+   *
+   * THE ZOOM IS LEFT ALONE. Fitting the row by zooming out would change the
+   * scale under someone who was reading it, and the scale is the one thing on
+   * this bar that a step must not touch — a box's width means a duration, and
+   * a step is not a request to re-measure the film.
+   */
+  const bringSpanIntoView = useCallback(
+    (from: number, to: number) => {
+      const width = trackRef.current?.getBoundingClientRect().width ?? trackWidth;
+      if (width <= 0) return;
+      const room = width - FOLLOW_LEAD_PX - FOLLOW_TRAIL_PX;
+      const current = offsetRef.current;
+      let next = current;
+      if (to - from > room) {
+        // Too wide for the track: centre what there is.
+        next = width / 2 - (from + to) / 2;
+      } else if (from + current < FOLLOW_LEAD_PX) {
+        next = FOLLOW_LEAD_PX - from;
+      } else if (to + current > width - FOLLOW_TRAIL_PX) {
+        next = width - FOLLOW_TRAIL_PX - to;
+      }
+      if (Math.abs(next - current) < 0.5) return;
+      setOffset(next);
+    },
+    [setOffset, trackWidth],
+  );
+
   useEffect(() => {
     if (broughtIntoViewRef.current === centreClipId) return;
     broughtIntoViewRef.current = centreClipId;
     setFollowSuspended(false);
     if (panPxRef.current === null) return;
+    if (panelSpan !== null) {
+      bringSpanIntoView(panelSpan.from, panelSpan.to);
+      return;
+    }
+    // No panels reported — a bar rendered without a carousel under it. The
+    // subject alone is the best "here" there is.
     const segment = strip.segments.find((candidate) => candidate.clipId === centreClipId);
     if (segment === undefined) return;
     nudgeIntoView(segment.leftPx + segment.widthPx / 2);
-  }, [centreClipId, nudgeIntoView, strip]);
+  }, [bringSpanIntoView, centreClipId, nudgeIntoView, panelSpan, strip]);
+
+  // AND CHANGING HOW MANY PANELS THERE ARE IS THE SAME REQUEST.
+  //
+  // Going from three up to five puts two more clips on screen, and they are on
+  // screen whether or not the bar is showing them — so the count is as much a
+  // "bring the row into view" as a step is. Keyed on the SIZE rather than the
+  // set: the members change on every step, which the effect above already
+  // handles, and re-fitting on both would fight a deliberate pan made between
+  // one step and the next.
+  const panelCount = panelClipIds.size;
+  const fittedCountRef = useRef(panelCount);
+  useEffect(() => {
+    if (fittedCountRef.current === panelCount) return;
+    fittedCountRef.current = panelCount;
+    if (panPxRef.current === null || panelSpan === null) return;
+    bringSpanIntoView(panelSpan.from, panelSpan.to);
+  }, [bringSpanIntoView, panelCount, panelSpan]);
 
   // DERIVED, NOT ANNOUNCED AT EACH SITE. `hover` is cleared from four places —
   // pointer down, pointer leave, a wheel, and a position that resolves to no
@@ -908,6 +995,8 @@ export function SeamStripBar({
         <SeamRuler
           ticks={ticks}
           offset={offset}
+          segments={strip.segments}
+          centreClipId={centreClipId}
           // The same x the lane's ghost uses, so the two are one line. Dropped
           // while panning for the same reason the lane drops its card: the bar
           // is moving under the pointer, and a mark claiming to be "here" is
@@ -918,6 +1007,7 @@ export function SeamStripBar({
 
         <SeamLane
           laneRef={laneRef}
+          panelClipIds={panelClipIds}
           strip={strip}
           clips={clips}
           colourOf={boxColourOf}
@@ -975,6 +1065,7 @@ export function SeamStripBar({
         clips={clips}
         colourOf={boxColourOf}
         centreClipId={centreClipId}
+        panelClipIds={panelClipIds}
         totalSeconds={totalSeconds}
         windowFromSeconds={windowFromSeconds}
         windowToSeconds={windowToSeconds}
