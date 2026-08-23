@@ -33,9 +33,8 @@ import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 import {
-  DETAILS_RESIZE_MS,
-  DETAILS_SLIDE_MS,
-  detailsSlideTransition,
+  DETAILS_HEIGHT_DELAY_MS,
+  DETAILS_HEIGHT_MS,
   detailsStepTransition,
 } from "./graph-details-motion";
 import { SegmentedControl } from "./graph-details-segmented";
@@ -377,7 +376,7 @@ function DetailsFilmstripModal({
     // miniature.
     const timer = setTimeout(
       () => setLeavingCentre(null),
-      DETAILS_RESIZE_MS + DETAILS_SLIDE_MS + 40,
+      DETAILS_HEIGHT_DELAY_MS + DETAILS_HEIGHT_MS + 40,
     );
     return () => clearTimeout(timer);
   }, [centre]);
@@ -1252,10 +1251,7 @@ function DetailsFilmstripModal({
           // finished resizing — see `detailsSlideTransition`. Opacity is not
           // part of the choreography (it is the hover-preview fade), so it
           // keeps the plain step timing and starts immediately.
-          transition:
-            dragPx === 0
-              ? `${detailsSlideTransition("transform")}, ${detailsStepTransition("opacity")}`
-              : undefined,
+          transition: dragPx === 0 ? detailsStepTransition("transform, opacity") : undefined,
         }}
       >
         {ids.map((id, index) => {

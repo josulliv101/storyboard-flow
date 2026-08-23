@@ -4106,31 +4106,28 @@ export const TheSubjectMarkIsHandedOverNotSwapped: Story = {
 };
 
 /**
- * THE ROW FINISHES MOVING BEFORE THE CARDS RESIZE.
+ * THE WIDTH TRAVELS WITH THE ROW; ONLY THE HEIGHT WAITS.
  *
- * A step used to do both at once, and what made that read wrong was not the
- * overlap — it was that only half the resize was animated. Width eased over the
- * step; HEIGHT was in nobody's transition list and snapped. Measured at 1920, a
- * card promoted to subject goes from 368px tall to 519, and since the cards hang
- * from a common bottom that is a 151px jump of its top edge, in one frame, at
- * the moment the row began to travel.
+ * A step used to animate width while HEIGHT snapped — it was in nobody's
+ * transition list. Measured at 1920, a card promoted to subject goes from 368px
+ * tall to 519, and since the cards hang from a common bottom that is a 151px
+ * jump of its top edge, in a single frame, exactly as the row began to travel.
+ * One dimension gliding while the other teleported is what looked wrong.
  *
- * Separated, then ordered by eye: resize-then-slide was tried first and still
- * read wrong, so the row travels first and the cards change size once it has
- * stopped.
+ * Both full orderings were built and rejected before landing here. Resize-first
+ * made the subject grow before it had anywhere to go. Slide-first left it 184px
+ * right of centre — half the 368px between the two widths, because the row's
+ * offset is computed from a uniform neighbour width and only centres the subject
+ * once the subject IS the wide card — and made it close that gap by growing.
  *
- * WHAT THAT COSTS, measured rather than assumed. The row's offset is computed
- * from a uniform neighbour width, so it lands the subject centred only once the
- * subject is the wide card. Slide first and the subject arrives 184px right of
- * centre — exactly half the 368px between the two widths — and closes that gap
- * as it grows. Both phases carry it the same way, so there is no reversal: it
- * travels, then grows into position.
+ * So WIDTH has to travel with the row: the landing position depends on it.
+ * HEIGHT does not, and it is the jarring one, so it is the only thing held back.
  *
- * Asserted as declarations rather than as sampled geometry. The claim is about
- * ORDER, and sampling positions mid-flight is a race — worse here than usual,
- * because the interesting window is 190ms long.
+ * Asserted as declarations. The claim is about ORDER, and neither browser pane
+ * will sample a transition — requestAnimationFrame is throttled in both, so a
+ * timed probe returns one frame and then nothing.
  */
-export const TheRowSlidesBeforeTheCardsResize: Story = {
+export const TheWidthTravelsWithTheRowAndTheHeightFollows: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
@@ -4138,36 +4135,35 @@ export const TheRowSlidesBeforeTheCardsResize: Story = {
     const outer = panel.parentElement!;
     const strip = document.querySelector<HTMLElement>("[data-details-strip]")!;
 
-    // HEIGHT IS ANIMATED AT ALL. This is the whole bug, in one assertion.
-    const panelStyle = getComputedStyle(panel);
-    expect(panelStyle.transitionProperty).toContain("height");
+    const entry = (element: HTMLElement, property: string) => {
+      const style = getComputedStyle(element);
+      const at = style.transitionProperty
+        .split(",")
+        .map((name) => name.trim())
+        .indexOf(property);
+      const pick = (value: string) => value.split(",").map((v) => v.trim())[at] ?? "";
+      return { duration: pick(style.transitionDuration), delay: pick(style.transitionDelay) };
+    };
 
-    // Width and height run on the same clock, so the card changes shape as one
-    // thing rather than as two.
-    const properties = panelStyle.transitionProperty.split(",").map((name) => name.trim());
-    const durations = panelStyle.transitionDuration.split(",").map((value) => value.trim());
-    const heightDuration = durations[properties.indexOf("height")];
-    expect(`height ${heightDuration}`).toBe(
-      `height ${getComputedStyle(outer).transitionDuration.split(",")[0]!.trim()}`,
+    // HEIGHT IS ANIMATED AT ALL. This is the original bug, in one assertion.
+    expect(getComputedStyle(panel).transitionProperty).toContain("height");
+
+    // WIDTH AND THE ROW TRAVEL TOGETHER — same clock, neither waiting.
+    const travel = entry(strip, "transform");
+    const width = entry(outer, "width");
+    expect(`width ${width.duration}/${width.delay}`).toBe(
+      `width ${travel.duration}/${travel.delay}`,
     );
+    expect(`row waits ${travel.delay}`).toBe("row waits 0s");
 
-    // THE SLIDE GOES FIRST, so it waits for nothing.
-    const stripStyle = getComputedStyle(strip);
-    const stripProperties = stripStyle.transitionProperty
-      .split(",")
-      .map((name) => name.trim());
-    const stripDelays = stripStyle.transitionDelay.split(",").map((value) => value.trim());
-    const stripDurations = stripStyle.transitionDuration
-      .split(",")
-      .map((value) => value.trim());
-    const at = stripProperties.indexOf("transform");
-    expect(`slide waits ${stripDelays[at]}`).toBe("slide waits 0s");
-
-    // AND THE RESIZE WAITS FOR THE SLIDE — by exactly its duration, which is
-    // what makes this a sequence rather than an overlap.
-    const delays = panelStyle.transitionDelay.split(",").map((value) => value.trim());
-    expect(`height waits ${delays[properties.indexOf("height")]}`).toBe(
-      `height waits ${stripDurations[at]}`,
+    // AND THE HEIGHT FOLLOWS, on its own shorter clock.
+    const height = entry(panel, "height");
+    expect(Number.parseFloat(height.delay)).toBeGreaterThan(0);
+    expect(Number.parseFloat(height.duration)).toBeLessThan(
+      Number.parseFloat(travel.duration),
     );
+    // It starts as the travel is finishing rather than after a gap — most of a
+    // hard ease-out's distance is covered early.
+    expect(Number.parseFloat(height.delay)).toBeLessThan(Number.parseFloat(travel.duration));
   },
 };

@@ -23,9 +23,9 @@ import {
 import {
   DETAILS_CHROME_MS,
   DETAILS_HANDOFF_MS,
-  DETAILS_RESIZE_MS,
-  DETAILS_SLIDE_MS,
-  detailsResizeTransition,
+  DETAILS_HEIGHT_DELAY_MS,
+  DETAILS_HEIGHT_MS,
+  detailsStepTransition,
 } from "./graph-details-motion";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { formatSeconds } from "@/lib/format-duration";
@@ -377,7 +377,7 @@ export function DetailsPanel({
           // a `duration-*`/`ease-*` pair so the curve is the one value all
           // three read, instead of a cubic-bezier copied into three class
           // strings and drifting from two of them.
-          ...(swapping ? {} : { transition: detailsResizeTransition("width") }),
+          ...(swapping ? {} : { transition: detailsStepTransition("width") }),
           ...(spare ? { visibility: "hidden" as const } : {}),
         }}
       >
@@ -416,8 +416,12 @@ export function DetailsPanel({
           // step — which is the point, because the SIZES are crossing at that
           // moment and cannot say which card is which.
           ["--chrome-ms" as string]: `${focusHandoff === "departing" ? DETAILS_HANDOFF_MS : DETAILS_CHROME_MS}ms`,
-          ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_RESIZE_MS}ms`,
-          ["--resize-delay" as string]: swapping ? "0ms" : `${DETAILS_SLIDE_MS}ms`,
+          // HEIGHT IS THE ONE THING THAT WAITS. Width travels with the row
+          // because the landing position depends on it; height does not, and it
+          // is the change that was jarring — 151px of it lands on the top edge,
+          // since the cards hang from a common bottom.
+          ["--resize-ms" as string]: swapping ? "0ms" : `${DETAILS_HEIGHT_MS}ms`,
+          ["--height-delay" as string]: swapping ? "0ms" : `${DETAILS_HEIGHT_DELAY_MS}ms`,
           ...(focusHandoff === "arriving"
             ? { ["--focus-delay" as string]: `${DETAILS_HANDOFF_MS}ms` }
             : {}),
@@ -517,7 +521,7 @@ export function DetailsPanel({
           "transition-[box-shadow,border-color,background-color,transform,height]",
           "ease-[cubic-bezier(0.32,0.72,0,1)]",
           "[transition-duration:var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--resize-ms)]",
-          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,var(--resize-delay,0ms)]",
+          "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,var(--height-delay,0ms)]",
           "motion-reduce:transition-none",
           // EVERY PANEL WEARS THE SAME BORDER, including the one you opened.
           //

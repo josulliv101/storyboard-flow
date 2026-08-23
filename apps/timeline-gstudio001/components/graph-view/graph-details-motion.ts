@@ -53,50 +53,33 @@ export const DETAILS_STEP_MS = 420;
 export const DETAILS_STEP_EASING = DETAILS_STEP_EASE;
 
 /**
- * A STEP IS TWO PHASES NOW: THE CARDS RESIZE, AND THEN THE ROW SLIDES.
+ * WIDTH, HEIGHT AND THE ROW'S TRAVEL ALL MOVE TOGETHER, ON THIS CLOCK.
  *
- * They used to happen together, and the reason that read badly was not the
- * overlap itself — it was that only HALF of the resize was animated. Width
- * eased over the step; height was in nobody's transition list and snapped.
- * Measured at 1920: a card going from neighbour to subject is 368px tall and
- * becomes 519, and since the cards hang from a common bottom that is a 151px
- * jump of the top edge, in one frame, at the exact moment the row began to
- * travel. One dimension gliding while the other teleports is what the eye was
- * catching.
+ * Both orderings were built and looked at. Resize-then-slide made the subject
+ * grow before it had anywhere to go; slide-then-resize landed it 184px right of
+ * centre — half the 368px between the two widths, because the row's offset is
+ * computed from a uniform neighbour width and only centres the subject once the
+ * subject IS the wide card — and left it to close that gap by growing.
  *
- * Animating height alongside width would have fixed the snap and left three
- * things moving at once. Separating them is the better answer, and it is free:
- * the two cards that change size are ADJACENT and swap the same number of
- * pixels, so while they resize nothing else in the row moves at all. The
- * subject grows in place; then the row slides to centre it.
+ * Simultaneous was right all along. What was actually wrong was that only HALF
+ * of it was animated: width eased over the step and HEIGHT was in nobody's
+ * transition list, so a card promoted to subject jumped from 368px tall to 519
+ * in a single frame — and because the cards hang from a common bottom, that
+ * moved its top edge 151px at the exact moment the row began to travel. One
+ * dimension gliding while the other teleported is the whole of what looked
+ * wrong; the ordering was never the problem.
  *
- * Sequenced with a plain transition-delay rather than a state machine — the
- * slide simply does not begin until the resize has finished.
+ * WIDTH TRAVELS WITH THE ROW; HEIGHT WAITS. The card has to be the right WIDTH
+ * when it lands — the row's offset is computed from a uniform neighbour width
+ * and only centres the subject once the subject is the wide card, so a width
+ * that arrived late would leave the card 184px off centre and creeping. Height
+ * is under no such obligation: nothing about the horizontal landing depends on
+ * it, and it is the change that was jarring, because the cards hang from a
+ * common bottom and 151px of it lands on the top edge.
+ *
+ * So the vertical change is held back until the horizontal one has effectively
+ * finished, and gets a clock of its own.
  */
-export const DETAILS_RESIZE_MS = 190;
-
-/** The travel, once the sizes have settled. */
-export const DETAILS_SLIDE_MS = 260;
-
-/** Phase TWO: the cards change size, once the row has stopped moving. */
-export function detailsResizeTransition(properties: string): string {
-  return properties
-    .split(",")
-    .map(
-      (property) =>
-        `${property.trim()} ${DETAILS_RESIZE_MS}ms ${DETAILS_STEP_EASE} ${DETAILS_SLIDE_MS}ms`,
-    )
-    .join(", ");
-}
-
-/** Phase ONE: the row travels, at the old sizes. */
-export function detailsSlideTransition(properties: string): string {
-  return properties
-    .split(",")
-    .map((property) => `${property.trim()} ${DETAILS_SLIDE_MS}ms ${DETAILS_STEP_EASE}`)
-    .join(", ");
-}
-
 /** `transition` shorthand for a property that moves with a step. */
 export function detailsStepTransition(properties: string): string {
   return properties
@@ -114,6 +97,20 @@ export function detailsStepTransition(properties: string): string {
  * alongside it.
  */
 export const DETAILS_CHROME_MS = 210;
+
+/**
+ * When the height change starts, measured from the top of the step.
+ *
+ * Not the full {@link DETAILS_STEP_MS}, which would read as a pause. The step's
+ * curve is a hard ease-out — it does most of its travel early — so by 300ms the
+ * row has visibly stopped even though it has 120ms of settle left. Starting
+ * here reads as the card adjusting once it has arrived, rather than as two
+ * animations with a gap between them.
+ */
+export const DETAILS_HEIGHT_DELAY_MS = 300;
+
+/** And how long it then takes. Short: it is a correction, not a journey. */
+export const DETAILS_HEIGHT_MS = 200;
 
 /**
  * How long the subject's chrome takes to LEAVE the card losing it, and how
