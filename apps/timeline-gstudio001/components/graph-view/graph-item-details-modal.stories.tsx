@@ -1805,6 +1805,39 @@ export const TheMinimapMovesTheWindow: Story = {
     reachTo("10");
     await waitFor(() => expect(segments()).toBe(21));
 
+    // AND THE SUBJECT IS MARKED HERE TOO, on exactly one segment and on the
+    // same clip the bar marks. The two strips answer different questions —
+    // which shot, and where in the project that shot is — and the subject is
+    // the fact they share; marked on only one of them the map showed a window
+    // a dozen clips wide and left you to work out which was yours.
+    const live = document.querySelectorAll("[data-seam-mini-segment-live]");
+    expect(live.length).toBe(1);
+    expect(live[0]!.getAttribute("data-seam-mini-segment")).toBe(
+      centreBox().getAttribute("data-seam-segment"),
+    );
+    // WHITE, AT FULL STRENGTH, AND A LITTLE TALLER. Colour rather than an
+    // edge, because a segment here can be one pixel wide: a border would eat
+    // into a width that means duration, and an outline around a one-pixel clip
+    // stands in for the thing rather than marking it.
+    const marked = getComputedStyle(live[0]!);
+    expect(Number(marked.opacity)).toBe(1);
+    const ink = marked.backgroundColor.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    expect(Math.min(...ink)).toBeGreaterThan(200);
+
+    // Taller than its neighbours, and on the SAME CENTRE LINE — grown both
+    // ways rather than hanging off the bottom of the run.
+    const others = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-seam-mini-segment]"),
+    ).filter((segment) => !segment.hasAttribute("data-seam-mini-segment-live"));
+    const markedBox = live[0]!.getBoundingClientRect();
+    const plainBox = others[0]!.getBoundingClientRect();
+    expect(markedBox.height).toBeGreaterThan(plainBox.height);
+    expect(
+      Math.abs(
+        (markedBox.top + markedBox.height / 2) - (plainBox.top + plainBox.height / 2),
+      ),
+    ).toBeLessThan(0.6);
+
     // The window is a PART of it, not all of it: if it covered the whole
     // minimap there would be nothing off the sides and nothing to say.
     const map = minimap.getBoundingClientRect();
@@ -2414,6 +2447,53 @@ export const TheBarSlidesIntoPositionOnAMove: Story = {
     // a wobble.
     await settleStrip();
     expect(Math.abs(stripX() - from)).toBeGreaterThan(20);
+
+    // ── AND THE SAME IS TRUE OF THE STEP BUTTONS ─────────────────────────
+    //
+    // A different path to the same move, and the one that was broken: a click
+    // on a box commits the clip and the travel together, while a STEP changes
+    // the subject and only then decides whether the bar has to follow. Those
+    // are separate commits, so the slide had nothing to interpolate on the
+    // first and no move left to claim on the second — the strip cut 986px with
+    // no transition property set at all.
+    //
+    // Everything above passed throughout, which is why this is here: the story
+    // covered the path that worked.
+    //
+    // AND THIS IS COVERAGE, NOT A REGRESSION GUARD — said plainly because the
+    // difference matters. Reverting the fix and re-running this leaves it
+    // GREEN: whether the subject change and the nudge land in one commit or
+    // two is React's scheduling, and under the story runner they arrive
+    // together, which is exactly the case the old code handled. The split is
+    // real in the app and was measured there — 986px with no transition
+    // property at all, against `transform 520ms ease-out` after. What follows
+    // asserts the step path eases at all, which nothing did before.
+    const strip = () => document.querySelector<HTMLElement>("[data-seam-strip]")!;
+    const forward = document.querySelector<HTMLElement>('[data-seam-step="forward"]')!;
+    expect(forward).not.toBeNull();
+
+    // STEP UNTIL THE BAR ACTUALLY HAS TO TRAVEL. Most steps move nothing —
+    // the next clip is usually already on screen and the bar deliberately
+    // stays where it was put — so asserting on the first press would assert
+    // against a bar that correctly did nothing.
+    let travelled = false;
+    for (let attempt = 0; attempt < 12 && !travelled; attempt++) {
+      const before = stripX();
+      const wasOn = subject();
+      forward.click();
+      await waitFor(() => expect(subject()).not.toBe(wasOn));
+      // Read the easing while the transition is still on the node: the effect
+      // clears it once the slide is over.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const easing = strip().style.transition;
+      await settleStrip();
+      if (Math.abs(stripX() - before) > 20) {
+        travelled = true;
+        expect(easing).toContain("transform");
+      }
+    }
+    // The loop proving nothing would be the quiet failure here.
+    expect(travelled).toBe(true);
   },
 };
 
@@ -2534,7 +2614,15 @@ export const TheBarIsGreyUntilTheTintIsSwitchedOn: Story = {
     // ONE colour across two collections, on both rows.
     const boxColours = colours("[data-seam-segment]");
     expect(boxColours.size).toBe(1);
-    const miniColours = colours("[data-seam-mini-segment]");
+    // THE SUBJECT IS EXCLUDED, and only it. The map marks the active clip
+    // white, which is a claim about WHICH CLIP rather than which collection —
+    // the flag withholds the second and has nothing to say about the first.
+    // Scoped with `:not()` rather than by filtering afterwards so a mark that
+    // silently stopped being applied would take the exclusion with it and
+    // leave this asserting over everything again.
+    const miniColours = colours(
+      "[data-seam-mini-segment]:not([data-seam-mini-segment-live])",
+    );
     expect(miniColours.size).toBe(1);
     // And the SAME one, so the strip and the map read as one object.
     expect([...miniColours]).toEqual([...boxColours]);

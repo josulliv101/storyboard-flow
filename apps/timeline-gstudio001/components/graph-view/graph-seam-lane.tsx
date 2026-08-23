@@ -22,6 +22,17 @@ import type { PreviewAnchor } from "./graph-seam-preview-anchor";
  */
 const SEAM_SLIDE_MS = 520;
 
+/**
+ * How long a change of subject stays claimable by the travel that follows it.
+ *
+ * The step and the nudge it causes are separate commits, so the slide has to
+ * survive the gap between them — see the effect below. Bounded so an unspent
+ * intent cannot be picked up by a later gesture: a wheel pan or a drag must
+ * track the hand exactly, and easing one because a step happened a few seconds
+ * ago is the lag every other path here is careful to avoid.
+ */
+const SEAM_MOVE_CLAIM_MS = 120;
+
 /** How wide the end-of-project stop is. Wider than the hairline between two
  *  boxes, so it is read as an edge rather than as another gap. */
 const CAP_WIDTH_PX = 6;
@@ -397,13 +408,39 @@ export function SeamLane({
   const stripRef = useRef<HTMLDivElement | null>(null);
   const centreWasRef = useRef(centreClipId);
   const offsetWasRef = useRef(offset);
+  /** When the subject last changed, so the nudge that follows can claim it. */
+  const movedAtRef = useRef(0);
   useLayoutEffect(() => {
     const node = stripRef.current;
-    const moved = centreWasRef.current !== centreClipId;
+    // THE MOVE AND THE TRAVEL ARRIVE IN DIFFERENT RENDERS, which is why this
+    // used to animate nothing.
+    //
+    // A step changes the subject; the bar then decides whether that subject is
+    // off the side and, if it is, nudges the strip to bring it in. Those are
+    // two state changes and React commits them separately, so this effect ran
+    // twice: once with the new `centreClipId` and the OLD offset — nothing to
+    // interpolate, so it returned, having already recorded the new centre —
+    // and again with the new offset and `moved` now false. Both runs bailed
+    // and the strip cut.
+    //
+    // Measured on a 21-clip scene: a step moved the strip 986px with no
+    // transition property set at all.
+    //
+    // So the move is REMEMBERED rather than consumed, and spent on whichever
+    // render actually brings the travel with it. Time-bounded, because a step
+    // that needs no nudge leaves the intent unspent — and without a bound the
+    // next wheel pan, seconds later, would inherit it and ease when it must
+    // track the hand exactly. A nudge follows its step within a render or two;
+    // 120ms is generous for that and far short of a separate gesture.
+    if (centreWasRef.current !== centreClipId) {
+      centreWasRef.current = centreClipId;
+      movedAtRef.current = performance.now();
+    }
     const previous = offsetWasRef.current;
-    centreWasRef.current = centreClipId;
     offsetWasRef.current = offset;
-    if (!moved || node === null || previous === offset) return;
+    if (node === null || previous === offset) return;
+    if (performance.now() - movedAtRef.current > SEAM_MOVE_CLAIM_MS) return;
+    movedAtRef.current = 0;
 
     // PUT IT BACK, THEN LET IT GO. A transition cannot be added to a value
     // that has ALREADY changed: by the time a layout effect runs, React has

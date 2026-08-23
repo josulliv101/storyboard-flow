@@ -974,6 +974,7 @@ export function SeamStripBar({
       <SeamMinimap
         clips={clips}
         colourOf={boxColourOf}
+        centreClipId={centreClipId}
         totalSeconds={totalSeconds}
         windowFromSeconds={windowFromSeconds}
         windowToSeconds={windowToSeconds}
