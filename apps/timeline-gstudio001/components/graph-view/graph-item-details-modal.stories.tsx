@@ -4156,14 +4156,21 @@ export const TheWidthTravelsWithTheRowAndTheHeightFollows: Story = {
     );
     expect(`row waits ${travel.delay}`).toBe("row waits 0s");
 
-    // AND THE HEIGHT FOLLOWS, on its own shorter clock.
+    // AND THE HEIGHT FOLLOWS, on its own shorter clock...
     const height = entry(panel, "height");
     expect(Number.parseFloat(height.delay)).toBeGreaterThan(0);
     expect(Number.parseFloat(height.duration)).toBeLessThan(
       Number.parseFloat(travel.duration),
     );
-    // It starts as the travel is finishing rather than after a gap — most of a
-    // hard ease-out's distance is covered early.
-    expect(Number.parseFloat(height.delay)).toBeLessThan(Number.parseFloat(travel.duration));
+
+    // ...BUT LANDS ON THE SAME FRAME. They used to finish 80ms apart, and that
+    // tail was what felt wrong: everything else had settled and one edge was
+    // still creeping, so the step ended twice and the second ending was the one
+    // you noticed. Asserted to the millisecond, because the delay is derived by
+    // subtraction precisely so this cannot drift.
+    const finishes = Number.parseFloat(height.delay) + Number.parseFloat(height.duration);
+    expect(`height lands at ${finishes.toFixed(2)}s`).toBe(
+      `height lands at ${Number.parseFloat(travel.duration).toFixed(2)}s`,
+    );
   },
 };
