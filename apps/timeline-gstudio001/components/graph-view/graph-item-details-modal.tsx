@@ -859,8 +859,8 @@ function DetailsFilmstripModal({
       // be measured and this raised, or the row below rides up into it on a
       // short viewport.
       //
-      // 14rem → 16.5rem when the transport took a 20px top margin, dropping it
-      // clear of the two bars above. This is exactly the failure the note above
+      // 14rem → 18.5rem, for the transport's 36px top margin dropping it clear
+      // of the two bars above. This is exactly the failure the note above
       // predicts, and it was caught the way it was meant to be:
       // `TheTwoBarsAreAdjacent` measures the gap between this row and the
       // centre card, and it fell from 22px to 2 — the "quiet eight pixels"
@@ -871,8 +871,13 @@ function DetailsFilmstripModal({
       // writing down. This box is `items-center`, so padding added at the top
       // is shared with the bottom when the row is re-centred in what is left —
       // 20px of padding buys only 10px of downward movement. The first attempt
-      // added 20 and recovered half the slack (2 → 12, still short of the 16
-      // floor). 40px is what 20px of bar costs here: 224 + 40 = 264 = 16.5rem.
+      // added 20 for 20 and recovered half the slack (2 → 12, still short of
+      // the 16 floor).
+      //
+      // So the arithmetic is 224 + 2 × margin: 20px of margin took this to
+      // 16.5rem, and 36px takes it to 18.5rem (224 + 72 = 296). Move the
+      // transport again and this moves by twice as much, in the same
+      // direction.
       // `overflow-clip`, NOT `overflow-hidden`. Both crop, but `hidden` makes
       // this a SCROLL CONTAINER — and the row is thirteen thousand pixels
       // wide, so there is a great deal for it to scroll. Landing on a new clip
@@ -882,7 +887,7 @@ function DetailsFilmstripModal({
       // row that had itself moved 1728px, which put the card just chosen
       // entirely off the left edge. `clip` crops without ever being
       // scrollable, so the transform stays the only thing that moves the row.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[16.5rem] pb-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[18.5rem] pb-6 backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim

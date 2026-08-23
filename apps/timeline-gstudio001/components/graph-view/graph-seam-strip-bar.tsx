@@ -17,7 +17,7 @@ import {
 } from "./graph-seam-bar-layout";
 import { SeamLane, type SeamHover } from "./graph-seam-lane";
 import { SeamMinimap } from "./graph-seam-minimap";
-import { SeamRuler } from "./graph-seam-ruler";
+import { SEAM_RULER_HEIGHT_PX, SeamRuler } from "./graph-seam-ruler";
 import {
   buildSeamStrip,
   stripCentreOffset,
@@ -100,6 +100,45 @@ const CLICK_SLOP_PX = 4;
  */
 const FOLLOW_LEAD_PX = 56;
 const FOLLOW_TRAIL_PX = 72;
+
+/**
+ * ── THE FLICK, AND HOW IT DIES ──────────────────────────────────────────────
+ *
+ * How much of its speed the glide keeps per millisecond. Applied as
+ * `v *= DECAY ** dt`, so the curve is the same on a 60Hz panel and a 120Hz
+ * one — a per-FRAME factor would make the strip travel twice as far on the
+ * faster display, which is the usual way this is got wrong.
+ *
+ * 0.9965 is roughly a third of the speed left after 300ms: long enough that a
+ * flick clearly carries, short enough that the film never feels like it is
+ * getting away from you. The bar is a thing you read, not a wheel you spin.
+ */
+const GLIDE_DECAY_PER_MS = 0.9965;
+
+/** Below this the glide is over — a fifth of a pixel per frame is not motion,
+ *  it is a rounding error keeping a rAF alive. */
+const GLIDE_MIN_PX_PER_MS = 0.012;
+
+/**
+ * How much of the release has to be a THROW before anything glides.
+ *
+ * A pan that is placed — pulled somewhere and set down — ends slow, and
+ * carrying it on past where it was put would be the strip disagreeing with the
+ * hand. Only a release still moving at this speed reads as thrown.
+ */
+const GLIDE_MIN_LAUNCH_PX_PER_MS = 0.35;
+
+/**
+ * How far back the launch speed is measured.
+ *
+ * The last two events are too few — a pointer that stalls for one frame before
+ * release reports zero and the flick dies on the spot — and the whole gesture
+ * is too many, since a drag that paused in the middle and then flicked would
+ * launch at its average rather than its parting speed. ~70ms is about four
+ * frames: enough to survive one stutter, short enough to be the END of the
+ * gesture rather than a summary of it.
+ */
+const GLIDE_SAMPLE_MS = 70;
 
 function readSeconds(value: number): string {
   return `${value.toFixed(2)}s`;
@@ -387,6 +426,65 @@ export function SeamStripBar({
     setPanPx(clamped);
   }, []);
 
+  // ── INERTIA ──────────────────────────────────────────────────────────────
+  //
+  // A flick keeps going. The strip stopped dead on release, which is fine for
+  // a short pull and wrong for a long one: reaching the far end of a
+  // four-minute cut meant a row of separate drags, each one re-grabbing film
+  // that was already still.
+  //
+  // A rAF LOOP rather than a CSS transition, because the distance is not known
+  // when the hand leaves: the glide has to stop early if it reaches a pan
+  // limit, and a transition that has already been handed a destination cannot.
+  const glideRef = useRef<number | null>(null);
+  /** Recent pointer positions, for the speed the hand left at. */
+  const samplesRef = useRef<{ x: number; t: number }[]>([]);
+
+  const stopGlide = useCallback(() => {
+    if (glideRef.current === null) return;
+    cancelAnimationFrame(glideRef.current);
+    glideRef.current = null;
+  }, []);
+  // Nothing outlives the bar: a rAF still holding a closure over `setOffset`
+  // after unmount is a setState on a dead component every frame until it
+  // decays.
+  useEffect(() => stopGlide, [stopGlide]);
+
+  const startGlide = useCallback(
+    (velocityPxPerMs: number) => {
+      stopGlide();
+      // REDUCED MOTION TAKES THE GLIDE, not the pan. The strip still goes
+      // exactly where it is dragged; it simply stops when the hand does, which
+      // is what someone asking for less motion is asking for.
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true) return;
+      if (Math.abs(velocityPxPerMs) < GLIDE_MIN_LAUNCH_PX_PER_MS) return;
+      let velocity = velocityPxPerMs;
+      let previous = performance.now();
+      const step = (now: number) => {
+        const dt = Math.min(64, now - previous);
+        previous = now;
+        velocity *= GLIDE_DECAY_PER_MS ** dt;
+        if (Math.abs(velocity) < GLIDE_MIN_PX_PER_MS) {
+          glideRef.current = null;
+          return;
+        }
+        const before = offsetRef.current;
+        setOffset(before + velocity * dt);
+        // CLAMPED IS STOPPED. `setOffset` holds the pan inside its limits, so
+        // a glide that has run into one would otherwise spend its remaining
+        // speed asking for a position it cannot have — the strip sitting still
+        // while a loop insists it is moving.
+        if (Math.abs(offsetRef.current - before) < 0.01) {
+          glideRef.current = null;
+          return;
+        }
+        glideRef.current = requestAnimationFrame(step);
+      };
+      glideRef.current = requestAnimationFrame(step);
+    },
+    [setOffset, stopGlide],
+  );
+
   /** Local x within the track, which is the space every gesture works in. */
   const localX = useCallback((clientX: number) => {
     const element = trackRef.current;
@@ -424,6 +522,11 @@ export function SeamStripBar({
       // along a bench: the playhead stays where it is, nothing below changes,
       // and letting go commits to nothing. Clicking a box still chooses one,
       // which is the gesture that always meant "go here".
+      // CATCHING A GLIDING STRIP STOPS IT, exactly like putting a hand on
+      // moving film. Before the press records its origin, because that origin
+      // is `offsetRef` and a glide is still writing to it.
+      stopGlide();
+      samplesRef.current = [];
       pressRef.current = {
         pointerId: event.pointerId,
         x: event.clientX,
@@ -436,7 +539,7 @@ export function SeamStripBar({
       // hand — the same rule the wheel already follows.
       setFollowSuspended(true);
     },
-    [cancelHover],
+    [cancelHover, stopGlide],
   );
 
   const showHover = useCallback(
@@ -503,30 +606,71 @@ export function SeamStripBar({
     [cancelHover, clips, localX, strip],
   );
 
+  /**
+   * The RULER's move handler, and the only thing that raises the preview.
+   *
+   * Hovering used to be the lane's job, which meant the card appeared over the
+   * frames it was reporting on with the pointer sitting on them. It answers
+   * from the ruler now — the same x, since both are translated by the same
+   * offset, so the clip under the mark is the clip the card describes.
+   *
+   * DEAD WHILE A DRAG IS RUNNING. The lane captures the pointer on press, so
+   * moves during a scrub are delivered here only if the finger travels up over
+   * the ruler; showing a card mid-drag would put a picture over the film at
+   * exactly the moment the film is the thing being watched.
+   */
+  const onRulerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (pressRef.current !== null) return;
+      showHover(event.clientX);
+    },
+    [showHover],
+  );
+
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const press = pressRef.current;
-      if (press === null) {
-        showHover(event.clientX);
-        return;
-      }
+      // NO LONGER THE HOVER PATH. A move over the boxes with nothing pressed
+      // is now simply nothing — the ruler above answers that, see
+      // `onRulerMove`.
+      if (press === null) return;
       if (event.pointerId !== press.pointerId) return;
       if (Math.abs(event.clientX - press.x) > CLICK_SLOP_PX) press.moved = true;
+      // THE LAST FEW MILLISECONDS OF THE HAND, kept so the release knows how
+      // fast it was going. Trimmed to the window rather than accumulated: the
+      // launch speed is the end of the gesture, not its average.
+      const now = performance.now();
+      const samples = samplesRef.current;
+      samples.push({ x: event.clientX, t: now });
+      while (samples.length > 2 && now - samples[0]!.t > GLIDE_SAMPLE_MS) samples.shift();
       // THE FILM FOLLOWS THE HAND, ONE TO ONE. Measured from where the press
       // landed rather than accumulated per event, so the point of film under
       // the finger stays under it however long the drag runs — an accumulating
       // version drifts by whatever a dropped or coalesced move was worth.
       setOffset(press.offset + (event.clientX - press.x));
     },
-    [setOffset, showHover],
+    [setOffset],
   );
 
   const endPress = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const press = pressRef.current;
       pressRef.current = null;
+      const samples = samplesRef.current;
+      samplesRef.current = [];
       if (press === null) return;
       setPanning(false);
+      // LET GO OF A MOVING FILM AND IT KEEPS GOING. Measured across the
+      // window rather than between the final pair, so one stalled frame
+      // before release does not report a dead stop — see `GLIDE_SAMPLE_MS`.
+      // Only a drag glides: a click has no speed to carry and the branch
+      // below turns it into a choice of clip instead.
+      if (press.moved && samples.length >= 2) {
+        const first = samples[0]!;
+        const last = samples[samples.length - 1]!;
+        const elapsed = last.t - first.t;
+        if (elapsed > 0) startGlide((last.x - first.x) / elapsed);
+      }
       // A PRESS THAT DID NOT TRAVEL IS A CLICK, and a click on a box makes
       // that clip active. Distinguished by travel rather than by timing,
       // because a slow deliberate pan must not also count as a tap on whatever
@@ -542,7 +686,7 @@ export function SeamStripBar({
       const landedOn = stripPositionAt(strip, stripX)?.clipId ?? null;
       if (landedOn !== null && landedOn !== centreClipId) onCommitClip(landedOn);
     },
-    [centreClipId, localX, onCommitClip, strip],
+    [centreClipId, localX, onCommitClip, startGlide, strip],
   );
 
 
@@ -557,6 +701,10 @@ export function SeamStripBar({
     if (element === null) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
+      // A WHEEL IS A NEW INSTRUCTION, so it takes over from a glide rather
+      // than adding to one — otherwise the strip is being moved by two things
+      // at once and lands where neither asked.
+      stopGlide();
       setFollowSuspended(true);
       cancelHover();
       setWheeling(true);
@@ -585,7 +733,7 @@ export function SeamStripBar({
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);
-  }, [cancelHover, setOffset]);
+  }, [cancelHover, setOffset, stopGlide]);
 
   // ── KEEPING THE PLAYHEAD IN VIEW ─────────────────────────────────────────
   //
@@ -753,6 +901,21 @@ export function SeamStripBar({
         // nothing under it stops being clickable.
         className="relative z-30 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
+        {/* THE SCALE, ABOVE THE FILM IT MEASURES — and the hover target.
+            See `graph-seam-ruler` for both: a ruler belongs against what it
+            measures, and a preview card belongs somewhere other than on top
+            of the frames it is reporting on. */}
+        <SeamRuler
+          ticks={ticks}
+          offset={offset}
+          // The same x the lane's ghost uses, so the two are one line. Dropped
+          // while panning for the same reason the lane drops its card: the bar
+          // is moving under the pointer, and a mark claiming to be "here" is
+          // the one thing that is not true mid-drag.
+          ghostX={hover === null || panning ? null : hover.x}
+          handlers={{ onPointerMove: onRulerMove, onPointerLeave: cancelHover }}
+        />
+
         <SeamLane
           laneRef={laneRef}
           strip={strip}
@@ -771,7 +934,6 @@ export function SeamStripBar({
             onPointerMove,
             onPointerUp: endPress,
             onPointerCancel: endPress,
-            onPointerLeave: cancelHover,
           }}
         />
 
@@ -779,20 +941,25 @@ export function SeamStripBar({
             edges, and a hard edge is indistinguishable from an end — these say
             which of the two you are looking at, and disappear when there is
             nothing beyond. */}
+        {/* THERE IS MORE THAT WAY, over the FILM only.
+            Offset by the ruler's height rather than pinned to the track's top:
+            the strip no longer starts there, and a fade left at `top-0` would
+            wash out the row of labels instead of the frames. One number, from
+            the ruler itself, so the two cannot drift. */}
         <span
           aria-hidden="true"
           data-seam-fade="left"
           hidden={offset >= -0.5}
-          className="pointer-events-none absolute top-0 left-0 h-9 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
+          style={{ top: SEAM_RULER_HEIGHT_PX }}
+          className="pointer-events-none absolute left-0 h-9 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
         />
         <span
           aria-hidden="true"
           data-seam-fade="right"
           hidden={strip.totalPx + offset <= trackWidth + 0.5}
-          className="pointer-events-none absolute top-0 right-0 h-9 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
+          style={{ top: SEAM_RULER_HEIGHT_PX }}
+          className="pointer-events-none absolute right-0 h-9 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
         />
-
-        <SeamRuler ticks={ticks} offset={offset} />
       </div>
 
       {/* THE WHOLE PROJECT, DIRECTLY UNDER THE FILM STRIP.
@@ -867,10 +1034,13 @@ export function SeamStripBar({
             stay there when a setting changes width. */}
         <div
           data-seam-transport
-          // DROPPED CLEAR OF THE BARS ABOVE. `mt-5` is 20px, on the assembly
+          // DROPPED CLEAR OF THE BARS ABOVE. `mt-9` is 36px, on the assembly
           // rather than on the row: the badges either side keep sitting where
           // the ruler leaves them, and only the transport takes the air.
-          className="mt-5 flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/70 p-1.5"
+          //
+          // Landed at 20 first and went to 36. Whatever this number becomes,
+          // the scrim's top padding owes it TWICE over — see the note there.
+          className="mt-9 flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/70 p-1.5"
         >
           {/* STEP ONE CLIP, either way, bracketing the thing they move.
               Disabled rather than hidden at the ends: a control that vanishes
