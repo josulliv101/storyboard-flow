@@ -90,11 +90,19 @@ export function ItemDetailsTrimStrip({
           <div ref={stripSlot} className="hidden w-full @min-[18rem]:block">
             {stripWidth > 0 ? (
               <div className="relative">
+                {/* WHITE, because this view is a filmstrip.
+                    The board's strip layout keeps the blue selection frame —
+                    there the window is one selected thing among many. Here the
+                    panel is a row of frames under a bar of frames, and a blue
+                    rectangle would be the only object on screen that is not
+                    part of the film. A white frame line says the same thing in
+                    the vocabulary everything around it is written in. */}
                 <TrimOverviewStrip
                   node={video}
                   width={stripWidth}
                   trimInSeconds={trimIn}
                   trimOutSeconds={trimOut}
+                  tone="film"
                 />
                 {/* WHERE PLAY IS, in this clip. Absent — not parked at an
                     edge — when the playhead is in another clip: a line at

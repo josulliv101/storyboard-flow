@@ -129,7 +129,14 @@ export function ItemDetailsMonitor({
         `HERO` stays on the opened panel only: it is the card's morph
         target, and the slide below is a plain transform rather than a view
         transition, so the two never contend for the same element. */
+  // A FRAGMENT, so the picture and the readout under it are both DIRECT
+  // children of the panel. The panel dims its own chrome with
+  // `[&>*:not([data-item-details-frame])]`, which only reaches one level — a
+  // wrapper around these two would be the child that selector matched, and the
+  // picture would go out with everything else at exactly the moment it is the
+  // only thing anyone is looking at.
   return (
+    <>
     <div
       data-item-details-frame
       {...swipe}
@@ -313,6 +320,28 @@ export function ItemDetailsMonitor({
           fade is written against. A 25% button is still legible and still
           clickable, and the state it is in — something else is playing —
           is exactly when reaching for it is the less common move. */}
+      {live !== null && (
+        <span
+          data-item-details-edge={live.side === "right" ? "right" : "left"}
+          className={[
+            "absolute inset-y-0 w-1.5 bg-blue-500",
+            live.side === "right" ? "right-0" : "left-0",
+          ].join(" ")}
+        />
+      )}
+    </div>
+
+    {/* THE READOUT, BELOW THE PICTURE RATHER THAN ON IT.
+        The play button and the time used to float over the bottom corners of
+        the frame, which cost two pieces of the image to say two things that
+        are not in it — and put a dark chip over whatever happened to be in the
+        corner of the shot. A strip of its own gives them somewhere to live
+        that never covers anything, and lines the two numbers up with the
+        in/out fields further down so a panel reads as one column of facts. */}
+    <div
+      data-item-details-readout
+      className="flex items-center gap-3 rounded-md bg-zinc-900/80 px-2 py-1.5"
+    >
       {onPlayFromStart !== null && (
         <button
           type="button"
@@ -331,33 +360,54 @@ export function ItemDetailsMonitor({
             onPlayFromStart();
           }}
           className={[
-            "absolute bottom-2 left-2 grid h-7 w-7 place-items-center rounded-full",
-            "bg-black/70 text-zinc-100 ring-1 ring-white/25 backdrop-blur-sm",
-            "transition-colors hover:bg-black/90 hover:text-white",
+            "grid h-6 w-6 shrink-0 place-items-center rounded-full",
+            "bg-zinc-800 text-zinc-100 ring-1 ring-white/15",
+            "transition-colors hover:bg-zinc-700 hover:text-white",
             "focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none",
           ].join(" ")}
         >
           {playingHere ? (
-            <Pause aria-hidden="true" className="h-3.5 w-3.5" />
+            <Pause aria-hidden="true" className="h-3 w-3" />
           ) : (
-            <Play aria-hidden="true" className="h-3.5 w-3.5" />
+            <Play aria-hidden="true" className="h-3 w-3" />
           )}
         </button>
       )}
-      {live !== null && (
+
+      {/* HOW FAR PAST THE CUT, on the panel the cut is about.
+          `monitor.seconds` is measured inside the clip's SHOWING range, so
+          zero is its first frame — which is the cut itself. Only on the
+          centre: a neighbour is context, and "0.00s past a cut" said three
+          times is three answers to a question only one panel is being
+          asked. */}
+      {/* ZERO IS AN ANSWER, so this shows before anything has been scrubbed.
+          A panel at rest sits on its own first frame, which IS the cut — so
+          `cut 0.00s` is true, and hiding it until the clock moves would make
+          the readout appear from nowhere the first time anyone touched the
+          bar. */}
+      {centre && (
         <span
-          data-item-details-edge={live.side === "right" ? "right" : "left"}
-          className={[
-            "absolute inset-y-0 w-1.5 bg-blue-500",
-            live.side === "right" ? "right-0" : "left-0",
-          ].join(" ")}
-        />
+          data-item-details-cut
+          className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+        >
+          cut <span className="text-zinc-300">{formatSeconds(monitor?.seconds ?? 0)}</span>
+        </span>
       )}
+
+      <span className="flex-1" />
+
+      {/* WHERE THIS IS IN THE SOURCE FILE, which is not where it is in the
+          cut — the difference between them is the trim, and being able to
+          read both is how you know which one you are about to change. */}
       {video && (
-        <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-blue-300">
-          {formatSeconds(rawTime)}
+        <span
+          data-item-details-src
+          className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+        >
+          src <span className="text-blue-300">{formatSeconds(rawTime)}</span>
         </span>
       )}
     </div>
+    </>
   );
 }

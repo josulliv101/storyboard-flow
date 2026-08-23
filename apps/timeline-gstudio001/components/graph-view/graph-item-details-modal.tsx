@@ -55,7 +55,7 @@ import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
   VIEW_COUNTS,
   lastViewCount,
-  panelWidthFor,
+  panelWidthsFor,
   rememberViewCount,
   type ViewCount,
 } from "./graph-item-details-view-count";
@@ -66,6 +66,12 @@ import {
   rememberPlaybarThumbnails,
   type PlaybarThumbnails,
 } from "./graph-playbar-thumbnails";
+import {
+  PREVIEW_ANCHORS,
+  lastPreviewAnchor,
+  rememberPreviewAnchor,
+  type PreviewAnchor,
+} from "./graph-seam-preview-anchor";
 import {
   BAR_REACHES,
   barReachLabel,
@@ -261,10 +267,11 @@ function DetailsFilmstripModal({
   const [swapping, setSwapping] = useState(false);
   const swapRef = useRef(false);
   const [playing, setPlaying] = useState(false);
-  // A DRAG IS IN PROGRESS ON THE BAR. Distinct from `scrubbed`, which stays
-  // true once the clock has been touched: this is the gesture itself, and it
-  // is what the monitor grows for.
-  const [scrubbing, setScrubbing] = useState(false);
+  // THE HOVER CARD IS UP. The row goes back for it — see the strip's own
+  // className. A separate flag from `scrubbing` because the two are different
+  // moments: a scrub is a gesture with the pointer down and the card hidden,
+  // this is a pointer resting on the bar with a picture open under it.
+  const [previewing, setPreviewing] = useState(false);
   // HOW MANY CLIPS ARE ON SCREEN. Remembered for the session rather than the
   // page: it is a way of working — reading one cut closely, or scanning a
   // sequence — and having it snap back to three every time you open a clip
@@ -282,6 +289,13 @@ function DetailsFilmstripModal({
   const chooseFrames = useCallback((next: PlaybarThumbnails) => {
     rememberPlaybarThumbnails(next);
     setFrames(next);
+  }, []);
+  // WHERE THE HOVER CARD SITS, kept beside the other bar settings because it
+  // is the same kind of question — how this control behaves while you read it.
+  const [previewAnchor, setPreviewAnchor] = useState<PreviewAnchor>(lastPreviewAnchor());
+  const choosePreviewAnchor = useCallback((next: PreviewAnchor) => {
+    rememberPreviewAnchor(next);
+    setPreviewAnchor(next);
   }, []);
 
   const clipAt = useCallback(
@@ -458,7 +472,11 @@ function DetailsFilmstripModal({
     return found && found.kind === "media" ? (found as MediaNode) : null;
   })();
 
-  const panelWidth = panelWidthFor(viewCount);
+  // TWO WIDTHS NOW: the clip being worked on, and everything else. The row's
+  // step is the NEIGHBOUR width — see `panelWidthsFor` for why the centre's
+  // extra width cancels out of the centring arithmetic entirely.
+  const panelWidths = panelWidthsFor(viewCount);
+  const panelWidth = panelWidths.neighbour;
 
   // ONE PANEL FURTHER THAN CAN BE SEEN, on each side.
   //
@@ -626,6 +644,11 @@ function DetailsFilmstripModal({
         showingSeconds: media === null ? 0 : mediaDurationSeconds(media),
         collectionId: parentId === null ? null : (parentId as string),
         collectionName: parent?.name ?? null,
+        // SKIPPED AT PLAY TIME, said on the bar. The flag was on the node all
+        // along and the bar had never been told, so the one control that shows
+        // you the shape of playback was silent about a clip playback steps
+        // over. It changes how the box is PAINTED and never how wide it is.
+        ...(media?.disabled === true ? { disabled: true } : {}),
         ...(media === null ? {} : { posterSrc: seamClipOf(media)?.posterSrc }),
         // ONLY A VIDEO GETS THE FULL SET. A still's single image sampled at
         // ten intervals is ten copies of itself, which is a filmstrip saying
@@ -823,11 +846,18 @@ function DetailsFilmstripModal({
       // them. This padding is the band they occupy: header (61px) plus the
       // bar block at top-16 with its own pt-4 (152px to its underside), plus
       // clearance, plus the reach picker's own row (mt-2 and a ~18px button)
-      // — which is why this is 13rem and not the 11rem it was before that
+      // — which is why this is 14rem and not the 11rem it was before that
       // picker existed. It grew when the bar did, and it has to keep pace: the
       // symptom of it not doing so is the minimap resting on the top edge of
       // the middle card, which is a quiet eight pixels rather than an obvious
       // fault.
+      //
+      // MEASURED, each time the bar changes shape. The transport became an
+      // ensemble with a 44px play button, which took the block from 116px to
+      // 142px — it starts at `top-16` plus its own `pt-4`, so it now ends 222px
+      // down and 13rem reserved only 208. Anything added to that block has to
+      // be measured and this raised, or the row below rides up into it on a
+      // short viewport.
       // `overflow-clip`, NOT `overflow-hidden`. Both crop, but `hidden` makes
       // this a SCROLL CONTAINER — and the row is thirteen thousand pixels
       // wide, so there is a great deal for it to scroll. Landing on a new clip
@@ -837,7 +867,7 @@ function DetailsFilmstripModal({
       // row that had itself moved 1728px, which put the card just chosen
       // entirely off the left edge. `clip` crops without ever being
       // scrollable, so the transform stays the only thing that moves the row.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[13rem] pb-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[14rem] pb-6 backdrop-blur-sm"
       // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
       // glanced at — trimming, scrubbing and swiping all end with the pointer
       // somewhere unpredictable, and the panels are cropped by the scrim
@@ -891,6 +921,7 @@ function DetailsFilmstripModal({
               // against the bar directly above them, so they belong in the
               // bar's own controls row alongside the transport and the clock.
               settingsLeft={
+                <>
                 <div
                   data-details-bar-frames
                   role="group"
@@ -947,7 +978,58 @@ function DetailsFilmstripModal({
                       </button>
                     );
                   })}
+
                 </div>
+
+                {/* WHERE THE HOVER CARD SITS.
+                    ITS OWN GROUP, next to `frames` rather than inside it. They
+                    sit together because they are the same kind of question —
+                    what this bar does while you read it — and because the card
+                    only exists to show the frames the control beside it turned
+                    on. But "what the boxes draw" and "where the preview sits"
+                    are two settings, and folding the second into the first
+                    group gave that group five buttons under an aria-label
+                    describing three of them.
+
+                    `PIN` parks it dead centre under the bar so the pointer
+                    scrubs and the picture changes in place. That matters now
+                    the card is big enough to judge a frame in: a large picture
+                    sliding around under a moving pointer is the one
+                    arrangement in which you cannot judge anything, because the
+                    eye spends the sweep re-finding it. The cost is that a card
+                    away from the box is less obviously ABOUT that box, which
+                    is why this is a choice and not a change. */}
+                <span aria-hidden="true" className="mx-1 h-3 w-px bg-white/10" />
+                <div
+                  data-details-bar-card
+                  role="group"
+                  aria-label="Where the hover preview sits"
+                  className="flex items-center gap-1"
+                >
+                  <span className="mr-1 font-mono text-[10px] text-zinc-500">card</span>
+                  {PREVIEW_ANCHORS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={option === previewAnchor}
+                      onClick={() => choosePreviewAnchor(option)}
+                      title={
+                        option === "follow"
+                          ? "The preview follows the pointer"
+                          : "The preview stays under the middle of the bar"
+                      }
+                      className={[
+                        "min-w-7 rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums transition-colors",
+                        option === previewAnchor
+                          ? "bg-zinc-100 text-zinc-900"
+                          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+                      ].join(" ")}
+                    >
+                      {option === "follow" ? "FOLLOW" : "PIN"}
+                    </button>
+                  ))}
+                </div>
+                </>
               }
               settingsRight={
               <div
@@ -980,6 +1062,7 @@ function DetailsFilmstripModal({
                 ))}
             </div>
               }
+              previewAnchor={previewAnchor}
               atStart={barWindow.ids[0] === ids[0]}
               atEnd={barWindow.ids[barWindow.ids.length - 1] === ids[ids.length - 1]}
               centreClipId={node.id as string}
@@ -991,7 +1074,7 @@ function DetailsFilmstripModal({
               // three land in one place and cannot drift apart.
               onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
               onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
-              onScrubbingChange={setScrubbing}
+              onPreviewingChange={setPreviewing}
               // The clock spans every clip, so a point on the rail IS a point
               // on the clock and needs no conversion.
               //
@@ -1002,15 +1085,6 @@ function DetailsFilmstripModal({
               // Splitting them would mean a few pixels of travel decided
               // whether you kept your place in the shot.
               onCommitClip={(clipId) => landOn(clipId, position)}
-              // WHEREVER THE PLAYHEAD FINISHED, which is not always under the
-              // pointer: holding at an edge runs the strip along beneath a
-              // hand that is standing still. `position` is the view's own
-              // answer to where the clock is, so the drag does not have to
-              // carry one.
-              onScrubEnd={() => {
-                if (position === null) return;
-                landOn(position.clipId, position);
-              }}
               onScrubSeconds={(seconds) => {
                 setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
@@ -1033,10 +1107,7 @@ function DetailsFilmstripModal({
         className={[
           "pointer-events-auto absolute right-6 bottom-6 z-10 flex items-center gap-1",
           "rounded-lg border border-zinc-700 bg-zinc-950/90 p-1 backdrop-blur-sm",
-          // Out of the way while the clock is being dragged: how many cards
-          // are up is not a question anyone is asking mid-scrub.
           "transition-opacity duration-200",
-          scrubbing ? "opacity-20" : "opacity-100",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -1076,8 +1147,21 @@ function DetailsFilmstripModal({
           // A BAR LANDING has no transition at all, which the layout effect
           // above does to the node rather than from here.
           dragPx === 0
-            ? "transition-transform ease-out motion-reduce:transition-none"
+            ? "transition-[transform,opacity] ease-out motion-reduce:transition-none"
             : "",
+          // BACK, WHILE THE PREVIEW IS UP.
+          //
+          // The hover card is now a picture big enough to judge a frame in,
+          // and it is drawn OVER this row rather than in a gap above it. Three
+          // bright panels behind it compete with the one thing being looked
+          // at — and the card is answering a question about a clip that is
+          // usually not one of the three, so the panels are not even context
+          // for it.
+          //
+          // Pulled back rather than hidden: they are still where you are
+          // working, and the point of the hover is to check something WITHOUT
+          // leaving that. The row comes straight back when the pointer does.
+          previewing ? "opacity-40" : "",
         ].join(" ")}
         style={{
           gap: PANEL_GAP,
@@ -1120,9 +1204,6 @@ function DetailsFilmstripModal({
               node={media}
               centre={index === centre}
               swapping={swapping}
-              // Everything but the picture goes out while the clock is being
-              // dragged — see `scrubFocus`.
-              scrubFocus={scrubbing && index === centre}
               clipLabel={`clip ${index + 1}`}
               playingHere={playingHere}
               onPlayFromStart={
@@ -1173,17 +1254,24 @@ function DetailsFilmstripModal({
               // could be in sync with anything.
               playing={index === centre && playing}
               live={position?.clipId === id}
-              // Only the monitor grows, and only while the bar is being
-              // dragged: the neighbours are context, and enlarging them would
-              // be enlarging the thing you are trying to look past.
-              magnified={index === centre && scrubbing}
-              // The proxy follows the seeking, not the centring: a neighbour
-              // tracking the playhead is doing the same expensive thing the
-              // centre is, and a full-res seek per pointer move is what the
-              // proxy exists to avoid.
-              scrubbing={scrubbing && (index === centre || position?.clipId === id)}
               swipe={swipe}
-              width={panelWidth}
+              // MOUNTED, BUT NOT ON SCREEN.
+              //
+              // The spare pair beyond the visible window exists so an arriving
+              // panel is already built (see `MOUNTED_RADIUS`) — it was never
+              // meant to be SEEN. It used to be off the edge by accident:
+              // panels were wide enough that two of them overflowed the
+              // viewport entirely. Now three fit it exactly, so the spares sit
+              // in the scrim's own 24px padding and show as a sliver down each
+              // side — which reads as a fourth and fifth card the count says
+              // are not there.
+              //
+              // Hidden rather than unmounted, and hidden rather than
+              // zero-width: the row's centring assumes every non-centre panel
+              // is one neighbour wide, so collapsing these would shift every
+              // panel between them and the middle.
+              spare={Math.abs(index - centre) > half}
+              width={index === centre ? panelWidths.centre : panelWidths.neighbour}
               // Engaged, and not the one being watched. Uses the same gate as
               // the playhead lines and the ring, so the whole view agrees on
               // when the clock is running.

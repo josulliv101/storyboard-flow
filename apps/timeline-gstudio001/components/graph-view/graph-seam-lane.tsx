@@ -11,6 +11,7 @@ import {
 } from "./graph-playbar-thumbnails";
 import { videoFrameUrls } from "@/lib/video-frame-url";
 import type { SeamStrip } from "./graph-seam-strip";
+import type { PreviewAnchor } from "./graph-seam-preview-anchor";
 
 /**
  * How long the strip takes to slide when the centred clip changes.
@@ -120,7 +121,23 @@ function SegmentFrames({
     return (
       <span
         data-seam-filmstrip={clipId}
-        className="absolute inset-0 flex"
+        // EVERY FRAME IS FRAMED, not just every clip.
+        //
+        // The cells butted together, so a clip's strip read as one long
+        // smeared picture and the only light lines on the bar were at the clip
+        // boundaries. On a strip of film every frame has an edge — that
+        // repeating light rhythm at a finer interval than the shots is most of
+        // what makes the thing recognisable as film rather than as a row of
+        // tiles.
+        //
+        // A GAP WITH THE LIGHT BEHIND IT, rather than a border on each cell: a
+        // border would be inside the cell's own box and would eat into the
+        // picture, and at these widths every pixel of picture counts. The gap
+        // lets the strip's own colour through, which is the same trick the gap
+        // between two clips already uses — one pixel here against five there,
+        // so a frame edge never reads as a cut.
+        className="absolute inset-0 flex gap-px"
+        style={{ backgroundColor: FRAMED_CELL_EDGE }}
         aria-hidden="true"
       >
         {cells.map((url, index) => (
@@ -171,43 +188,6 @@ function SegmentFrames({
 }
 
 
-/**
- * The playhead's head, and its twitch when the scrub lands on a cut.
- *
- * DRIVEN FROM SCRIPT, NOT A KEYFRAME. A `@keyframes` would have to be
- * declared in a stylesheet, and this component is rendered into a portal from
- * two hosts with two different Tailwind entry points — the app's and
- * Storybook's — so a rule added to one of them is a rule the other silently
- * does not have. An animation the component brings with it cannot be missing
- * in one host and present in the other, and it is inspectable from a test
- * through `getAnimations()`.
- *
- * Skips its first run: mounting the playhead is not a snap.
- */
-function SnapPulse({ snapKey }: Readonly<{ snapKey: number }>) {
-  const ref = useRef<HTMLSpanElement | null>(null);
-  useEffect(() => {
-    const element = ref.current;
-    if (element === null || snapKey === 0) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const animation = element.animate(
-      [
-        { transform: "scale(1)" },
-        { transform: "scale(2.1)" },
-        { transform: "scale(1)" },
-      ],
-      { duration: 180, easing: "ease-out" },
-    );
-    return () => animation.cancel();
-  }, [snapKey]);
-  return (
-    <span
-      ref={ref}
-      data-seam-playhead-head
-      className="block h-1.5 w-1.5 rounded-full bg-red-500"
-    />
-  );
-}
 
 /**
  * How far each box is pulled in from its clip's true extent, per side.
@@ -258,9 +238,68 @@ const BOX_INSET_PX = 2.5;
  *
  * Only when frames are on. Over grey the whole treatment is decoration
  * answering a question nobody asked.
+ *
+ * ── AND IT IS A FILM STRIP, SO IT LOOKS LIKE ONE ────────────────────────
+ *
+ * THE STRIP IS THE PALE THING AND THE FRAMES SIT IN IT. That is what a strip
+ * of film is: a light base with pictures printed on it and a margin of base
+ * showing on every side of every frame. So the background here is near-white
+ * and each box casts a thin DARK ring, which keeps the two-tone rule intact —
+ *
+ *     two bright frames   white │ DARK pale DARK │ white   ← the rings show
+ *     two dark frames     black │ dark PALE dark │ black   ← the core shows
+ *
+ * — while making the bar read as film rather than as tiles in a chart.
+ *
+ * IT WAS INVERTED FOR A WHILE, near-black base with pale rings, on the
+ * reasoning that either polarity satisfies the contrast rule so the choice was
+ * free. The contrast rule was satisfied; the resemblance was not. A dark strip
+ * with light lines in it looks like a chart with gridlines. Film is light with
+ * dark frame lines, and the difference between those two is the whole point of
+ * the treatment.
+ *
+ * THE VERTICAL INSET IS WHAT MAKES EITHER OF THEM VISIBLE, and its absence is
+ * why this went unnoticed through several attempts — see `BOX_INSET_Y_PX`.
+ * Without room above and below, the only base showing is a sliver between
+ * clips, and no choice of colour reads as anything at all.
  */
-const FRAMED_GAP_COLOUR = "rgba(212, 212, 216, 0.92)";
+const FRAMED_GAP_COLOUR = "rgba(238, 238, 241, 0.96)";
 const FRAMED_BOX_EDGE = "0 0 0 1.5px rgba(0, 0, 0, 0.82)";
+/**
+ * The line between two FRAMES of the same clip.
+ *
+ * FAINT ON PURPOSE — 40% where the film base around a clip is opaque. That
+ * difference IS the hierarchy, and it is the only thing keeping the treatment
+ * honest: a frame edge is texture you read as film, a clip edge is a line you
+ * read as a CUT. At full strength the two are indistinguishable, so every
+ * sampled frame inside a long take looks like a shot boundary — which is
+ * precisely the thing the bar exists to show you and would now be lying about.
+ *
+ * Only the interior lines. The clip's own edge stays solid, because that one
+ * is answering the other question.
+ */
+const FRAMED_CELL_EDGE = "rgba(250, 250, 250, 0.4)";
+
+/**
+ * How far each box is pulled in from the TOP and BOTTOM of the lane once it
+ * holds frames.
+ *
+ * Without it the film strip has no top or bottom edge, and that is a bug
+ * rather than a nuance. A box is `inset-y-0` — exactly the lane's height — and
+ * the lane is `overflow-hidden`, so a ring painted OUTSIDE the box has nowhere
+ * to go vertically and is clipped away entirely. What survives is the left and
+ * right of each ring, which reads as a row of thin separators rather than as
+ * frames: every horizontal edge of the treatment was being thrown away.
+ *
+ * Giving the box a vertical inset puts the strip's own colour above and below
+ * each frame as well as between them, which is what a strip of film actually
+ * looks like — a frame has margin on all four sides, not two.
+ *
+ * ONLY WHEN FRAMES ARE ON. Over plain grey the boxes should still fill the
+ * bar: there the height is not carrying anything and shortening it would just
+ * make the bar quieter for no reason.
+ */
+const BOX_INSET_Y_PX = 3;
 
 export type SeamHover = Readonly<{
   /** Absolute strip pixels. */
@@ -294,10 +333,9 @@ export function SeamLane({
   centreClipId,
   offset,
   playheadPx,
-  snapKey,
   ghostX,
   hover,
-  chip,
+  previewAnchor = "follow",
   handlers,
   atStart,
   atEnd,
@@ -311,12 +349,13 @@ export function SeamLane({
   offset: number;
   playheadPx: number | null;
   /** Bumped on every snap, so the playhead can acknowledge one. */
-  snapKey: number;
   /** Where an un-pressed pointer is hovering, in strip pixels. */
   ghostX: number | null;
   hover: SeamHover | null;
+  /** Whether the hover card follows the pointer or parks in the middle — see
+   *  `graph-seam-preview-anchor`. */
+  previewAnchor?: PreviewAnchor;
   /** The time under the playhead while it is being dragged. */
-  chip: string | null;
   handlers: React.ComponentProps<"div">;
   /** Whether the bar's first clip is the project's first — see `SeamEndCap`.
    *  False when the reach has cropped the window short of it, because then
@@ -422,11 +461,13 @@ export function SeamLane({
             if (segment.widthPx <= 0) return null;
             const isCentre = segment.clipId === centreClipId;
             const colour = colourOf.get(segment.clipId) ?? BAR_NEUTRAL_COLOUR;
+            const skipped = clipById.get(segment.clipId)?.disabled === true;
             return (
               <span
                 key={segment.clipId}
                 data-seam-segment={segment.clipId}
                 data-seam-segment-live={isCentre ? "" : undefined}
+                data-seam-segment-skipped={skipped ? "" : undefined}
                 aria-hidden="true"
                 style={{
                   left: segment.leftPx + BOX_INSET_PX,
@@ -440,8 +481,14 @@ export function SeamLane({
                   // See `FRAMED_BOX_EDGE`: the ring is the dark half of the
                   // gap, and the strip's own background is the pale half.
                   ...(thumbnails.shown ? { boxShadow: FRAMED_BOX_EDGE } : {}),
+                  // ROOM FOR THE RING TO EXIST. See `BOX_INSET_Y_PX`: the lane
+                  // clips, so without this the frame's top and bottom edges
+                  // are painted straight off the element.
+                  ...(thumbnails.shown
+                    ? { top: BOX_INSET_Y_PX, bottom: BOX_INSET_Y_PX }
+                    : { top: 0, bottom: 0 }),
                 }}
-                className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[3px]"
+                className="absolute flex items-center justify-center overflow-hidden rounded-[3px]"
               >
                 {thumbnails.shown ? (
                   <SegmentFrames
@@ -452,20 +499,59 @@ export function SeamLane({
                     style={thumbnails.style}
                   />
                 ) : null}
-                {isCentre && segment.widthPx >= 16 ? (
+                {/* SKIPPED AT PLAY TIME: struck through with hatching.
+                    Diagonals rather than a wash, because a dimmed box is
+                    indistinguishable from a dark frame and a box this bar is
+                    already drawing pictures in has no spare brightness to
+                    signal with. Hatching is the one treatment that survives
+                    any content under it — it is a pattern, and footage is
+                    not. It paints OVER the frames and inside the box, so it
+                    costs no width: a disabled clip still occupies its full
+                    duration, which is the truth about where the later cuts
+                    fall. */}
+                {skipped ? (
                   <span
-                    data-seam-marker
-                    // Above the frame once there is one, and darker for it: a
-                    // 50% black dot reads on grey and disappears into a busy
-                    // picture, which is the one box it has to be findable in.
-                    className={
-                      thumbnails.shown
-                        ? "relative z-10 h-3 w-3 rounded-full bg-black/70 ring-1 ring-white/70"
-                        : "h-3 w-3 rounded-full bg-black/50"
-                    }
+                    data-seam-hatch
+                    aria-hidden="true"
+                    className="absolute inset-0 z-10 rounded-[3px]"
+                    style={{
+                      backgroundImage:
+                        "repeating-linear-gradient(45deg, rgba(9,9,11,0.72) 0px, rgba(9,9,11,0.72) 3px, rgba(228,228,231,0.55) 3px, rgba(228,228,231,0.55) 6px)",
+                    }}
                   />
                 ) : null}
               </span>
+            );
+          })}
+
+
+          {/* AND SAID AGAIN ABOVE THE BOX, in red.
+              The hatching says a clip is skipped once you are looking at it;
+              this says it while you are scanning the bar for something else,
+              which is when it matters — the whole failure mode of a disabled
+              clip is not noticing one. Dotted, so it is never confused with
+              the solid red ring below it, and clear of the boxes so it does
+              not eat into a width that means duration. */}
+          {strip.segments.map((segment) => {
+            if (segment.widthPx <= 0) return null;
+            if (clipById.get(segment.clipId)?.disabled !== true) return null;
+            return (
+              <span
+                key={`skip-${segment.clipId}`}
+                data-seam-skip-rule={segment.clipId}
+                aria-hidden="true"
+                className="pointer-events-none absolute border-t-2 border-dotted border-red-500/80"
+                style={{
+                  left: segment.leftPx + BOX_INSET_PX,
+                  width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                  // INSIDE THE LANE. At -6 this sat above the lane's top edge,
+                  // and the lane clips — so the one mark saying a clip gets
+                  // skipped was painted off the element and never appeared at
+                  // all. It lives in the margin above the frame now, which is
+                  // the space the film-strip inset created.
+                  top: 0,
+                }}
+              />
             );
           })}
 
@@ -522,27 +608,83 @@ export function SeamLane({
                 what ACKNOWLEDGES A SNAP. A snap moves the playhead by a few
                 pixels at most and is otherwise invisible, so without this you
                 cannot tell the bar helped from your hand being accurate. */}
-              <span className="absolute -top-1 left-1/2 -translate-x-1/2">
-                <SnapPulse snapKey={snapKey} />
-              </span>
+              {/* The head of the line, so the playhead reads as a position
+                  that was put there rather than a border between two boxes.
+                  It used to pulse when a drag snapped to a cut; there is no
+                  drag on the playhead any more, so there is no snap to
+                  acknowledge. */}
+              <span
+                data-seam-playhead-head
+                className="absolute -top-1 left-1/2 block h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500"
+              />
             </span>
           )}
         </div>
       </div>
 
-      {/* THE TIME, ON THE PLAYHEAD, while it is being dragged. ABOVE the
-          boxes, not on them: it names the frame you are looking at, and a
-          label laid over that frame answers the question by covering it. */}
-      {chip !== null && playheadPx !== null && (
-        <span
-          data-seam-chip
-          aria-hidden="true"
-          style={{ left: viewportX(playheadPx) }}
-          className="pointer-events-none absolute -top-[22px] z-10 -translate-x-1/2 rounded border border-zinc-700 bg-zinc-950/95 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-zinc-100 shadow-lg"
-        >
-          {chip}
-        </span>
-      )}
+      {/* THE CLIP THE CARDS ARE ON, POINTED AT FROM ABOVE.
+          A red ring around its box did this for a while, and it was the wrong
+          shape of answer twice over. A ring encloses an AREA, so at a wide
+          reach — where a box is eight pixels across — the mark becomes most of
+          the clip and stops reading as a mark at all. And red is the
+          playhead's colour: two different "you are here" claims in one colour,
+          one about time and one about which shot, is one too many.
+          A triangle points at a PLACE. Its size has nothing to do with the
+          clip's duration, so it reads identically at every zoom, and white
+          against the dark band above the film base is the one thing up there.
+          OUTSIDE THE CLIPPING WRAPPER, which is why this is a sibling of the
+          boxes rather than a child: the strip is `overflow-hidden` and anything
+          above the film base would be cut off. The chip and the hover preview
+          escape the same way, and `viewportX` is how all three stay with the
+          strip while living outside it. */}
+      {(() => {
+        const segment = strip.segments.find((found) => found.clipId === centreClipId);
+        if (segment === undefined || segment.widthPx <= 0) return null;
+        return (
+          <>
+            {/* AND HOW LONG IT RUNS. The triangle says WHICH clip and nothing
+                about its extent — it is the same 10px whether the shot is one
+                second or thirty, so at a glance the active clip has a position
+                and no size. A rule spanning the box gives it back, and it is
+                the one measurement the bar is built on: width is duration.
+
+                BEHIND THE TRIANGLE, and thinner, so the pair reads as one mark
+                — a pointer with a span rather than two things at the same
+                height. It uses the box's own inset, so its ends land exactly
+                where the clip's frames do rather than in the gaps either
+                side. */}
+            <span
+              data-seam-active-span={centreClipId}
+              aria-hidden="true"
+              style={{
+                left: viewportX(segment.leftPx + BOX_INSET_PX),
+                width: Math.max(2, segment.widthPx - BOX_INSET_PX * 2),
+                top: -7,
+                height: 2,
+                // HALF STRENGTH. The triangle is the mark and this is its
+                // extent — at equal weight the pair read as two claims of the
+                // same importance, and the long one wins on area alone. Behind
+                // and quieter, it measures the mark rather than competing with
+                // it.
+                backgroundColor: "rgba(250, 250, 250, 0.5)",
+              }}
+              className="pointer-events-none absolute z-10 rounded-full"
+            />
+            <span
+              data-seam-active-mark={centreClipId}
+              aria-hidden="true"
+              style={{
+                left: viewportX(segment.leftPx + segment.widthPx / 2),
+                borderLeft: "5px solid transparent",
+                borderRight: "5px solid transparent",
+                borderTop: "6px solid rgba(250, 250, 250, 0.95)",
+              }}
+              className="pointer-events-none absolute -top-[9px] z-20 h-0 w-0 -translate-x-1/2"
+            />
+          </>
+        );
+      })()}
+
 
       {/* WHAT IS UNDER THE POINTER. A name and a frame, which together answer
           "is that the shot I am looking for" without moving the playhead to
@@ -551,27 +693,98 @@ export function SeamLane({
         <span
           data-seam-preview
           aria-hidden="true"
-          style={{ left: viewportX(hover.x) }}
+          // PINNED, OR KEPT INSIDE THE TRACK.
+          //
+          // `pinned` parks it dead centre under the bar and leaves it there, so
+          // the pointer scrubs and the picture changes in place. See
+          // `graph-seam-preview-anchor` for why that is worth having: the card
+          // is now big enough to judge a frame in, and a big thing sliding
+          // around under a moving pointer is the one arrangement in which you
+          // cannot.
+          //
+          // `follow` centres it on the box being described, which walks it off
+          // the side as soon as that box is near either end — and the wider
+          // this card got, the more of the bar had that problem. At 288px a
+          // hover anywhere in the first or last 144 pixels was reading a card
+          // with its edge cut off, which is worst exactly where the picture is
+          // the whole point. `clamp` against percentages rather than a measured
+          // width: the percentage resolves against this element's containing
+          // block, which IS the track, so the bound follows a resize with no
+          // observer and no re-render. 9rem is half the card.
+          style={{
+            left:
+              previewAnchor === "pinned"
+                ? "50%"
+                : `clamp(12rem, ${viewportX(hover.x)}px, calc(100% - 12rem))`,
+          }}
           // BELOW THE WHOLE BAR, not just below the boxes: at `top-9` it lay
           // across the ruler and the minimap, hiding the two things that say
           // where the box being previewed actually is.
-          className="pointer-events-none absolute top-20 z-20 flex max-w-64 -translate-x-1/2 items-center gap-2 rounded-md border border-zinc-700 bg-zinc-950/95 p-1.5 shadow-xl"
+          // STACKED, SO THE PICTURE CAN BE THE SIZE OF THE ANSWER.
+          //
+          // It was a 56x32 thumbnail beside two lines of text — barely larger
+          // than the frame being pointed at, which made the preview a worse
+          // copy of the thing that prompted it. The question a hover asks is
+          // "which shot is that", and the only part of this card that answers
+          // it is the picture; the name and the time are confirmation. So the
+          // picture gets the full width of the card and the words go
+          // underneath.
+          //
+          // AND IT STANDS OFF THE PAGE, because it now overlaps the panels
+          // below rather than floating over a gap: a heavier border, a deeper
+          // shadow and a near-opaque ground, so it reads as something in front
+          // rather than something printed on what it covers.
+          // TIGHT UNDER THE FILM STRIP, and over whatever is beneath it.
+          //
+          // It sat below the whole block, clear of the ruler, the minimap and
+          // the controls. That put a 264px card a long way from the 30px box it
+          // was describing, so pairing the two was a journey across everything
+          // in between — the preview and its subject were the two things
+          // furthest apart on screen.
+          //
+          // It overlaps the minimap and the controls now, which is the right
+          // trade: those are read between gestures, and this is read DURING
+          // one. It is `pointer-events-none`, so the transport underneath stays
+          // pressable through it, and it is gone the moment the pointer leaves
+          // the boxes.
+          //
+          // Sitting just under the ruler at 56px rather than against the boxes:
+          // the ruler is the scale the box widths mean anything against, and
+          // covering it would answer "which shot" while hiding "how long".
+          className="animate-seam-preview-in pointer-events-none absolute top-14 z-20 flex w-96 -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-zinc-600 bg-zinc-950/98 p-2 shadow-2xl ring-1 ring-black/50"
         >
           {hover.posterSrc === undefined ? null : (
             // A bare <img>: the preview is a thumbnail of a source the app
             // already holds a URL for, and next/image would add a loader
-            // round-trip on every hover for a 56px picture.
+            // round-trip on every hover for one picture.
             <img
               src={hover.posterSrc}
               alt=""
-              className="h-8 w-14 shrink-0 rounded-sm object-cover"
+              // THE FRAME'S OWN SHAPE, whole.
+              //
+              // It was forced to 16:9 and cropped to fill, on the reasoning
+              // that a card changing height as the pointer moved would be the
+              // card itself flickering. That holds for a row of mixed shapes
+              // and costs too much here: this project's shots are 896x384, so
+              // 16:9 was cutting the sides off every one of them — the preview
+              // was showing less of the frame than the box it came from. A
+              // preview that crops is answering a question about composition
+              // with a different composition.
+              //
+              // `h-auto` with no ratio, so the poster's intrinsic dimensions
+              // decide: scope stays scope, 16:9 stays 16:9, and nothing is
+              // trimmed. The card grows and shrinks with it, which is the
+              // honest trade and much less distracting now `PIN` exists — a
+              // stationary card resizing reads as the picture changing, where
+              // a moving one resizing reads as a wobble.
+              className="h-auto w-full rounded"
             />
           )}
           <span className="min-w-0">
-            <span className="block truncate text-[11px] text-zinc-100">
+            <span className="block truncate text-xs font-medium text-zinc-100">
               {hover.name}
             </span>
-            <span className="mt-0.5 block truncate font-mono text-[10px] tabular-nums text-zinc-500">
+            <span className="mt-0.5 block truncate font-mono text-[11px] tabular-nums text-zinc-400">
               {hover.meta}
             </span>
           </span>

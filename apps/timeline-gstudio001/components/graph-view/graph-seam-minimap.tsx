@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 
@@ -33,6 +33,7 @@ export function SeamMinimap({
   windowToSeconds,
   playheadSeconds,
   onPanToSeconds,
+  settled = true,
 }: Readonly<{
   clips: readonly SeamBarClip[];
   colourOf: ReadonlyMap<string, string>;
@@ -43,9 +44,25 @@ export function SeamMinimap({
   playheadSeconds: number | null;
   /** Put this second in the middle of the bar above. */
   onPanToSeconds: (seconds: number) => void;
+  /**
+   * Whether the window rectangle should EASE to its new place.
+   *
+   * False while a gesture is driving the bar — a drag or a wheel has to track
+   * the hand exactly, and easing it would put the rectangle a fixed distance
+   * behind wherever the bar actually is, which reads as lag rather than as
+   * smoothing. True for everything else, which is where it earns its place:
+   * pressing `fit`, stepping a clip, letting go of a scrub and playback
+   * nudging the window along all move it somewhere else in one frame, and a
+   * jump that size cannot be told apart from a redraw.
+   */
+  settled?: boolean;
 }>) {
   const railRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef<number | null>(null);
+  // ITS OWN DRAG COUNTS TOO. The bar cannot see this one — it only hears the
+  // seconds this asks it to pan to — so the rectangle has to know for itself
+  // that the hand on it is its own.
+  const [dragging, setDragging] = useState(false);
 
   const panTo = useCallback(
     (clientX: number) => {
@@ -82,6 +99,7 @@ export function SeamMinimap({
           /* untrusted pointer (stories) — the moves still arrive here */
         }
         draggingRef.current = event.pointerId;
+        setDragging(true);
         panTo(event.clientX);
       }}
       onPointerMove={(event) => {
@@ -90,9 +108,11 @@ export function SeamMinimap({
       }}
       onPointerUp={() => {
         draggingRef.current = null;
+        setDragging(false);
       }}
       onPointerCancel={() => {
         draggingRef.current = null;
+        setDragging(false);
       }}
       className="relative mt-1.5 h-3.5 cursor-grab touch-none select-none active:cursor-grabbing"
     >
@@ -121,8 +141,17 @@ export function SeamMinimap({
           cannot see is worse than no rectangle: it says the bar is nowhere. */}
       <span
         data-seam-mini-window
+        data-seam-mini-window-eased={settled && !dragging ? "" : undefined}
         style={{ left: asPercent(windowFromSeconds), width: `${windowWidth}%` }}
-        className="absolute inset-y-0 rounded-[3px] border border-white/30 bg-white/8"
+        className={[
+          "absolute inset-y-0 rounded-[3px] border border-white/30 bg-white/8",
+          // BOTH EDGES, not just the position: a fit changes the window's
+          // WIDTH as much as its place, and easing one while cutting the other
+          // makes the rectangle appear to stretch from a corner.
+          settled && !dragging
+            ? "transition-[left,width] duration-300 ease-out motion-reduce:transition-none"
+            : "",
+        ].join(" ")}
       />
 
       {playheadSeconds !== null && (

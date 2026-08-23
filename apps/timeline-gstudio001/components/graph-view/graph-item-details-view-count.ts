@@ -53,8 +53,50 @@ export function rememberViewCount(count: ViewCount): void {
  * wide enough to work in, and the reach across the timeline that nine bought
  * is what the bar above is for.
  */
-export function panelWidthFor(count: ViewCount): string {
+/**
+ * How much wider the clip being worked on is than the ones beside it.
+ *
+ * 7:4. The neighbours have to stay big enough to read a frame in — that is
+ * the entire reason they are whole panels rather than thumbnails — and the
+ * centre has to be unmistakably the subject without the row turning into one
+ * panel with two slivers. Below about 1.5 the emphasis stops reading as
+ * deliberate and looks like a rounding error; above about 2 the neighbours
+ * stop being usable and the layout would be better off showing one.
+ */
+const CENTRE_TO_NEIGHBOUR = 1.75;
+
+/**
+ * The two widths for a given count: the clip being worked on, and everything
+ * else.
+ *
+ * EVERY PANEL IS FULLY VISIBLE NOW. The old layout gave all panels one width
+ * and let the outermost pair hang half off each edge, which is what made
+ * "show three" mean "one whole and two halves". Sizing the centre separately
+ * buys the same emphasis without spending it on cropping:
+ *
+ *   (count - 1) x N  +  1.75 x N  +  (count - 1) gaps  =  viewport - padding
+ *
+ * so N = (100vw - 3rem - (count-1)rem) / (count - 1 + 1.75).
+ *
+ * THE ROW'S TRANSFORM DOES NOT NEED THE CENTRE WIDTH, which is the happy part
+ * of this arithmetic. Centring panel k means translating by
+ * `-(N + gap) * (k - (n-1)/2)` — the centre panel's extra width sits
+ * symmetrically about its own middle, so it cancels out of the centring
+ * entirely and the step stays one uniform neighbour-width. See the row
+ * transform in `graph-item-details-modal.tsx`.
+ *
+ * The caps survive so a very wide monitor does not hand the middle panel half
+ * a metre of screen; below them the count drives the layout.
+ */
+export function panelWidthsFor(
+  count: ViewCount,
+): Readonly<{ centre: string; neighbour: string }> {
   // 3rem is the modal's own padding (p-6 either side); the gaps are one rem
   // apiece, and there are `count - 1` of them between `count` panels.
-  return `min(48rem, (100vw - 3rem - ${count - 1}rem) / ${count - 1})`;
+  const available = `(100vw - 3rem - ${count - 1}rem)`;
+  const share = count - 1 + CENTRE_TO_NEIGHBOUR;
+  return {
+    neighbour: `min(34rem, ${available} / ${share})`,
+    centre: `min(60rem, ${available} * ${CENTRE_TO_NEIGHBOUR} / ${share})`,
+  };
 }

@@ -92,14 +92,35 @@ export const DefaultTrimOverviewContent = memo(function DefaultTrimOverviewConte
   );
 }, defaultOverviewPropsEqual);
 
+/**
+ * WHAT THE WINDOW LOOKS LIKE, and it is a look rather than a state.
+ *
+ * `focus` is a blue selection frame — the window is a thing you have selected
+ * out of the source, drawn in the colour the rest of the board uses for
+ * selection. Right wherever the strip sits among other selectable things.
+ *
+ * `film` is a white one. In a view that is already a row of frames with a
+ * filmstrip bar over it, a blue rectangle is the only object on screen that is
+ * not part of the film — and white is what the edge of a frame has always been.
+ * It says the same thing (this part, not that part) in the vocabulary the rest
+ * of that view is written in.
+ *
+ * A PROP RATHER THAN A REWRITE, because both consumers are live and only one
+ * of them is a filmstrip: the board's strip layout keeps the selection blue.
+ */
+export type TrimWindowTone = "focus" | "film";
+
 export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   node,
   pixelsPerSecond,
   trimInSeconds,
   trimOutSeconds,
   width,
+  tone = "focus",
 }: {
   node: VideoMediaNode;
+  /** How the window frame is painted; see `TrimWindowTone`. */
+  tone?: TrimWindowTone;
   /** The timeline scale. Optional only because `width` replaces it: a fitted
    *  strip derives its own scale and never reads this. */
   pixelsPerSecond?: number;
@@ -206,18 +227,33 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
           at source scale, so one accent covers the whole trim widget. */}
       <div
         data-trim-overview-window
-        className="absolute inset-y-0 rounded-sm border-2 border-blue-500 bg-blue-500/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+        data-trim-overview-tone={tone}
+        className={
+          tone === "film"
+            ? // The frame line, and nothing tinted inside it: a wash over the
+              // kept part would be a colour cast on the only frames anyone is
+              // trying to judge. The dark outer shadow is what separates the
+              // white from a bright frame under it.
+              "absolute inset-y-0 rounded-sm border-2 border-zinc-100 shadow-[0_0_0_1px_rgba(0,0,0,0.65)]"
+            : "absolute inset-y-0 rounded-sm border-2 border-blue-500 bg-blue-500/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+        }
         style={{ width: windowWidth, transform: `translateX(${trimInWidth}px)` }}
       >
         <span
           data-trim-overview-handle="left"
           onPointerDown={startTrim("left")}
-          className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-sm bg-blue-400/90"
+          className={[
+            "absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-sm",
+            tone === "film" ? "bg-zinc-100" : "bg-blue-400/90",
+          ].join(" ")}
         />
         <span
           data-trim-overview-handle="right"
           onPointerDown={startTrim("right")}
-          className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-sm bg-blue-400/90"
+          className={[
+            "absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-sm",
+            tone === "film" ? "bg-zinc-100" : "bg-blue-400/90",
+          ].join(" ")}
         />
       </div>
     </div>

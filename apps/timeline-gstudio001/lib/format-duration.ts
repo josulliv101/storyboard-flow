@@ -49,6 +49,35 @@ export function formatSeconds(seconds: number): string {
 }
 
 /**
+ * A RUNNING clock: "0:21.6", "4:12.9", "1:02:03.4".
+ *
+ * A third register, and it earns its place by being the only one that has to
+ * be readable while it MOVES. `formatDuration` rounds to the second, so a
+ * playhead crossing 21.4 → 21.6 does not visibly advance; `formatSeconds`
+ * keeps hundredths but stays in seconds, so a four-minute project reads
+ * "252.90s" — a number nobody can locate in a timeline.
+ *
+ * Tenths rather than hundredths: the second decimal changes too fast to read
+ * and is noise on a moving readout, while the first is exactly enough to see
+ * that time is passing and to land on a frame you meant.
+ */
+export function formatClock(seconds: number): string {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  // FLOOR THE TENTH, never round it. Rounding 59.97 gives 60.0, which would
+  // print ":60.0" — and carrying that into the minute is arithmetic this
+  // readout would have to redo on every frame to stay correct. A clock that
+  // never displays a time it has not yet reached is also the honest one.
+  const rest = Math.floor((safe % 60) * 10) / 10;
+  const shown = rest.toFixed(1).padStart(4, "0");
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${shown}`;
+  }
+  return `${minutes}:${shown}`;
+}
+
+/**
  * Ruler ticks: the reading form, minus the trailing ".0" on whole seconds.
  * A tick every second reading "1.0s 2.0s 3.0s" is a column of noise; the
  * fractional tiers (½s, ¼s) still need their decimal.
