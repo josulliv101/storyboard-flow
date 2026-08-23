@@ -35,7 +35,37 @@
 // film with pictures in them, and a picture that bounces past its mark and
 // comes back says the software is pleased with itself. The confidence is in
 // the departure, not in the arrival.
-const DETAILS_STEP_EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+/**
+ * THE STEP'S CURVE, and the reason a step felt violent had nothing to do with
+ * how long it lasted.
+ *
+ * It was `cubic-bezier(0.32, 0.72, 0, 1)` — a hard ease-out, the kind that
+ * feels crisp on a 40px control and is brutal on a 507px one. Measured against
+ * that distance over 420ms, where the average speed is 1207px/s:
+ *
+ *   starts at 2716px/s   — from a standing start, in the first frame
+ *   peaks at 5094px/s    — 4.2x average, only 16% of the way through
+ *   90% of the distance covered in 37% of the time
+ *
+ * So the card leapt away at more than twice average speed with no acceleration
+ * at all, was effectively parked a third of the way in, and spent the remaining
+ * 265ms on a settle nobody can see. Both complaints — too quick, too strong —
+ * are that one line.
+ *
+ * LENGTHENING IT WOULD NOT HAVE HELPED: the extra time lands in the invisible
+ * tail, and the leap at the front is unchanged.
+ *
+ * This is ease-in-out-sine. Same 420ms, and it starts from REST:
+ *
+ *   starts at 0px/s
+ *   peaks at 1919px/s    — 1.6x average, halfway through
+ *   90% of the distance covered in 79% of the time
+ *
+ * Peak speed falls by 62%, and the visible motion more than doubles in length —
+ * 155ms of it becomes 332ms — without touching the clock. The card accelerates,
+ * travels and arrives, instead of appearing already at speed.
+ */
+const DETAILS_STEP_EASE = "cubic-bezier(0.37, 0, 0.63, 1)";
 
 /**
  * How long a step takes, everywhere it is visible.

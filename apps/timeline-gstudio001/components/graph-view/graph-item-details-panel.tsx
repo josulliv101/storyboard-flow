@@ -519,7 +519,10 @@ export function DetailsPanel({
           // variables rather than an inline `transition` so that
           // `motion-reduce:transition-none` still outranks the lot.
           "transition-[box-shadow,border-color,background-color,transform,height]",
-          "ease-[cubic-bezier(0.32,0.72,0,1)]",
+          // Spelled out because a class cannot read a constant. See
+          // DETAILS_STEP_EASE in graph-details-motion.ts for why this curve and
+          // not the hard ease-out it replaces.
+          "ease-[cubic-bezier(0.37,0,0.63,1)]",
           "[transition-duration:var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--chrome-ms),var(--resize-ms)]",
           "[transition-delay:var(--focus-delay,0ms),var(--focus-delay,0ms),var(--focus-delay,0ms),0ms,var(--height-delay,0ms)]",
           "motion-reduce:transition-none",
