@@ -1170,6 +1170,39 @@ and on the branch at the moment the sub-graph expands; the one that moved names
 the cause. 207 against 380 is a large difference and should be obvious once the
 inputs are printed rather than inferred from a pass/fail.
 
+**THE MECHANISM, MEASURED — this is the useful part.** Instrumenting the clamp
+inputs at the moment of the expand gives, at this test's 1280x480 viewport:
+
+```
+innerHeight 480   rootTop -119 (clamped to 0)   mainBottom 606   scrollY 132
+```
+
+and the ceiling is
+`getViewportBoundaryBottom() - rootTop - MIN_TIMELINE_SPACE`, with
+`MIN_TIMELINE_SPACE = 260`. `getViewportBoundaryBottom` is
+`min(mainBottom, innerHeight)` = 480 here, so the ceiling is **at most
+`480 - 260 = 220`** and less once the page has scrolled — 207 is exactly
+`220 - 13` of `rootTop`.
+
+So the preview OPENS at `DEFAULT_SURFACE_HEIGHT` = 380, which is far above a
+ceiling that can never exceed 220 at this viewport. The invariant does not hold
+because 380 is legal; it holds only for as long as `clampToViewport` DOES NOT
+RUN AGAIN after the pane opens. Anything that causes one extra observer or
+scroll to fire after the expand cuts 380 down to the ceiling that was always
+there.
+
+That reframes the bug. It is not "something shrank the preview" — it is "the
+opened height was never within the clamp's own limit at this viewport, and the
+test passes only while nothing re-checks". Which is also why a bisect thrashes:
+the question is not WHICH change resized anything, it is which change added a
+re-check, and that is timing-shaped rather than layout-shaped.
+
+Two ways out, and they are a product decision rather than a test one:
+`initialSurfaceHeight` should not open the pane above its own ceiling (it
+clamps against `maxSurfaceHeight` but the restore path does not), or the test's
+480px viewport is simply below the height this pane is designed for and should
+say so.
+
 **Do not "fix" the test.** It is guarding a real invariant — the preview's
 height is the user's and content growth must not steal it — and it was written
 because the preview used to be fitted to whatever the lower pane left over.
