@@ -217,13 +217,40 @@ export function MediaDropTarget({
 
   const open = useCallback(() => inputRef.current?.click(), []);
 
+  /**
+   * Whether the picker has already been opened FOR US, by the effect below.
+   *
+   * ONE DROP WAS OPENING TWO PICKERS (PL15-019). The effect called `open()`
+   * with no guard, and `reactStrictMode` is on — StrictMode deliberately
+   * double-invokes mount effects (mount, unmount, remount) to surface effects
+   * that are not idempotent, and this was one: `open()` does something TO THE
+   * USER rather than setting something up, so running it twice opened the OS
+   * file picker twice, one behind the other.
+   *
+   * A ref rather than state: it must not re-render, and it survives
+   * StrictMode's simulated remount for the same reason state does — the
+   * component instance is the same one.
+   *
+   * IT GUARDS THE EFFECT, NOT `open`. The prompt button below calls `open` too,
+   * and that call is the user asking again — after cancelling the first picker,
+   * most likely. Guarding `open` itself would make "Choose files…" work once
+   * and then silently do nothing, which is a worse bug than the one being
+   * fixed.
+   */
+  const autoOpenedRef = useRef(false);
+
   // Open the picker when the drop still had activation; the prompt is rendered
   // either way, so this is an accelerator rather than a branch. Whether it was
   // possible is a PROP — decided at the drop, when it was true — so there is no
   // state to set here and no cascading render.
   useEffect(() => {
-    if (hadUserActivation) open();
-    else promptRef.current?.focus();
+    if (!hadUserActivation) {
+      promptRef.current?.focus();
+      return;
+    }
+    if (autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    open();
   }, [hadUserActivation, open]);
 
   // Dismissal: Escape, or a click anywhere that is not the prompt. Not the

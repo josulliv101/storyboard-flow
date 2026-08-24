@@ -963,3 +963,138 @@ if it is not, the honest fixes are a taller rail or a caret that overlaps the
 segment's lower edge, NOT one that spills outside the rail into the controls
 below it.
 
+## PL15-018 — Bring the MCP tools back up to the app
+
+- Status: Not started
+- Area: `lib/webmcp/tools.ts`, `lib/mcp/write-handlers.ts`,
+  `components/graph-view/graph-mcp-tools.tsx`, `docs/webmcp-agent-tools.md`
+- Screenshot: Not captured
+
+The agent tool surface has fallen behind what the app can do. Bring it level.
+
+**The drift, measured rather than asserted.** There are two surfaces: the
+in-page WebMCP tools (which mutate the live store) and the server-side
+handlers behind `/api/mcp`. Counted today:
+
+- **WebMCP — 14 tools:** `read_timeline`, `move_clip`, `trim_clip`,
+  `rename_item`, `remove_clip`, `get_view_state`, `select_items`,
+  `clear_selection`, `focus`, `go_up`, `set_preview`, `play`, `pause`, `seek`.
+- **Server handlers — 8:** `move_clip`, `trim_clip`, `rename_item`,
+  `set_tags`, `remove_clip`, `set_lane`, `set_start`, `set_layer_frame`.
+
+So four write verbs exist on the server and have NO in-page equivalent:
+`set_tags`, `set_lane`, `set_start`, `set_layer_frame`. An agent working in
+the browser — the whole point of the two-writer loop — cannot tag a clip, put
+it on a lane, pin its start, or choose its layer frame, while the same agent
+hitting the endpoint can.
+
+**And things shipped since have no tool at all.** `set_disabled` is the clear
+one: enabling and disabling an item is a first-class action with its own
+command (`set-node-disabled`), its own undo clause and controls in two
+dialogs, and there is no way to ask for it. `create_collection` exists in
+`lib/mcp/` but is not registered on either surface.
+
+**The doc is stale in a way that matters.** `docs/webmcp-agent-tools.md` opens
+with "11 tools" against the 14 that are registered, and its own instruction is
+"Keep it current as decisions land." A count that is wrong by three is the
+cheapest possible signal that the decision log stopped being kept, so the doc
+is part of this item and not a footnote to it.
+
+Acceptance criteria:
+
+- The in-page surface covers every write the server handlers do — no verb an
+  agent can perform through the endpoint but not in the page.
+- `set_disabled` exists, dispatching `set-node-disabled` through the same
+  command path the dialogs use.
+- Every new tool returns the repo's `Result`-shaped rejection rather than
+  throwing, and refuses rather than guessing — the existing tools' contract.
+- Nothing is left orphaned: a tool that can move or remove a node obeys the
+  hard rule that nothing may be parentless (refuse, or route to trash).
+- `docs/webmcp-agent-tools.md` names the real tools and the real count, and
+  its decision log records what landed here.
+- Tests beside each new tool, matching the existing per-tool `.test.ts`
+  pattern in `lib/webmcp/` and `lib/mcp/`.
+
+**The trap that will waste an afternoon otherwise: the connector CACHES its
+tool list.** A newly added tool does not appear until the client refreshes it,
+and the failure mode is a tool that is definitely registered and definitely
+absent from the agent's view — which reads as a setting that does not exist
+rather than as a cache. Refresh the connector before concluding anything is
+wrong with a new tool.
+
+**Worth deciding as part of this:** whether the two surfaces should stay
+separately hand-maintained at all. They have already drifted by four verbs,
+and drifting is what two hand-written lists of the same thing do. The write
+handlers are shared logic; the registration is not. A single declaration both
+surfaces are generated from would make this the last time this item is
+written — which is a bigger change than "add four tools" and should be an
+explicit choice rather than a discovery halfway through.
+
+## PL15-019 — Dragging the Media tool opens two file pickers
+
+- Status: IN PROGRESS — a guard is applied, the DIAGNOSIS IS UNPROVEN. The
+  StrictMode theory below could not be reproduced: with the guard removed, a
+  story that wraps the component in `StrictMode` still counts exactly one
+  picker request, because React only double-invokes effects in a development
+  build of React and the storybook build is not one. So the guard is correct
+  defensive code — an effect that opens a picker should be idempotent — but it
+  is NOT established that it fixes what was reported. The decisive check named
+  below (watch the real dev app, and a production build) has not been run.
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (drag the Media tool from the controls row onto the board)
+- Area: `components/graph-view/graph-tool-buttons.tsx` (`MediaDropTarget`),
+  `apps/timeline-gstudio001/next.config.ts` (`reactStrictMode`)
+- Screenshot: Not captured
+
+Using the Media tool to add a clip opens the OS file picker, and then opens a
+second one immediately behind it. One drop, two prompts.
+
+**The cause, and it is a specific line.** The drag path parks the drop
+position and then asks for files through `MediaDropTarget`, which opens the
+picker from a MOUNT EFFECT:
+
+```
+const open = useCallback(() => inputRef.current?.click(), []);
+
+useEffect(() => {
+  if (hadUserActivation) open();
+  else promptRef.current?.focus();
+}, [hadUserActivation, open]);
+```
+
+`open()` is a side effect with no guard, fired from an effect that runs on
+mount. `reactStrictMode` is `true` in `next.config.ts`, and StrictMode
+deliberately double-invokes mount effects — mount, unmount, remount — so the
+input is clicked twice and the browser opens two pickers. `open` is a
+`useCallback` with an empty dep array, so it is stable and the second run is
+the remount rather than a changed dependency.
+
+This is exactly the class of bug StrictMode's double-invoke exists to surface:
+an effect that is not idempotent. The effect body is doing something that
+happens TO THE USER rather than something that sets up and tears down.
+
+**CONFIRM IT IS DEV-ONLY BEFORE FIXING ANYTHING.** StrictMode's double-invoke
+does not happen in a production build, so if this is the cause the deployed
+app opens one picker and only the dev server opens two. That changes the
+severity completely and is one build to check. Do that first — and if
+production ALSO doubles, the cause is something else (two `MediaDropTarget`s
+mounted at once, from the grid and strip surfaces or from a sub-timeline row,
+is the next place to look) and everything above is wrong.
+
+Acceptance criteria:
+
+- One drop of the Media tool opens exactly one picker, in dev and in
+  production.
+- Cancelling the picker still dismisses the pending drop as it does now.
+- The keyboard path is unchanged: with no user activation the prompt is
+  focused rather than a picker opened, which is the branch that makes this
+  reachable without a mouse at all.
+- The fix is a guard on the SIDE EFFECT — a ref that records the picker was
+  already opened for this pending drop — not switching StrictMode off.
+  StrictMode found a real defect here; turning it off would hide the next one.
+
+**Worth a sweep while in there.** Any other effect in this area that opens a
+picker, starts an upload, or dispatches a command on mount has the same shape
+and the same bug, and would show the same way — twice in dev, once in
+production, and nobody notices until someone watches carefully.
+
