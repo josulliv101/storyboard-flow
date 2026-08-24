@@ -1248,6 +1248,34 @@ clamps against `maxSurfaceHeight` but the restore path does not), or the test's
 480px viewport is simply below the height this pane is designed for and should
 say so.
 
+**THE CEILINGS DID NOT MATCH, and fixing that did NOT fix this.** Both halves
+matter.
+
+`initialSurfaceHeight` passed its own `maxSurfaceHeight` of
+`available - dividerHeight` (~44px), while `clampToViewport` calls
+`clampSurfaceHeight(height)` with no max and falls through to
+`getManualMaxSurfaceHeight()`, which subtracts `MIN_TIMELINE_SPACE` (260). Two
+ceilings more than 200px apart, and the pane opened under the loose one — so it
+could open at a height the very next clamp would cut. That is a real defect and
+it is fixed: the open path omits the argument and uses the same ceiling as
+everything else.
+
+It did not move the failure rate. Measured across three runs after the change:
+4 of 6, then 5 of 6, then 6 of 10 — all within noise of the rate before it.
+Recorded so nobody re-derives this fix expecting it to close the item.
+
+**The residual, and it is the thing to chase next:** the ceiling itself MOVES.
+`getManualMaxSurfaceHeight` is `viewportBottom - rootTop - MIN_TIMELINE_SPACE`,
+and `rootTop` is the pane's position in the viewport — which changes with
+SCROLL. So the pane can open under a legal ceiling and be re-clamped later
+under a different one, without anything about the layout having changed, purely
+because the page scrolled between the two moments. The probe caught exactly
+this: `rootTop -119, scrollY 132` at the assert.
+
+That reframes it as a product question rather than a bug: should a pane the
+user sized shrink because the page scrolled? If not, the ceiling has to come
+from something stable rather than from the live `rootTop`.
+
 **Do not "fix" the test.** It is guarding a real invariant — the preview's
 height is the user's and content growth must not steal it — and it was written
 because the preview used to be fitted to whatever the lower pane left over.

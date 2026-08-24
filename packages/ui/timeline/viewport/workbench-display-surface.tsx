@@ -2556,15 +2556,33 @@ export function WorkbenchSplitPane({
     const divider = dividerRef.current;
     if (!divider) return;
 
-    const dividerHeight = divider.getBoundingClientRect().height;
     // A third of what the user can actually SEE, not of a <main> that may
     // run far below the fold — getViewportBoundaryBottom already resolves
     // that, and measuring from the root's top keeps the fraction honest
     // when the board sits below other chrome.
     const rootTop = Math.max(0, rootRef.current?.getBoundingClientRect().top ?? 0);
     const availableHeight = getViewportBoundaryBottom() - rootTop;
-    const maxSurfaceHeight = Math.max(MIN_SURFACE_HEIGHT, availableHeight - dividerHeight);
-    const nextHeight = clampSurfaceHeight(availableHeight / 3, maxSurfaceHeight);
+    // ONE CEILING, THE SAME ONE EVERY LATER CLAMP USES (PL15-020).
+    //
+    // This used to pass its own `maxSurfaceHeight` of `available - divider`,
+    // while `clampToViewport` calls `clampSurfaceHeight(height)` with no max
+    // and so falls through to `getManualMaxSurfaceHeight()` — which subtracts
+    // `MIN_TIMELINE_SPACE` (260) rather than a ~44px divider. Two ceilings
+    // more than 200px apart, and the pane opened under the loose one.
+    //
+    // So it could open at a height the very NEXT clamp would cut, and whether
+    // it did depended entirely on whether anything re-checked before you
+    // looked. That is what made `preview height is the user's` intermittent:
+    // the test asserts that growing the tree does not steal the pane's height,
+    // and the height it was defending had never been legal — it survived only
+    // while nothing asked.
+    //
+    // Measured at the 1280x480 viewport that test uses: the pane opened at 380
+    // against a manual ceiling that cannot exceed 220 there.
+    //
+    // Omitting the argument is the fix. The pane now opens at a height it can
+    // keep, and a re-check has nothing to take away.
+    const nextHeight = clampSurfaceHeight(availableHeight / 3);
 
     setSurfaceHeight((height) =>
       Math.abs(height - nextHeight) < 0.5 ? height : nextHeight,
