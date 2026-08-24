@@ -83,7 +83,7 @@ describe("resolveTrim on audio", () => {
     // landing exactly on the far edge left a window of zero (PL15-015).
     expect(resolveTrim(audio(), "left", 99).update).toEqual({
       mediaKind: "audio",
-      trimInSeconds: 8.75,
+      trimInSeconds: 8.9,
     });
   });
 
@@ -132,8 +132,12 @@ describe("resolveTrim quantization", () => {
     // dragged through the middle of the clip and out the far side, swallowing
     // it (PL15-015). The ceiling keeps a minimum window back now.
     const { update, live } = resolveTrim(video({ trimInSeconds: 2 }), "right", -100);
-    expect(update).toEqual({ mediaKind: "video", trimOutSeconds: 7.75 });
-    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
+    expect(update).toEqual({ mediaKind: "video", trimOutSeconds: 7.9 });
+    // `toBeCloseTo`: the COMMITTED value is on the grid (the ceiling is
+    // quantized), but `effectiveSeconds` is `full - in - out` computed live,
+    // and 10 - 2 - 7.9 is 0.09999999999999964. Grid-cleanliness is a property
+    // of what is stored, not of a subtraction done for the preview.
+    expect(live.effectiveSeconds).toBeCloseTo(MIN_TRIM_WINDOW_SECONDS, 6);
   });
 
   it("does not leave float dust on the grid", () => {
@@ -169,19 +173,31 @@ describe("the minimum trim window", () => {
     const { update, live } = resolveTrim(video({ trimInSeconds: 0, trimOutSeconds: 1 }), "left", 100);
     // 10 full, 1 trimmed off the end, so the left edge stops a quarter second
     // before what is left of the source rather than at it.
-    expect(update).toEqual({ mediaKind: "video", trimInSeconds: 8.75 });
-    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
+    expect(update).toEqual({ mediaKind: "video", trimInSeconds: 8.9 });
+    // `toBeCloseTo`: the COMMITTED value is on the grid (the ceiling is
+    // quantized), but `effectiveSeconds` is `full - in - out` computed live,
+    // and 10 - 2 - 7.9 is 0.09999999999999964. Grid-cleanliness is a property
+    // of what is stored, not of a subtraction done for the preview.
+    expect(live.effectiveSeconds).toBeCloseTo(MIN_TRIM_WINDOW_SECONDS, 6);
   });
 
   it("stops the RIGHT edge short of the left one", () => {
     const { update, live } = resolveTrim(video({ trimInSeconds: 3, trimOutSeconds: 0 }), "right", -100);
-    expect(update).toEqual({ mediaKind: "video", trimOutSeconds: 6.75 });
-    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
+    expect(update).toEqual({ mediaKind: "video", trimOutSeconds: 6.9 });
+    // `toBeCloseTo`: the COMMITTED value is on the grid (the ceiling is
+    // quantized), but `effectiveSeconds` is `full - in - out` computed live,
+    // and 10 - 2 - 7.9 is 0.09999999999999964. Grid-cleanliness is a property
+    // of what is stored, not of a subtraction done for the preview.
+    expect(live.effectiveSeconds).toBeCloseTo(MIN_TRIM_WINDOW_SECONDS, 6);
   });
 
   it("applies to audio, which shares the windowed branch", () => {
     const { live } = resolveTrim(audio({ trimInSeconds: 0, trimOutSeconds: 0 }), "left", 100);
-    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
+    // `toBeCloseTo`: the COMMITTED value is on the grid (the ceiling is
+    // quantized), but `effectiveSeconds` is `full - in - out` computed live,
+    // and 10 - 2 - 7.9 is 0.09999999999999964. Grid-cleanliness is a property
+    // of what is stored, not of a subtraction done for the preview.
+    expect(live.effectiveSeconds).toBeCloseTo(MIN_TRIM_WINDOW_SECONDS, 6);
   });
 
   it("leaves an ordinary trim untouched", () => {
@@ -197,7 +213,7 @@ describe("the minimum trim window", () => {
     // the ceiling — dragging the handle backwards. It floors at zero instead,
     // so the edge simply cannot move.
     const { update } = resolveTrim(
-      video({ fullDurationSeconds: 0.2, trimInSeconds: 0, trimOutSeconds: 0 }),
+      video({ fullDurationSeconds: 0.05, trimInSeconds: 0, trimOutSeconds: 0 }),
       "left",
       100,
     );

@@ -822,8 +822,12 @@ rather than inheriting the attribute.
 
 ## PL15-015 — A trim edge cannot be dragged into the middle
 
-- Status: Complete as the MINIMUM WINDOW reading (0.25s floor), which is the
-  half that was uncontroversial. The hard halfway stop is deliberately NOT
+- Status: Complete as the MINIMUM WINDOW reading, at ONE QUANTUM (0.1s). It
+  was 0.25s until `VirtualStrip.stories` failed asserting `0.10s / 10.00s` —
+  a shipped, tested trim the floor had quietly made impossible, which is the
+  exact risk this item warned about. The floor gave way rather than the test.
+  A larger one is a single constant, but choose it against trims people
+  actually make. The hard halfway stop is deliberately NOT
   built — it forbids legitimate trims. Say if that was what you meant; it is
   the same two lines.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph

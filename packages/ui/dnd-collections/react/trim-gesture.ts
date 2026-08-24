@@ -46,12 +46,20 @@ function clamp(value: number, min: number, max: number): number {
  * stopped it: `MAX_HANDLE_SHARE` only decides whether a handle is DRAWN on a
  * short clip and does nothing to a drag already under way (PL15-015).
  *
- * A QUARTER SECOND, and the number is a judgement rather than a derivation. It
- * has to be small enough never to refuse a real edit — six frames at 24fps is
- * a flash cut, which is a thing people cut — and large enough that what is
- * left is still a clip you can see, grab and trim again. The 0.1s quantize
- * grid is the smallest expressible floor and only rules out the exactly
- * degenerate case, which is not what was being complained about.
+ * ONE QUANTUM — the 0.1s grid, the smallest floor that can be expressed — and
+ * it started at a quarter second before the tests said otherwise.
+ *
+ * 0.25 was a judgement: small enough not to refuse a real edit, large enough
+ * that what is left is still a clip you can grab. `VirtualStrip.stories` then
+ * failed asserting `0.10s / 10.00s`, which is a SHIPPED, TESTED trim that the
+ * floor had quietly made impossible. That is the exact risk this item was
+ * warned about — a floor picked for feel forbidding work somebody relies on —
+ * and the test is the evidence, so the floor gives way rather than the test.
+ *
+ * What is left is narrow and safe: it rules out the degenerate window and
+ * nothing else. If a larger floor is genuinely wanted it is this one constant,
+ * but it needs to be chosen against the trims people actually make rather than
+ * against how it feels to drag.
  *
  * NOT A HALFWAY STOP. The other reading of "the end cannot be dragged to the
  * middle" is that neither edge may pass the clip's midpoint, so no single edge
@@ -60,7 +68,7 @@ function clamp(value: number, min: number, max: number): number {
  * edge doing eighty per cent of it. Left unbuilt deliberately; it is the same
  * two lines if it turns out to be what was wanted.
  */
-export const MIN_TRIM_WINDOW_SECONDS = 0.25;
+export const MIN_TRIM_WINDOW_SECONDS = 0.1;
 
 /**
  * Whether a trim currently OWNS the pointer, for the pan hook's
@@ -135,7 +143,11 @@ export function resolveTrim(
         // `Math.max(0, …)` matters for a source already shorter than the
         // minimum — the ceiling must not go negative and invert the clamp,
         // which would pin the edge at 0 and make the handle feel dead.
-        Math.max(0, node.fullDurationSeconds - node.trimOutSeconds - MIN_TRIM_WINDOW_SECONDS)
+        // QUANTIZED, like the value it bounds. `10 - 1 - 0.1` is
+        // 8.899999999999999, and an un-gridded ceiling hands that straight
+        // through as the committed trim — the same float dust the test below
+        // pins for the value, arriving by way of the limit instead.
+        quantize(Math.max(0, node.fullDurationSeconds - node.trimOutSeconds - MIN_TRIM_WINDOW_SECONDS))
       );
       return {
         update: { mediaKind, trimInSeconds },
@@ -151,7 +163,7 @@ export function resolveTrim(
     const trimOutSeconds = clamp(
       quantize(node.trimOutSeconds - deltaSeconds),
       0,
-      Math.max(0, node.fullDurationSeconds - node.trimInSeconds - MIN_TRIM_WINDOW_SECONDS)
+      quantize(Math.max(0, node.fullDurationSeconds - node.trimInSeconds - MIN_TRIM_WINDOW_SECONDS))
     );
     return {
       update: { mediaKind, trimOutSeconds },
