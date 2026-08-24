@@ -265,7 +265,11 @@ go too. Those are different bugs and only one of them is the container query.
 
 ## PL15-006 — The bar's settings move behind a gear; reach stays out
 
-- Status: Complete — and the gear is deliberately NOT gated on `md:` like the
+- Status: Complete — SHIPPED BROKEN FIRST: the menu portals to `body` and so
+  rendered behind the modal's `z-[80]` scrim at its default `z-50`. Reported
+  from the app, not caught by the stories, which drove the menu's contents
+  without ever asking whether they were visible. Fixed and now asserted.
+  Complete — and the gear is deliberately NOT gated on `md:` like the
   groups it replaces, so frames/card/fit are reachable on a narrow viewport
   for the first time. The left grid cell is kept as an empty spacer: it is
   what centres the transport.
@@ -993,7 +997,11 @@ below it.
 
 ## PL15-018 — Bring the MCP tools back up to the app
 
-- Status: Not started
+- Status: Partial — `set_disabled` (which existed on NEITHER surface) and
+  `set_lane` are now in-page. `set_tags`, `set_start` and `set_layer_frame`
+  remain server-only; the doc's stale tool count still needs correcting. The
+  "generate both surfaces from one declaration" question in this item is
+  untouched and is the thing that stops it recurring.
 - Area: `lib/webmcp/tools.ts`, `lib/mcp/write-handlers.ts`,
   `components/graph-view/graph-mcp-tools.tsx`, `docs/webmcp-agent-tools.md`
 - Screenshot: Not captured

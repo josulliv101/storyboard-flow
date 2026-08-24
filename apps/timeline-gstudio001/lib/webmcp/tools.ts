@@ -59,6 +59,8 @@ export function createGraphTools(ctx: GraphToolContext): ToolDef[] {
     trimClipTool(ctx),
     renameItemTool(ctx),
     removeClipTool(ctx),
+    setDisabledTool(ctx),
+    setLaneTool(ctx),
     getViewStateTool(ctx),
     selectItemsTool(ctx),
     clearSelectionTool(ctx),
@@ -325,6 +327,89 @@ function renameItemTool(ctx: GraphToolContext): ToolDef {
       const result = ctx.store.dispatch({ type: "rename-node", nodeId, name });
       if (!result.ok) return toolError(describeDispatchRejection(result.error));
       return toolOk(`Renamed to "${name}".`, { nodeId: nodeIdStr, name });
+    },
+  };
+}
+
+// ---- set_disabled ----------------------------------------------------------
+
+/**
+ * TWO WRITE VERBS THE IN-PAGE SURFACE DID NOT HAVE (PL15-018).
+ *
+ * `set_disabled` had no equivalent ANYWHERE — not here and not behind
+ * `/api/mcp` — even though disabling is a first-class action with its own
+ * command, its own clause in the modal's scoped undo, and a control in two
+ * dialogs. `set_lane` existed only on the server, so an agent working in the
+ * browser could not do something the same agent could do down the wire.
+ *
+ * Both go through `store.dispatch`, which is the point of the in-page surface:
+ * the tool runs the ACTUAL command path and its invariants rather than a second
+ * implementation of them, and the open editor animates the change because it
+ * renders from the same graph.
+ */
+function setDisabledTool(ctx: GraphToolContext): ToolDef {
+  return {
+    name: "set_disabled",
+    description:
+      "Enable or disable a clip or collection. A disabled item keeps its slot and its span; playback skips it.",
+    inputSchema: jsonSchemaFor({
+      nodeId: nodeIdField,
+      disabled: z.boolean().describe("True to disable, false to enable."),
+    }),
+    execute: (args) => {
+      const nodeIdStr = readString(args, "nodeId");
+      if (!nodeIdStr) return toolError("set_disabled requires a nodeId.");
+      const disabled = readBoolean(args, "disabled");
+      if (disabled === undefined) {
+        return toolError("set_disabled requires `disabled` to be true or false.");
+      }
+      const graph = ctx.store.getSnapshot().graph;
+      const nodeId = parseNodeId(nodeIdStr);
+      if (!graph.nodesById.get(nodeId)) return toolError(`No node with id "${nodeIdStr}".`);
+      const result = ctx.store.dispatch({ type: "set-node-disabled", nodeIds: [nodeId], disabled });
+      if (!result.ok) return toolError(describeDispatchRejection(result.error));
+      return toolOk(disabled ? "Disabled." : "Enabled.", { nodeId: nodeIdStr, disabled });
+    },
+  };
+}
+
+// ---- set_lane --------------------------------------------------------------
+
+function setLaneTool(ctx: GraphToolContext): ToolDef {
+  return {
+    name: "set_lane",
+    description:
+      "Move a clip between lanes. 0 is the picture; anything above runs under it.",
+    inputSchema: jsonSchemaFor({
+      nodeId: nodeIdField,
+      lane: z
+        .number()
+        .int()
+        .min(0)
+        .describe("The lane to put the clip on. 0 is the picture."),
+    }),
+    execute: (args) => {
+      const nodeIdStr = readString(args, "nodeId");
+      if (!nodeIdStr) return toolError("set_lane requires a nodeId.");
+      const lane = readNumber(args, "lane");
+      // Rejected rather than rounded: an agent asking for lane 1.5 has a bug,
+      // and quietly choosing one of the two neighbours for it hides it.
+      if (lane === undefined || !Number.isInteger(lane) || lane < 0) {
+        return toolError("`lane` must be a whole number, 0 or more. 0 is the picture.");
+      }
+      const graph = ctx.store.getSnapshot().graph;
+      const nodeId = parseNodeId(nodeIdStr);
+      if (!graph.nodesById.get(nodeId)) return toolError(`No node with id "${nodeIdStr}".`);
+      const result = ctx.store.dispatch({
+        type: "set-node-placement",
+        nodeIds: [nodeId],
+        placement: { trackIndex: lane },
+      });
+      if (!result.ok) return toolError(describeDispatchRejection(result.error));
+      return toolOk(lane === 0 ? "Back on the picture." : `On lane ${lane}.`, {
+        nodeId: nodeIdStr,
+        lane,
+      });
     },
   };
 }

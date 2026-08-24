@@ -460,7 +460,17 @@ function openBarSettings(): void {
   // opens, so every helper below then looked for its group inside content that
   // was not there and failed on a null that had nothing to do with the group.
   fireEvent.pointerDown(trigger!, { button: 0, isPrimary: true });
-  expect(document.querySelector("[data-seam-settings-content]")).not.toBeNull();
+  const content = document.querySelector<HTMLElement>("[data-seam-settings-content]");
+  expect(content).not.toBeNull();
+
+  // AND IT IS IN FRONT OF THE MODAL. Radix portals this to `document.body`, so
+  // the menu is a SIBLING of the details view rather than a descendant — and
+  // the view is `z-[80]` while `DropdownMenuContent` defaults to `z-50`. It
+  // opened, in the right place, behind the scrim: a gear that visibly did
+  // nothing. Asserted as a NUMBER rather than a class, because the class is
+  // merged with the component's default and which of the two wins is the
+  // actual question.
+  expect(Number(getComputedStyle(content!).zIndex)).toBeGreaterThan(80);
 }
 
 function framesTo(label: string): void {

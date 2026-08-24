@@ -1377,7 +1377,19 @@ export function SeamStripBar({
               side="top"
               align="end"
               data-seam-settings-content
-              className="flex w-auto flex-col items-start gap-3 p-3"
+              // `z-[90]` IS THE WHOLE REASON THIS MENU IS VISIBLE.
+              //
+              // Radix portals its content to `document.body`, so the menu is a
+              // SIBLING of the details modal rather than a descendant — and the
+              // modal is `z-[80]` while `DropdownMenuContent` defaults to
+              // `z-50`. The menu opened correctly, in the right place, behind
+              // the modal's own scrim: a gear that visibly did nothing.
+              //
+              // The other menus in this app sit in the board's header, outside
+              // any modal, which is why none of them needed this and why the
+              // default has never been wrong before. Anything portalled from
+              // INSIDE the details view has to clear 80.
+              className="z-[90] flex w-auto flex-col items-start gap-3 p-3"
             >
               {settingsLeft}
               <SegmentedControl
