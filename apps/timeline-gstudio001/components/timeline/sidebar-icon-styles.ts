@@ -97,8 +97,20 @@ export const RAIL_WIDTH_CLASS = {
  * The box is a full-width square at rail width — that is what keeps the rail's
  * rhythm even and the tiles on one grid. What you actually see is the
  * `::before` layer, inset from that box, so every fill (idle, hover, pressed,
- * disabled) paints as a rounded pill floating inside its square rather than a
- * band running edge to edge.
+ * disabled) paints as a pill floating inside its square rather than a band
+ * running edge to edge.
+ *
+ * SQUARE ON THE LEFT, ROUNDED ON THE RIGHT (`rounded-r-2xl`). The rail's
+ * active state is an indicator bar riding the left boundary (see
+ * `SIDEBAR_ICON_PRESSED`), and a fill that rounds AWAY from that edge reads as
+ * a free-floating button that happens to sit near a line. Squared on the side
+ * the bar marks, the two read as one shape anchored to the rail.
+ *
+ * ON EVERY TILE, not only the active one — which is why it is written here on
+ * the base rather than in the pressed variant. The fill is present in every
+ * state (idle is a fainter `zinc-900/40`), so squaring only the pressed one
+ * would make the pill change SHAPE on activation rather than only colour. One
+ * shape in every state, and the bar alone carries "where am I".
  *
  * ON THE RAIL the square becomes a row of the same HEIGHT and the glyph leads
  * rather than centring — unconditionally, in both states. The pill follows the
@@ -108,7 +120,7 @@ export const RAIL_WIDTH_CLASS = {
 export const SIDEBAR_ICON_BASE = [
   "group/sidebar-item relative flex w-full aspect-square items-center justify-center",
   "transition-all duration-200 focus-visible:outline-none",
-  "before:absolute before:inset-2 before:rounded-2xl before:transition-colors before:content-['']",
+  "before:absolute before:inset-2 before:rounded-r-2xl before:transition-colors before:content-['']",
   "focus-visible:before:ring-2 focus-visible:before:ring-zinc-400",
   // Not keyed to the open state — see RAIL_CLASS. 72px is exactly what
   // `aspect-square` already gave at 72px wide.

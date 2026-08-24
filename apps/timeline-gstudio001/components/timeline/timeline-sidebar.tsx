@@ -516,6 +516,60 @@ function initialOf(
   return (user?.name?.[0] ?? user?.email?.[0] ?? "U").toUpperCase();
 }
 
+type AccountUser = Readonly<{
+  name?: string | null;
+  email?: string | null;
+  picture?: string | null;
+}>;
+
+/**
+ * The account picture, or the initial in its place.
+ *
+ * WHY THIS IS A COMPONENT and not a third copy of the ternary: the branch was
+ * already written twice — the rail tile and the profile popover — and it was
+ * wrong in both the same way (PL15-007). It covered a picture that is ABSENT
+ * and not one that FAILS. A `picture` that is a real URL takes the image
+ * branch and, when the request 404s or is blocked, has nothing behind it, so
+ * the tile draws the browser's broken-image glyph. `initialOf` exists because
+ * the ternary was duplicated; this exists so the error path cannot be.
+ *
+ * THE FAILED URL IS REMEMBERED, NOT A BOOLEAN. Signing out and back in as
+ * someone else hands this a different `picture`, and a boolean latched by the
+ * previous user's dead URL would hide the new user's good one forever. Keyed
+ * on the src, a new URL is simply not the failed one and gets its own attempt
+ * — no reset effect, and nothing to forget to fire.
+ *
+ * The fallback is the SAME element the no-picture case has always drawn, so a
+ * failed load is indistinguishable from an account with no photo, and the box
+ * is identical either way — nothing reflows when it swaps.
+ */
+function AccountAvatar({
+  user,
+  imageClassName,
+  fallbackClassName,
+}: Readonly<{
+  user: AccountUser | null | undefined;
+  imageClassName: string;
+  fallbackClassName: string;
+}>) {
+  const picture = user?.picture ?? null;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
+  if (picture !== null && picture !== failedSrc) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={picture}
+        alt={user?.name || user?.email || "Profile"}
+        className={imageClassName}
+        onError={() => setFailedSrc(picture)}
+      />
+    );
+  }
+
+  return <div className={fallbackClassName}>{initialOf(user)}</div>;
+}
+
 type UtilityItem = {
   id: "assets" | "trash";
   label: string;
@@ -1233,28 +1287,23 @@ export function TimelineSidebar({
               isProfileOpen ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
             )}
           >
-            {user?.picture ? (
-              <img
-                src={user.picture}
-                alt={user.name || user.email || "Profile"}
-                className={cn(
-                  // `relative` for the same reason the glyphs carry it: the tile's pill is
-                  // an absolute ::before and would otherwise paint a 40% black veil over
-                  // this face. Same bug the collection thumbnails had.
-                  "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
-                  SIDEBAR_AVATAR_INSET,
-                )}
-              />
-            ) : (
-              <div
-                className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100",
-                  SIDEBAR_AVATAR_INSET,
-                )}
-              >
-                {initialOf(user)}
-              </div>
-            )}
+            <AccountAvatar
+              user={user}
+              imageClassName={cn(
+                // `relative` for the same reason the glyphs carry it: the tile's pill is
+                // an absolute ::before and would otherwise paint a 40% black veil over
+                // this face. Same bug the collection thumbnails had.
+                "relative h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors",
+                SIDEBAR_AVATAR_INSET,
+              )}
+              fallbackClassName={cn(
+                // `relative` for the same reason the image above carries it — the
+                // fallback stands in the same place and would otherwise sit under
+                // the pill.
+                "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100",
+                SIDEBAR_AVATAR_INSET,
+              )}
+            />
             <SidebarTooltipLabel
               id="sidebar-tooltip-utility-account"
               label="Account"
@@ -1270,17 +1319,11 @@ export function TimelineSidebar({
               className="absolute bottom-0 left-full z-50 ml-2 w-64 rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] backdrop-blur-md profile-popover-animate"
             >
               <div className="flex items-center gap-3 border-b border-zinc-800/60 pb-3">
-                {user?.picture ? (
-                  <img
-                    src={user.picture}
-                    alt={user.name || user.email || "Profile"}
-                    className="h-10 w-10 rounded-full object-cover border border-zinc-800"
-                  />
-                ) : (
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-sm font-bold text-zinc-300">
-                    {initialOf(user)}
-                  </div>
-                )}
+                <AccountAvatar
+                  user={user}
+                  imageClassName="h-10 w-10 shrink-0 rounded-full object-cover border border-zinc-800"
+                  fallbackClassName="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-sm font-bold text-zinc-300"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-semibold text-zinc-100">
                     {user?.name || "User"}
