@@ -725,7 +725,10 @@ name a file in `packages/`. Say if the app workspace alone was meant.
 
 ## PL15-014 — The bar's end stops get room, and a word
 
-- Status: Not started
+- Status: Complete — the gap is its own 40px constant and the word sits IN it,
+  between the stop and the film. Check it panned hard to either end: the start
+  stop is at a negative offset by construction and I could not clamp it (see
+  the code note), so a very narrow track could still crop it.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details; set reach to `All` on a short collection so
   both ends are real ends)
@@ -787,7 +790,10 @@ rather than inheriting the attribute.
 
 ## PL15-015 — A trim edge cannot be dragged into the middle
 
-- Status: Not started
+- Status: Complete as the MINIMUM WINDOW reading (0.25s floor), which is the
+  half that was uncontroversial. The hard halfway stop is deliberately NOT
+  built — it forbids legitimate trims. Say if that was what you meant; it is
+  the same two lines.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a video clip's details — the trim strip with the draggable window)
 - Area: `packages/ui/dnd-collections/react/trim-gesture.ts`

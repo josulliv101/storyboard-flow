@@ -2875,6 +2875,21 @@ export const TheBarMarksTheEndsOfTheProject: Story = {
       .getBoundingClientRect();
     expect(endCap.left).toBeGreaterThanOrEqual(last.right - 0.5);
 
+    // AND EACH STOP SAYS WHICH END IT IS (PL15-014), in the room the widened
+    // gap makes for it — between the stop and the film, not on top of either.
+    const startLabel = document.querySelector<HTMLElement>('[data-seam-cap-label="start"]')!;
+    const endLabel = document.querySelector<HTMLElement>('[data-seam-cap-label="end"]')!;
+    expect(startLabel.textContent).toBe("Start");
+    expect(endLabel.textContent).toBe("End");
+
+    // THE GAP IS BIGGER THAN THE ONE BETWEEN TWO BOXES, which is the whole
+    // point of the item: at the old inset the stop read as another clip's edge.
+    // Measured against this scene's own box gap rather than a literal, so the
+    // assertion survives a change to either number.
+    const boxGap = seamBoxes()[1]!.getBoundingClientRect().left - first.right;
+    expect(first.left - startCap.right).toBeGreaterThan(boxGap);
+    expect(endCap.left - last.right).toBeGreaterThan(boxGap);
+
     // CROPPED AT BOTH ENDS: the subject is ten clips in and five either side
     // reaches neither, so neither stop is true and neither is drawn.
     reachTo("5");

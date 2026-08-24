@@ -37,6 +37,32 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
+ * THE SHORTEST A TRIM MAY LEAVE A CLIP.
+ *
+ * Each edge used to be clamped only against the OTHER edge — `trimIn` up to
+ * `full - trimOut`, `trimOut` up to `full - trimIn` — which forbids crossing
+ * and permits MEETING. So an edge could be dragged through the middle of the
+ * clip and out the far side, leaving a window of zero, and nothing else
+ * stopped it: `MAX_HANDLE_SHARE` only decides whether a handle is DRAWN on a
+ * short clip and does nothing to a drag already under way (PL15-015).
+ *
+ * A QUARTER SECOND, and the number is a judgement rather than a derivation. It
+ * has to be small enough never to refuse a real edit — six frames at 24fps is
+ * a flash cut, which is a thing people cut — and large enough that what is
+ * left is still a clip you can see, grab and trim again. The 0.1s quantize
+ * grid is the smallest expressible floor and only rules out the exactly
+ * degenerate case, which is not what was being complained about.
+ *
+ * NOT A HALFWAY STOP. The other reading of "the end cannot be dragged to the
+ * middle" is that neither edge may pass the clip's midpoint, so no single edge
+ * can take more than half. That is a much stronger rule and it forbids
+ * legitimate work — keeping the last two seconds of a ten-second take is one
+ * edge doing eighty per cent of it. Left unbuilt deliberately; it is the same
+ * two lines if it turns out to be what was wanted.
+ */
+export const MIN_TRIM_WINDOW_SECONDS = 0.25;
+
+/**
  * Whether a trim currently OWNS the pointer, for the pan hook's
  * `isGestureClaimed`.
  *
@@ -105,7 +131,11 @@ export function resolveTrim(
       const trimInSeconds = clamp(
         quantize(node.trimInSeconds + deltaSeconds),
         0,
-        node.fullDurationSeconds - node.trimOutSeconds
+        // Room for the window to survive: the far edge, LESS the minimum. The
+        // `Math.max(0, …)` matters for a source already shorter than the
+        // minimum — the ceiling must not go negative and invert the clamp,
+        // which would pin the edge at 0 and make the handle feel dead.
+        Math.max(0, node.fullDurationSeconds - node.trimOutSeconds - MIN_TRIM_WINDOW_SECONDS)
       );
       return {
         update: { mediaKind, trimInSeconds },
@@ -121,7 +151,7 @@ export function resolveTrim(
     const trimOutSeconds = clamp(
       quantize(node.trimOutSeconds - deltaSeconds),
       0,
-      node.fullDurationSeconds - node.trimInSeconds
+      Math.max(0, node.fullDurationSeconds - node.trimInSeconds - MIN_TRIM_WINDOW_SECONDS)
     );
     return {
       update: { mediaKind, trimOutSeconds },

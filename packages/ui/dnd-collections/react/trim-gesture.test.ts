@@ -6,7 +6,12 @@ import {
   type ImageMediaNode,
   type VideoMediaNode,
 } from "../core/graph";
-import { resolveMove, resolveTrim, TRIM_QUANTUM_SECONDS } from "./trim-gesture";
+import {
+  MIN_TRIM_WINDOW_SECONDS,
+  resolveMove,
+  resolveTrim,
+  TRIM_QUANTUM_SECONDS,
+} from "./trim-gesture";
 
 // Pure-resolver coverage for the pointer trim gesture: quantization to the
 // 0.1s grid and the reducer-shared clamps. The pointer lifecycle
@@ -73,10 +78,12 @@ describe("resolveTrim on audio", () => {
       mediaKind: "audio",
       trimInSeconds: 2,
     });
-    // Past the far end lands ON the limit rather than through it.
+    // Past the far end lands ON the limit rather than through it. The limit is
+    // `full - trimOut - MIN_TRIM_WINDOW_SECONDS` now, not `full - trimOut`:
+    // landing exactly on the far edge left a window of zero (PL15-015).
     expect(resolveTrim(audio(), "left", 99).update).toEqual({
       mediaKind: "audio",
-      trimInSeconds: 9,
+      trimInSeconds: 8.75,
     });
   });
 
@@ -120,10 +127,13 @@ describe("resolveTrim quantization", () => {
   });
 
   it("still clamps at the physical limit after snapping", () => {
-    // Over-drag the end far past the source: trim-out clamps to full - trim-in.
+    // Over-drag the end far past the source. This used to clamp to
+    // `full - trimIn` and leave `effectiveSeconds` at ZERO — the edge could be
+    // dragged through the middle of the clip and out the far side, swallowing
+    // it (PL15-015). The ceiling keeps a minimum window back now.
     const { update, live } = resolveTrim(video({ trimInSeconds: 2 }), "right", -100);
-    expect(update).toEqual({ mediaKind: "video", trimOutSeconds: 8 });
-    expect(live.effectiveSeconds).toBe(0);
+    expect(update).toEqual({ mediaKind: "video", trimOutSeconds: 7.75 });
+    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
   });
 
   it("does not leave float dust on the grid", () => {
@@ -147,5 +157,50 @@ describe("resolveMove quantization", () => {
 describe("TRIM_QUANTUM_SECONDS", () => {
   it("is the 0.1s grid the display path also rounds to", () => {
     expect(TRIM_QUANTUM_SECONDS).toBe(0.1);
+  });
+});
+
+// A TRIM MAY NOT SWALLOW ITS CLIP (PL15-015). Each edge used to be clamped
+// only against the other, which forbids CROSSING and permits MEETING — so a
+// drag could leave a window of zero and the clip would still be there,
+// occupying no time and impossible to grab back.
+describe("the minimum trim window", () => {
+  it("stops the LEFT edge short of the right one", () => {
+    const { update, live } = resolveTrim(video({ trimInSeconds: 0, trimOutSeconds: 1 }), "left", 100);
+    // 10 full, 1 trimmed off the end, so the left edge stops a quarter second
+    // before what is left of the source rather than at it.
+    expect(update).toEqual({ mediaKind: "video", trimInSeconds: 8.75 });
+    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
+  });
+
+  it("stops the RIGHT edge short of the left one", () => {
+    const { update, live } = resolveTrim(video({ trimInSeconds: 3, trimOutSeconds: 0 }), "right", -100);
+    expect(update).toEqual({ mediaKind: "video", trimOutSeconds: 6.75 });
+    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
+  });
+
+  it("applies to audio, which shares the windowed branch", () => {
+    const { live } = resolveTrim(audio({ trimInSeconds: 0, trimOutSeconds: 0 }), "left", 100);
+    expect(live.effectiveSeconds).toBe(MIN_TRIM_WINDOW_SECONDS);
+  });
+
+  it("leaves an ordinary trim untouched", () => {
+    // The floor must only bite at the extreme. A one-second pull on a
+    // seven-second window is not near it and must resolve exactly.
+    const { update } = resolveTrim(video({ trimInSeconds: 2, trimOutSeconds: 1 }), "left", 1);
+    expect(update).toEqual({ mediaKind: "video", trimInSeconds: 3 });
+  });
+
+  it("does not invert the clamp on a source SHORTER than the minimum", () => {
+    // The ceiling is `full - other - minimum`, which goes negative here. Left
+    // unguarded that is a max BELOW the min, and `clamp` would pin the edge at
+    // the ceiling — dragging the handle backwards. It floors at zero instead,
+    // so the edge simply cannot move.
+    const { update } = resolveTrim(
+      video({ fullDurationSeconds: 0.2, trimInSeconds: 0, trimOutSeconds: 0 }),
+      "left",
+      100,
+    );
+    expect(update).toEqual({ mediaKind: "video", trimInSeconds: 0 });
   });
 });
