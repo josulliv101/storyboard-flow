@@ -319,51 +319,35 @@ html body[data-scroll-locked] {
 }
 
 /* A collection CARD, called out while its child-timeline row's folder is
-   hovered (PL10-001, replacing PL9-002's glow): one elastic grow that
-   overshoots and springs back to rest. A one-shot, not a loop — the pointer
-   sits on a folder for as long as the user is reading the tree, and a throb
-   for all of that is noise.
+   hovered.
 
-   TRANSFORM only. Never the element's opacity (see the trash note above),
-   and never a width/height/margin: these cards sit in a virtualized strip
-   where a box-model change would shove every neighbour. A scale composites
-   on its own layer and moves nothing else on the board — which is exactly
-   why this one is allowed where the box change the old comment forbade is
-   not. */
-@keyframes collection-paired-callout {
-  0% {
-    transform: scale(1);
-  }
-  /* Out fast... */
-  40% {
-    transform: scale(1.06);
-  }
-  /* ...then past rest, and settle. The undershoot is what reads as elastic;
-     without it the card just inflates and deflates. */
-  68% {
-    transform: scale(0.985);
-  }
-  86% {
-    transform: scale(1.012);
-  }
-  100% {
-    transform: scale(1);
-  }
+   A STEADY GLOW, HELD WHILE THE ROW IS HOVERED (PL15-009). It was an elastic
+   SCALE — one grow that overshot and sprang back (PL10-001, itself replacing
+   PL9-002's glow) — and the jiggle is what was asked to go.
+
+   The glow is not a new invention: it is PL9-002's, which survived this whole
+   time inside `prefers-reduced-motion` as the version "for exactly the users
+   who cannot see the new one". Removing the animation promotes it to
+   everyone, so what the mark SAYS is unchanged and only how it says it is.
+
+   ON `.is-called-out-card`, which until now carried no rule at all and was a
+   bare e2e handle. The animation class is gone rather than emptied: a class
+   named `animate-` that animates nothing is a trap for the next reader.
+
+   NO LAYOUT, for the reason the old comment gave and which still holds —
+   these cards sit in a virtualized strip where a box-model change would shove
+   every neighbour. A box-shadow paints outside the box and takes no part in
+   layout or scroll size, which is a stronger version of the guarantee a
+   composited transform gave. */
+.is-called-out-card {
+  box-shadow: 0 0 16px 3px rgba(56, 189, 248, 0.5);
+  transition: box-shadow 150ms ease-out;
 }
 
-.animate-collection-paired-callout {
-  /* 320ms is COLLECTION_CALLOUT_KEYFRAMES_MS in graph-collection-hover.tsx.
-     Change one, change the other.
-
-     The class is held on for LONGER than this on purpose (see
-     COLLECTION_CALLOUT_MS there). Holding it for exactly this long looks
-     right and is not: the hold timer starts when the class is applied, the
-     animation starts a frame later, so an equal hold cancels the final
-     frames of the settle. */
-  animation: collection-paired-callout 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
-  /* Grow from the card's middle, so a card at either end of the strip pushes
-     out symmetrically instead of sliding off its own origin. */
-  transform-origin: center center;
+@media (prefers-reduced-motion: reduce) {
+  .is-called-out-card {
+    transition: none;
+  }
 }
 
 /* The trim view's grow-from-the-card (PL10-008). The browser morphs the
@@ -385,17 +369,8 @@ html body[data-scroll-locked] {
 @media (prefers-reduced-motion: reduce) {
   .animate-trash-arrival,
   .animate-trash-armed-pulse,
-  .animate-trash-hover-attention,
-  .animate-collection-paired-callout {
+  .animate-trash-hover-attention {
     animation: none;
-  }
-
-  /* The connection still has to READ without motion: with the scale off,
-     hold a steady glow for as long as the row is hovered instead. This is
-     the old PL9-002 call-out, kept for exactly the users who cannot see the
-     new one. */
-  .animate-collection-paired-callout {
-    box-shadow: 0 0 16px 3px rgba(56, 189, 248, 0.5);
   }
 }
 

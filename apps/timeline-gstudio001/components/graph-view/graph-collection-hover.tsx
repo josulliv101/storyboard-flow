@@ -3,9 +3,7 @@
 import {
   createContext,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -109,49 +107,36 @@ export function useCollectionHoverSource(collectionId: string): Readonly<{
   );
 }
 
-/**
- * How long the card's call-out keyframes run. MUST stay in sync with
- * `collection-paired-callout` in globals.css.
+/*
+ * TWO DURATIONS USED TO LIVE HERE and both are gone with the animation
+ * (PL15-009): `COLLECTION_CALLOUT_KEYFRAMES_MS`, which had to stay equal to
+ * the keyframes in globals.css, and `COLLECTION_CALLOUT_MS`, which was
+ * deliberately LONGER so a hold could outlast them.
+ *
+ * The second one is worth remembering even though nothing needs it now. A hold
+ * equal to the animation's own duration expired a frame or two BEFORE the
+ * animation ended — the timer started when the class was applied and the
+ * animation only started the frame after — so it dropped the class mid-flight
+ * and cancelled precisely the settle it existed to protect, on roughly half of
+ * runs. Any future "hold a class for exactly as long as its animation" has the
+ * same bug waiting in it.
  */
-const COLLECTION_CALLOUT_KEYFRAMES_MS = 320;
-
-/**
- * How long the class is HELD on the card, which is deliberately longer.
- *
- * The hold must OUTLAST the keyframes, not merely match them. This timer
- * starts when the class is set; the animation does not start until the frame
- * AFTER the browser has applied it. So a hold equal to the duration expires a
- * frame or two BEFORE the animation ends, drops the class mid-flight, and
- * cancels precisely what the hold exists to protect — the last frames of the
- * elastic settle. The old value was exactly 320 and did this on roughly half
- * of runs, reporting `cancelled` instead of `finished`.
- *
- * That is also why the e2e asserts on the animation's own outcome rather than
- * on the class still being present: presence is a race, `finished` vs
- * `cancelled` is the actual question.
- *
- * The margin is a few frames at 60Hz — enough to absorb a couple of slow ones,
- * and imperceptible because the class does nothing once the keyframes have
- * ended (no fill mode, so the card is already back at rest).
- */
-export const COLLECTION_CALLOUT_MS = COLLECTION_CALLOUT_KEYFRAMES_MS + 80;
 
 /**
  * The TARGET end, for a collection card: whether its row is being hovered
- * right now. Drives a one-shot call-out on the card (see
- * `graph-item-content`), so what matters is the transition into true.
+ * right now.
  *
- * It HOLDS past the pointer leaving. The call-out is an animation, and the
- * card only carries it for as long as this returns true — so a flick across a
- * folder used to start the elastic scale and then kill it a frame or two in,
- * leaving a card that twitched and stopped. Once triggered it now plays out,
+ * IT FOLLOWS THE POINTER EXACTLY, and that is a change of kind rather than a
+ * simplification (PL15-009). This used to HOLD past the pointer leaving,
+ * because the call-out was a one-shot animation: a flick across a folder
+ * started the elastic scale and then killed it a frame or two in, leaving a
+ * card that twitched and stopped, so once triggered it was made to play out
  * whether or not the pointer stayed.
  *
- * The hold is timed from the FIRST trigger, not extended by later ones: it
- * tracks the animation that is already running, so re-entering the same folder
- * mid-play lets that play finish rather than restarting it (a wiggle over one
- * row shouldn't strobe). Re-entering after it ends drops the class and re-adds
- * it, which is what restarts the animation.
+ * A steady glow wants the opposite. There is no play to protect, and a
+ * highlight that outlived the pointer by a third of a second would read as
+ * lag — the card staying lit after you have moved on, which is exactly the
+ * complaint a hold was invented to cure in the other direction.
  */
 export function useCollectionHoverTarget(collectionId: string): boolean {
   const channel = useContext(CollectionHoverContext);
@@ -161,26 +146,5 @@ export function useCollectionHoverTarget(collectionId: string): boolean {
     () => false,
   );
 
-  const [holding, setHolding] = useState(false);
-  const [wasHovered, setWasHovered] = useState(hovered);
-
-  // Latch on the RISING edge, adjusted during render (the repo's
-  // cascading-render-safe pattern — a synchronous setState in an effect trips
-  // the lint). Edge-triggered, not level-triggered: latching on every render
-  // where `hovered` is true would re-arm the timer forever while the pointer
-  // rests on a folder.
-  if (hovered !== wasHovered) {
-    setWasHovered(hovered);
-    if (hovered) setHolding(true);
-  }
-
-  useEffect(() => {
-    if (!holding) return;
-    // Deliberately NOT keyed on `hovered`: the whole point is that the pointer
-    // leaving must not cancel this timer.
-    const timer = window.setTimeout(() => setHolding(false), COLLECTION_CALLOUT_MS);
-    return () => window.clearTimeout(timer);
-  }, [holding]);
-
-  return hovered || holding;
+  return hovered;
 }

@@ -4860,10 +4860,15 @@ test.describe("graph view E2E", () => {
   });
 
   test("hovering a child row's folder calls out its collection card", async ({ page }) => {
-    // PL9-002, revising PL8-012: ONE direction now, and the card is called out
-    // by an animation rather than its icon changing. PL10-001 made that
-    // animation an elastic SCALE on the card itself (the old inset glow
-    // overlay is gone), so the marker moved onto the card.
+    // PL9-002, revising PL8-012: ONE direction, and the card is called out
+    // rather than its icon changing.
+    //
+    // The MARK has been round a loop. PL9-002 was a glow, PL10-001 replaced it
+    // with an elastic scale on the card itself, and PL15-009 removed the
+    // jiggle — landing back on a glow, which had survived the whole time
+    // inside `prefers-reduced-motion` as the version for users who could not
+    // see the scale. What never changed is the claim: this row and that card
+    // are the same collection.
     await installGraphApi(page);
     await openGraph(page); // children timelines on
     const cardIcon = drillButton(page, "Scene A");
@@ -4886,85 +4891,58 @@ test.describe("graph view E2E", () => {
     await rowFolder.hover();
     await expect(calledOut).toHaveCount(1);
 
-    // EVERYTHING that has to be observed mid-animation is read in ONE
-    // evaluate, because the keyframes last 320ms and each round trip to the
-    // page spends part of that. Split across four calls, as this once was, a
-    // loaded CI runner reaches the end of the animation before the last one
-    // lands and the test fails on timing rather than on behaviour.
+    // THE MARK IS A STEADY GLOW, NOT AN ANIMATION (PL15-009).
     //
-    // The class is not the point — the KEYFRAMES are. Assert the card is
-    // actually running them, and that they scale it (an animation whose name
-    // resolves but whose rule was renamed away would still pass on class
-    // presence alone).
-    const running = await calledOut.evaluate((el) => {
+    // It was an elastic scale, and most of what this test used to do was cope
+    // with that: everything had to be read in ONE evaluate because the
+    // keyframes lasted 320ms and each round trip spent part of them, and the
+    // flick had to be judged by recording `animation.finished` up front rather
+    // than by looking for the class again and hoping to be quick enough. None
+    // of that is needed against a mark that simply stays while the pointer
+    // does — which is worth noting, because a test that stops racing the clock
+    // is most of the benefit of the change.
+    const marked = await calledOut.evaluate((el) => {
       const style = getComputedStyle(el);
-      const animation = el
-        .getAnimations()
-        .find(
-          (candidate) =>
-            (candidate as CSSAnimation).animationName === "collection-paired-callout",
-        );
-
-      // How the flick is judged, instead of by looking for the class again
-      // later and hoping to be quick enough. `finished` resolves if the
-      // keyframes play out and REJECTS if the animation is cancelled — and
-      // dropping the class is exactly what cancels it. So the outcome is
-      // recorded here, while the animation is definitely still in hand, and
-      // simply read back afterwards. No wall-clock race either way.
-      const target = window as Window & { __calloutOutcome?: string };
-      target.__calloutOutcome = "pending";
-      animation?.finished.then(
-        () => {
-          target.__calloutOutcome = "finished";
-        },
-        () => {
-          target.__calloutOutcome = "cancelled";
-        },
-      );
-
       return {
-        name: style.animationName,
-        scales: animation !== undefined,
+        glow: style.boxShadow,
+        // The class alone is not the point: a rule renamed away would still
+        // leave the class on the element and nothing on the screen.
+        //
+        // `animationName`, NOT `getAnimations().length`. A CSS TRANSITION is an
+        // Animation as far as `getAnimations` is concerned, and the glow has
+        // one (it fades in over 150ms), so counting them can never reach zero
+        // and the assertion would be testing nothing it claims to. The
+        // computed `animation-name` asks the question actually meant: are any
+        // KEYFRAMES running on this card.
+        animationName: style.animationName,
         inCard: el
           .closest("[data-node-wrapper]")
           ?.querySelector("[data-node-id]")
           ?.getAttribute("data-node-id"),
       };
     });
-    expect(running.inCard).toBe(CHILD_ID);
-    expect(running.name).toBe("collection-paired-callout");
-    expect(running.scales).toBe(true);
+    expect(marked.inCard).toBe(CHILD_ID);
+    expect(marked.glow).not.toBe("none");
+    expect(marked.animationName).toBe("none");
 
-    // It is a TRANSFORM, so it reflows nothing: the neighbour must not budge
-    // while the called-out card is mid-animation. (The called-out card's own
-    // box does change under the scale — that is the effect, and measuring it
-    // mid-flight would only race the keyframes.)
+    // IT REFLOWS NOTHING, and the claim is now stronger than it was. Under the
+    // scale only the NEIGHBOUR could be asserted still — the called-out card's
+    // own box changed, because changing it was the effect. A box-shadow paints
+    // outside the border box and takes no part in layout or scroll size, so
+    // both boxes hold.
     const neighbourDuring = (await neighbour.boundingBox())!;
     expect(neighbourDuring.x).toBeCloseTo(neighbourBefore.x, 0);
     expect(neighbourDuring.width).toBeCloseTo(neighbourBefore.width, 0);
+    const cardDuring = (await card.boundingBox())!;
+    expect(cardDuring.x).toBeCloseTo(cardBefore.x, 0);
+    expect(cardDuring.width).toBeCloseTo(cardBefore.width, 0);
 
-    // PL10-002: a flick still plays the whole animation. Without the hold the
-    // class would come off one or two frames in, cancelling the animation
-    // mid-keyframe; with it, the keyframes run to their end.
-    //
-    // This used to assert `calledOut.count() === 1` right after the move —
-    // "the class is still there" — which is only true inside the remaining
-    // slice of those 320ms. It was reading the clock, not the behaviour, and
-    // failed whenever the runner was slow enough to have spent the animation
-    // already. Waiting for the recorded outcome asks the real question, and a
-    // torn-off animation reports `cancelled` however long the wait takes.
+    // IT FOLLOWS THE POINTER. The hold that used to keep the class on past a
+    // flick is gone with the animation it protected — there is no play left to
+    // let finish, and a highlight outliving the pointer by a third of a second
+    // would read as lag.
     await page.mouse.move(0, 0);
-    await page.waitForFunction(
-      () => (window as Window & { __calloutOutcome?: string }).__calloutOutcome !== "pending",
-    );
-    const outcome = await page.evaluate(
-      () => (window as Window & { __calloutOutcome?: string }).__calloutOutcome,
-    );
-    expect(outcome).toBe("finished");
-
-    // ...and then it ends on its own.
     await expect(calledOut).toHaveCount(0);
-    // And the card comes back to exactly the box it started in.
     const cardAfter = (await card.boundingBox())!;
     const neighbourAfter = (await neighbour.boundingBox())!;
     expect(neighbourAfter.x).toBeCloseTo(neighbourBefore.x, 0);
@@ -5905,12 +5883,23 @@ test.describe("graph view E2E", () => {
     await expect(frame).toHaveCount(0);
   });
 
-  test("the call-out's scale never grows a scroll area", async ({ page }) => {
+  test("the call-out never grows a scroll area", async ({ page }) => {
     // PL10-003. A transform that spills past its box counts as SCROLLABLE
     // overflow, so the call-out used to grow whichever scroller held the card
     // and flash a scrollbar for the length of the animation. The card's
     // wrapper is `overflow: clip` (with a margin wide enough for the growth
     // and for the drop bars) so nothing above it ever hears about the scale.
+    //
+    // THE SCALE IS GONE (PL15-009) and the mark is a box-shadow, which cannot
+    // produce scrollable overflow at all — so this now passes by construction
+    // rather than by the clipping wrapper. Kept anyway, and rewritten rather
+    // than deleted: the invariant it states is about the CALL-OUT, not about
+    // one implementation of it, and it is the test that would catch a future
+    // mark going back to a transform and taking the scrollbars with it.
+    //
+    // Simpler for it, too. The old version had to pause the animation and
+    // drive `currentTime` to the 1.06 peak, because sampling a 320ms one-shot
+    // from the test side raced it. A steady mark can just be looked at.
     await installGraphApi(page);
     await openGraph(page);
     const rowFolder = page
@@ -5918,43 +5907,29 @@ test.describe("graph view E2E", () => {
       .getByRole("button", { name: "Expand" })
       .first();
 
+    // Every ancestor's scroll size, measured from the card's own wrapper
+    // upward. Start ABOVE the clip box itself: a clip container still reports
+    // its own scrollWidth, it just stops handing it upward, and that upward
+    // propagation is the whole bug.
+    const ancestorSizes = () =>
+      page.evaluate((childId) => {
+        const card = document.querySelector(`[data-node-id="${childId}"]`);
+        if (!card) return ["no card"];
+        const sizes: string[] = [];
+        for (let n = card.closest("[data-node-wrapper]")?.parentElement; n; n = n.parentElement) {
+          sizes.push(`${n.tagName}.${n.className}: ${n.scrollWidth}x${n.scrollHeight}`);
+        }
+        return sizes;
+      }, CHILD_ID);
+
+    const rest = await ancestorSizes();
+    expect(rest.length).toBeGreaterThan(0);
+    expect(rest[0]).not.toBe("no card");
+
     await rowFolder.hover();
     await expect(page.locator(".is-called-out-card")).toHaveCount(1);
 
-    // Measure every ancestor at rest and at the animation's peak. Pausing the
-    // animation is what makes this deterministic — sampling a 320ms one-shot
-    // from the test side would race it.
-    const changed = await page.evaluate(() => {
-      const card = document.querySelector(".is-called-out-card");
-      if (!card) return ["no call-out"];
-      const animation = card.getAnimations()[0];
-      if (!animation) return ["no animation"];
-      const chain: Element[] = [];
-      // Start ABOVE the clip box itself: a clip container still reports its
-      // own scrollWidth, it just stops handing it upward, and that upward
-      // propagation is the whole bug.
-      for (let n = card.closest("[data-node-wrapper]")?.parentElement; n; n = n.parentElement) {
-        chain.push(n);
-      }
-      const snap = () => chain.map((n) => `${n.scrollWidth}x${n.scrollHeight}`);
-      animation.pause();
-      animation.currentTime = 0;
-      const rest = snap();
-      animation.currentTime = 128; // the 1.06 peak
-      const peak = snap();
-      animation.play();
-      return peak.flatMap((size, i) => {
-        // Read into locals: this runs in the BROWSER, so the test file's
-        // helpers do not exist here.
-        const before = rest[i];
-        const element = chain[i];
-        if (before === undefined || element === undefined) return [];
-        return size === before
-          ? []
-          : [`${element.tagName}.${element.className}: ${before} -> ${size}`];
-      });
-    });
-    expect(changed).toEqual([]);
+    expect(await ancestorSizes()).toEqual(rest);
   });
 
   test("clicking away anywhere that is not a control clears the selection", async ({

@@ -158,7 +158,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           // between folders drops it off one card and adds it to the next, so
           // the animation re-fires without a counter or a manual restart, and
           // re-entering the same folder replays it.
-          calledOut ? "is-called-out-card animate-collection-paired-callout" : "",
+          calledOut ? "is-called-out-card" : "",
         ].join(" ")}
       >
         {muted && <DisabledChip inherited={node.disabled !== true} />}

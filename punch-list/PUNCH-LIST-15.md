@@ -437,7 +437,9 @@ puts the slider back roughly where the whole control lives today.
 
 ## PL15-009 — Remove the paired-card jiggle
 
-- Status: Not started
+- Status: Complete — the jiggle is gone; the pairing signal is now the STATIC
+  glow that already existed for reduced-motion users. Say if you wanted the
+  signal gone entirely and it is a one-line follow-up.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (children timelines shown, hover a child row's folder)
 - Area: `app/globals.css` (`collection-paired-callout`),
