@@ -903,7 +903,11 @@ same change to the same two lines and a completely different editing tool.
 
 ## PL15-016 — The strip stutters while it is panned
 
-- Status: Not started
+- Status: Partial — the drag offset is off the React render path (it is a CSS
+  variable written straight to the row, so a pan touches one style property and
+  React is not involved). The structural cause is removed and the reasoning is
+  sound, but THE PROFILE THIS ITEM ASKS FOR HAS NOT BEEN RUN, so it is not
+  established that the stutter is gone. Do not close it on the diff.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details, then drag the strip sideways)
 - Area: `components/graph-view/graph-item-details-modal.tsx` (the `swipe`
@@ -1163,7 +1167,10 @@ production, and nobody notices until someone watches carefully.
 
 ## PL15-020 — A preview-height invariant regressed somewhere in this list
 
-- Status: OPEN — reproduced, NOT attributed. Raised by me, against my own work.
+- Status: OPEN — reproduced, NOT attributed, and INTERMITTENT. Raised by me,
+  against my own work. Rate measured at the end of the list: 4 of 6 passing in
+  isolation, and a full suite run that came back entirely green — so a green
+  run is NOT evidence this is fixed. `origin/main` passed it 6 of 6.
 - Area: `apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts`
   (`preview height is the user's: tree growth never steals it, and a toggle
   restores it`)
