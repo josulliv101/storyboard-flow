@@ -20,15 +20,37 @@ export function acceptsNativeDrag(event: DragEvent<HTMLElement>): boolean {
 
 /**
  * The drop-zone affordance: every eligible target outlines itself for the
- * duration of the drag, and the one under the pointer is filled in. Ring and
- * background only — nothing here may change the box, or arming the affordance
- * would reflow the strips mid-drag and move the very gaps being aimed at.
+ * duration of the drag, and the one under the pointer is filled in.
+ *
+ * NOTHING HERE MAY CHANGE THE BOX. Arming the affordance mid-drag must not
+ * reflow the strips, or it would move the very gaps being aimed at — so the
+ * edge is painted outside the box (an outline; a ring before it) and never as
+ * a border.
+ *
+ * DASHED AND GREY (PL15-012). It was solid `sky-400` — a bright blue edge over
+ * a blue wash, on every eligible surface, for the whole drag. Loud for
+ * something that is only saying "you could let go here": the drag already has
+ * one thing worth shouting, and it is the insertion bar below, which says
+ * where the thing will actually LAND. Ambient state gives up the accent; the
+ * precise signal keeps it.
+ *
+ * AN OUTLINE, NOT A RING, and that is forced rather than chosen. Tailwind's
+ * `ring-*` is a box-shadow and a box-shadow cannot be dashed. `outline` can,
+ * and shares the property that matters here: it is painted outside the box and
+ * takes no part in layout, so the rule above still holds. A `border` would
+ * not — it would add to the box and do exactly the reflow this must not do.
+ *
+ * The two states stay two states: the surface under the pointer has to be
+ * plainly the one that will take the drop, so it goes brighter and doubles the
+ * dash's weight rather than differing only in tint.
  */
 export function dropZoneClassName(armed: boolean, hovered: boolean): string {
   if (!armed) return "relative rounded-lg";
   return [
-    "relative rounded-lg ring-1 transition-colors duration-150 motion-reduce:transition-none",
-    hovered ? "bg-sky-400/10 ring-2 ring-sky-400" : "bg-sky-400/[0.03] ring-sky-400/40",
+    "relative rounded-lg outline-dashed transition-colors duration-150 motion-reduce:transition-none",
+    hovered
+      ? "bg-zinc-300/[0.07] outline-2 outline-zinc-300/70"
+      : "bg-zinc-300/[0.02] outline-1 outline-zinc-400/35",
   ].join(" ");
 }
 
@@ -70,5 +92,8 @@ export function NativeDropStatus({ upload }: Readonly<{ upload: DropSummary | nu
  * from the wrapper's ORIGIN, so without the anchor the line draws in the wrong
  * place entirely. z-30 clears the grid's own overlay tier as well as its cards.
  */
+/* IT KEEPS THE ACCENT, and now it is the only thing in a drag that has one —
+ * see `dropZoneClassName`. The zone says "this surface would take it"; this
+ * says "it lands HERE", which is the answer actually being aimed at. */
 export const DROP_INDICATOR_CLASS =
   "pointer-events-none absolute left-0 z-30 w-0.5 rounded bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.9)]";

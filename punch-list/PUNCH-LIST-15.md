@@ -777,3 +777,66 @@ is the wrong way round. Either the label is announced (and the mark stays
 hidden beside it), or there is a reason it should not be. Choose deliberately
 rather than inheriting the attribute.
 
+## PL15-015 — A trim edge cannot be dragged into the middle
+
+- Status: Not started
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a video clip's details — the trim strip with the draggable window)
+- Area: `packages/ui/dnd-collections/react/trim-gesture.ts`
+  (the windowed branch of the trim reducer)
+- Screenshot: Not captured
+
+In the details modal, the trim strip's window can have either edge dragged
+deep into the clip — the start pulled to the middle and past it, the end
+likewise. It should stop: an edge is constrained, not free to swallow the
+clip.
+
+**The mechanism, found.** The reducer clamps each edge only against the OTHER
+edge:
+
+```
+trimInSeconds  = clamp(…, 0, fullDurationSeconds - trimOutSeconds)
+trimOutSeconds = clamp(…, 0, fullDurationSeconds - trimInSeconds)
+```
+
+So the two can meet. The window has no MINIMUM — the clamp forbids crossing
+and permits collapsing to zero, which is why an edge keeps travelling all the
+way through the middle and out the far side. There is no floor anywhere else
+either: `MAX_HANDLE_SHARE` only decides whether a handle is DRAWN on a short
+clip, and does nothing to a drag already under way.
+
+Acceptance criteria:
+
+- Neither edge can reduce the window below a minimum length.
+- The edge stops at that limit and stays under the pointer's control — it must
+  not jump, snap back, or drop the gesture.
+- The limit holds for both edges and for video and audio alike (one windowed
+  branch serves both).
+- Committing at the limit stores the clamped value; the previewed width and
+  the committed data still agree exactly, which is what `quantize`-then-`clamp`
+  is for.
+
+**SCOPE IS WIDER THAN THE MODAL.** `trim-gesture.ts` is the shared reducer —
+the same code backs the trim handles on the strip's CARDS. A floor added here
+lands in both places, which is almost certainly right (a card edge can collapse
+a clip today too) but is worth knowing before it is called a modal fix. The
+package has `trim-gesture.test.ts` beside it; the floor belongs there as a unit
+test, not only in a story.
+
+**Which limit was meant needs settling.** Two readings of "constrained as far
+as end points", and they are different products:
+
+- **A minimum window** — an edge may travel until some floor of remaining clip
+  and no further. This is the reading assumed above, and it is the one that
+  matches the mechanism found. A floor needs a number: one frame is the honest
+  minimum, the 0.1s quantize grid is the cheapest, and something like half a
+  second is what actually keeps a clip usable.
+- **A hard halfway stop** — neither edge may pass the midpoint, so no single
+  edge can take more than half the clip. This is closer to the words "cannot be
+  dragged to middle" but is a stronger rule, and it would forbid legitimate
+  trims (keeping the last two seconds of a ten-second take is one edge doing
+  80% of the work).
+
+Recommend the minimum window. Say which before it is built — the two are the
+same change to the same two lines and a completely different editing tool.
+

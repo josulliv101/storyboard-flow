@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import { AuthProvider } from "@/components/auth/auth-provider";
+import { AuthProvider, type AuthUser } from "@/components/auth/auth-provider";
 
 import { TimelineSidebar } from "./timeline-sidebar";
 import { RAIL_OPEN_WIDTH_PX, RAIL_WIDTH_PX } from "./sidebar-icon-styles";
@@ -45,7 +45,10 @@ function forgetRailPreference(): void {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
-const USER = {
+// ANNOTATED, not inferred. Inference gives `picture` the literal type `null`,
+// which makes every helper taking `typeof USER` reject a user that HAS a
+// picture — including the one the avatar-fallback story is built on.
+const USER: AuthUser = {
   uid: "u-story",
   email: "editor@example.test",
   name: "Story Editor",
@@ -64,7 +67,7 @@ const USER = {
  * testing had been swapped for the default's `null` before the assertion ran,
  * and "no picture" falls back for a reason that has nothing to do with the bug.
  */
-function stubFetch(user: typeof USER = USER) {
+function stubFetch(user: AuthUser = USER) {
   window.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
     const body = url.includes("/api/auth/me")
@@ -79,7 +82,7 @@ function stubFetch(user: typeof USER = USER) {
   }) as typeof window.fetch;
 }
 
-function Harness({ user = USER }: { user?: typeof USER }) {
+function Harness({ user = USER }: { user?: AuthUser }) {
   return (
     // The rail is `h-screen` and sticky; the frame gives it a page to sit in
     // and the app's ground to be read against.

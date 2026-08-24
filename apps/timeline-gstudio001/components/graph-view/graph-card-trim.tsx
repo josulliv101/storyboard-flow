@@ -118,24 +118,31 @@ export const GraphTrimHandle = memo(function GraphTrimHandle({
         // the outer edge — so the grip below, at a measured 50%, still read as
         // off-centre. The bar was never the problem; the field around it was.
         //
-        // QUIET AT REST, and the armed state below is what pays for it. This
-        // was a solid `white/85` — what an affordance looks like when it has
-        // to announce itself unaided, on every clip, forever. It no longer
-        // does: a press on the strip has to settle before it trims (the same
-        // drag is how the strip pans), so the handle now has a MOMENT to speak
-        // at, and at rest it can recede into the clip instead of sitting on
-        // six edges shouting. GREY rather than a dimmer white because it has
-        // to hold against a bright frame as well as a dark one, and because
-        // grey is the one value here that is not already a state — blue is
-        // selection everywhere on this board (the ring, the check, the count)
-        // and amber reads as a third accent.
-        "bg-zinc-400/45",
-        // ARMED: the press settled, and the next pull edits rather than
-        // scrolls. Those two outcomes are far enough apart that the handle has
-        // to say which one it is holding — the one moment it goes full
-        // strength. Colour only, no geometry: it must not move under the
-        // finger already on it.
-        "transition-colors group-data-[trim-armed=true]/trim:bg-white/95",
+        // WHITE AT REST (PL15-004). It was `bg-zinc-400/45` — grey, chosen so
+        // the handle could recede into the clip and let the armed state carry
+        // the announcement. The call now is the other way: a handle should
+        // read as a handle before you touch it, and it wears the same white
+        // arming used to promote it to.
+        //
+        // The grey had a reason worth keeping in view rather than deleting:
+        // it holds against a bright frame as well as a dark one, and it was
+        // the one value here that is not already a state (blue is selection
+        // everywhere on this board — the ring, the check, the count — and
+        // amber reads as a third accent). White at 95% is opaque enough to
+        // hold on a blown-out frame; that is the case to look at first if this
+        // ever reads badly.
+        "bg-white/95",
+        // ARMING IS THE GRIP'S JOB NOW, and it has to be, because the collar
+        // has no colour change left to make — it is already at full strength
+        // before the press settles.
+        //
+        // That distinction still matters: the same drag pans the strip, so a
+        // settled press means the next pull EDITS rather than scrolls, and the
+        // handle has one moment to say which it is holding. The grip below
+        // says it — `h-5` to full height, `black/45` to `black/70` — a
+        // geometry and ink change INSIDE the handle rather than to it, so
+        // nothing moves under the finger already on it.
+        "transition-colors",
         side === "left" ? "rounded-l-md" : "rounded-r-md",
       ].join(" ")}
     >

@@ -528,29 +528,31 @@ async function openGraph(page: Page): Promise<void> {
   await strip(page, PROJECT_ID)
     .locator('[data-node-id="alpha"]')
     .waitFor({ state: "visible", timeout: 30000 });
-  await leaveFlatMode(page);
   // Children timelines are OFF by default now; this suite predates that
   // and reads the tree throughout, so reveal it through the real control
   // (the sidebar's children icon).
   await page.getByRole("button", { name: "Show children timelines" }).click();
 }
 
-/**
- * Put the board back into its NESTED reading.
+/*
+ * `leaveFlatMode` USED TO LIVE HERE, and every test in this file called it —
+ * through `openGraph`, or by hand where a test navigates itself.
  *
- * The strip opens FLAT, and a flat run has no collection cards — it replaces
- * every collection with its leaves — so a test about drilling in, dropping,
- * or reordering is asking about a shape that is not on screen. Flat also
- * refuses `move-nodes` outright (see `commandPolicy`), so a drag still runs,
- * still animates, and is then declined: the card returns and nothing says why
- * except a toast the test never reads.
+ * It existed because the strip opened FLAT, and a flat run has no collection
+ * cards (it replaces every collection with its leaves), so a test about
+ * drilling in, dropping or reordering was asking about a shape that was not on
+ * screen. Flat also refuses `move-nodes` outright (see `commandPolicy`), so a
+ * drag ran, animated, and was then declined.
  *
- * Separate from `openGraph` because several tests navigate themselves — they
- * are about what a bare URL does — and still need the nested board afterwards.
+ * THE STRIP OPENS IN COLLECTIONS NOW (PL15-003), so there is nothing to leave
+ * and the helper is gone rather than kept as a no-op. Note what its removal
+ * would have looked like if it had been left calling the old control: the
+ * button is named for the state it moves you TO, so "Show collections" simply
+ * does not exist on arrival any more, and every call would have waited out its
+ * timeout — a suite that hangs rather than one that fails.
  *
- * The control is named for the state it moves you TO, so it reads "Show
- * collections" while flat. Leaving restores "Show all items in order", which
- * is what the flat-specific tests click to go back.
+ * `enableRuler` below still clicks "Show all items in order" to ENTER flat,
+ * which is the direction that still has somewhere to go.
  */
 /**
  * Add a collection through the Collection tool — the CLICK route.
@@ -562,10 +564,6 @@ async function openGraph(page: Page): Promise<void> {
  */
 async function addCollectionViaButton(page: Page): Promise<void> {
   await page.locator('[data-tool-button="collection"]').click();
-}
-
-async function leaveFlatMode(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Show collections" }).click();
 }
 
 /** A collection card's metadata row in the project strip, which carries
@@ -2040,12 +2038,6 @@ test.describe("graph view E2E", () => {
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    // This test navigates itself (it checks what a bare URL does at the root),
-    // so it does not go through `openGraph` and has to leave flat on its own.
-    // Flat refuses `move-nodes`, so the drag below would run, animate, and be
-    // declined — the card returning to where it started, with the reason only
-    // in a toast.
-    await leaveFlatMode(page);
     expect(await stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
     const projectCrumb = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
     await expect(projectCrumb).toHaveCount(1);
@@ -2097,10 +2089,6 @@ test.describe("graph view E2E", () => {
     await strip(page, GRANDCHILD_ID)
       .locator('[data-node-id="g1"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    // Deep-linked rather than opened through `openGraph`, so flat is still on
-    // and would refuse the move below. See `leaveFlatMode`.
-    await leaveFlatMode(page);
-
     // BOTH ancestors are drop targets — the project (root) and Scene A (parent).
     await expect(page.locator("[data-graph-ancestor-drop]")).toHaveCount(2);
     const projectCrumb = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
