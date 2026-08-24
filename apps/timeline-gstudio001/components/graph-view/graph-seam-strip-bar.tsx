@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, Settings2 } from "lucide-react";
 
 import {
   BAR_COLLECTION_COLOURS_ENABLED,
@@ -18,6 +18,11 @@ import {
 import { SEAM_LANE_HEIGHT_PX, SeamLane, type SeamHover } from "./graph-seam-lane";
 import { HAIRLINE, SURFACE_WELL } from "./graph-details-design";
 import { SegmentedControl } from "./graph-details-segmented";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/core/dropdown-menu";
 import { SeamMinimap } from "./graph-seam-minimap";
 import { SEAM_RULER_TOTAL_PX, SeamRuler } from "./graph-seam-ruler";
 import {
@@ -1205,12 +1210,13 @@ export function SeamStripBar({
         // between the minimap and the top of the controls.
         className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 pt-3 pb-2"
       >
-        {/* HIDDEN, NOT WRAPPED, on a narrow view. Wrapping this row costs the
-            strip below a line of height it has to be told about — see the
-            scrim's top padding — and the two settings here are set once, while
-            the transport and the clock are used continuously. The row keeps
-            what is being USED. */}
-        <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsLeft}</div>
+        {/* EMPTY, AND HOLDING THE COLUMN OPEN.
+            `settingsLeft` moved into the gear at the far right (PL15-006), but
+            the row is a three-column grid whose middle track is what centres
+            the transport — removing this cell would hand the transport the
+            left third as well and it would no longer be in the middle of
+            anything. */}
+        <div aria-hidden="true" className="min-w-0" />
 
         {/* THE TRANSPORT, AS ONE OBJECT AND THE BIGGEST THING IN THE ROW.
             It was three small icon buttons with the same weight as the
@@ -1325,31 +1331,72 @@ export function SeamStripBar({
             <span>{formatClock(totalSeconds)}</span>
           </span>
 
-          {/* FIT: the two scales worth one press.
-              Zoom was ⌘-wheel and nothing else, which meant the two scales
-              anyone actually wants — this scene, and the lot — were reachable
-              only by rolling until they happened to arrive. Both are one
-              `fitPixelsPerSecond` call the bar was already making on open;
-              this just gives them a button. */}
-          <div className="hidden shrink-0 md:flex">
-            <SegmentedControl
-              label="fit"
-              ariaLabel="Fit the bar to"
-              groupAttribute="data-seam-fit"
-              segments={(["clip", "all"] as const).map((mode) => ({
-                value: mode,
-                label: mode,
-                title:
-                  mode === "clip"
-                    ? "Fit this clip's collection"
-                    : "Fit everything the bar reaches",
-                active: mode === fitMode,
-              }))}
-              onSelect={fitTo}
-            />
-          </div>
+          {/* FIT MOVED INTO THE GEAR (PL15-006). It is the two scales worth
+              one press — this scene, and the lot — but it is still a thing you
+              set rather than a thing you drive, so it sits with the other two
+              settings rather than in the row. */}
 
           <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsRight}</div>
+
+          {/* THE VIEW'S SETTINGS, BEHIND ONE CONTROL (PL15-006).
+              What the bar's boxes draw, where the hover card sits, and what the
+              zoom fits to were three labelled groups strung along this row —
+              nine or ten segments of chrome around a transport, all of them
+              things you set once and then work. REACH STAYS OUT because it is
+              not that kind of setting: it changes how much of the sequence the
+              bar is showing, which is a thing you reach for while reading it.
+
+              A GEAR, NOT AN ELLIPSIS. The project menu next door documents the
+              distinction and it holds here: an ellipsis says "more things to DO
+              here", a cog says "how this is configured". These are all the
+              second kind.
+
+              Non-modal for the reason every other menu in this header is:
+              Radix's modal default puts `pointer-events: none` on the body,
+              which stops the trigger receiving the click that should close its
+              own menu.
+
+              NOT gated on `md:` like the groups it replaces. Those were hidden
+              on a narrow view because a row of segmented controls has nowhere
+              to go; a menu is the same size whatever the viewport, so folding
+              them behind it makes them reachable on a phone for the first
+              time. */}
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-seam-settings-menu
+                aria-label="Bar settings"
+                title="Bar settings — frames, hover card, and what the zoom fits"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+              >
+                <Settings2 aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              side="top"
+              align="end"
+              data-seam-settings-content
+              className="flex w-auto flex-col items-start gap-3 p-3"
+            >
+              {settingsLeft}
+              <SegmentedControl
+                label="fit"
+                ariaLabel="Fit the bar to"
+                groupAttribute="data-seam-fit"
+                segments={(["clip", "all"] as const).map((mode) => ({
+                  value: mode,
+                  label: mode,
+                  title:
+                    mode === "clip"
+                      ? "Fit this clip's collection"
+                      : "Fit everything the bar reaches",
+                  active: mode === fitMode,
+                }))}
+                onSelect={fitTo}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

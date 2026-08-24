@@ -439,7 +439,32 @@ function centreBox(): HTMLElement {
  * scope for the session, so a story that leaves frames on hands them to
  * whichever story runs next in the same browser.
  */
+/**
+ * Open the bar's settings gear, if its contents are not already showing.
+ *
+ * FRAMES, CARD AND FIT LIVE BEHIND IT NOW (PL15-006) — they were three
+ * labelled groups strung along the controls row and are one menu. Every story
+ * that presses one of their segments has to open the menu first, and a handle
+ * behind an unopened trigger fails as a TIMEOUT rather than an assertion, so
+ * this exists to be called rather than each story remembering.
+ *
+ * Idempotent on purpose: several of these helpers are called in sequence, and
+ * a second click on an open trigger would close it again.
+ */
+function openBarSettings(): void {
+  if (document.querySelector("[data-seam-settings-content]") !== null) return;
+  const trigger = document.querySelector<HTMLButtonElement>("[data-seam-settings-menu]");
+  expect(trigger).not.toBeNull();
+  // POINTERDOWN, NOT `click()`. Radix opens a dropdown on the pointer going
+  // DOWN — a synthetic `click()` dispatches only the click and the menu never
+  // opens, so every helper below then looked for its group inside content that
+  // was not there and failed on a null that had nothing to do with the group.
+  fireEvent.pointerDown(trigger!, { button: 0, isPrimary: true });
+  expect(document.querySelector("[data-seam-settings-content]")).not.toBeNull();
+}
+
 function framesTo(label: string): void {
+  openBarSettings();
   const group = document.querySelector<HTMLElement>("[data-details-bar-frames]");
   expect(group).not.toBeNull();
   const button = Array.from(group!.querySelectorAll("button")).find(
@@ -2765,6 +2790,7 @@ export const ThePlaybarOpensAsFilm: Story = {
 
     // The control says so too, which is what makes the bar's state readable
     // rather than merely true.
+    openBarSettings();
     const group = document.querySelector<HTMLElement>("[data-details-bar-frames]")!;
     const badges = Array.from(group.querySelectorAll("button"));
     expect(badges.map((badge) => badge.textContent?.trim())).toEqual([
@@ -2872,7 +2898,10 @@ export const TheTwoBarsAreAdjacent: Story = {
 
     // ── AND EVERYTHING ELSE IS IN THAT ROW WITH IT ────────────────────────
     const row = document.querySelector<HTMLElement>("[data-seam-controls]")!;
-    expect(row.querySelector("[data-details-bar-frames]")).not.toBeNull();
+    // THE SETTINGS ARE BEHIND THE GEAR, NOT IN THE ROW (PL15-006) — what is
+    // left in it is what you drive while reading the bar.
+    expect(row.querySelector("[data-seam-settings-menu]")).not.toBeNull();
+    expect(row.querySelector("[data-details-bar-frames]")).toBeNull();
     expect(row.querySelector("[data-details-bar-reach]")).not.toBeNull();
     expect(row.querySelector("[data-seam-transport]")).not.toBeNull();
     // The clock, which used to sit at the far right of the scrub bar itself.
@@ -2881,9 +2910,12 @@ export const TheTwoBarsAreAdjacent: Story = {
     // because the left half MOVES and the second decimal is a blur at
     // playback speed.
     expect(row.textContent).toMatch(/\d+:\d\d\.\d\s*\/\s*\d+:\d\d\.\d/);
-    // And the fit control, which shares the row for the same reason the reach
-    // does: both are questions about how much of the bar you are looking at.
-    expect(row.querySelector("[data-seam-fit]")).not.toBeNull();
+    // FIT WENT INTO THE GEAR WITH THE OTHER TWO and reach did not, which is
+    // the whole distinction this item drew: reach changes how much of the
+    // sequence is on the bar, so you reach for it while reading; fit is a
+    // scale you set. Asserted here because "everything is in the row" is no
+    // longer the claim.
+    expect(row.querySelector("[data-seam-fit]")).toBeNull();
 
     // ── AND THE TRACK GOT THE WIDTH THE TRANSPORT AND CLOCK GAVE UP ───────
     // They were siblings of the track, so the bar was as wide as the modal
@@ -3482,7 +3514,8 @@ export const FitRescalesTheBar: Story = {
     const scale = () => Number(track.getAttribute("data-seam-pps"));
     const button = (label: string) =>
       Array.from(
-        document.querySelectorAll<HTMLButtonElement>("[data-seam-fit] button"),
+        (openBarSettings(),
+        document.querySelectorAll<HTMLButtonElement>("[data-seam-fit] button")),
       ).find((found) => found.textContent?.trim() === label)!;
 
     // It opens fitted to the subject's own collection, so that is what is lit.
@@ -3572,6 +3605,7 @@ export const TheHoverCardCanBePinned: Story = {
 
     const lane = document.querySelector<HTMLElement>("[data-seam-boxes]")!;
     const press = (label: string) => {
+      openBarSettings();
       const group = document.querySelector<HTMLElement>("[data-details-bar-card]")!;
       Array.from(group.querySelectorAll("button"))
         .find((button) => button.textContent?.trim() === label)!
@@ -4083,11 +4117,13 @@ export const TheTransportSitsOnTheControlRow: Story = {
       return box.top + box.height / 2;
     };
     const transport = centreY("[data-seam-transport]");
+    // WHAT IS LEFT IN THE ROW, which is now reach and the gear (PL15-006).
+    // Frames, card and fit are inside the gear's menu and are no longer on
+    // this line at all, so asking them to share its centre would be asserting
+    // the geometry of a popover against the row that opens it.
     for (const group of [
-      "[data-details-bar-frames]",
-      "[data-details-bar-card]",
-      "[data-seam-fit]",
       "[data-details-bar-reach]",
+      "[data-seam-settings-menu]",
     ]) {
       expect(`${group} offset ${Math.round(centreY(group) - transport)}`).toBe(
         `${group} offset 0`,

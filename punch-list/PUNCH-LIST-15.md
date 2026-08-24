@@ -265,7 +265,10 @@ go too. Those are different bugs and only one of them is the container query.
 
 ## PL15-006 — The bar's settings move behind a gear; reach stays out
 
-- Status: Not started
+- Status: Complete — and the gear is deliberately NOT gated on `md:` like the
+  groups it replaces, so frames/card/fit are reachable on a narrow viewport
+  for the first time. The left grid cell is kept as an empty spacer: it is
+  what centres the transport.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details — the controls row under the bar)
 - Area: `components/graph-view/graph-seam-strip-bar.tsx` (the controls row,
