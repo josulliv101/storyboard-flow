@@ -906,11 +906,20 @@ same change to the same two lines and a completely different editing tool.
 
 ## PL15-016 — The strip stutters while it is panned
 
-- Status: Partial — the drag offset is off the React render path (it is a CSS
-  variable written straight to the row, so a pan touches one style property and
-  React is not involved). The structural cause is removed and the reasoning is
-  sound, but THE PROFILE THIS ITEM ASKS FOR HAS NOT BEEN RUN, so it is not
-  established that the stutter is gone. Do not close it on the diff.
+- Status: Complete — CONFIRMED BY THE OWNER in the app, and NEVER PROFILED.
+  Both halves of that are the status.
+
+  The drag offset is off the React render path: the transform reads
+  `var(--drag-px, 0px)` and the move handler writes that property straight to
+  the row, so a pan touches one style property on one node and React is not
+  involved. The structural cause is gone and the owner reports the pan reads
+  fine.
+
+  What was NOT done is the before/after profile this item opens by demanding.
+  So the evidence is a removed cause plus a person using it — which is the
+  evidence PL14-006 says actually counts, and is still not a measurement. If
+  the stutter ever returns, start by taking the profile that was skipped rather
+  than assuming this change was wrong.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details, then drag the strip sideways)
 - Area: `components/graph-view/graph-item-details-modal.tsx` (the `swipe`
