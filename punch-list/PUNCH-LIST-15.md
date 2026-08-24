@@ -558,7 +558,9 @@ open it from another.
 
 ## PL15-011 — The child row's thumbnail mirrors a real collection card
 
-- Status: Complete — the audio placeholder was carried across too, so a
+- Status: Complete — SEE PL15-020: the placeholder half was briefly reverted
+  on a wrong inference and has been restored, because reverting it did not fix
+  the failing invariant either. Complete — the audio placeholder was carried across too, so a
   voice-takes collection no longer reads as empty in the tree and as audio on
   the board. The border is a RING: a border would have widened the box and
   pushed it off the column the negative margin exists to hold.
@@ -1123,4 +1125,52 @@ Acceptance criteria:
 picker, starts an upload, or dispatches a command on mount has the same shape
 and the same bug, and would show the same way — twice in dev, once in
 production, and nobody notices until someone watches carefully.
+
+## PL15-020 — A preview-height invariant regressed somewhere in this list
+
+- Status: OPEN — reproduced, NOT attributed. Raised by me, against my own work.
+- Area: `apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts`
+  (`preview height is the user's: tree growth never steals it, and a toggle
+  restores it`)
+- Screenshot: Not captured
+
+One e2e test fails on `punch-list-15` and passes on `origin/main`. It asserts
+that expanding a sub-graph must never shrink the preview pane — the preview
+opens at 380 and is measured again after a sub-graph is expanded, where it
+comes back 207.
+
+**What is established:**
+
+- `origin/main` passes it **6 times out of 6**.
+- The branch fails it, in the full suite and in isolation.
+- The whole suite is otherwise green: 176 passed, 4 skipped, this the only
+  failure.
+
+**What is NOT established, and the attempt is worth recording so it is not
+repeated blind.** A per-commit bisect gave non-monotonic answers — `d7882f3`
+(the minimap caret) failed 3/3 while `a669bf5`, which is LATER, passed 3/3,
+and the branch tip has given both 1-of-2 and 3-of-3 failures on different
+runs. So the per-commit results are measuring run-to-run variance, not the
+change under them, and every conclusion drawn from them is void. That includes
+two I drew and then disproved:
+
+- "It is the empty-collection placeholder in the sub-timeline row." Removing it
+  passed twice, then the same removal failed twice. Taking the placeholder out
+  of the flex flow did not help either, and reverting
+  `graph-sub-timelines.tsx` **entirely** to its pre-PL15-010 state still
+  failed.
+- "It is the preview's new audio island." It fails with
+  `workbench-display-surface.tsx` stashed.
+
+**Where to start, since the bisect cannot be trusted:** instrument rather than
+sample. The height comes from `initialSurfaceHeight` / `clampToViewport` in
+`workbench-display-surface.tsx`, and both derive from
+`getViewportBoundaryBottom() - rootTop`. Log those two numbers on `origin/main`
+and on the branch at the moment the sub-graph expands; the one that moved names
+the cause. 207 against 380 is a large difference and should be obvious once the
+inputs are printed rather than inferred from a pass/fail.
+
+**Do not "fix" the test.** It is guarding a real invariant — the preview's
+height is the user's and content growth must not steal it — and it was written
+because the preview used to be fitted to whatever the lower pane left over.
 
