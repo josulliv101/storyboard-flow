@@ -692,8 +692,20 @@ become "cannot tell it armed".
 
 ## PL15-013 — Count the real lines of code, per file, biggest first
 
-- Status: Script written and verified (`npm run audit:loc`); the RESULT is
-  produced once every other item is done.
+- Status: Complete. `npm run audit:loc`; the run is in
+  `punch-list/PUNCH-LIST-15-loc.txt`.
+
+**The result, as of the end of this punch list: 623 files, 96,235 lines of
+code** — 51,768 across 440 source files and 44,467 across 183 tests and
+stories, which are marked `T`.
+
+That ratio is the finding. Coverage is 46% of the code in this repo by line,
+and the single largest file in the tree is the e2e suite at 5,525 — more than
+three times the largest component. Two of the top three files are stories.
+
+Worth reading beside the counts: comments are excluded, and this repo comments
+heavily, so these numbers are much smaller than the files look. `graph-board.tsx`
+is 1,515 lines of code inside a file more than twice that.
 - Area: `scripts/` (new), root `package.json`
 - Screenshot: Not captured
 
