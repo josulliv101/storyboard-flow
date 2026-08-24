@@ -840,3 +840,124 @@ as end points", and they are different products:
 Recommend the minimum window. Say which before it is built — the two are the
 same change to the same two lines and a completely different editing tool.
 
+## PL15-016 — The strip stutters while it is panned
+
+- Status: Not started
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a media item's details, then drag the strip sideways)
+- Area: `components/graph-view/graph-item-details-modal.tsx` (the `swipe`
+  handlers, `dragPx`, `rowTransform`),
+  `components/graph-view/graph-item-details-panel.tsx`
+- Screenshot: Not captured
+
+Grabbing the film strip in the details modal and panning it stutters. It does
+not track the hand. Find out why, fix it, and sweep the rest of that surface's
+performance while there.
+
+**MEASURE BEFORE CHANGING ANYTHING.** This repo has already paid for the other
+order: three playback optimizations were built and then REJECTED because the
+measurement did not support them. A profile of an actual pan — frame timings,
+what is re-rendering, what is decoding — comes first, and the same profile run
+again is what says the fix worked. "It must be the re-renders" is not evidence.
+
+**The leading hypothesis, and it is a specific one.** The gesture stores its
+start coordinate in a ref, and the comment beside that ref says exactly why:
+
+> Not state: this changes on nearly every pointer move and only the ROW's
+> transform cares. A re-render per move to store a start coordinate would
+> re-render three live panels — video elements included — sixty times a second
+> for the duration of a swipe.
+
+But the OFFSET is state. `onPointerMove` calls `setDragPx(swipeOffset(dx, …))`
+on nearly every move, and `dragPx` is read by `rowTransform`, which is built in
+the modal's own render. So the re-render-per-move the ref was written to avoid
+happens anyway, one level up — and it re-renders the whole modal, which mounts
+up to `MOUNTED_RADIUS` × 2 + 1 panels, each a video element, a trim strip and
+a tag editor.
+
+If the profile agrees, the shape of the fix is to move the drag offset off the
+React render path entirely: write the transform to the row element directly
+(a ref plus a style write, or a CSS variable set on the wrapper) and keep
+`dragPx` in state only at the boundaries where a render genuinely has to
+happen — the start of the gesture and its commit. The row already opts out of
+its transition while `dragPx !== 0`, so nothing in the choreography depends on
+the value passing through render.
+
+**Do not stop at the first plausible cause.** Other candidates in the same
+area, worth including in the same profile rather than a second pass:
+
+- `rowTransform` is a `calc()` string built from `panelWidth`, itself a `min()`
+  expression — re-parsed per frame.
+- The panel under the playhead SEEKS itself while it is a neighbour, on
+  purpose, so a pan can be moving several media elements that are also seeking.
+- A pan that crosses a step boundary commits, which starts the 420ms
+  choreography — a stutter at the moment of landing is a different bug from a
+  stutter throughout, and the two must be told apart before either is fixed.
+- Container queries on panel width re-evaluate as the row moves.
+
+Acceptance criteria:
+
+- A profile of a pan, before and after, with the numbers stated — frame times
+  or dropped frames, not an impression.
+- The strip tracks the pointer through a full pan on a project with enough
+  clips to be worth panning.
+- The landing step is still one motion on one clock (`DETAILS_STEP_MS`); a
+  fix for the drag must not desynchronise the commit.
+- Whatever is found is written down beside the code, including anything that
+  turned out NOT to be the cause — the rejected candidates are the expensive
+  half of this and should not have to be re-derived.
+
+## PL15-017 — A caret under the minimap's active segment
+
+- Status: Not started
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a media item's details — the minimap under the bar)
+- Area: `components/graph-view/graph-seam-minimap.tsx`,
+  `components/graph-view/graph-seam-lane.tsx` (`MARK_HALF_PX`,
+  `MARK_HEIGHT_PX` — the existing mark to match)
+- Screenshot: Not captured
+
+The minimap marks the clip you are on by turning its segment white and
+raising it a pixel. Add a small white triangle pointing UP, centred under that
+segment — a second, plainer signal that this is the active one.
+
+**It is the same idiom the bar already uses, which is the argument for it.**
+The minimap's own comment says the white was chosen "because that is what the
+bar above marks its active clip with — the triangle and its rule. The same
+claim in the same ink, said twice at two scales." The bar's mark
+(`data-seam-active-mark`) is a CSS-border triangle in `rgba(250,250,250,0.95)`
+sitting ABOVE the film pointing down at it. This is its twin at the smaller
+scale, below and pointing up. Build it from the same two constants rather than
+new numbers.
+
+Acceptance criteria:
+
+- A white triangle, pointing up, centred horizontally on the highlighted
+  segment.
+- It moves with the highlight — stepping to another clip moves the caret.
+- It does not overlap or obscure the segments themselves.
+- It stays inside the rail at both ends: the first and last clips' segments
+  are at the very edges, and the bar's mark already clamps for exactly this
+  reason ("a mark drawn past the end of the bar is not reporting a position at
+  all").
+- The minimap is `aria-hidden` and the caret is decoration; it stays that way.
+
+**Render it INSIDE the highlighted segment, not positioned over the rail.**
+This is the one thing that will otherwise cost an afternoon. The segments are
+flex children sized by `flexGrow: clip.showingSeconds` with per-seam
+`marginLeft`, so a segment's centre is NOT computable from a percentage of the
+rail the way the window and the playhead are (`asPercent(seconds)` works for
+those because they are positioned against total duration, not against a flex
+run). Reproducing the flex layout in arithmetic to place the caret would be a
+second implementation of the layout that drifts the moment a seam gap changes.
+A child of the centre segment at `left: 50%` with a half-width translate lets
+flex do it, and is correct at every width.
+
+**Check the vertical room first.** The rail is 14px (`h-3.5`), the segments
+are 6px (`h-1.5`) at `top-1`, and the active one grows a pixel each way — so
+the run occupies roughly y=3 to y=11 and there are about three pixels beneath
+it before the rail ends. That may be enough for a caret this small or may not;
+if it is not, the honest fixes are a taller rail or a caret that overlaps the
+segment's lower edge, NOT one that spills outside the rail into the controls
+below it.
+

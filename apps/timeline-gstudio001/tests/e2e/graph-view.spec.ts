@@ -1645,14 +1645,24 @@ test.describe("graph view E2E", () => {
     ).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
 
-    // Strip icon → strip layout, which OPENS FLAT. The ruler is scoped to a
-    // single continuous time axis, which only the flat run is — so the toggle
-    // arrives with the strip rather than needing a second control first. It
-    // used to take entering flat by hand; the default moved, and this is the
-    // half of the claim that changed.
+    // Strip icon → strip layout, which OPENS IN COLLECTIONS (PL15-003). The
+    // ruler is scoped to a single continuous time axis, which only the FLAT
+    // run is, so the toggle is not there on arrival and entering flat by hand
+    // is what summons it.
+    //
+    // THIS HALF OF THE CLAIM HAS NOW MOVED TWICE, which is worth saying rather
+    // than quietly rewriting again: the strip opened flat for a while, so the
+    // ruler arrived with it and this test asserted that. Opening flat also
+    // meant opening with drag-to-reorder refused, which is what sent the
+    // default back. The ruler's own rule never changed — it belongs to the
+    // flat run — only which state the strip starts in.
     await surfaceButton(page, "strip").click();
     await expect(strip(page, PROJECT_ID)).toBeVisible();
     await expect(surfaceButton(page, "strip")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: /time ruler/i })).toHaveCount(0);
+
+    // Into the flat run, and the ruler's control arrives with it.
+    await page.getByRole("button", { name: "Show all items in order" }).click();
     const rulerToggle = page.getByRole("button", { name: /show time ruler/i });
     await expect(rulerToggle).toBeVisible();
 
