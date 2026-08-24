@@ -154,7 +154,10 @@ Acceptance criteria:
 
 ## PL15-004 — The strip's trim handle collar goes white
 
-- Status: Complete — verify the armed read on a real strip
+- Status: Complete, CONFIRMED BY THE OWNER in the app. The open question was
+  whether an armed handle still reads as armed once the collar is white at rest
+  — arming has no colour left to change, so the grip carries it alone (`h-5` to
+  full height, `black/45` to `black/70`). Checked on a real strip: it reads
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph?surface=strip
 - Area: `components/graph-view/graph-card-trim.tsx` (`GraphTrimHandle`)
 - Screenshot: Not captured
@@ -265,11 +268,11 @@ go too. Those are different bugs and only one of them is the container query.
 
 ## PL15-006 — The bar's settings move behind a gear; reach stays out
 
-- Status: Complete — SHIPPED BROKEN FIRST: the menu portals to `body` and so
-  rendered behind the modal's `z-[80]` scrim at its default `z-50`. Reported
-  from the app, not caught by the stories, which drove the menu's contents
-  without ever asking whether they were visible. Fixed and now asserted.
-  Complete — and the gear is deliberately NOT gated on `md:` like the
+- Status: Complete, CONFIRMED BY THE OWNER in the app. SHIPPED BROKEN FIRST:
+  the menu portals to `body` and so rendered behind the modal's `z-[80]` scrim
+  at its default `z-50`. Reported from the app, not caught by the stories,
+  which drove the menu's contents without ever asking whether they were
+  visible. Fixed, asserted as a computed z-index, and now seen working — and the gear is deliberately NOT gated on `md:` like the
   groups it replaces, so frames/card/fit are reachable on a narrow viewport
   for the first time. The left grid cell is kept as an empty spacer: it is
   what centres the transport.
