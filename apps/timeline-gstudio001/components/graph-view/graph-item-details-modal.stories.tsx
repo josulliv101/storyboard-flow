@@ -1274,6 +1274,94 @@ export const TagsAreAddedFromAnIcon: Story = {
  * the panel fits its picture instead of holding two thirds of the screen with
  * most of it black.
  */
+/**
+ * A COUNT CHANGE IS A RESIZE, NOT A REPLACEMENT (PL15-005).
+ *
+ * Switching 3 to 5 read as the three panels animating off and five animating
+ * on. Nothing is actually being replaced: the subject is the same clip and its
+ * neighbours are the same clips, so what should happen is that the panels on
+ * screen shrink into their new width and two more arrive at the edges.
+ *
+ * IT WAS NEVER A KEYING PROBLEM, which is what made it worth pinning here. The
+ * row renders every id in the flat order keyed by `id`, and mounts real panels
+ * within `MOUNTED_RADIUS = floor(count / 2) + 1` — so at three the visible set
+ * is centre +/-1 and the mounted set is centre +/-2, and at five the visible
+ * set is centre +/-2. The two panels that BECOME visible were already mounted;
+ * React never threw anything away. The identity assertion below states that,
+ * so a future "fix" that starts remounting them fails here.
+ *
+ * What did change discontinuously was HEIGHT — see the neighbour branch in
+ * `graph-item-details-panel`. That is what the second assertion is for.
+ */
+export const ChangingTheCountResizesTheSamePanels: Story = {
+  // A LONG scene on purpose. `TRIMMED_SCENE` holds three clips, so "show five"
+  // has nothing to show and the step this story is about cannot happen at all.
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    await waitFor(() => expect(panels().length).toBeGreaterThanOrEqual(3));
+
+    const press = async (label: string) => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>("[data-details-view-count] button"),
+      ).find((b) => b.textContent?.trim() === label)!;
+      fireEvent.click(button);
+      await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
+    };
+
+    // The ELEMENTS, held across the step. Identity, not a count or a name — a
+    // replacement would satisfy either of those and is exactly what is being
+    // ruled out.
+    const before = panels();
+    const heightsBefore = before.map((panel) => Math.round(panel.getBoundingClientRect().height));
+
+    await press("5");
+    // MOUNTED, not visible: the row keeps a spare panel either side of what can
+    // be seen, so the count is `min(ids, count + 2)` rather than the count.
+    // What matters here is that it GREW — five-up mounts more than three-up —
+    // and the identity assertions below carry the actual claim.
+    await waitFor(() => expect(panels().length).toBeGreaterThan(before.length));
+
+    const after = panels();
+    for (const panel of before) {
+      expect(after).toContain(panel);
+    }
+
+    // AND A NEIGHBOUR'S HEIGHT IS A RULE, NOT ITS PICTURE'S.
+    //
+    // The height used to be a container query on the panel's own WIDTH — a
+    // definite 38.9vh over 30rem, `h-auto` under it — and a count change walks
+    // straight across that threshold: measured at 1920, a neighbour is 490px
+    // at three-up and 314px at five-up. `auto` cannot be interpolated, so
+    // every neighbour's height jumped in one frame while its width eased,
+    // which is most of what read as a replacement.
+    //
+    // ASSERTED AS THE VALUE, not as a before/after delta, and that distinction
+    // was learned the hard way here: this story's viewport is far narrower
+    // than 1880, so BOTH counts fall under 30rem and both were `h-auto`
+    // together. A delta comparison passed against the unfixed code — it was
+    // measuring a threshold neither state crossed. The rule itself is
+    // width-independent and holds at any viewport.
+    const neighbourHeight = () => {
+      const neighbour = panels().find(
+        (panel) => panel.getAttribute("data-item-details-panel") === "neighbour",
+      )!;
+      return neighbour.getBoundingClientRect().height;
+    };
+    expect(neighbourHeight()).toBeCloseTo(window.innerHeight * 0.389, 0);
+    expect(heightsBefore.length).toBeGreaterThan(0);
+
+    // Back again, and every panel that remains was one of the originals — the
+    // return trip is a resize too, not a fresh set.
+    await press("3");
+    await waitFor(() => expect(panels().length).toBe(before.length));
+    for (const panel of panels()) {
+      expect(before).toContain(panel);
+    }
+  },
+};
+
 export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {

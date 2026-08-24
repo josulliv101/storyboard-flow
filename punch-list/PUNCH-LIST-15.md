@@ -198,7 +198,13 @@ say which and it is done either way.
 
 ## PL15-005 — Changing the view count keeps the panels it already has
 
-- Status: Not started
+- Status: Complete — the cause was NOT the container query on CONTENT, it was
+  the one on the neighbour's HEIGHT: crossing 30rem swapped a definite value
+  for `h-auto`, which cannot be interpolated, so heights jumped in one frame
+  while widths eased. Fixing it also fixed a latent bug — at five-up every
+  neighbour was falling back to fitting its own picture, the exact "four
+  neighbours at four different heights" the fixed height was introduced to
+  prevent.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details, then use the 3 / 5 control)
 - Area: `components/graph-view/graph-item-details-modal.tsx`,
