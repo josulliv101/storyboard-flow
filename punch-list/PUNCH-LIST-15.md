@@ -374,7 +374,11 @@ Acceptance criteria:
 
 ## PL15-008 — The preview's volume becomes an icon that reveals its slider
 
-- Status: Not started
+- Status: Complete — MUTE WAS KEPT as a press, inside the popover beside the
+  slider, rather than becoming "drag to zero". Losing a one-press action to
+  gain a reveal was the wrong trade. The divider's left 36px stops being drag
+  target; three e2e interaction points moved off that end, which is only
+  honest because the rest of a full-width divider remains.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (the workbench preview, with the pane open)
 - Area: `packages/ui/timeline/viewport/workbench-display-surface.tsx`
@@ -682,7 +686,8 @@ become "cannot tell it armed".
 
 ## PL15-013 — Count the real lines of code, per file, biggest first
 
-- Status: Not started
+- Status: Script written and verified (`npm run audit:loc`); the RESULT is
+  produced once every other item is done.
 - Area: `scripts/` (new), root `package.json`
 - Screenshot: Not captured
 

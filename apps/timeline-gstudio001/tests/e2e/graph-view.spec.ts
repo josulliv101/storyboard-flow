@@ -1793,7 +1793,14 @@ test.describe("graph view E2E", () => {
     const dividerLineColor = () =>
       dividerLine.evaluate((el) => getComputedStyle(el).color);
     const restLineColor = await dividerLineColor();
-    await divider.hover({ position: { x: 20, y: 10 } });
+    // x=60, NOT x=20 (PL15-008). The divider's left end carries the preview's
+    // audio icon now — a 28px control at `left-2`, so it occupies roughly the
+    // first 36 pixels — and hovering THAT is not hovering the divider. Moving
+    // the point is only honest because of what is left: the drag target is
+    // still everything but the first 36px of a divider that runs the full
+    // width, which is why one icon was allowed there when a button AND a 64px
+    // slider previously were not.
+    await divider.hover({ position: { x: 60, y: 10 } });
     await expect.poll(dividerLineColor).not.toBe(restLineColor);
     await page.mouse.move(0, 0); // unhover before the resize steps below
 
@@ -2764,7 +2771,14 @@ test.describe("graph view E2E", () => {
     ).toBeCloseTo(36, 0);
 
     // Divider hover does not resize or move the transport.
-    await divider.hover({ position: { x: 20, y: 6 } });
+    // x=60, NOT x=20 (PL15-008). The divider's left end carries the preview's
+    // audio icon now — a 28px control at `left-2`, so it occupies roughly the
+    // first 36 pixels — and hovering THAT is not hovering the divider. Moving
+    // the point is only honest because of what is left: the drag target is
+    // still everything but the first 36px of a divider that runs the full
+    // width, which is why one icon was allowed there when a button AND a 64px
+    // slider previously were not.
+    await divider.hover({ position: { x: 60, y: 6 } });
     const groupAfterHover = await buttonGroup.boundingBox();
     expect(groupAfterHover).not.toBeNull();
     expect(groupAfterHover!.x).toBeCloseTo(groupBox!.x, 0);
@@ -2814,15 +2828,23 @@ test.describe("graph view E2E", () => {
     await expect(divider).toHaveAttribute("aria-valuenow", surfaceHeightBeforePlay!);
 
     // The rest of the divider remains a resize target.
+    //
+    // AT x=60, NOT x=20 (PL15-008). The divider's left end carries the
+    // preview's audio icon now — 28px at `left-2` — and that control stops
+    // pointer propagation for exactly the reason the transport does: a press on
+    // it must not begin a resize. So x=20 lands ON the island and the drag
+    // correctly does nothing, which is a pass for the island and a false
+    // failure for this assertion. The claim here is about the REST of the
+    // divider, and 36px in is where the rest begins.
     const dividerBoxAfterPlay = await divider.boundingBox();
     expect(dividerBoxAfterPlay).not.toBeNull();
     await page.mouse.move(
-      dividerBoxAfterPlay!.x + 20,
+      dividerBoxAfterPlay!.x + 60,
       dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2,
     );
     await page.mouse.down();
     await page.mouse.move(
-      dividerBoxAfterPlay!.x + 20,
+      dividerBoxAfterPlay!.x + 60,
       dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2 + 24,
     );
     await page.mouse.up();
@@ -2915,6 +2937,12 @@ test.describe("graph view E2E", () => {
     await expect(surface).toHaveAttribute("data-preview-muted", "false");
     await expect(surface).toHaveAttribute("data-preview-volume", "1");
 
+    // THE SLIDER AND MUTE LIVE BEHIND THE ICON NOW (PL15-008): the divider
+    // carries one audio icon, and a press on it reveals the pair. Opening is
+    // part of the flow rather than setup noise — the state being pinned here
+    // is reached the way a user reaches it.
+    const audioToggle = page.getByTestId("workbench-preview-volume-toggle");
+    await audioToggle.click();
     const volume = page.getByTestId("workbench-preview-volume");
     await expect(volume).toHaveValue("1");
 
@@ -2930,6 +2958,10 @@ test.describe("graph view E2E", () => {
     await previewToggle(page).click();
     await expect(surface).toHaveAttribute("data-preview-muted", "true");
 
+    // Reopened pane, reopened popover: the surface unmounted with the pane, so
+    // the reveal is closed again while the MUTE it was showing survived on the
+    // channel — which is the point of the round trip above.
+    await audioToggle.click();
     await page.getByRole("button", { name: "Unmute workbench preview" }).click();
     await expect(surface).toHaveAttribute("data-preview-muted", "false");
   });

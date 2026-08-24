@@ -427,15 +427,25 @@ export const ControlledPlayback: Story = {
       /0(?:\.\d+)?s \/ 30\.0s/,
     );
 
-    // Tab order follows the DOM: the audio controls overlay the picture, so
-    // they come BEFORE the divider transport. Walk past them and the transport
-    // is still reachable, which is what this ever asserted.
+    // Tab order follows the DOM: the audio control sits on the divider before
+    // the transport, so it comes first. Walk past it and the transport is
+    // still reachable, which is what this ever asserted.
+    //
+    // ONE STOP, NOT TWO (PL15-008). It used to be mute then the slider, both
+    // permanently in the picture. They are behind the icon now, so a keyboard
+    // user walking the view passes ONE audio control rather than two — and the
+    // pair below proves they are still reachable once it is opened, which is
+    // the half that would otherwise be lost silently.
     await user.tab();
-    expect(canvas.getByTestId("workbench-preview-mute")).toHaveFocus();
-    await user.tab();
-    expect(canvas.getByTestId("workbench-preview-volume")).toHaveFocus();
+    const audioToggle = canvas.getByTestId("workbench-preview-volume-toggle");
+    expect(audioToggle).toHaveFocus();
     await user.tab();
     expect(controls.contains(document.activeElement)).toBe(true);
+
+    // Opened, the mute button and the slider are both reachable from the icon.
+    await user.click(audioToggle);
+    expect(canvas.getByTestId("workbench-preview-mute")).toBeInTheDocument();
+    expect(canvas.getByTestId("workbench-preview-volume")).toBeInTheDocument();
     expect(controls).toHaveAttribute("data-transport-layout", "static");
   },
 };
@@ -485,6 +495,10 @@ export const ControlledAudio: Story = {
     expect(surface).toHaveAttribute("data-preview-muted", "false");
     expect(surface).toHaveAttribute("data-preview-volume", "1");
     expect(canvas.getByTestId("audio-readout")).toHaveTextContent("volume=1 muted=false");
+
+    // The divider carries an audio ICON; mute and the slider are behind it
+    // (PL15-008), so opening it is the first step of the flow now.
+    await user.click(canvas.getByRole("button", { name: "Preview audio" }));
 
     const mute = canvas.getByRole("button", { name: "Mute workbench preview" });
     expect(mute).toHaveAttribute("aria-pressed", "false");

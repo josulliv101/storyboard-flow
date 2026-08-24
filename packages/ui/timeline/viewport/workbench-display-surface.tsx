@@ -278,12 +278,33 @@ type WorkbenchAudioControlsProps = {
 };
 
 /**
- * Volume lives INSIDE the preview, not on the divider beside play/pause.
+ * Volume: an icon on the DIVIDER, and a slider it reveals.
  *
- * The divider is a resize handle first: its whole band is the drag target, and
+ * IT USED TO LIVE INSIDE THE PREVIEW, and the comment here said why: "The
+ * divider is a resize handle first: its whole band is the drag target, and
  * parking a button at its left end quietly shrank that target — the e2e that
- * hovers the divider at x=20 caught it immediately. Overlaying the picture is
- * also simply where every video player puts this control.
+ * hovers the divider at x=20 caught it immediately."
+ *
+ * That objection was against a button AND a 64px slider sitting there
+ * permanently. What sits there now is one 28px icon, and the slider only
+ * exists while it is open — so the band it costs is the left 36px of a divider
+ * that runs the full width. The two e2e hover points moved off that end with
+ * this change, which is only honest because of that measurement: the drag
+ * target is still everything but its first 36 pixels.
+ *
+ * THE ISLAND PATTERN IS THE TRANSPORT'S, not a new one. The wrapper is
+ * `pointer-events-none` so the divider keeps every pixel it is not actually
+ * covering, the control itself is `pointer-events-auto`, and a pointer press
+ * on it stops propagating — a press on the audio control must never begin a
+ * resize, exactly as a transport press must not.
+ *
+ * CLICK OPENS THE SLIDER; MUTE MOVES INSIDE IT. Click used to mute, and the
+ * plain reading of "click the icon and you get the slider" would have left
+ * mute as "drag to zero and drag back to a level you have to remember" —
+ * losing a one-press action to gain a reveal. So the popover carries a mute
+ * button beside the slider: mute costs one extra press rather than a gesture
+ * and a memory, and the icon still SHOWS the silent state whether or not the
+ * popover is open.
  */
 function WorkbenchAudioControls({
   volume,
@@ -293,44 +314,101 @@ function WorkbenchAudioControls({
   audioBlocked,
 }: WorkbenchAudioControlsProps) {
   const silent = muted || volume <= 0;
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // DISMISS ON A PRESS OUTSIDE, AND ON ESCAPE — with one owner, so there is no
+  // question which of them closed it. `pointerdown` rather than `click`: the
+  // click that opens the popover is still in flight when the listener is
+  // attached, and listening for clicks would close it in the same gesture.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: PointerEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // Stopped, or Escape reaches whatever else in the view treats it as
+      // "close me" and two things answer one press.
+      event.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
 
   return (
     <div
-      className="absolute bottom-2 left-2 z-20 flex items-center gap-1.5 rounded-full bg-zinc-950/70 px-1.5 py-1 backdrop-blur-sm"
+      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0"
       data-testid="workbench-preview-audio"
-      onPointerDown={(event) => {
-        // The canvas below toggles play on click. These controls are their own
-        // island — pressing one must not also start the preview.
-        event.stopPropagation();
-      }}
-      onClick={(event) => {
-        event.stopPropagation();
-      }}
     >
-      <button
-        type="button"
-        onClick={onToggleMuted}
-        className="grid size-6 shrink-0 place-items-center rounded-full text-zinc-300 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-        aria-label={silent ? "Unmute workbench preview" : "Mute workbench preview"}
-        aria-pressed={silent}
-        title={audioBlocked ? "Click to enable sound" : silent ? "Unmute" : "Mute"}
-        data-testid="workbench-preview-mute"
-        data-audio-blocked={audioBlocked || undefined}
+      <div
+        ref={rootRef}
+        className="pointer-events-auto absolute left-2 flex items-center"
+        style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
+        onPointerDown={(event) => {
+          // The audio control visually occupies the divider and is its own
+          // interaction island — a press here must never begin a resize.
+          event.stopPropagation();
+        }}
       >
-        {silent ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((was) => !was)}
+          className="grid size-7 shrink-0 place-items-center rounded-full text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          // NOT "Workbench preview volume" — that name belongs to the SLIDER,
+          // and it has had it since before this control existed. Handing it to
+          // the trigger would have made an accessible-name lookup ambiguous the
+          // moment the popover opened, and silently changed which element every
+          // existing `getByRole("slider", { name: … })` resolves to.
+          aria-label="Preview audio"
+          aria-expanded={open}
+          title={audioBlocked ? "Click to enable sound" : "Volume"}
+          data-testid="workbench-preview-volume-toggle"
+          data-audio-blocked={audioBlocked || undefined}
+        >
+          {silent ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+        </button>
 
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.01}
-        value={muted ? 0 : volume}
-        onChange={(event) => onVolumeChange(Number(event.target.value))}
-        className="h-1 w-16 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-        aria-label="Workbench preview volume"
-        data-testid="workbench-preview-volume"
-      />
+        {open && (
+          <div
+            className="ml-1 flex items-center gap-2 rounded-full bg-zinc-950/90 px-2 py-1 shadow-lg ring-1 ring-white/15 backdrop-blur-sm"
+            data-testid="workbench-preview-volume-popover"
+          >
+            {/* MUTE, which the icon outside used to carry on its own click.
+                Kept as a press rather than folded into the slider's zero end:
+                muting and restoring is one action, and a drag to zero followed
+                by a drag back to a level you have to remember is not. */}
+            <button
+              type="button"
+              onClick={onToggleMuted}
+              className="grid size-6 shrink-0 place-items-center rounded-full text-zinc-300 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+              aria-label={silent ? "Unmute workbench preview" : "Mute workbench preview"}
+              aria-pressed={silent}
+              title={silent ? "Unmute" : "Mute"}
+              data-testid="workbench-preview-mute"
+            >
+              {silent ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={muted ? 0 : volume}
+              onChange={(event) => onVolumeChange(Number(event.target.value))}
+              className="h-1 w-16 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+              aria-label="Workbench preview volume"
+              data-testid="workbench-preview-volume"
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2128,25 +2206,6 @@ export function WorkbenchDisplaySurface({
             <Play className="h-20 w-20 fill-white text-white sm:h-28 sm:w-28" />
           )}
         </div>
-        <WorkbenchAudioControls
-          volume={activeVolume}
-          muted={activeMuted}
-          audioBlocked={audioBlocked}
-          onToggleMuted={() => {
-            // This click IS a user gesture — resume the context on it.
-            void getMixer().resume();
-            // Unmuting from a zeroed slider must actually be audible, or the
-            // control appears to do nothing.
-            if (activeMuted && activeVolume <= 0) setVolume(1);
-            setMuted(!activeMuted);
-          }}
-          onVolumeChange={(next) => {
-            void getMixer().resume();
-            setVolume(next);
-            // Dragging the slider up is an unmute in every player people know.
-            if (next > 0 && activeMuted) setMuted(false);
-          }}
-        />
         {/* Names what the grayed frame means. Only ever visible while
             SCRUBBING — playing jumps the span, so the clock never rests here.
             Top-LEFT: the close button owns the right corner. */}
@@ -2175,6 +2234,25 @@ export function WorkbenchDisplaySurface({
           </button>
         )}
       </div>
+      <WorkbenchAudioControls
+        volume={activeVolume}
+        muted={activeMuted}
+        audioBlocked={audioBlocked}
+        onToggleMuted={() => {
+          // This click IS a user gesture — resume the context on it.
+          void getMixer().resume();
+          // Unmuting from a zeroed slider must actually be audible, or the
+          // control appears to do nothing.
+          if (activeMuted && activeVolume <= 0) setVolume(1);
+          setMuted(!activeMuted);
+        }}
+        onVolumeChange={(next) => {
+          void getMixer().resume();
+          setVolume(next);
+          // Dragging the slider up is an unmute in every player people know.
+          if (next > 0 && activeMuted) setMuted(false);
+        }}
+      />
       <WorkbenchDividerTransport
         currentTime={currentTime}
         duration={duration}
