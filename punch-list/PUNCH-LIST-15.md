@@ -1342,7 +1342,10 @@ than a slider: the values in between buy nothing and cost a decision.
 
 ## PL15-023 — The playhead appears before the preview does
 
-- Status: Not started — cause identified below, not yet built.
+- Status: Complete — and it needed NO new plumbing. `usePreviewSettled()`
+  already existed and was already published to the board by context; the board
+  already imports it elsewhere. This was one condition looking at the wrong
+  flag. See the note at the end about the version I built first and threw away.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (toggle the preview pane open and watch the board)
 - Area: `components/graph-view/graph-sub-timelines.tsx` (`showPlayhead`),
@@ -1530,3 +1533,22 @@ number in the bar; the gap is `mt-1.5` on the minimap's own root. Nothing
 connects them, so `MINIMAP_GAP_PX` is named and says so — the failure if they
 drift is a column that stops short of the map or runs into it.
 
+**A CALLBACK WAS BUILT FIRST AND THROWN AWAY, and the reason is worth keeping.**
+The recommendation above was to have the surface publish `chromeIn` through a
+new callback, because "the app does not know that duration". That was right
+about the principle and wrong about the facts — the signal was already
+published, as `usePreviewSettled()`, and graph-board already consumes it a few
+hundred lines from where this change landed.
+
+The callback version also BROKE the reveal before it was replaced.
+`chromeIn` goes true, false, true around an opening pane, and pushing each edge
+out re-rendered the consumer twice at the moment the slide was starting — the
+region's own height transition then never ran at all, which
+`the preview is UNCOVERED, and its contents do not grow inside the reveal`
+caught as an empty list of transition runs. A context read costs no re-render
+in the consumer and has none of that.
+
+Two lessons, both cheap to have had earlier: look for the signal before
+building one, and be suspicious of adding a state update inside a window that
+something else is animating — which is the same family PL15-020 identifies as
+the cause of its own intermittency.
