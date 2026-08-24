@@ -61,6 +61,8 @@ export function createGraphTools(ctx: GraphToolContext): ToolDef[] {
     removeClipTool(ctx),
     setDisabledTool(ctx),
     setLaneTool(ctx),
+    setTagsTool(ctx),
+    setLayerFrameTool(ctx),
     getViewStateTool(ctx),
     selectItemsTool(ctx),
     clearSelectionTool(ctx),
@@ -409,6 +411,110 @@ function setLaneTool(ctx: GraphToolContext): ToolDef {
       return toolOk(lane === 0 ? "Back on the picture." : `On lane ${lane}.`, {
         nodeId: nodeIdStr,
         lane,
+      });
+    },
+  };
+}
+
+// ---- set_tags --------------------------------------------------------------
+
+/**
+ * Tags live in the DETAILS side table, not in the graph — which is why this
+ * writes through `ctx.details` rather than dispatching a command. There is no
+ * tag command to dispatch; the server handler reaches for the same table.
+ *
+ * A node with no details entry is REFUSED rather than given one. An entry is
+ * what a document knows about a clip, and inventing a bare one to hang tags off
+ * would write into a row nothing else believes in.
+ */
+function setTagsTool(ctx: GraphToolContext): ToolDef {
+  return {
+    name: "set_tags",
+    description: "Replace a clip or collection's tags. Pass an empty list to clear them.",
+    inputSchema: jsonSchemaFor({
+      nodeId: nodeIdField,
+      tags: z.array(z.string()).describe("The complete tag list. Replaces what is there."),
+    }),
+    execute: (args) => {
+      const nodeIdStr = readString(args, "nodeId");
+      if (!nodeIdStr) return toolError("set_tags requires a nodeId.");
+      const graph = ctx.store.getSnapshot().graph;
+      if (!graph.nodesById.get(parseNodeId(nodeIdStr))) {
+        return toolError(`No node with id "${nodeIdStr}".`);
+      }
+      const existing = ctx.details.get(nodeIdStr);
+      if (existing === undefined) {
+        return toolError(`"${nodeIdStr}" has no details entry yet, so tags have nowhere to live.`);
+      }
+      // Trimmed, de-duplicated, blanks dropped — the same normalising the
+      // server does, so the two surfaces cannot disagree about what a tag list
+      // means.
+      const tags = [
+        ...new Set(readStringArray(args, "tags").map((tag) => tag.trim()).filter(Boolean)),
+      ];
+      ctx.details.merge({ [nodeIdStr]: { ...existing, tags } });
+      return toolOk(
+        tags.length === 0 ? "Cleared the tags." : `Tagged: ${tags.join(", ")}.`,
+        { nodeId: nodeIdStr, tags },
+      );
+    },
+  };
+}
+
+// ---- set_layer_frame -------------------------------------------------------
+
+function setLayerFrameTool(ctx: GraphToolContext): ToolDef {
+  return {
+    name: "set_layer_frame",
+    description:
+      "Inset a layered clip into a frame within the picture, or clear it so the clip fills it.",
+    inputSchema: jsonSchemaFor({
+      nodeId: nodeIdField,
+      // A RECT, NOT A NAME. `layerFrame` is `{x, y, width}` in fractions of the
+      // picture — the first version of this tool took a string and typechecked
+      // clean against `placement`, because `placement` is a partial and an
+      // unknown key is simply ignored. It would have accepted every call and
+      // done nothing.
+      frame: z
+        .object({
+          x: z.number().describe("Left edge, 0-1 across the picture."),
+          y: z.number().describe("Top edge, 0-1 down the picture."),
+          width: z.number().describe("Width, 0-1 of the picture."),
+        })
+        .nullable()
+        .describe("Where to inset the clip, or null to clear it."),
+    }),
+    execute: (args) => {
+      const nodeIdStr = readString(args, "nodeId");
+      if (!nodeIdStr) return toolError("set_layer_frame requires a nodeId.");
+      const graph = ctx.store.getSnapshot().graph;
+      const nodeId = parseNodeId(nodeIdStr);
+      if (!graph.nodesById.get(nodeId)) return toolError(`No node with id "${nodeIdStr}".`);
+      // `null` clears; a MISSING key is not the same thing and must not be read
+      // as one, so absent is an error rather than a silent clear.
+      const raw = record(args)["frame"];
+      if (raw === undefined) {
+        return toolError("`frame` is required — pass null to clear the frame.");
+      }
+      let layerFrame: Readonly<{ x: number; y: number; width: number }> | null = null;
+      if (raw !== null) {
+        const x = readNumber(raw, "x");
+        const y = readNumber(raw, "y");
+        const width = readNumber(raw, "width");
+        if (x === undefined || y === undefined || width === undefined) {
+          return toolError("`frame` needs numeric `x`, `y` and `width`, or null to clear.");
+        }
+        layerFrame = { x, y, width };
+      }
+      const result = ctx.store.dispatch({
+        type: "set-node-placement",
+        nodeIds: [nodeId],
+        placement: { layerFrame },
+      });
+      if (!result.ok) return toolError(describeDispatchRejection(result.error));
+      return toolOk(layerFrame === null ? "Frame cleared." : "Frame set.", {
+        nodeId: nodeIdStr,
+        layerFrame,
       });
     },
   };

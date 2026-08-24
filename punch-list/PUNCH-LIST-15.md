@@ -1275,3 +1275,55 @@ than a slider: the values in between buy nothing and cost a decision.
 
 **Three sizes, not a range**, for the same reason `VIEW_COUNTS` is `[3, 5]`.
 
+## PL15-023 — The playhead appears before the preview does
+
+- Status: Not started — cause identified below, not yet built.
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (toggle the preview pane open and watch the board)
+- Area: `components/graph-view/graph-sub-timelines.tsx` (`showPlayhead`),
+  `components/graph-view/graph-timeline-view.tsx` (`previewOn`),
+  `packages/ui/timeline/viewport/workbench-display-surface.tsx` (`chromeIn`)
+- Screenshot: Not captured
+
+Opening the preview draws the red playhead on the board immediately, while the
+pane is still sliding open. It should not appear until the preview is actually
+there.
+
+**The cause, exactly.** The board gates the line on
+`showPlayhead = previewOn && clockWindow !== undefined`, and `previewOn` flips
+the instant the toggle is pressed. The pane, meanwhile, animates open over the
+surface's reveal duration. So the gate is "has the preview been ASKED for",
+and what it needs to be is "is the preview THERE".
+
+**The same problem was already solved once, in the surface, for the same
+reason.** `chromeIn` exists so the divider and the transport fade in only once
+the pane has finished:
+
+> The divider and the transport are controls for a thing that is not there yet
+> while the pane is still opening — drawing them mid-slide puts a play button
+> on a two-inch sliver of video — so they fade in once it has finished.
+
+A playhead on the board is the same kind of thing: a readout of a preview that
+is not yet on screen. It should ride the same signal.
+
+Acceptance criteria:
+
+- The playhead does not draw until the preview pane has finished opening.
+- Closing is NOT symmetric: the chrome "ride[s] the close down still visible,
+  which reads as the board covering them rather than as two separate
+  departures", and the playhead should behave the same way.
+- A pane that is already open at first paint shows the playhead immediately —
+  there is nothing to wait for, and `chromeIn`'s `wasOpenRef` exists because
+  hiding and re-showing in that case is a flash.
+- The strip's line, the grid's line, and the sub-timeline rows' lines all
+  follow the same rule; `showPlayhead` feeds several places.
+
+**Two routes, and the cheap one is wrong.** The board could start its own timer
+for the reveal duration — but the app does not know that duration (the surface
+supplies its own default), so this would duplicate a constant across a package
+boundary and drift silently the first time the reveal is retuned. The honest
+route is for the surface to PUBLISH when it has settled: it already computes
+exactly this as `chromeIn` and already stamps `data-preview-chrome` on its own
+region, so what is missing is only a callback (or lifting that flag) so a
+sibling can read it. Prefer that.
+
