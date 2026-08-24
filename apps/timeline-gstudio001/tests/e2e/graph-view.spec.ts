@@ -1030,6 +1030,22 @@ test.describe("graph view E2E", () => {
       .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().right)));
     expect(thumbRights.length).toBeGreaterThan(1);
     expect(new Set(thumbRights).size).toBe(1);
+
+    // EVERY THUMBNAIL WEARS THE COLLECTION MARK (PL15-011), the same `Layers`
+    // its card wears — on the card it is drawn whether or not there are frames
+    // behind it, and the row is the tree view of those cards.
+    const thumbs = page.locator("[data-subtimeline-thumbs]");
+    await expect(thumbs.locator("[data-subtimeline-collection-mark]")).toHaveCount(
+      thumbRights.length,
+    );
+
+    // AND A RING, NOT A BORDER. Asserted as a box-shadow rather than by eye
+    // because the distinction is the point: a border would have widened these
+    // boxes and pushed them off the single column just asserted above.
+    const ring = await thumbs
+      .first()
+      .evaluate((el) => getComputedStyle(el).boxShadow);
+    expect(ring).not.toBe("none");
   });
 
   test("a collection id containing a comma is one row, not two broken ones", async ({ page }) => {
@@ -1093,6 +1109,30 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, SLASH_ID), { timeout: 15000 }).toEqual(["s1"]);
   });
 
+  test("the whole row header opens the timeline, and the name still renames", async ({
+    page,
+  }) => {
+    // PL15-010. The row was expanded by a 20px folder button and nothing else,
+    // in a header that is most of the width of the board.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const section = page.locator('section[aria-label="Sub-timeline: Scene A"]');
+    const folder = section.locator("button[aria-expanded]").first();
+    await expect(folder).toHaveAttribute("aria-expanded", "false");
+
+    // The CLIP COUNT — an inert readout, nowhere near the folder, and the kind
+    // of place a press used to do nothing at all.
+    await section.getByText(/clips$/).click();
+    await expect(folder).toHaveAttribute("aria-expanded", "true");
+
+    // The folder still works, and works ONCE. It sits inside the clickable
+    // header now, so without stopping propagation a press would run the toggle
+    // twice and the row would read as inert.
+    await folder.click();
+    await expect(folder).toHaveAttribute("aria-expanded", "false");
+  });
+
   test("renaming a sub-graph in place persists to the child document title", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
@@ -1100,6 +1140,17 @@ test.describe("graph view E2E", () => {
     // Double-click the (collapsed) row's name → inline edit; commit with Enter.
     const section = page.locator('section[aria-label="Sub-timeline: Scene A"]');
     await section.getByRole("heading", { name: "Scene A" }).dblclick();
+
+    // THE NAME IS THE ONE PART OF THE HEADER THAT DOES NOT TOGGLE (PL15-010).
+    // The first click of this double-click is a single click on a row that is
+    // otherwise clickable everywhere — and expanding a row HYDRATES it, so
+    // without the exclusion every rename would fire a fetch, flash the body
+    // open and collapse it again on the second click.
+    await expect(section.locator("button[aria-expanded]").first()).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
     const input = page.getByRole("textbox", { name: "Timeline name" });
     await input.fill("Opening Scene");
     await input.press("Enter");

@@ -30,10 +30,20 @@ import { MediaDropTarget } from "./graph-tool-buttons";
 // so `input.click()` dispatches the click and nothing else happens — which is
 // exactly what needs counting.
 
+// Both stories drive the component through `render` (they need the StrictMode
+// wrapper), but the typed `satisfies` still wants a full arg set on the meta —
+// so these are the defaults each story then re-states for readability.
 const meta = {
   title: "Graph view/Media drop target",
   component: MediaDropTarget,
   parameters: { layout: "centered" },
+  args: {
+    hadUserActivation: true,
+    clientX: 40,
+    clientY: 40,
+    onFiles: () => {},
+    onDismiss: () => {},
+  },
 } satisfies Meta<typeof MediaDropTarget>;
 
 export default meta;

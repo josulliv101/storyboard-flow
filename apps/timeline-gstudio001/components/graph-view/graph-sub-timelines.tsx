@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Folder, FolderOpen, ListTree } from "lucide-react";
+import { Folder, FolderOpen, Layers, ListTree } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -22,7 +22,9 @@ import { VideoFrameLookAhead } from "./graph-card-frame-loading";
 import {
   useCollectionPreviewFrames,
   useEnabledChildCount,
+  useFirstChildIsAudio,
 } from "./graph-card-derivations";
+import { AudioPlaceholder, EmptyCollectionPlaceholder } from "./graph-card-placeholders";
 import { collectionPreviewFrameUrl } from "@/lib/video-frame-url";
 import { hydrateTimeline } from "./graph-hydration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
@@ -153,8 +155,11 @@ function SubTimelineNode({
   // it has to agree with the time totals and the served summary rather than
   // counting clips that are skipped.
   const liveCount = useEnabledChildCount(collectionId);
-  // Same pair the card shows; empty until an un-hydrated row loads.
+  // The same frame the card shows; empty until an un-hydrated row loads.
   const previewFrames = useCollectionPreviewFrames(id, hydrated, detail?.previewItems);
+  // A collection of voice takes gets the audio glyph rather than the empty
+  // gradient, exactly as its card does — see the thumbnail below.
+  const leadsWithAudio = useFirstChildIsAudio(collectionId);
   const childIds = useCollectionChildIds(collectionId);
   const status = subTimelineRowStatus({ expanded, hydrated, failed });
 
@@ -187,7 +192,34 @@ function SubTimelineNode({
       aria-label={`Sub-timeline: ${name}`}
       className="min-w-0 rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3"
     >
-      <div className="mb-1.5 flex items-center gap-2">
+      {/* THE WHOLE BAR OPENS IT (PL15-010), not just the folder.
+          A 20px folder button was the only way to expand a row whose header is
+          most of the width of the board.
+
+          NOT A `<button>` AROUND THE ROW. It contains a button, and while
+          renaming it contains an `<input>` — nested interactive elements are
+          invalid and take the keyboard behaviour of both with them. So the
+          click lives on the container and the FOLDER stays the one accessible
+          control, with `aria-expanded` on it. This adds a pointer target, not
+          a second tab stop.
+
+          THE NAME IS EXCLUDED, and it is the one exception worth arguing.
+          Double-clicking it renames, so a row that toggled on single click
+          would fire on the first click of every rename — expanding the row,
+          which HYDRATES it (a fetch), then collapsing it again on the second.
+          The end state would be right and the flash and the request would not.
+          Everything else in the header is fair game.
+
+          Hover moves here with the click. The call-out that lights this
+          collection's card lived on the folder alone; a bar that opens from
+          anywhere should light the card from anywhere, or it answers "which
+          card is this" in a smaller region than it answers "press me". */}
+      <div
+        className="mb-1.5 flex cursor-pointer items-center gap-2 rounded transition-colors hover:bg-zinc-800/40"
+        onClick={toggle}
+        onPointerEnter={hoverSource.onPointerEnter}
+        onPointerLeave={hoverSource.onPointerLeave}
+      >
         {/* Tree elbow. Nesting is otherwise carried only by the panels'
             indentation, which reads as "inset boxes" rather than "branches";
             the corner in front of the folder names the relationship. Drawn
@@ -204,12 +236,13 @@ function SubTimelineNode({
           type="button"
           aria-label={expanded ? "Collapse" : "Expand"}
           aria-expanded={expanded}
-          onClick={toggle}
-          // Hovering this folder calls out the same collection's CARD in the
-          // surface above (graph-collection-hover). One direction only: the
-          // card does not reach back down here.
-          onPointerEnter={hoverSource.onPointerEnter}
-          onPointerLeave={hoverSource.onPointerLeave}
+          // STOPS PROPAGATING, or the row's own handler toggles it straight
+          // back: this button is inside the clickable header now, so one press
+          // would run `toggle` twice and the row would appear inert.
+          onClick={(event) => {
+            event.stopPropagation();
+            toggle();
+          }}
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-sky-400 transition-colors hover:bg-zinc-800 hover:text-sky-300"
         >
           {expanded ? (
@@ -219,16 +252,25 @@ function SubTimelineNode({
           )}
         </button>
         {rename.editing ? (
-          <InlineNameEditor
-            initialValue={name}
-            onInput={rename.setDraft}
-            onCommit={rename.commit}
-            onCancel={rename.cancel}
-            className="min-w-0 flex-1 rounded border border-sky-500/60 bg-zinc-900 px-1.5 py-0.5 text-sm font-semibold text-zinc-100 outline-none"
-          />
+          // Wrapped so a click inside the editor cannot reach the row's
+          // toggle. Clicking to place a caret while renaming must not collapse
+          // the thing being renamed.
+          <div className="min-w-0 flex-1" onClick={(event) => event.stopPropagation()}>
+            <InlineNameEditor
+              initialValue={name}
+              onInput={rename.setDraft}
+              onCommit={rename.commit}
+              onCancel={rename.cancel}
+              className="w-full rounded border border-sky-500/60 bg-zinc-900 px-1.5 py-0.5 text-sm font-semibold text-zinc-100 outline-none"
+            />
+          </div>
         ) : (
           <h3
             onDoubleClick={rename.begin}
+            // The exception to the clickable row — see the header's note. A
+            // single click here must not toggle, because the first click of a
+            // rename double-click is a single click.
+            onClick={(event) => event.stopPropagation()}
             title="Double-click to rename"
             className="cursor-text truncate text-sm font-semibold text-zinc-100"
           >
@@ -269,7 +311,11 @@ function SubTimelineNode({
         <span
           aria-hidden="true"
           data-subtimeline-thumbs
-          className="flex h-10 w-[72px] shrink-0 overflow-hidden rounded-sm bg-zinc-950/60"
+          // A RING, NOT A BORDER (PL15-011). A border would add to the box and
+          // shift this thumbnail off the vertical column the negative margin
+          // below exists to hold it on; a ring paints outside and takes no part
+          // in layout. Same reason the drop zones wear one.
+          className="relative flex h-10 w-[72px] shrink-0 overflow-hidden rounded-sm bg-zinc-950/60 ring-1 ring-white/15"
           // Cancel the right inset this row's ANCESTOR panels impose, so every
           // preview in the tree lands on one vertical line however deeply the
           // row is nested. Without it each level shifted the frames 13px left
@@ -278,20 +324,69 @@ function SubTimelineNode({
           // they belong to the column, not to the panel they sit in.
           style={{ marginRight: -(depth * SUBTIMELINE_PANEL_RIGHT_INSET_PX) }}
         >
-          {previewFrames.map((frame, index) => (
-            // Keyed by SLOT, not content: the pair is order-stable and the
-            // same asset can be both first and last, so a content key would
-            // collide AND remount an already-loaded frame on every child edit.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={index}
-              src={collectionPreviewFrameUrl(frame)}
-              alt=""
-              draggable={false}
-              loading="lazy"
-              className="h-full min-w-0 flex-1 object-cover"
-            />
-          ))}
+          {previewFrames.length === 0 ? (
+            /* THE CARD'S OWN EMPTY STATES, not a flat tint (PL15-011).
+               This box's `bg-zinc-950/60` used to be all you saw when a
+               collection had no frame — a flat wash that reads at 40px like
+               the card's gradient and is not it. Mirroring the card means
+               using the card's placeholders, so the two cannot drift.
+
+               INCLUDING THE AUDIO ONE. A collection of voice takes draws the
+               audio glyph on its card because "this is sound" is truer there
+               than "this is empty"; drawing the gradient here would make the
+               same collection read as empty in the tree and as audio on the
+               board, which is the exact disagreement this item exists to
+               close. */
+            <span
+              data-subtimeline-thumb-kind={leadsWithAudio ? "audio" : "empty"}
+              className="flex h-full w-full"
+            >
+              {leadsWithAudio ? <AudioPlaceholder /> : <EmptyCollectionPlaceholder />}
+            </span>
+          ) : (
+            previewFrames.map((frame, index) => (
+              // Keyed by SLOT, not content: the same asset can appear more than
+              // once, so a content key would collide AND remount an
+              // already-loaded frame on every child edit.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={index}
+                src={collectionPreviewFrameUrl(frame)}
+                alt=""
+                draggable={false}
+                loading="lazy"
+                className="h-full min-w-0 flex-1 object-cover"
+              />
+            ))
+          )}
+          {/* THE COLLECTION MARK, as the card wears it (PL15-011).
+              On the card this says "container, not clip" over the artwork, and
+              it is drawn whether or not there are frames behind it — said once,
+              the same way, either way. The row is the tree view of those very
+              cards, so it says it too.
+
+              ITS OWN SCALE. The card's mark is a 40px glyph in a `p-2` disc,
+              which is the whole height of this 40px box. A 16px glyph in a
+              `p-1` disc is the same object one size down.
+
+              THE DISC IS NOT DECORATION. A bare glyph is white on whatever the
+              children happen to be, and over a pale or busy frame the strokes
+              break up; the disc is its ground. `bg-black/45` as a BACKGROUND
+              alpha rather than `opacity` on the wrapper, which would take the
+              glyph down with it — and the glyph keeps its own half opacity so
+              the frame still reads through, because the frame is how you
+              recognise WHICH collection this is. */}
+          <span
+            data-subtimeline-collection-mark
+            className="pointer-events-none absolute inset-0 grid place-items-center"
+          >
+            <span className="rounded-full bg-black/45 p-1">
+              <Layers
+                className="size-4 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.5}
+              />
+            </span>
+          </span>
         </span>
       </div>
 

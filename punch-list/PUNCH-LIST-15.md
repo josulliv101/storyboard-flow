@@ -495,7 +495,10 @@ fail as a locator that never resolves.
 
 ## PL15-010 — The whole child-timeline row opens it, not just the folder
 
-- Status: Not started
+- Status: Complete — the NAME is excluded (a rename's first click would
+  otherwise expand the row and fire its hydration fetch); everything else in
+  the header toggles. Hover moved with the click, so the card call-out lights
+  from the same region that opens the row.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (children timelines shown)
 - Area: `components/graph-view/graph-sub-timelines.tsx`
@@ -542,7 +545,10 @@ open it from another.
 
 ## PL15-011 — The child row's thumbnail mirrors a real collection card
 
-- Status: Not started
+- Status: Complete — the audio placeholder was carried across too, so a
+  voice-takes collection no longer reads as empty in the tree and as audio on
+  the board. The border is a RING: a border would have widened the box and
+  pushed it off the column the negative margin exists to hold.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (children timelines shown — the thumbnail at the far right of a row header)
 - Area: `components/graph-view/graph-sub-timelines.tsx`
