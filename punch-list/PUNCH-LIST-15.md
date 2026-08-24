@@ -1339,3 +1339,61 @@ exactly this as `chromeIn` and already stamps `data-preview-chrome` on its own
 region, so what is missing is only a callback (or lifting that flag) so a
 sibling can read it. Prefer that.
 
+## PL15-024 — Sizing the film should scale it in both axes
+
+- Status: Not started — mechanism identified, and one real conflict to settle
+  first (below).
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a media item's details, then the gear's `size` group)
+- Area: `components/graph-view/graph-seam-strip-bar.tsx` (`scale`, `fitTo`),
+  `components/graph-view/graph-seam-lane-size.ts`
+- Screenshot: Not captured
+
+PL15-022 made the film taller. It did not make it wider, so `md` and `lg`
+currently stretch each thumbnail vertically against an unchanged time scale.
+The horizontal scale should move with the height, so a bigger film means
+bigger thumbnails rather than taller ones.
+
+**Where it goes.** The bar's effective scale is one expression:
+
+```
+const scale = pxPerSecond ?? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth);
+```
+
+`pxPerSecond` is null until somebody zooms or presses `fit`. Multiplying that
+result by `laneHeight / SEAM_LANE_HEIGHT_PX` scales both axes by the same
+factor — which also keeps a filmstrip CELL square and keeps the same number of
+frames per clip, so a bigger film is genuinely a bigger version of the same
+picture rather than a coarser one. (PL15-022 changes the cell count precisely
+because only one axis moved; this would undo that side effect, which is the
+better outcome and worth saying out loud.)
+
+**THE CONFLICT, which needs deciding before it is built: `fit` stops fitting.**
+`fit` means "this collection spans the track" — it computes the scale FROM the
+measured width. Multiply that result by a size factor and at `md` or `lg` the
+collection no longer fits the track, so a control whose entire promise is in
+its name stops keeping it. Three ways out:
+
+- **`fit` re-fits at the current size** — divide by the same factor inside
+  `fitTo`, so fit always fits and only the unzoomed default and manual zooms
+  carry the size factor. Keeps both promises; costs one place where the factor
+  must be applied in reverse, which is exactly the sort of thing that drifts.
+- **Size scales only the DEFAULT scale**, not an explicit zoom or fit. A user
+  who has set a scale keeps it; a user who has not gets a proportional film.
+  Least surprising, and does nothing for the case where you zoom first and
+  resize second.
+- **Accept that `fit` is a starting point, not an invariant** — simplest, and
+  the one that makes the control lie.
+
+Recommend the first. Do not build it before choosing, because the three differ
+only by a couple of lines and are very hard to tell apart from the diff after
+the fact.
+
+Acceptance criteria:
+
+- At each size the film's boxes are proportionally wider as well as taller.
+- A filmstrip cell stays square, and a clip is cut into the same number of
+  frames at every size.
+- Whatever is decided about `fit` is written next to the code, since the name
+  is a promise.
+
