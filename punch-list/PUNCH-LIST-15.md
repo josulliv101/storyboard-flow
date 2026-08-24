@@ -5,7 +5,7 @@ dictated; each is Not started until it is worked.
 
 ## PL15-001 — Square off the left edge of the active tile's pill
 
-- Status: Not started
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
 - Area: `components/timeline/sidebar-icon-styles.ts`
   (`SIDEBAR_ICON_BASE`, `SIDEBAR_ICON_PRESSED`)
@@ -52,7 +52,7 @@ Acceptance criteria:
 
 ## PL15-002 — Drop "Load project from file" from the board's `⋮`
 
-- Status: Not started
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
 - Area: `components/graph-view/graph-project-menu.tsx`,
   `components/graph-view/graph-project-menu.stories.tsx`
@@ -104,7 +104,7 @@ at it once the item is out before deciding.
 
 ## PL15-003 — The strip opens in Collections, not flat
 
-- Status: Not started
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph?surface=strip
 - Area: `components/graph-view/graph-timeline-view.tsx` (`flatOn`),
   `components/graph-view/graph-board.tsx` (the `Collections` `HeaderToggle`)
@@ -154,7 +154,7 @@ Acceptance criteria:
 
 ## PL15-004 — The strip's trim handle collar goes white
 
-- Status: Not started
+- Status: Complete — verify the armed read on a real strip
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph?surface=strip
 - Area: `components/graph-view/graph-card-trim.tsx` (`GraphTrimHandle`)
 - Screenshot: Not captured
@@ -322,7 +322,7 @@ like-for-like, and say so.
 
 ## PL15-007 — The account avatar shows a broken image
 
-- Status: Not started
+- Status: Complete
 - URL: http://localhost:3000/ (the rail's Account tile, bottom of the sidebar)
 - Area: `components/timeline/timeline-sidebar.tsx` (lines ~1236 and ~1273)
 - Screenshot: Not captured
@@ -606,7 +606,7 @@ are still scoped to a card. The e2e already reads `[data-subtimeline-thumbs]`
 
 ## PL15-012 — The drop zone goes dashed and grey
 
-- Status: Not started
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (drag a file from the OS over the grid or the strip)
 - Area: `components/graph-view/graph-native-drop-chrome.tsx`
@@ -909,7 +909,7 @@ Acceptance criteria:
 
 ## PL15-017 — A caret under the minimap's active segment
 
-- Status: Not started
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details — the minimap under the bar)
 - Area: `components/graph-view/graph-seam-minimap.tsx`,

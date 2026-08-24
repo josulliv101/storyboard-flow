@@ -2158,6 +2158,37 @@ export const TheMinimapMovesTheWindow: Story = {
     const ink = marked.backgroundColor.match(/[\d.]+/g)!.slice(0, 3).map(Number);
     expect(Math.min(...ink)).toBeGreaterThan(200);
 
+    // AND A CARET UNDER IT (PL15-017) — the bar's own mark at map scale,
+    // pointing up at the segment instead of down at the film.
+    //
+    // ONE, and inside the marked segment. Being a CHILD is not decoration in
+    // the test either: it is how the caret finds the segment's centre at all.
+    // The segments are flex items sized by duration with a margin at every
+    // collection seam, so their centres are not a percentage of the run —
+    // asserting containment is asserting that nothing has quietly gone back
+    // to positioning it by arithmetic.
+    const carets = document.querySelectorAll<HTMLElement>("[data-seam-mini-active-mark]");
+    expect(carets.length).toBe(1);
+    expect(live[0]!.contains(carets[0]!)).toBe(true);
+
+    // CENTRED ON THE SEGMENT, and hanging directly beneath it. Half a pixel of
+    // slack on each: the segment's width is a flex fraction of a duration, so
+    // both numbers land on subpixels routinely.
+    const caretBox = carets[0]!.getBoundingClientRect();
+    const liveBox = live[0]!.getBoundingClientRect();
+    expect(Math.abs((caretBox.left + caretBox.right) / 2 - (liveBox.left + liveBox.right) / 2))
+      .toBeLessThanOrEqual(0.5);
+    expect(Math.abs(caretBox.top - liveBox.bottom)).toBeLessThanOrEqual(0.5);
+
+    // IT STAYS INSIDE THE RAIL. The caret is wider than the narrowest possible
+    // segment, so a short clip at either end is where it would hang off — and
+    // a mark drawn past the end of the map is not reporting a position, for
+    // the same reason the bar's own mark is clamped.
+    const rail = minimap.getBoundingClientRect();
+    expect(caretBox.left).toBeGreaterThanOrEqual(rail.left - 0.5);
+    expect(caretBox.right).toBeLessThanOrEqual(rail.right + 0.5);
+    expect(caretBox.bottom).toBeLessThanOrEqual(rail.bottom + 0.5);
+
     // ── AND THE PANELS EITHER SIDE, ONE TIER DOWN ────────────────────────
     //
     // The map marks what is ON SCREEN, the same set the film strip draws

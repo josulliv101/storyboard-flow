@@ -7,6 +7,24 @@ import { BAR_NEUTRAL_COLOUR } from "@/lib/bar-collection-colours-flag";
 import { collectionSeams, type SeamBarClip } from "./graph-seam-bar-layout";
 
 /**
+ * The active segment's caret — half its width, and its height.
+ *
+ * ITS OWN NUMBERS, not the bar's `MARK_HALF_PX` / `MARK_HEIGHT_PX`. That mark
+ * is 10px across and sits above a 44px band; the same glyph here would be
+ * wider than most segments and taller than the gap under them. Same idiom, one
+ * scale down — which is the relationship the white already has with the bar's
+ * white.
+ *
+ * 3 and 3 is what the rail has room for, and the room is the constraint rather
+ * than taste: the rail is 14px, the run sits at `top-1` and is 6px, and the
+ * active segment grows a pixel each way (`-my-px`) — so the segments occupy
+ * y=3 to y=11 and there are exactly three pixels beneath them. The caret takes
+ * those three and stops flush with the bottom of the rail.
+ */
+const MINI_MARK_HALF_PX = 3;
+const MINI_MARK_HEIGHT_PX = 3;
+
+/**
  * THE WHOLE SEQUENCE, IN MINIATURE — and the only thing on screen that is.
  *
  * The bar above it is a window: it zooms, it pans, and at any useful scale
@@ -182,6 +200,11 @@ export function SeamMinimap({
               }}
               className={[
                 "min-w-px flex-shrink rounded-[1px]",
+                // `relative` ONLY so the caret below can anchor to this
+                // segment. It is a flex item either way and its size is
+                // unchanged; see the caret for why it hangs off the segment
+                // rather than off the rail.
+                isCentre ? "relative" : "",
                 // Full strength as well, so the white is white rather than a
                 // 70% wash of it against the dimmed run either side.
                 //
@@ -204,7 +227,43 @@ export function SeamMinimap({
                     ? "opacity-100"
                     : "opacity-70",
               ].join(" ")}
-            />
+            >
+              {/* A CARET UNDER THE ACTIVE ONE — the bar's mark at this scale.
+                  The bar marks its active clip with a white triangle above the
+                  film pointing down at it; this is the same claim said the
+                  same way one size smaller, pointing up.
+
+                  A CHILD OF THE SEGMENT, not a mark positioned over the rail,
+                  and that is the whole reason this is cheap. The segments are
+                  flex items sized by `flexGrow: showingSeconds` with a 3px
+                  margin wherever a collection changes, so a segment's centre
+                  is NOT a percentage of total duration — which is exactly how
+                  the window and the playhead above are placed, and why they
+                  can be. Hanging the caret off the segment lets flex answer
+                  "where is its middle" instead of re-deriving the layout in
+                  arithmetic that would drift the moment a seam gap changed.
+
+                  `top: 100%` is the segment's own bottom edge, so the caret
+                  starts where the run ends however tall the run is drawn —
+                  including the extra pixel this segment has for being the
+                  subject. */}
+              {isCentre && (
+                <span
+                  data-seam-mini-active-mark={clip.id}
+                  aria-hidden="true"
+                  style={{
+                    top: "100%",
+                    left: "50%",
+                    borderLeft: `${MINI_MARK_HALF_PX}px solid transparent`,
+                    borderRight: `${MINI_MARK_HALF_PX}px solid transparent`,
+                    // Pointing UP: the solid edge is the BOTTOM one, so the
+                    // tip is at the top, against the segment it names.
+                    borderBottom: `${MINI_MARK_HEIGHT_PX}px solid rgb(250, 250, 250)`,
+                  }}
+                  className="pointer-events-none absolute -translate-x-1/2"
+                />
+              )}
+            </span>
           );
         })}
       </div>
