@@ -1242,3 +1242,36 @@ Acceptance criteria:
   whatever is in it.
 - Clock notation and tenths are unchanged.
 
+## PL15-022 — The film strip can be drawn taller
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a media item's details — the gear menu's `size` group)
+- Area: `components/graph-view/graph-seam-lane-size.ts` (new),
+  `graph-seam-lane.tsx`, `graph-seam-strip-bar.tsx`,
+  `graph-item-details-modal.tsx`
+- Screenshot: Not captured
+
+The bar's film was one fixed height. It gets a `SM · MD · LG` picker, in the
+gear with the other settings — a posture you set and then work, which is the
+same test that put frames, card and fit there (PL15-006).
+
+`sm` is the height the bar has always drawn (48px), so nothing changes until
+the control is used. `md` is 64 and `lg` is 88.
+
+Acceptance criteria:
+
+- The picker sits in the gear menu, labelled `size`.
+- The film redraws at the chosen height; the hover card still hangs below it
+  rather than climbing into it.
+- The choice is remembered for the session and not persisted, like the reach
+  and the view count.
+
+**A CELL IS SQUARE, so this is not only a size.** `FILMSTRIP_CELL_PX` was the
+lane height, and the number of frames a clip's box is cut into is its width
+divided by that — so a taller film is a COARSER filmstrip as well as a bigger
+one. That is the actual trade, and it is why three sizes are offered rather
+than a slider: the values in between buy nothing and cost a decision.
+
+**Three sizes, not a range**, for the same reason `VIEW_COUNTS` is `[3, 5]`.
+

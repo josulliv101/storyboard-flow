@@ -179,6 +179,7 @@ export function SeamStripBar({
   onPreviewingChange,
   atStart,
   atEnd,
+  laneHeight = SEAM_LANE_HEIGHT_PX,
   settingsLeft,
   settingsRight,
   previewAnchor = "follow",
@@ -234,6 +235,8 @@ export function SeamStripBar({
    * clock sits with the controls, and that the whole thing lands between the
    * scrub bar and the minimap — and none of that changes with what is passed.
    */
+  /** The film's drawn height — the `size` picker in the gear (PL15-022). */
+  laneHeight?: number;
   settingsLeft?: React.ReactNode;
   settingsRight?: React.ReactNode;
   /** Whether the hover card follows the pointer or parks under the middle of
@@ -1108,6 +1111,7 @@ export function SeamStripBar({
         />
 
         <SeamLane
+          laneHeight={laneHeight}
           laneRef={laneRef}
           panelClipIds={panelClipIds}
           hoveredClipId={hoveredClipId}
@@ -1143,14 +1147,14 @@ export function SeamStripBar({
           aria-hidden="true"
           data-seam-fade="left"
           hidden={offset >= -0.5}
-          style={{ top: SEAM_RULER_TOTAL_PX, height: SEAM_LANE_HEIGHT_PX }}
+          style={{ top: SEAM_RULER_TOTAL_PX, height: laneHeight }}
           className="pointer-events-none absolute left-0 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
         />
         <span
           aria-hidden="true"
           data-seam-fade="right"
           hidden={strip.totalPx + offset <= trackWidth + 0.5}
-          style={{ top: SEAM_RULER_TOTAL_PX, height: SEAM_LANE_HEIGHT_PX }}
+          style={{ top: SEAM_RULER_TOTAL_PX, height: laneHeight }}
           className="pointer-events-none absolute right-0 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
         />
       </div>

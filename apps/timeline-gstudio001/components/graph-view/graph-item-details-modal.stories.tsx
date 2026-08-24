@@ -1328,6 +1328,51 @@ export const TagsAreAddedFromAnIcon: Story = {
  * What did change discontinuously was HEIGHT — see the neighbour branch in
  * `graph-item-details-panel`. That is what the second assertion is for.
  */
+/**
+ * THE FILM CAN BE DRAWN TALLER (PL15-022).
+ *
+ * `sm` is the height the bar has always used, so the control changes nothing
+ * until it is pressed. What makes it worth a story is the part that is not
+ * obvious from the label: a filmstrip CELL IS SQUARE, so the height also sets
+ * how many frames a clip's box is cut into — a taller film is a coarser
+ * filmstrip as well as a bigger one.
+ */
+export const TheFilmCanBeDrawnTaller: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+
+    const lane = () =>
+      document.querySelector<HTMLElement>("[data-seam-boxes]")?.getBoundingClientRect().height ??
+      0;
+    const press = (label: string) => {
+      openBarSettings();
+      const group = document.querySelector<HTMLElement>("[data-details-bar-size]")!;
+      const button = Array.from(group.querySelectorAll("button")).find(
+        (candidate) => candidate.textContent?.trim() === label,
+      )!;
+      fireEvent.click(button);
+    };
+
+    const small = lane();
+    expect(small).toBeGreaterThan(0);
+
+    press("MD");
+    await waitFor(() => expect(lane()).toBeGreaterThan(small));
+    const medium = lane();
+
+    press("LG");
+    await waitFor(() => expect(lane()).toBeGreaterThan(medium));
+
+    // PUT IT BACK. Like the reach and the view count, this is remembered at
+    // module scope for the session — a story that leaves the film tall hands
+    // it to whichever story runs next in the same browser.
+    press("SM");
+    await waitFor(() => expect(lane()).toBe(small));
+  },
+};
+
 export const ChangingTheCountResizesTheSamePanels: Story = {
   // A LONG scene on purpose. `TRIMMED_SCENE` holds three clips, so "show five"
   // has nothing to show and the step this story is about cannot happen at all.

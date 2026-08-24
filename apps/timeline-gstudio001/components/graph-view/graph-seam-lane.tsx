@@ -160,7 +160,11 @@ export { BOX_INSET_PX, SEAM_LANE_HEIGHT_PX, SEAM_PREVIEW_GAP_PX };
 const SOFTENED_PANEL_FRAME_OPACITY = 0.8;
 
 /** One cell per bar-height, so a filmstrip cell reads as a square. */
-const FILMSTRIP_CELL_PX = SEAM_LANE_HEIGHT_PX;
+/** A filmstrip cell is SQUARE, so the lane's height is also its cell width —
+ *  which means a taller film is a coarser filmstrip as well as a bigger one.
+ *  Passed rather than read from the constant now that the height is a setting
+ *  (PL15-022); the constant remains the `sm` value and the default. */
+const filmstripCellPx = (laneHeight: number) => laneHeight;
 /** Past this the cells stretch rather than multiply — see `SegmentFrames`. */
 const MAX_FILMSTRIP_CELLS = 12;
 
@@ -174,6 +178,7 @@ const MAX_FILMSTRIP_CELLS = 12;
  * dozen image lists per box per frame is exactly the cost this is not worth.
  */
 function SegmentFrames({
+  laneHeight,
   clipId,
   clip,
   posterSrc,
@@ -195,6 +200,8 @@ function SegmentFrames({
    * colour stays exactly the tone the rest of the run is.
    */
   opacity?: number;
+  /** The lane's height, which is also a filmstrip cell's width. */
+  laneHeight?: number;
 }>) {
   // HOW MANY CELLS FIT, at roughly one per bar-height so each reads as a
   // square. Capped, because a long clip at a high zoom is a box thousands of
@@ -206,14 +213,14 @@ function SegmentFrames({
     if (style !== "filmstrip" || clip?.posterSrcs === undefined) return null;
     const wanted = Math.min(
       MAX_FILMSTRIP_CELLS,
-      Math.max(1, Math.round(widthPx / FILMSTRIP_CELL_PX)),
+      Math.max(1, Math.round(widthPx / filmstripCellPx(laneHeight ?? SEAM_LANE_HEIGHT_PX))),
     );
     const urls = videoFrameUrls(clip.posterSrcs, wanted, {
       trimInSeconds: clip.trimInSeconds ?? 0,
       effectiveSeconds: clip.showingSeconds,
     });
     return urls.length === 0 ? null : urls;
-  }, [clip, style, widthPx]);
+  }, [clip, style, widthPx, laneHeight]);
 
   /**
    * THE ONE FRAME, TAKEN AFTER THE TRIM RATHER THAN BEFORE IT.
@@ -463,6 +470,7 @@ export type SeamHover = Readonly<{
  * cannot read exactly when you need it.
  */
 export function SeamLane({
+  laneHeight = SEAM_LANE_HEIGHT_PX,
   laneRef,
   strip,
   clips,
@@ -479,6 +487,9 @@ export function SeamLane({
   atEnd,
 }: Readonly<{
   /** The element the bar attaches its non-passive wheel listener to. */
+  /** The film's drawn height, and therefore its filmstrip cell size — a
+   *  cell is square. Defaults to the `sm` value the bar has always used. */
+  laneHeight?: number;
   laneRef: React.RefObject<HTMLDivElement | null>;
   strip: SeamStrip;
   clips: readonly SeamBarClip[];
@@ -622,7 +633,7 @@ export function SeamLane({
       // have to escape it: a time chip drawn INSIDE the boxes covers the frames
       // it is reporting on, which is the one thing you are looking at while you
       // drag.
-      style={{ height: SEAM_LANE_HEIGHT_PX }}
+      style={{ height: laneHeight }}
       className="relative cursor-ew-resize touch-none select-none"
     >
       <div className="absolute inset-0 overflow-hidden">
@@ -720,6 +731,7 @@ export function SeamLane({
               >
                 {framed ? (
                   <SegmentFrames
+                    laneHeight={laneHeight}
                     clipId={segment.clipId}
                     clip={clipById.get(segment.clipId)}
                     posterSrc={segment.posterSrc}
@@ -954,6 +966,7 @@ export function SeamLane({
           find out — the thing a bar of anonymous boxes cannot do. */}
       {hover !== null && (
         <SeamPreviewCard
+          laneHeight={laneHeight}
           hover={hover}
           previewAnchor={previewAnchor}
           leftPx={viewportX(hover.x)}
@@ -978,6 +991,7 @@ export function SeamLane({
  * there is no effect and nothing to keep in step.
  */
 function SeamPreviewCard({
+  laneHeight = SEAM_LANE_HEIGHT_PX,
   hover,
   previewAnchor,
   leftPx,
@@ -986,6 +1000,8 @@ function SeamPreviewCard({
   previewAnchor: PreviewAnchor;
   /** Where the card points, already in the lane's coordinates. */
   leftPx: number;
+  /** The film's height, which is what this card hangs below. */
+  laneHeight?: number;
 }>) {
   // WHETHER THE CARD HAS A PICTURE TO BE THE SIZE OF YET.
   //
@@ -1039,7 +1055,7 @@ function SeamPreviewCard({
       // block, which IS the track, so the bound follows a resize with no
       // observer and no re-render. 9rem is half the card.
       style={{
-        top: SEAM_LANE_HEIGHT_PX + SEAM_PREVIEW_GAP_PX,
+        top: laneHeight + SEAM_PREVIEW_GAP_PX,
         left:
           previewAnchor === "pinned"
             ? "50%"

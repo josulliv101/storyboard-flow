@@ -79,6 +79,13 @@ import {
   type PreviewAnchor,
 } from "./graph-seam-preview-anchor";
 import {
+  LANE_SIZES,
+  laneHeightFor,
+  lastLaneSize,
+  rememberLaneSize,
+  type LaneSize,
+} from "./graph-seam-lane-size";
+import {
   BAR_REACHES,
   barReachLabel,
   barReachWindow,
@@ -288,6 +295,10 @@ function DetailsFilmstripModal({
   // panels are on screen: the row is what you are working on, the bar is how
   // much of the sequence you can get to without leaving it.
   const [reach, setReach] = useState<BarReach>(lastBarReach());
+  // HOW TALL THE FILM IS DRAWN (PL15-022). Remembered for the session like the
+  // reach and the view count, and for the same reason: a working posture, not
+  // a preference.
+  const [laneSize, setLaneSize] = useState<LaneSize>(lastLaneSize());
   // WHAT THE BOXES DRAW, kept beside the reach because it is the same kind of
   // question — how much this control shows you, and of what. Seeded from
   // module scope so it survives the modal being closed and reopened.
@@ -589,6 +600,11 @@ function DetailsFilmstripModal({
   const chooseReach = useCallback((next: BarReach) => {
     rememberBarReach(next);
     setReach(next);
+  }, []);
+
+  const chooseLaneSize = useCallback((next: LaneSize) => {
+    rememberLaneSize(next);
+    setLaneSize(next);
   }, []);
 
   const chooseViewCount = useCallback((next: ViewCount) => {
@@ -1097,6 +1113,34 @@ function DetailsFilmstripModal({
                       can make twice rather than a choice you re-enter. That is
                       the whole reason the two are stored apart even though
                       they are pressed together. */}
+                  {/* HOW TALL THE FILM IS. In the gear with the other
+                      settings rather than in the row, because it is a posture
+                      you set and then work — the same test that put frames,
+                      card and fit there (PL15-006).
+
+                      A CELL IS SQUARE, so this also changes how many frames a
+                      clip is cut into: a taller film is a coarser filmstrip as
+                      well as a bigger one. That is the actual trade and it is
+                      why three sizes are offered rather than a slider — the
+                      in-between values buy nothing and cost a decision. */}
+                  <SegmentedControl
+                    label="size"
+                    ariaLabel="How tall the film is drawn"
+                    groupAttribute="data-details-bar-size"
+                    segments={LANE_SIZES.map((option) => ({
+                      value: option,
+                      label: option.toUpperCase(),
+                      title:
+                        option === "sm"
+                          ? "A compact film"
+                          : option === "md"
+                            ? "Tall enough to recognise a shot"
+                            : "Tall enough to judge a frame",
+                      active: option === laneSize,
+                    }))}
+                    onSelect={chooseLaneSize}
+                  />
+
                   <SegmentedControl
                     label="frames"
                     ariaLabel="What the bar's boxes draw"
@@ -1149,6 +1193,7 @@ function DetailsFilmstripModal({
                   />
                 </>
               }
+              laneHeight={laneHeightFor(laneSize)}
               settingsRight={
                 <SegmentedControl
                   label="reach"
