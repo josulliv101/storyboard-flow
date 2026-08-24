@@ -3050,6 +3050,20 @@ export const TheBarMarksTheEndsOfTheProject: Story = {
       .getBoundingClientRect();
     expect(endCap.left).toBeGreaterThanOrEqual(last.right - 0.5);
 
+    // THE SUBJECT'S COLUMN RUNS PAST THE FILM (PL15-026). The ruler tinted the
+    // active clip's stretch of scale and stopped at its own band, so the clip
+    // being worked on was marked ABOVE the film and nowhere else. The block
+    // continues down through it now, into the space before the minimap.
+    const column = document.querySelector<HTMLElement>("[data-seam-active-column]")!;
+    const columnBox = column.getBoundingClientRect();
+    const laneBox = document.querySelector<HTMLElement>("[data-seam-boxes]")!.getBoundingClientRect();
+    // PAST the film, not merely as tall as it — the point of the item is the
+    // space underneath.
+    expect(columnBox.bottom).toBeGreaterThan(laneBox.bottom);
+    // And it is the SUBJECT's width, not the whole track's.
+    expect(columnBox.width).toBeLessThan(laneBox.width);
+    expect(columnBox.width).toBeGreaterThan(0);
+
     // AND EACH STOP SAYS WHICH END IT IS (PL15-014), in the room the widened
     // gap makes for it — between the stop and the film, not on top of either.
     const startLabel = document.querySelector<HTMLElement>('[data-seam-cap-label="start"]')!;

@@ -1450,3 +1450,45 @@ screen. The clamp reserves exactly the stop's own room
 (`CAP_WIDTH_PX + CAP_GAP_PX`), which is why that constant had to be exported
 rather than guessed at here.
 
+## PL15-026 — The subject's blue runs past the film to the minimap
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a media item's details)
+- Area: `components/graph-view/graph-seam-ruler.tsx`
+  (`RULER_BLOCK_ACTIVE_COLOUR`),
+  `components/graph-view/graph-seam-strip-bar.tsx`
+- Screenshot: Supplied by the owner
+
+The ruler tints the active clip's stretch of scale sky — "the one thing in
+this band with a hue", and the only saturated thing up there, which is what
+makes it findable on a bar of two dozen blocks. It stopped at the ruler's own
+band, so the clip being worked on was marked ABOVE the film and nowhere else.
+
+The block continues downward now: through the film and into the space before
+the minimap, so the subject reads as a COLUMN rather than as a tab sitting over
+it.
+
+Acceptance criteria:
+
+- The active clip's tint runs from the ruler to the minimap, at the clip's own
+  width.
+- It travels with the film — panning moves it with the boxes.
+- It paints BEHIND the frames rather than washing them.
+- It takes no pointer: the lane owns every gesture on this track.
+
+**The same constant, not a matched value.** The column reads
+`RULER_BLOCK_ACTIVE_COLOUR` from the ruler rather than restating
+`rgba(56, 189, 248, 0.30)`. Two ends of one band that drifted apart would be
+worse than no band at all, which is why the ruler's constant is exported.
+
+**There was no space below the film to fill.** `bottom: 0` inside the track put
+the column flush with the frames — measured, the lane ends exactly where the
+track ends, so the gap this item is about belongs to the MINIMAP's top margin,
+not to the track. The column overhangs by that margin.
+
+**Two numbers that must agree, and only one can live here.** The overhang is a
+number in the bar; the gap is `mt-1.5` on the minimap's own root. Nothing
+connects them, so `MINIMAP_GAP_PX` is named and says so — the failure if they
+drift is a column that stops short of the map or runs into it.
+

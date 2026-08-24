@@ -30,7 +30,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/core/dropdown-menu";
 import { SeamMinimap } from "./graph-seam-minimap";
-import { SEAM_RULER_TOTAL_PX, SeamRuler } from "./graph-seam-ruler";
+import {
+  RULER_BLOCK_ACTIVE_COLOUR,
+  SEAM_RULER_TOTAL_PX,
+  SeamRuler,
+} from "./graph-seam-ruler";
 import {
   buildSeamStrip,
   clampStripOffset,
@@ -170,6 +174,16 @@ function readSeconds(value: number): string {
  * and lighting one would be claiming a scale the bar is not at.
  */
 type FitMode = "clip" | "all";
+
+/**
+ * The gap between the film's track and the minimap under it.
+ *
+ * KEEP IN STEP WITH `mt-1.5` on the minimap's own root. It is a Tailwind class
+ * over there and a number here, and nothing connects them — the failure if they
+ * drift is the active column either stopping short of the map or running into
+ * it.
+ */
+const MINIMAP_GAP_PX = 6;
 
 export function SeamStripBar({
   clips,
@@ -328,6 +342,10 @@ export function SeamStripBar({
     pxPerSecond ??
     (trackWidth > 0 ? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth) : 9);
   const strip = useMemo(() => buildSeamStrip(clips, scale), [clips, scale]);
+  // The subject's own box in strip coordinates — what the active column below
+  // is drawn against. `undefined` while the subject is not on the bar at all,
+  // which is a real state at a tight reach.
+  const activeSegment = strip.segments.find((segment) => segment.clipId === centreClipId);
 
   // ONE NEUTRAL FOR EVERY BOX unless the tint is switched on. Substituted here
   // rather than at the derivation, so the collection tones are still computed
@@ -1096,6 +1114,47 @@ export function SeamStripBar({
         // nothing under it stops being clickable.
         className="relative z-30 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
+        {/* THE ACTIVE CLIP'S COLUMN (PL15-026).
+            The ruler already tints the active clip's stretch of scale sky —
+            "the one thing in this band with a hue", and the only saturated
+            thing up there, which is what makes it findable on a bar of two
+            dozen blocks. It stopped at the ruler's own band, so the clip being
+            worked on was marked ABOVE the film and nowhere else.
+
+            This continues the same block downward, through the film and into
+            the space before the minimap, so the subject reads as a column
+            rather than as a tab over it. The SAME constant, not a matched
+            value: two ends of one band that drifted apart would be worse than
+            no band at all.
+
+            BEHIND EVERYTHING — `-z-10` against the track's own stacking, so it
+            passes under the boxes rather than washing the frames it is
+            pointing at. `pointer-events-none` for the same reason: the lane
+            below owns every gesture on this track.
+
+            It travels with the film, because `offset` is the same value the
+            strip is translated by. */}
+        {activeSegment !== undefined && (
+          <span
+            data-seam-active-column={centreClipId}
+            aria-hidden="true"
+            style={{
+              left: activeSegment.leftPx + offset,
+              width: activeSegment.widthPx,
+              top: SEAM_RULER_TOTAL_PX,
+              // PAST THE TRACK'S OWN BOTTOM, which is exactly the film's:
+              // measured, the lane ends where the track ends, so `bottom: 0`
+              // stopped the column flush with the frames and filled none of
+              // the space this item is about. The overhang is the minimap's
+              // own top margin, so the band closes the gap between the film
+              // and the map and stops at it.
+              bottom: -MINIMAP_GAP_PX,
+              backgroundColor: RULER_BLOCK_ACTIVE_COLOUR,
+            }}
+            className="pointer-events-none absolute -z-10"
+          />
+        )}
+
         {/* THE SCALE, ABOVE THE FILM IT MEASURES — and the hover target.
             See `graph-seam-ruler` for both: a ruler belongs against what it
             measures, and a preview card belongs somewhere other than on top

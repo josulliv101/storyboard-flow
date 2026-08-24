@@ -54,7 +54,7 @@ const RULER_BLOCK_COLOUR = "rgba(250, 250, 250, 0.16)";
  * It is the only saturated thing up here, which is what makes it findable at a
  * glance on a bar of two dozen blocks.
  */
-const RULER_BLOCK_ACTIVE_COLOUR = "rgba(56, 189, 248, 0.30)";
+export const RULER_BLOCK_ACTIVE_COLOUR = "rgba(56, 189, 248, 0.30)";
 
 /**
  * The same two tones, pointed at.
