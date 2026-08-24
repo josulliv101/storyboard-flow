@@ -4127,6 +4127,16 @@ export const TheTransportSitsOnTheControlRow: Story = {
       return box.top + box.height / 2;
     };
     const transport = centreY("[data-seam-transport]");
+    // THE CLOCK IS ON THE LEFT NOW (PL15-021), where the settings used to be.
+    // Asserted against the transport rather than as a pixel: it has to be left
+    // of the thing it reports on, and the row is a grid so the two cannot be
+    // compared by class.
+    const clockBox = document.querySelector<HTMLElement>("[data-seam-clock]")!;
+    const transportBox = document.querySelector<HTMLElement>("[data-seam-transport]")!;
+    expect(clockBox.getBoundingClientRect().right).toBeLessThan(
+      transportBox.getBoundingClientRect().left,
+    );
+
     // WHAT IS LEFT IN THE ROW, which is now reach and the gear (PL15-006).
     // Frames, card and fit are inside the gear's menu and are no longer on
     // this line at all, so asking them to share its centre would be asserting

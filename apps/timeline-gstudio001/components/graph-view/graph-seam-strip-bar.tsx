@@ -1210,13 +1210,40 @@ export function SeamStripBar({
         // between the minimap and the top of the controls.
         className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 pt-3 pb-2"
       >
-        {/* EMPTY, AND HOLDING THE COLUMN OPEN.
-            `settingsLeft` moved into the gear at the far right (PL15-006), but
-            the row is a three-column grid whose middle track is what centres
-            the transport — removing this cell would hand the transport the
-            left third as well and it would no longer be in the middle of
-            anything. */}
-        <div aria-hidden="true" className="min-w-0" />
+        {/* THE CLOCK, ON THE LEFT (PL15-021).
+            It sat at the far right beside reach and the gear, because it
+            arrived there with the transport and the settings ended up around
+            it. This cell was emptied when those moved into the gear
+            (PL15-006), leaving a bare third on one side and three things
+            crowded on the other.
+
+            It belongs on the transport's line either way: it says where
+            playback IS, which is the question the play button answers, and
+            reading the two together is why it came down out of the scrub bar
+            in the first place.
+
+            The cell keeps the column open regardless — the row is a
+            three-column grid and the middle track is what centres the
+            transport. */}
+        <div className="flex min-w-0 items-center">
+          {/* THE CLOCK, which came from the far right of the scrub bar. It
+              belongs with the transport rather than with the track: it says
+              where playback IS, which is the same question the play button
+              answers, and reading the two together is why it moved. */}
+          {/* CLOCK NOTATION, NOT SECONDS. `252.90s` is accurate and unusable —
+              nobody can place it in a four-minute cut without doing division.
+              Tenths rather than hundredths because this number MOVES: the
+              second decimal is a blur at playback speed, and the first is
+              exactly enough to see time passing. */}
+          <span
+            data-seam-clock
+            className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+          >
+            <span className="text-blue-300">{formatClock(atSeconds)}</span>
+            {" / "}
+            <span>{formatClock(totalSeconds)}</span>
+          </span>
+        </div>
 
         {/* THE TRANSPORT, AS ONE OBJECT AND THE BIGGEST THING IN THE ROW.
             It was three small icon buttons with the same weight as the
@@ -1313,23 +1340,6 @@ export function SeamStripBar({
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-3">
-          {/* THE CLOCK, which came from the far right of the scrub bar. It
-              belongs with the transport rather than with the track: it says
-              where playback IS, which is the same question the play button
-              answers, and reading the two together is why it moved. */}
-          {/* CLOCK NOTATION, NOT SECONDS. `252.90s` is accurate and unusable —
-              nobody can place it in a four-minute cut without doing division.
-              Tenths rather than hundredths because this number MOVES: the
-              second decimal is a blur at playback speed, and the first is
-              exactly enough to see time passing. */}
-          <span
-            data-seam-clock
-            className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
-          >
-            <span className="text-blue-300">{formatClock(atSeconds)}</span>
-            {" / "}
-            <span>{formatClock(totalSeconds)}</span>
-          </span>
 
           {/* FIT MOVED INTO THE GEAR (PL15-006). It is the two scales worth
               one press — this scene, and the lot — but it is still a thing you

@@ -1215,3 +1215,30 @@ say so.
 height is the user's and content growth must not steal it — and it was written
 because the preview used to be fitted to whatever the lower pane left over.
 
+## PL15-021 — The clock moves to the far left of the transport row
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a media item's details — the controls row under the bar)
+- Area: `components/graph-view/graph-seam-strip-bar.tsx`
+- Screenshot: Supplied by the owner
+
+`0:08.4 / 2:16.0` sat at the far right of the controls row, beside reach and
+the settings gear. It moves to the far LEFT, on the same line as the transport.
+
+It arrived on the right because it came down from the scrub bar with the
+transport, and the settings groups happened to end up around it. PL15-006 then
+emptied the row's left cell by folding those groups into the gear — so the row
+was carrying a bare third on one side and three controls crowded on the other.
+
+Acceptance criteria:
+
+- The clock is the leftmost thing in the controls row.
+- It stays on the transport's line: it says where playback IS, which is the
+  question the play button answers, and reading the two together is why it came
+  down out of the scrub bar at all.
+- The transport is still centred — the row is a three-column grid and the
+  middle track is what centres it, so the left cell has to keep existing
+  whatever is in it.
+- Clock notation and tenths are unchanged.
+

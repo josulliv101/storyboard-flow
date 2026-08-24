@@ -803,7 +803,38 @@ function DetailsFilmstripModal({
   // the same shape on all three and only ever felt on the first.
   const hasPrevious = centre > 0;
   const hasNext = centre >= 0 && centre < ids.length - 1;
-  const [dragPx, setDragPx] = useState(0);
+  /**
+   * THE DRAG OFFSET IS NOT REACT STATE (PL15-016), and the ref beside it
+   * explains why it should never have been.
+   *
+   * That ref's own comment already said it: "this changes on nearly every
+   * pointer move and only the ROW's transform cares. A re-render per move to
+   * store a start coordinate would re-render three live panels — video
+   * elements included — sixty times a second for the duration of a swipe."
+   * Exactly right, and then the OFFSET was `useState` and did the very thing
+   * one level up — `setDragPx` per move, read by `rowTransform`, which is
+   * built in this component's render. So every pointer move re-rendered the
+   * whole modal, which mounts up to `MOUNTED_RADIUS * 2 + 1` panels, each a
+   * video element, a trim strip and a tag editor.
+   *
+   * A CSS VARIABLE, WRITTEN STRAIGHT TO THE ELEMENT. The transform reads
+   * `var(--drag-px, 0px)`, and the move handler sets that property on the row
+   * itself — so a pan touches one style property on one element and React is
+   * not involved at all. A custom property also survives an unrelated
+   * re-render: React only writes the style keys it manages, so a playhead tick
+   * mid-swipe cannot clobber the offset the way rebuilding `transform` from
+   * state would.
+   *
+   * `dragging` stays state because the ROW's transition is keyed to it, and
+   * that flips exactly twice per gesture rather than sixty times a second.
+   */
+  const [dragging, setDragging] = useState(false);
+  // Written to `stripRef` — the row element itself, which already has a ref
+  // for the landing effect. A second ref on the same node would be two names
+  // for one thing and an invitation to attach one of them and not the other.
+  const setDragOffset = useCallback((px: number) => {
+    stripRef.current?.style.setProperty("--drag-px", `${px}px`);
+  }, []);
   // Not state: this changes on nearly every pointer move and only the ROW's
   // transform cares. A re-render per move to store a start coordinate would
   // re-render three live panels — video elements included — sixty times a
@@ -848,18 +879,22 @@ function DetailsFilmstripModal({
           if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(dy)) return;
           drag.committed = true;
           swipedRef.current = true;
+          // ONE render for the whole gesture: the row drops its transition
+          // here and takes it back on release.
+          setDragging(true);
           try {
             event.currentTarget.setPointerCapture(drag.pointerId);
           } catch {
             /* untrusted pointer — moves over the picture still arrive */
           }
         }
-        setDragPx(swipeOffset(dx, hasPrevious, hasNext));
+        setDragOffset(swipeOffset(dx, hasPrevious, hasNext));
       },
       onPointerUp: (event) => {
         const drag = dragRef.current;
         dragRef.current = null;
-        setDragPx(0);
+        setDragOffset(0);
+        setDragging(false);
         if (drag === null || event.pointerId !== drag.pointerId || !drag.committed) return;
         const intent = swipeIntent({
           dx: event.clientX - drag.x,
@@ -874,7 +909,8 @@ function DetailsFilmstripModal({
       },
       onPointerCancel: () => {
         dragRef.current = null;
-        setDragPx(0);
+        setDragOffset(0);
+        setDragging(false);
       },
       // A SWIPE MUST NOT ALSO COUNT AS A TAP. The picture's click brings a
       // neighbour to the middle, and a swipe that ended on a neighbour would
@@ -888,7 +924,7 @@ function DetailsFilmstripModal({
         event.preventDefault();
       },
     }),
-    [centre, hasNext, hasPrevious, ids, onOpenNeighbour],
+    [centre, hasNext, hasPrevious, ids, onOpenNeighbour, setDragOffset],
   );
 
   // WHERE THE PLAYHEAD IS, read across from the clock. The clock says "this
@@ -903,7 +939,7 @@ function DetailsFilmstripModal({
   })();
 
   const rowTransform =
-    `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + ${dragPx}px))`;
+    `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + var(--drag-px, 0px)))`;
 
   return createPortal(
     <div
@@ -1231,7 +1267,7 @@ function DetailsFilmstripModal({
           //
           // A BAR LANDING has no transition at all, which the layout effect
           // above does to the node rather than from here.
-          dragPx === 0
+          !dragging
             ? "transition-[transform,opacity] motion-reduce:transition-none"
             : "",
           // BACK, WHILE THE PREVIEW IS UP.
@@ -1257,7 +1293,7 @@ function DetailsFilmstripModal({
           // finished resizing — see `detailsSlideTransition`. Opacity is not
           // part of the choreography (it is the hover-preview fade), so it
           // keeps the plain step timing and starts immediately.
-          transition: dragPx === 0 ? detailsStepTransition("transform, opacity") : undefined,
+          transition: dragging ? undefined : detailsStepTransition("transform, opacity"),
         }}
       >
         {ids.map((id, index) => {
