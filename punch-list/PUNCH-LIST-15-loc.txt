@@ -1,627 +1,435 @@
-5525  T  graph-view.spec.ts  —  apps/timeline-gstudio001/tests/e2e
-2230  T  VirtualStrip.stories.tsx  —  packages/ui/dnd-collections
-2205  T  graph-item-details-modal.stories.tsx  —  apps/timeline-gstudio001/components/graph-view
-1829     workbench-display-surface.tsx  —  packages/ui/timeline/viewport
-1515     graph-board.tsx  —  apps/timeline-gstudio001/components/graph-view
-1371  T  graph-item-content.stories.tsx  —  apps/timeline-gstudio001/components/graph-view
-1274  T  adapter.test.ts  —  packages/timeline-domain/src
- 987     VirtualStrip.tsx  —  packages/ui/dnd-collections/virtual
- 973  T  commands.test.ts  —  packages/collections-core
- 962  T  collections-store.test.ts  —  packages/ui/dnd-collections/react
- 862  T  graph-documents-gateway.test.ts  —  apps/timeline-gstudio001/lib
- 858     graph-preview.tsx  —  apps/timeline-gstudio001/components/graph-view
- 855  T  CustomItemContent.stories.tsx  —  packages/ui/dnd-collections
- 820     firebase-timeline-store.ts  —  apps/timeline-gstudio001/lib
- 812  T  WorkbenchSplitPane.stories.tsx  —  packages/ui/timeline/viewport
- 796  T  DndCollections.stories.tsx  —  packages/ui/dnd-collections
- 760     graph-item-details-modal.tsx  —  apps/timeline-gstudio001/components/graph-view
- 745     graph-seam-strip-bar.tsx  —  apps/timeline-gstudio001/components/graph-view
- 741     DndCollections.tsx  —  packages/ui/dnd-collections/react
- 732     graph.ts  —  packages/collections-core
- 726     timeline-documents.ts  —  packages/ui/timeline
- 702  T  graph.test.ts  —  packages/collections-core
- 700     timeline-sidebar.tsx  —  apps/timeline-gstudio001/components/timeline
- 697     graph-documents-gateway.ts  —  apps/timeline-gstudio001/lib
- 689  T  graph-playhead-model.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 689     graph-seek-rails.tsx  —  apps/timeline-gstudio001/components/graph-view
- 669     adapter.ts  —  packages/timeline-domain/src
- 667  T  timelines-batch.test.ts  —  apps/timeline-gstudio001/app/api/timelines
- 653     tools.ts  —  apps/timeline-gstudio001/lib/webmcp
- 653  T  VirtualGrid.stories.tsx  —  packages/ui/dnd-collections
- 633  T  dnd-collections.spec.ts  —  apps/timeline-gstudio001/tests/e2e
- 564     graph-timeline-view.tsx  —  apps/timeline-gstudio001/components/graph-view
- 561     globals.css  —  apps/timeline-gstudio001/app
- 542     route.ts  —  apps/timeline-gstudio001/app/api/mcp
- 539     collections-store.ts  —  packages/ui/dnd-collections/react
- 531     write-handlers.ts  —  apps/timeline-gstudio001/lib/mcp
- 498     graph-item-actions.tsx  —  apps/timeline-gstudio001/components/graph-view
- 475     foobar-demo.mjs  —  apps/timeline-gstudio001/tests/demo
- 469  T  keyboard.test.ts  —  packages/collections-core
- 466     graph-playhead-model.ts  —  apps/timeline-gstudio001/components/graph-view
- 462     cloudinary-media-store.ts  —  apps/timeline-gstudio001/lib
- 449     graph-seam-lane.tsx  —  apps/timeline-gstudio001/components/graph-view
- 432     trash-drawer.tsx  —  apps/timeline-gstudio001/components/assets
- 425  T  PaletteTrash.stories.tsx  —  packages/ui/dnd-collections
- 422  T  upload.test.ts  —  apps/timeline-gstudio001/lib/mcp
- 421  T  trash-empty.test.ts  —  apps/timeline-gstudio001/app/api/trash
- 409     graph-sub-timelines.tsx  —  apps/timeline-gstudio001/components/graph-view
- 406     commands.ts  —  packages/collections-core
- 403  T  TrimReadouts.stories.tsx  —  packages/ui/dnd-collections
- 367     VirtualGrid.tsx  —  packages/ui/dnd-collections/virtual
- 362  T  tools.test.ts  —  apps/timeline-gstudio001/lib/webmcp
- 359     timeline-document-store.tsx  —  packages/ui/timeline
- 348     graph-view-chrome.tsx  —  apps/timeline-gstudio001/components/graph-view
- 347     page.tsx  —  apps/timeline-gstudio001/app
- 342  T  intents.test.ts  —  packages/collections-core
- 342     use-keyboard-controller.ts  —  packages/ui/dnd-collections/react
- 329  T  firebase-timeline-cascade-delete.test.ts  —  apps/timeline-gstudio001/lib
- 328  T  ffmpeg-plan.test.ts  —  apps/timeline-gstudio001/lib/render
- 324     collection-item.tsx  —  packages/ui/dnd-collections/react
- 320  T  derive-collection-summaries.test.ts  —  apps/timeline-gstudio001/lib
- 319     graph-native-drop-engine.ts  —  apps/timeline-gstudio001/components/graph-view
- 319     use-timeline-clips.ts  —  packages/ui/timeline/hooks
- 317  T  cut-list.test.ts  —  apps/timeline-gstudio001/lib/render
- 315     node-views.tsx  —  packages/ui/dnd-collections/react
- 308  T  virtual-strip-lanes.test.ts  —  packages/ui/dnd-collections/virtual
- 300  T  graph-native-drop-model.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 286     apply-command.ts  —  apps/timeline-gstudio001/lib/mcp
- 285  T  apply-command.test.ts  —  apps/timeline-gstudio001/lib/mcp
- 283     globals.css  —  apps/storybook/.storybook
- 278  T  audio-graph.test.ts  —  packages/ui/timeline/viewport
- 277  T  timelines-authorization.test.ts  —  apps/timeline-gstudio001/app/api/timelines
- 273  T  InteractionPolicy.stories.tsx  —  packages/ui/dnd-collections
- 272     styles.css  —  packages/timeline-widget/src
- 268  T  CompoundItem.stories.tsx  —  packages/ui/dnd-collections
- 267  T  storyboard-monster-mark.stories.tsx  —  apps/timeline-gstudio001/components/timeline
- 265     intents.ts  —  packages/collections-core
- 265     keyboard.ts  —  packages/collections-core
- 265  T  lane-roundtrip.test.ts  —  packages/timeline-domain/src
- 262     graph-collection-card.tsx  —  apps/timeline-gstudio001/components/graph-view
- 257     route.ts  —  apps/timeline-gstudio001/app/api/timeline-media/upload
- 252  T  playback-manifest.test.ts  —  packages/timeline-domain/src
- 252  T  TrimGesture.stories.tsx  —  packages/ui/dnd-collections
- 250     validator.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
- 248  T  timelines-export-import.test.ts  —  apps/timeline-gstudio001/app/api/timelines
- 240     graph-clip-card.tsx  —  apps/timeline-gstudio001/components/graph-view
- 239     patches.ts  —  packages/collections-core
- 238     graph-item-details-panel.tsx  —  apps/timeline-gstudio001/components/graph-view
- 237     graph-item-details-monitor.tsx  —  apps/timeline-gstudio001/components/graph-view
- 237  T  graph-rsc-payloads.test.ts  —  apps/timeline-gstudio001/lib
- 236     graph-hydration.tsx  —  apps/timeline-gstudio001/components/graph-view
- 236     timeline-media-client.ts  —  apps/timeline-gstudio001/lib
- 235  T  timelines-preview-manifest.test.ts  —  apps/timeline-gstudio001/app/api/timelines
- 234  T  graph-lane-rows.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 234     trim-gesture.ts  —  packages/ui/dnd-collections/react
- 233  T  set-start.test.ts  —  apps/timeline-gstudio001/lib/mcp
- 227     graph-navigation.tsx  —  apps/timeline-gstudio001/components/graph-view
- 227     scene-service.ts  —  packages/db/lib
- 226  T  aspect-correction.test.ts  —  apps/timeline-gstudio001/lib
- 226     virtual-strip-lanes.ts  —  packages/ui/dnd-collections/virtual
- 224  T  remove-clip.test.ts  —  apps/timeline-gstudio001/lib/mcp
- 223  T  reclaim-route.test.ts  —  apps/timeline-gstudio001/app/api/assets/reclaim
- 220     upload.ts  —  apps/timeline-gstudio001/lib/mcp
- 220  T  PanMomentumCoverage.stories.tsx  —  packages/ui/dnd-collections
- 216  T  playback-skip.test.ts  —  packages/ui/timeline/viewport
- 212     graph-grid-play-button.tsx  —  apps/timeline-gstudio001/components/graph-view
- 210  T  lane-manifest.test.ts  —  packages/timeline-domain/src
- 209     graph-native-drop-model.ts  —  apps/timeline-gstudio001/components/graph-view
- 209     graph-seam-bar.tsx  —  apps/timeline-gstudio001/components/graph-view
- 209     graph-selection-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
- 207     graph-collection-details.tsx  —  apps/timeline-gstudio001/components/graph-view
- 204  T  sidebar-collection-shortcuts.stories.tsx  —  apps/timeline-gstudio001/components/timeline
- 201     storyboard-monster-mark.tsx  —  apps/timeline-gstudio001/components/timeline
- 198  T  documents.test.ts  —  packages/timeline-model
- 198  T  validate.test.ts  —  packages/timeline-model
- 197  T  flat-order.test.ts  —  packages/timeline-domain/src
- 196  T  job-store.test.ts  —  apps/timeline-gstudio001/lib/render
- 195  T  timelines-batch-get.test.ts  —  apps/timeline-gstudio001/app/api/timelines
- 195     ffmpeg-plan.mjs  —  apps/timeline-gstudio001/scripts/render-worker
- 195     playback-manifest.ts  —  packages/timeline-domain/src
- 194     graph-card-derivations.ts  —  apps/timeline-gstudio001/components/graph-view
- 194  T  move-clip.test.ts  —  apps/timeline-gstudio001/lib/mcp
- 193     correct-clip-aspects.mjs  —  apps/timeline-gstudio001/scripts
- 193  T  FirstItemTrim.stories.tsx  —  packages/ui/dnd-collections
- 192     graph-breadcrumb-drop.tsx  —  apps/timeline-gstudio001/components/graph-view
- 192     auth-service.ts  —  packages/db/lib
- 190  T  cloudinary-media-store.test.ts  —  apps/timeline-gstudio001/lib
- 187  T  graph-seam-bar-layout.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 187     index.mjs  —  apps/timeline-gstudio001/scripts/render-worker
- 186  T  timeline-media-client.test.ts  —  apps/timeline-gstudio001/lib
- 186  T  clip-display.test.ts  —  packages/timeline-model
- 186  T  GestureArbitration.stories.tsx  —  packages/ui/dnd-collections
- 183     index.ts  —  packages/ui/dnd-collections
- 182  T  timeline-sidebar.stories.tsx  —  apps/timeline-gstudio001/components/timeline
- 182  T  change-log.test.ts  —  apps/timeline-gstudio001/lib
- 181     graph-native-drop-grid.tsx  —  apps/timeline-gstudio001/components/graph-view
- 181  T  graph-node-clone.test.ts  —  apps/timeline-gstudio001/lib
- 180  T  graph-card-model.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 180     graph-seam-ruler.tsx  —  apps/timeline-gstudio001/components/graph-view
- 178  T  AlwaysOnTrimHandles.stories.tsx  —  packages/ui/dnd-collections
- 176  T  graph-insert-placement.test.ts  —  apps/timeline-gstudio001/lib
- 176     audio-graph.ts  —  packages/ui/timeline/viewport
- 175  T  client-manifest-equivalence.test.ts  —  apps/timeline-gstudio001/lib
- 175  T  layer-frame.test.ts  —  packages/timeline-model
- 173  T  video-frame-url.test.ts  —  apps/timeline-gstudio001/lib
- 173  T  commands.fuzz.test.ts  —  packages/collections-core
- 173  T  TimelineStrip.stories.tsx  —  packages/timeline-widget/src/views
- 172     use-pan-with-momentum.ts  —  packages/ui/dnd-collections/react
- 171     graph-item-action-specs.ts  —  apps/timeline-gstudio001/lib
- 168     serve-timeline.ts  —  apps/timeline-gstudio001/lib
- 167     sidebar-collection-shortcuts.tsx  —  apps/timeline-gstudio001/components/timeline
- 166     graph-native-drop-strip.tsx  —  apps/timeline-gstudio001/components/graph-view
- 166     remove-dangling-collection-references.ts  —  apps/timeline-gstudio001/scripts
- 166  T  virtual-strip-geometry.test.ts  —  packages/ui/dnd-collections/virtual
- 165     job-store.ts  —  apps/timeline-gstudio001/lib/render
- 164     auth-gate.tsx  —  apps/timeline-gstudio001/components/auth
- 162  T  asset-references.test.ts  —  apps/timeline-gstudio001/lib/assets
- 158     charts-bar-chart.tsx  —  .agents/skills/remotion-best-practices/rules/assets
- 158     graph-tag-filter-control.tsx  —  apps/timeline-gstudio001/components/graph-view
- 158  T  core.test.ts  —  apps/timeline-gstudio001/lib/oauth
- 157  T  marked-route.test.ts  —  apps/timeline-gstudio001/app/api/assets/marked
- 154  T  button.stories.tsx  —  apps/timeline-gstudio001/components/core
- 154     graph-tag-editor.tsx  —  apps/timeline-gstudio001/components/graph-view
- 154     App.tsx  —  packages/timeline-widget/src/app
- 153  T  graph-layer-frame-picker.stories.tsx  —  apps/timeline-gstudio001/components/graph-view
- 152  T  route.test.ts  —  apps/timeline-gstudio001/app/api/timeline-media
- 151     graph-seam-minimap.tsx  —  apps/timeline-gstudio001/components/graph-view
- 151  T  job-state.test.ts  —  apps/timeline-gstudio001/lib/render
- 150     route.ts  —  apps/timeline-gstudio001/app/api/oauth/token
- 149  T  graph-item-action-specs.test.ts  —  apps/timeline-gstudio001/lib
- 149     migrate-legacy-video-durations.mjs  —  apps/timeline-gstudio001/scripts
- 148     trim-overview.tsx  —  packages/ui/dnd-collections/react
- 147     documents.ts  —  packages/timeline-model
- 146     graph-shortcuts.tsx  —  apps/timeline-gstudio001/components/graph-view
- 146     repair-truncated-asset-paths.mjs  —  apps/timeline-gstudio001/scripts
- 146  T  trim-gesture.test.ts  —  packages/ui/dnd-collections/react
- 145     dropdown-menu.tsx  —  apps/timeline-gstudio001/components/core
- 145     attach-output.ts  —  apps/timeline-gstudio001/lib/render
- 144  T  route.test.ts  —  apps/timeline-gstudio001/app/api/timeline-media/upload
- 144     graph-anchor-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
- 144  T  read-timeline.test.ts  —  apps/timeline-gstudio001/lib/mcp
- 143  T  graph-details-store.test.ts  —  apps/timeline-gstudio001/lib
- 143     virtual-strip-geometry.ts  —  packages/ui/dnd-collections/virtual
- 140     route.ts  —  apps/timeline-gstudio001/app/api/timelines/batch
- 140     timeline-snapshot.mjs  —  apps/timeline-gstudio001/scripts
- 139     graph-layer-frame-picker.tsx  —  apps/timeline-gstudio001/components/graph-view
- 139     graph-tool-buttons.tsx  —  apps/timeline-gstudio001/components/graph-view
- 139     use-virtual-collection-view.tsx  —  packages/ui/dnd-collections/virtual
- 138     route.ts  —  apps/timeline-gstudio001/app/api/timelines/[id]
- 138  T  default-layer-frame.test.ts  —  apps/timeline-gstudio001/lib
- 138  T  renders-collection.test.ts  —  apps/timeline-gstudio001/lib/render
- 137     firebase-media-store.ts  —  apps/timeline-gstudio001/lib
- 137     edge-autoscroll-coordinator.ts  —  packages/ui/dnd-collections/react
- 134     db-client.ts  —  packages/db/lib
- 133     graph-item-details-trim-strip.tsx  —  apps/timeline-gstudio001/components/graph-view
- 133     bin-unreachable-timelines.mjs  —  apps/timeline-gstudio001/scripts
- 132     audit-review-findings.mjs  —  apps/timeline-gstudio001/scripts
- 131  T  MediaThumbnails.stories.tsx  —  packages/ui/dnd-collections
- 130  T  trash-groups.test.ts  —  apps/timeline-gstudio001/lib
- 130  T  waveform-cache.test.ts  —  apps/timeline-gstudio001/lib
- 130     inspect-squatted-fixtures.mjs  —  apps/timeline-gstudio001/scripts
- 130     make-dev-fixture.mjs  —  apps/timeline-gstudio001/scripts
- 130  T  hydrate.test.ts  —  packages/collections-core
- 130     use-flip-graph-animation.ts  —  packages/ui/dnd-collections/react
- 129  T  placement.test.ts  —  packages/timeline-model
- 128     waveform-cache.ts  —  apps/timeline-gstudio001/lib
- 128     find-unreachable-ui.mjs  —  scripts
- 126     audit-orphaned-timelines.mjs  —  apps/timeline-gstudio001/scripts
- 125     graph-render-status.tsx  —  apps/timeline-gstudio001/components/graph-view
- 125  T  use-timeline-clips.test.ts  —  packages/ui/timeline/hooks
- 124     smoke-test.mjs  —  apps/timeline-gstudio001/scripts/render-worker
- 124     validate.ts  —  packages/timeline-model
- 123     graph-item-details-trim-fields.tsx  —  apps/timeline-gstudio001/components/graph-view
- 123     core.ts  —  apps/timeline-gstudio001/lib/oauth
- 122     layer-frame.ts  —  packages/timeline-model
- 121     graph-card-badges.tsx  —  apps/timeline-gstudio001/components/graph-view
- 121     graph-remote-changes.tsx  —  apps/timeline-gstudio001/components/graph-view
- 121     count-loc.mjs  —  scripts
- 120  T  create-collection.test.ts  —  apps/timeline-gstudio001/lib/mcp
- 120  T  waveform-peaks.test.ts  —  packages/ui/timeline/viewport
- 117     derive-collection-summaries.ts  —  apps/timeline-gstudio001/lib
- 117     graph-view-events.ts  —  apps/timeline-gstudio001/lib
- 116     graph-persistence.tsx  —  apps/timeline-gstudio001/components/graph-view
- 116     fixture-timeline-store.ts  —  apps/timeline-gstudio001/lib
- 114     graph-item-details-header.tsx  —  apps/timeline-gstudio001/components/graph-view
- 114  T  graph-seam-scrub.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 114  T  tag-facets.test.ts  —  apps/timeline-gstudio001/lib
- 113     asset-tombstones.ts  —  apps/timeline-gstudio001/lib
- 113  T  collection-shortcuts.test.ts  —  apps/timeline-gstudio001/lib
- 112     graph-seam-scrub.ts  —  apps/timeline-gstudio001/components/graph-view
- 111  T  TrimGestureUnmount.stories.tsx  —  packages/ui/dnd-collections
- 110     use-seeked-video.ts  —  apps/timeline-gstudio001/hooks
- 110     timeline-app-html.ts  —  packages/timeline-widget
- 110     use-palette-drag.ts  —  packages/ui/dnd-collections/react
- 110  T  timeline-documents.test.ts  —  packages/ui/timeline
- 109  T  graph-history-format.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 109     timeline-tree.ts  —  apps/timeline-gstudio001/lib/webmcp
- 109     interaction-policy.ts  —  packages/ui/dnd-collections/react
- 108  T  fixture-timeline-store.test.ts  —  apps/timeline-gstudio001/lib
- 107     auth-provider.tsx  —  apps/timeline-gstudio001/components/auth
- 107     preview-time-channel.ts  —  apps/timeline-gstudio001/components/graph-view
- 107     measure-closure-batched-vs-per-document-reads.mjs  —  apps/timeline-gstudio001/scripts
- 107  T  CollisionCoverage.stories.tsx  —  packages/ui/dnd-collections
- 107  T  interaction-policy.test.ts  —  packages/ui/dnd-collections/react
- 107     use-announcements.ts  —  packages/ui/dnd-collections/react
- 107     use-background-clear.ts  —  packages/ui/dnd-collections/react
- 106     route.ts  —  apps/timeline-gstudio001/app/api/renders
- 106     graph-seam-bar-layout.ts  —  apps/timeline-gstudio001/components/graph-view
- 105     route.ts  —  apps/timeline-gstudio001/app/api/timeline-media
- 105     route.ts  —  apps/timeline-gstudio001/app/api/trash
- 104     stories-helpers.ts  —  packages/ui/dnd-collections
- 103     graph-item-details-panel-header.tsx  —  apps/timeline-gstudio001/components/graph-view
- 103     graph-trim-panel.tsx  —  apps/timeline-gstudio001/components/graph-view
- 103  T  graph-trash-discard.test.ts  —  apps/timeline-gstudio001/lib
- 103     collections-components.tsx  —  packages/ui/dnd-collections/react
- 101  T  graph-details-neighbours.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 101  T  graph-item-details-change-note.test.ts  —  apps/timeline-gstudio001/components/graph-view
- 101     aspect-correction.mjs  —  apps/timeline-gstudio001/scripts
- 101     playback-skip.ts  —  packages/ui/timeline/viewport
- 101     waveform-peaks.ts  —  packages/ui/timeline/viewport
- 100     measure-project-query-vs-closure-walk.mjs  —  apps/timeline-gstudio001/scripts
- 100  T  replay-guard.test.ts  —  packages/collections-core
- 100  T  preview-items.test.ts  —  packages/timeline-model
-  99     create-collection.ts  —  apps/timeline-gstudio001/lib/mcp
-  99     render.ts  —  apps/timeline-gstudio001/lib/mcp
-  99  T  view-state.test.ts  —  packages/timeline-widget/src/app
-  98     page.tsx  —  apps/timeline-gstudio001/app/oauth/authorize
-  98     graph-item-context-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
-  98     graph-selection-actions.tsx  —  apps/timeline-gstudio001/components/graph-view
-  98     graph-rsc-payloads.ts  —  apps/timeline-gstudio001/lib
-  98     audit-dead-asset-references.mjs  —  apps/timeline-gstudio001/scripts
-  97     route.ts  —  apps/timeline-gstudio001/app/api/timelines/import
-  97  T  graph-seam-strip.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  97     load-timeline-closure.ts  —  apps/timeline-gstudio001/lib
-  97  T  patches.test.ts  —  packages/collections-core
-  96  T  preview-time-channel.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  96     view-tools.ts  —  packages/timeline-widget/src/tools
-  94     authorize-request.ts  —  apps/timeline-gstudio001/lib/oauth
-  94     node-thumbnail.tsx  —  packages/ui/dnd-collections/react
-  93  T  history.test.ts  —  packages/collections-core
-  92     graph-card-caption.tsx  —  apps/timeline-gstudio001/components/graph-view
-  92  T  authorize-request.test.ts  —  apps/timeline-gstudio001/lib/oauth
-  91     firebase-auth-session.ts  —  apps/timeline-gstudio001/lib
-  90     text-animations-word-highlight.tsx  —  .agents/skills/remotion-best-practices/rules/assets
-  89     text-animations-typewriter.tsx  —  .agents/skills/remotion-best-practices/rules/assets
-  89     route.ts  —  apps/timeline-gstudio001/app/api/timelines/batch-get
-  89  T  firestore-failure.test.ts  —  apps/timeline-gstudio001/lib
-  88  T  http-range.test.ts  —  apps/timeline-gstudio001/lib
-  88     stamp-project-id-on-timeline-documents.mjs  —  apps/timeline-gstudio001/scripts
-  87     graph-trim-preview.tsx  —  apps/timeline-gstudio001/components/graph-view
-  87  T  project-thumbnail.test.ts  —  apps/timeline-gstudio001/lib
-  86     graph-render-format.tsx  —  apps/timeline-gstudio001/components/graph-view
-  86  T  tag-write-plan.test.ts  —  apps/timeline-gstudio001/lib
-  86     index.ts  —  packages/collections-core
-  86     types.ts  —  packages/timeline-model
-  85     graph-item-details-change-note.ts  —  apps/timeline-gstudio001/components/graph-view
-  85  T  graph-layer-frame.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  84  T  graph-render-format.stories.tsx  —  apps/timeline-gstudio001/components/graph-view
-  84  T  offline-media-store.test.ts  —  apps/timeline-gstudio001/lib
-  84  T  RovingFocusReorder.stories.tsx  —  packages/ui/dnd-collections
-  83     graph-item-content.tsx  —  apps/timeline-gstudio001/components/graph-view
-  83     graph-clipboard.ts  —  apps/timeline-gstudio001/lib
-  83     prune-empty-orphans.mjs  —  apps/timeline-gstudio001/scripts
-  83  T  render-format.test.ts  —  packages/timeline-model
-  82  T  NodeDomCoverage.stories.tsx  —  packages/ui/dnd-collections
-  81     route.ts  —  apps/timeline-gstudio001/app/api/renders/[id]/report
-  81     audit-foreign-accounts.mjs  —  apps/timeline-gstudio001/scripts
-  81  T  tags-roundtrip.test.ts  —  packages/timeline-domain/src
-  81     default-item-content.tsx  —  packages/ui/dnd-collections/react
-  80     history-views.tsx  —  packages/ui/dnd-collections/react
-  79     route.ts  —  apps/timeline-gstudio001/app/api/assets/reclaim
-  79  T  move-cost.test.ts  —  packages/collections-core
-  78     graph-item-details-history.ts  —  apps/timeline-gstudio001/components/graph-view
-  78  T  metadata.test.ts  —  apps/timeline-gstudio001/lib/oauth
-  78     store.ts  —  apps/timeline-gstudio001/lib/oauth
-  78     audit-ownerless-timelines.mjs  —  apps/timeline-gstudio001/scripts
-  78     clip-display.ts  —  packages/timeline-model
-  78     utils.ts  —  packages/ui/timeline
-  77     graph-inline-rename.tsx  —  apps/timeline-gstudio001/components/graph-view
-  77  T  graph-remote-diff.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  77     graph-seam-strip.ts  —  apps/timeline-gstudio001/components/graph-view
-  77     tag-facets.ts  —  apps/timeline-gstudio001/lib
-  77     stamp-ownerless-timelines.mjs  —  apps/timeline-gstudio001/scripts
-  77     view-state.ts  —  packages/timeline-widget/src/app
-  76     graph-card-ghost.tsx  —  apps/timeline-gstudio001/components/graph-view
-  76     graph-collection-hover.tsx  —  apps/timeline-gstudio001/components/graph-view
-  76     graph-lane-rows.ts  —  apps/timeline-gstudio001/components/graph-view
-  76  T  graph-tool-buttons.stories.tsx  —  apps/timeline-gstudio001/components/graph-view
-  76     graph-details-store.ts  —  apps/timeline-gstudio001/lib
-  76  T  placement.test.ts  —  apps/timeline-gstudio001/lib/webmcp
-  75     graph-save-status.tsx  —  apps/timeline-gstudio001/components/graph-view
-  75  T  use-hover-prefetch.test.ts  —  apps/timeline-gstudio001/components/projects
-  75     firebase-auth-rest.ts  —  apps/timeline-gstudio001/lib
-  75  T  timeline-tree.test.ts  —  apps/timeline-gstudio001/lib/webmcp
-  74     change-log.ts  —  apps/timeline-gstudio001/lib
-  74  T  webmcp-adapter.test.ts  —  apps/timeline-gstudio001/lib/webmcp
-  74     Clip.tsx  —  packages/timeline-widget/src/components
-  73     context-menu.tsx  —  apps/timeline-gstudio001/components/core
-  73     firestore-failure.ts  —  apps/timeline-gstudio001/lib
-  73  T  graph-clipboard.test.ts  —  apps/timeline-gstudio001/lib
-  73     history.ts  —  packages/collections-core
-  72  T  card-ghost-frames.test.ts  —  apps/timeline-gstudio001/lib
-  72  T  KeyboardDuringDrag.stories.tsx  —  packages/ui/dnd-collections
-  72     trim-handles.tsx  —  packages/ui/dnd-collections/react
-  71     graph-card-model.ts  —  apps/timeline-gstudio001/components/graph-view
-  71     firebase-admin.ts  —  apps/timeline-gstudio001/lib
-  71     offline-media-store.ts  —  apps/timeline-gstudio001/lib
-  71     cut-list.ts  —  apps/timeline-gstudio001/lib/render
-  71     job-state.ts  —  apps/timeline-gstudio001/lib/render
-  71  T  tags.test.ts  —  packages/timeline-model
-  70     route.ts  —  apps/timeline-gstudio001/app/api/oauth/authorize
-  70     route.ts  —  apps/timeline-gstudio001/app/api/timelines/[id]/export
-  70  T  preview-card-geometry.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  70  T  s3-provider.test.ts  —  apps/timeline-gstudio001/lib/assets
-  70  T  card-provenance.test.ts  —  apps/timeline-gstudio001/lib
-  69     graph-card-trim.tsx  —  apps/timeline-gstudio001/components/graph-view
-  68     layout.tsx  —  apps/timeline-gstudio001/app
-  68     graph-native-drop-insertion.ts  —  apps/timeline-gstudio001/components/graph-view
-  67  T  mcp-timeline-summary.test.ts  —  apps/timeline-gstudio001/lib
-  66     graph-add-collection-slot.tsx  —  apps/timeline-gstudio001/components/graph-view
-  66  T  render-poll.test.ts  —  apps/timeline-gstudio001/lib/render
-  65     graph-details-segmented.tsx  —  apps/timeline-gstudio001/components/graph-view
-  65     graph-node-clone.ts  —  apps/timeline-gstudio001/lib
-  65  T  hydration-skeletons.test.ts  —  apps/timeline-gstudio001/lib
-  65     metadata.ts  —  apps/timeline-gstudio001/lib/oauth
-  65  T  provider.test.ts  —  apps/timeline-gstudio001/lib/render
-  65     video-frame-url.ts  —  apps/timeline-gstudio001/lib
-  64     routes.d.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
-  64  T  graph-item-details-bar-reach.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  64     graph-mcp-tools.tsx  —  apps/timeline-gstudio001/components/graph-view
-  64     graph-waveform-model.ts  —  apps/timeline-gstudio001/components/graph-view
-  64     eslint.config.mjs  —  apps/timeline-gstudio001
-  64  T  map-with-concurrency.test.ts  —  apps/timeline-gstudio001/lib
-  63     main.ts  —  apps/storybook/.storybook
-  63     vitest.config.ts  —  apps/storybook
-  63     graph-native-drag-signal.ts  —  apps/timeline-gstudio001/components/graph-view
-  62     global-error.tsx  —  apps/timeline-gstudio001/app
-  62  T  role-roundtrip.test.ts  —  packages/timeline-domain/src
-  61     use-dialog-focus.ts  —  apps/timeline-gstudio001/hooks
-  60     default-layer-frame.ts  —  apps/timeline-gstudio001/lib
-  60     hydrate.ts  —  packages/collections-core
-  59     graph-history-format.ts  —  apps/timeline-gstudio001/components/graph-view
-  59     client-playback-manifest.ts  —  apps/timeline-gstudio001/lib
-  59     node-dom.ts  —  packages/ui/dnd-collections/react
-  58  T  auth-allowlist.test.ts  —  apps/timeline-gstudio001/lib
-  57     graph-view-loading.tsx  —  apps/timeline-gstudio001/components/graph-view
-  57  T  load-project-button.stories.tsx  —  apps/timeline-gstudio001/components/projects
-  57  T  derived-cache.test.ts  —  apps/timeline-gstudio001/lib
-  57  T  tool-fields.test.ts  —  apps/timeline-gstudio001/lib/webmcp
-  56     use-frame-crossfade.ts  —  apps/timeline-gstudio001/hooks
-  55     s3-provider.ts  —  apps/timeline-gstudio001/lib/assets
-  55  T  frame-override.test.ts  —  packages/ui/timeline/viewport
-  54     host.ts  —  packages/timeline-widget/src/bridge
-  53     graph-details-neighbours.ts  —  apps/timeline-gstudio001/components/graph-view
-  53     preview-card-geometry.ts  —  apps/timeline-gstudio001/components/graph-view
-  53     trash-target.tsx  —  packages/ui/dnd-collections/react
-  52     button.tsx  —  apps/timeline-gstudio001/components/core
-  51     slider.tsx  —  apps/timeline-gstudio001/components/core
-  51     graph-item-details-context.tsx  —  apps/timeline-gstudio001/components/graph-view
-  51  T  sidebar-icon-styles.test.ts  —  apps/timeline-gstudio001/components/timeline
-  51  T  project-asset-scope.test.ts  —  apps/timeline-gstudio001/lib
-  51     flat-order.ts  —  packages/timeline-domain/src
-  50     route.ts  —  apps/timeline-gstudio001/app/api/auth/login
-  50     graph-insert-placement.ts  —  apps/timeline-gstudio001/lib
-  49     route.ts  —  apps/timeline-gstudio001/app/api/assets/marked
-  49  T  graph-strip-swipe.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  49     results.ts  —  apps/timeline-gstudio001/lib/webmcp
-  49     next.config.ts  —  apps/timeline-gstudio001
-  49     live-trim.ts  —  packages/ui/dnd-collections/react
-  47     graph-project-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
-  47  T  trash-provenance.test.ts  —  apps/timeline-gstudio001/lib
-  47     placement.ts  —  packages/timeline-model
-  46     error.tsx  —  apps/timeline-gstudio001/app
-  46     load-project-button.tsx  —  apps/timeline-gstudio001/components/projects
-  46     asset-references.ts  —  apps/timeline-gstudio001/lib/assets
-  46     rate-limit.ts  —  apps/timeline-gstudio001/lib
-  45     route.ts  —  apps/timeline-gstudio001/app/api/timelines/[id]/preview-manifest
-  45     route.ts  —  apps/timeline-gstudio001/app/api/timelines/closure
-  45     graph-details-context.tsx  —  apps/timeline-gstudio001/components/graph-view
-  45     graph-item-disable-toggle.tsx  —  apps/timeline-gstudio001/components/graph-view
-  45     sidebar-tooltip-label.tsx  —  apps/timeline-gstudio001/components/timeline
-  45  T  edge-autoscroll-math.test.ts  —  packages/ui/dnd-collections/react
-  44     types.ts  —  apps/timeline-gstudio001/lib/render
-  44     playwright.config.ts  —  apps/timeline-gstudio001
-  44  T  numeric.test.ts  —  packages/collections-core
-  44     TimelineStrip.tsx  —  packages/timeline-widget/src/views
-  43     graph-history-persistence.tsx  —  apps/timeline-gstudio001/components/graph-view
-  43     graph-playbar-thumbnails.tsx  —  apps/timeline-gstudio001/components/graph-view
-  43     load-project.ts  —  apps/timeline-gstudio001/components/projects
-  43     placement.ts  —  apps/timeline-gstudio001/lib/webmcp
-  42  T  cloudinary-provider.test.ts  —  apps/timeline-gstudio001/lib/assets
-  42  T  caption-tag-fit.test.ts  —  apps/timeline-gstudio001/lib
-  42     webmcp-adapter.ts  —  apps/timeline-gstudio001/lib/webmcp
-  42  T  edge-autoscroll-coordinator.test.ts  —  packages/ui/dnd-collections/react
-  41     route.ts  —  apps/timeline-gstudio001/app/api/auth/login/complete
-  40     graph-card-measure.ts  —  apps/timeline-gstudio001/components/graph-view
-  40     graph-remote-diff.ts  —  apps/timeline-gstudio001/components/graph-view
-  40     graph-view-config.ts  —  apps/timeline-gstudio001/components/graph-view
-  40     graph-trash-discard.ts  —  apps/timeline-gstudio001/lib
-  40     provider.ts  —  apps/timeline-gstudio001/lib/render
-  40  T  insert-noop.test.ts  —  packages/ui/dnd-collections/virtual
-  39     route.ts  —  apps/timeline-gstudio001/app/api/renders/[id]/upload-ticket
-  39     graph-paste-flash.ts  —  apps/timeline-gstudio001/lib
-  38     route.ts  —  apps/timeline-gstudio001/app/api/timelines/revisions
-  37  T  sidebar-rail-preference.test.ts  —  apps/timeline-gstudio001/components/timeline
-  37     tag-write-plan.ts  —  apps/timeline-gstudio001/lib
-  37     render-format.ts  —  packages/timeline-model
-  37     tags.ts  —  packages/timeline-model
-  36     route.ts  —  apps/timeline-gstudio001/app/api/timelines
-  36     graph-native-drop-chrome.tsx  —  apps/timeline-gstudio001/components/graph-view
-  36     use-hover-prefetch.ts  —  apps/timeline-gstudio001/components/projects
-  36     types.ts  —  packages/timeline-widget/src
-  36     palette.tsx  —  packages/ui/dnd-collections/react
-  36     constants.ts  —  packages/ui/timeline
-  35     route.ts  —  apps/timeline-gstudio001/app/api/renders/[id]
-  35     graph-strip-swipe.ts  —  apps/timeline-gstudio001/components/graph-view
-  35     graph-tag-filter.tsx  —  apps/timeline-gstudio001/components/graph-view
-  35  T  timeline-ownership.test.ts  —  apps/timeline-gstudio001/lib
-  35     trash-groups.ts  —  apps/timeline-gstudio001/lib
-  35     index.ts  —  packages/timeline-domain
-  35  T  audio-roundtrip.test.ts  —  packages/timeline-domain/src
-  34  T  graph-dropped-media.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  34     format-duration.ts  —  apps/timeline-gstudio001/lib
-  34  T  hydration-target.test.ts  —  apps/timeline-gstudio001/lib
-  34     project-asset-scope.ts  —  apps/timeline-gstudio001/lib
-  34  T  results.test.ts  —  apps/timeline-gstudio001/lib/webmcp
-  34  T  utils.test.ts  —  packages/ui/timeline
-  33     preview-scroller.ts  —  apps/timeline-gstudio001/components/graph-view
-  33     collection-shortcuts.ts  —  apps/timeline-gstudio001/lib
-  33  T  frame-count-settle.test.ts  —  apps/timeline-gstudio001/lib
-  33     http-range.ts  —  apps/timeline-gstudio001/lib
-  33     apply-flag.mjs  —  apps/timeline-gstudio001/scripts
-  32     route.ts  —  apps/timeline-gstudio001/app/api/renders/claim
-  32     page.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]/graph/[[...activeTimelinePath]]
-  32     graph-dropped-media.ts  —  apps/timeline-gstudio001/components/graph-view
-  32  T  graph-project-menu.stories.tsx  —  apps/timeline-gstudio001/components/graph-view
-  32  T  graph-sub-timeline-status.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  32     preview-contexts.tsx  —  apps/timeline-gstudio001/components/graph-view
-  32     renders-collection.ts  —  apps/timeline-gstudio001/lib/render
-  32     tool-fields.ts  —  apps/timeline-gstudio001/lib/webmcp
-  31  T  cloudinary-scrub-proxy.test.ts  —  apps/timeline-gstudio001/lib
-  31     read-timeline.ts  —  apps/timeline-gstudio001/lib/mcp
-  31  T  aspect.test.ts  —  packages/timeline-model
-  30     page.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]
-  30     caption-tag-fit.ts  —  apps/timeline-gstudio001/lib
-  30     compile-timeline-manifest.ts  —  apps/timeline-gstudio001/lib
-  29     client-graph-view.tsx  —  apps/timeline-gstudio001/components/graph-view
-  29     graph-layer-frame.ts  —  apps/timeline-gstudio001/components/graph-view
-  29     provider.ts  —  apps/timeline-gstudio001/lib/assets
-  28  T  asset-deletion-window.test.ts  —  apps/timeline-gstudio001/lib
-  28     timeline-ownership.ts  —  apps/timeline-gstudio001/lib
-  28     trash-provenance.ts  —  apps/timeline-gstudio001/lib
-  28     virtual-droppable.ts  —  packages/ui/dnd-collections/react
-  27     cache-life.d.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
-  27  T  boot-session-key.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  27     graph-card-dimming.ts  —  apps/timeline-gstudio001/components/graph-view
-  27  T  disabled-visuals.test.ts  —  apps/timeline-gstudio001/lib
-  27     preview-items.ts  —  packages/timeline-model
-  26     graph-pending-details.ts  —  apps/timeline-gstudio001/components/graph-view
-  26     derived-cache.ts  —  apps/timeline-gstudio001/lib
-  26     ErrorBoundary.tsx  —  packages/timeline-widget/src/app
-  26     pointer-sensors.ts  —  packages/ui/dnd-collections/react
-  25     layout.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]/graph
-  25     sidebar-icon-styles.ts  —  apps/timeline-gstudio001/components/timeline
-  25  T  provider.test.ts  —  apps/timeline-gstudio001/lib/assets
-  25  T  cloudinary-public-id.test.ts  —  apps/timeline-gstudio001/lib
-  24     main.ts  —  apps/timeline-gstudio001/.storybook
-  24     graph-card-placeholders.tsx  —  apps/timeline-gstudio001/components/graph-view
-  24     card-ghost-frames.ts  —  apps/timeline-gstudio001/lib
-  24     view-transition.ts  —  apps/timeline-gstudio001/lib
-  24     container-context.ts  —  packages/ui/dnd-collections/react
-  23     sonner.tsx  —  apps/timeline-gstudio001/components/core
-  23     graph-item-details-bar-reach.ts  —  apps/timeline-gstudio001/components/graph-view
-  23     press-feedback.ts  —  apps/timeline-gstudio001/components/graph-view
-  23     make-scale-probe.mjs  —  apps/timeline-gstudio001/scripts
-  23     numeric.ts  —  packages/collections-core
-  22     tag-accent-dot.tsx  —  apps/timeline-gstudio001/components/graph-view
-  21     preview.ts  —  apps/timeline-gstudio001/.storybook
-  21     render-poll.ts  —  apps/timeline-gstudio001/lib/render
-  21     edge-autoscroll-math.ts  —  packages/ui/dnd-collections/react
-  20     graph-details-design.ts  —  apps/timeline-gstudio001/components/graph-view
-  20     graph-item-details-view-count.ts  —  apps/timeline-gstudio001/components/graph-view
-  20     map-with-concurrency.ts  —  apps/timeline-gstudio001/lib
-  20     worker-request.ts  —  apps/timeline-gstudio001/lib/render
-  19     use-mobile.ts  —  apps/timeline-gstudio001/hooks
-  19     frame-count-settle.ts  —  apps/timeline-gstudio001/lib
-  19     mcp-timeline-summary.ts  —  apps/timeline-gstudio001/lib
-  18     graph-seam-lane-size.ts  —  apps/timeline-gstudio001/components/graph-view
-  18     cloudinary-provider.ts  —  apps/timeline-gstudio001/lib/assets
-  18     types.ts  —  apps/timeline-gstudio001/lib/webmcp
-  18     vitest.config.ts  —  apps/timeline-gstudio001
-  18     use-edge-autoscroll.ts  —  packages/ui/dnd-collections/react
-  18     insert-noop.ts  —  packages/ui/dnd-collections/virtual
-  17     route.ts  —  apps/timeline-gstudio001/app/.well-known/oauth-authorization-server
-  17     route.ts  —  apps/timeline-gstudio001/app/.well-known/oauth-protected-resource
-  17     trim-preview-context.ts  —  packages/ui/dnd-collections/react
-  16     graph-gateway-primer.tsx  —  apps/timeline-gstudio001/components/graph-view
-  16     auth-allowlist.ts  —  apps/timeline-gstudio001/lib
-  16     hydration-skeletons.ts  —  apps/timeline-gstudio001/lib
-  16     build-html-module.mjs  —  packages/timeline-widget
-  16     vite.config.ts  —  packages/timeline-widget
-  15     middleware-build-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
-  15     card-provenance.ts  —  apps/timeline-gstudio001/lib
-  15     use-coarse-pointer.ts  —  apps/timeline-gstudio001/lib
-  15     engine.ts  —  packages/timeline-domain/src
-  14  T  trash-document-id.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  14     hydration-target.ts  —  apps/timeline-gstudio001/lib
-  13     graph-card-frame-loading.tsx  —  apps/timeline-gstudio001/components/graph-view
-  13     types.ts  —  apps/timeline-gstudio001/lib/assets
-  12     route.ts  —  apps/timeline-gstudio001/app/api/auth/me
-  12     skeleton.tsx  —  apps/timeline-gstudio001/components/core
-  12     graph-clip-names.tsx  —  apps/timeline-gstudio001/components/graph-view
-  12     graph-seam-preview-anchor.ts  —  apps/timeline-gstudio001/components/graph-view
-  12     graph-sub-timeline-status.ts  —  apps/timeline-gstudio001/components/graph-view
-  12     disabled-visuals.ts  —  apps/timeline-gstudio001/lib
-  12     local-provider.ts  —  apps/timeline-gstudio001/lib/render
-  12     main.tsx  —  packages/timeline-widget/src
-  11     preview.ts  —  apps/storybook/.storybook
-  11     _buildManifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/static/development
-  11     loading.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]
-  11     graph-seam-metrics.ts  —  apps/timeline-gstudio001/components/graph-view
-  11     sidebar-rail-preference.ts  —  apps/timeline-gstudio001/components/timeline
-  11     asset-deletion-window.ts  —  apps/timeline-gstudio001/lib
-  10     graph-details-motion.ts  —  apps/timeline-gstudio001/components/graph-view
-  10  T  graph-view-config.test.ts  —  apps/timeline-gstudio001/components/graph-view
-  10     bearer-token.ts  —  apps/timeline-gstudio001/lib
-  10     cloudinary-scrub-proxy.ts  —  apps/timeline-gstudio001/lib
-  10     index.ts  —  packages/timeline-model
-   9     route.ts  —  apps/timeline-gstudio001/app/api/auth/register
-   9     project-thumbnail.ts  —  apps/timeline-gstudio001/lib
-   9     at.ts  —  apps/timeline-gstudio001/lib/test-support
-   9     at.ts  —  packages/ui/test-support
-   9     types.ts  —  packages/ui/timeline
-   8     preview.css  —  apps/storybook/.storybook
-   8     boot-session-key.ts  —  apps/timeline-gstudio001/components/graph-view
-   7     postcss.config.mjs  —  apps/storybook
-   7     route.ts  —  apps/timeline-gstudio001/app/api/auth/logout
-   7     graph-item-details-shared.ts  —  apps/timeline-gstudio001/components/graph-view
-   7     registry.ts  —  apps/timeline-gstudio001/lib/assets
-   7     postcss.config.mjs  —  apps/timeline-gstudio001
-   6     read-json-body.ts  —  apps/timeline-gstudio001/lib
-   5     utils.ts  —  apps/timeline-gstudio001/lib
-   5     utils.ts  —  packages/ui/lib
-   4     registry.ts  —  apps/timeline-gstudio001/lib/render
-   4     gesture-thresholds.ts  —  packages/ui/dnd-collections/react
-   3     preview.css  —  apps/timeline-gstudio001/.storybook
-   3     trash-document-id.ts  —  apps/timeline-gstudio001/components/graph-view
-   3     bar-collection-colours-flag.ts  —  apps/timeline-gstudio001/lib
-   3     cloudinary-public-id.ts  —  apps/timeline-gstudio001/lib
-   3     index.ts  —  packages/db
-   3     constants.ts  —  packages/timeline-model
-   3     duration-format.ts  —  packages/ui/dnd-collections/react
-   2     es-toolkit-compat-get.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-isPlainObject.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-last.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-maxBy.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-minBy.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-omit.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-range.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-sortBy.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-sumBy.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-throttle.ts  —  apps/storybook/.storybook/shims
-   2     es-toolkit-compat-uniqBy.ts  —  apps/storybook/.storybook/shims
-   2     sidebar-collection-shortcuts-flag.ts  —  apps/timeline-gstudio001/lib
-   2     next-env.d.ts  —  apps/timeline-gstudio001
-   1     interception-route-rewrite-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
-   1     next-font-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
-   1     server-reference-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
-   1     _clientMiddlewareManifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/static/development
-   1     _ssgManifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/static/development
-   1     root-params.d.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
-   1     lane-tracks-flag.ts  —  apps/timeline-gstudio001/lib
-   1     timeline-documents.ts  —  apps/timeline-gstudio001/lib
-   1     index.ts  —  packages/timeline-widget
-   1     commands.ts  —  packages/ui/dnd-collections/core
-   1     graph.ts  —  packages/ui/dnd-collections/core
-   1     history.ts  —  packages/ui/dnd-collections/core
-   1     hydrate.ts  —  packages/ui/dnd-collections/core
-   1     index.ts  —  packages/ui/dnd-collections/core
-   1     intents.ts  —  packages/ui/dnd-collections/core
-   1     keyboard.ts  —  packages/ui/dnd-collections/core
-   1     numeric.ts  —  packages/ui/dnd-collections/core
-   1     patches.ts  —  packages/ui/dnd-collections/core
-   1     index.ts  —  packages/ui
+1829  workbench-display-surface.tsx  —  packages/ui/timeline/viewport
+1515  graph-board.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 987  VirtualStrip.tsx  —  packages/ui/dnd-collections/virtual
+ 858  graph-preview.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 820  firebase-timeline-store.ts  —  apps/timeline-gstudio001/lib
+ 760  graph-item-details-modal.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 745  graph-seam-strip-bar.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 741  DndCollections.tsx  —  packages/ui/dnd-collections/react
+ 732  graph.ts  —  packages/collections-core
+ 726  timeline-documents.ts  —  packages/ui/timeline
+ 700  timeline-sidebar.tsx  —  apps/timeline-gstudio001/components/timeline
+ 697  graph-documents-gateway.ts  —  apps/timeline-gstudio001/lib
+ 689  graph-seek-rails.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 669  adapter.ts  —  packages/timeline-domain/src
+ 653  tools.ts  —  apps/timeline-gstudio001/lib/webmcp
+ 564  graph-timeline-view.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 561  globals.css  —  apps/timeline-gstudio001/app
+ 542  route.ts  —  apps/timeline-gstudio001/app/api/mcp
+ 539  collections-store.ts  —  packages/ui/dnd-collections/react
+ 531  write-handlers.ts  —  apps/timeline-gstudio001/lib/mcp
+ 498  graph-item-actions.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 466  graph-playhead-model.ts  —  apps/timeline-gstudio001/components/graph-view
+ 462  cloudinary-media-store.ts  —  apps/timeline-gstudio001/lib
+ 449  graph-seam-lane.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 432  trash-drawer.tsx  —  apps/timeline-gstudio001/components/assets
+ 409  graph-sub-timelines.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 406  commands.ts  —  packages/collections-core
+ 367  VirtualGrid.tsx  —  packages/ui/dnd-collections/virtual
+ 359  timeline-document-store.tsx  —  packages/ui/timeline
+ 348  graph-view-chrome.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 347  page.tsx  —  apps/timeline-gstudio001/app
+ 342  use-keyboard-controller.ts  —  packages/ui/dnd-collections/react
+ 324  collection-item.tsx  —  packages/ui/dnd-collections/react
+ 319  graph-native-drop-engine.ts  —  apps/timeline-gstudio001/components/graph-view
+ 319  use-timeline-clips.ts  —  packages/ui/timeline/hooks
+ 315  node-views.tsx  —  packages/ui/dnd-collections/react
+ 286  apply-command.ts  —  apps/timeline-gstudio001/lib/mcp
+ 283  globals.css  —  apps/storybook/.storybook
+ 272  styles.css  —  packages/timeline-widget/src
+ 265  intents.ts  —  packages/collections-core
+ 265  keyboard.ts  —  packages/collections-core
+ 262  graph-collection-card.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 257  route.ts  —  apps/timeline-gstudio001/app/api/timeline-media/upload
+ 250  validator.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
+ 240  graph-clip-card.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 239  patches.ts  —  packages/collections-core
+ 238  graph-item-details-panel.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 237  graph-item-details-monitor.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 236  graph-hydration.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 236  timeline-media-client.ts  —  apps/timeline-gstudio001/lib
+ 234  trim-gesture.ts  —  packages/ui/dnd-collections/react
+ 227  graph-navigation.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 227  scene-service.ts  —  packages/db/lib
+ 226  virtual-strip-lanes.ts  —  packages/ui/dnd-collections/virtual
+ 220  upload.ts  —  apps/timeline-gstudio001/lib/mcp
+ 212  graph-grid-play-button.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 209  graph-native-drop-model.ts  —  apps/timeline-gstudio001/components/graph-view
+ 209  graph-seam-bar.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 209  graph-selection-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 207  graph-collection-details.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 201  storyboard-monster-mark.tsx  —  apps/timeline-gstudio001/components/timeline
+ 195  ffmpeg-plan.mjs  —  apps/timeline-gstudio001/scripts/render-worker
+ 195  playback-manifest.ts  —  packages/timeline-domain/src
+ 194  graph-card-derivations.ts  —  apps/timeline-gstudio001/components/graph-view
+ 193  correct-clip-aspects.mjs  —  apps/timeline-gstudio001/scripts
+ 192  graph-breadcrumb-drop.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 192  auth-service.ts  —  packages/db/lib
+ 187  index.mjs  —  apps/timeline-gstudio001/scripts/render-worker
+ 183  index.ts  —  packages/ui/dnd-collections
+ 181  graph-native-drop-grid.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 180  graph-seam-ruler.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 176  audio-graph.ts  —  packages/ui/timeline/viewport
+ 172  use-pan-with-momentum.ts  —  packages/ui/dnd-collections/react
+ 171  graph-item-action-specs.ts  —  apps/timeline-gstudio001/lib
+ 168  serve-timeline.ts  —  apps/timeline-gstudio001/lib
+ 167  sidebar-collection-shortcuts.tsx  —  apps/timeline-gstudio001/components/timeline
+ 166  graph-native-drop-strip.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 166  remove-dangling-collection-references.ts  —  apps/timeline-gstudio001/scripts
+ 165  job-store.ts  —  apps/timeline-gstudio001/lib/render
+ 164  auth-gate.tsx  —  apps/timeline-gstudio001/components/auth
+ 158  charts-bar-chart.tsx  —  .agents/skills/remotion-best-practices/rules/assets
+ 158  graph-tag-filter-control.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 154  graph-tag-editor.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 154  App.tsx  —  packages/timeline-widget/src/app
+ 151  graph-seam-minimap.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 150  route.ts  —  apps/timeline-gstudio001/app/api/oauth/token
+ 149  migrate-legacy-video-durations.mjs  —  apps/timeline-gstudio001/scripts
+ 148  trim-overview.tsx  —  packages/ui/dnd-collections/react
+ 147  documents.ts  —  packages/timeline-model
+ 146  graph-shortcuts.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 146  repair-truncated-asset-paths.mjs  —  apps/timeline-gstudio001/scripts
+ 145  dropdown-menu.tsx  —  apps/timeline-gstudio001/components/core
+ 145  attach-output.ts  —  apps/timeline-gstudio001/lib/render
+ 144  graph-anchor-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 143  virtual-strip-geometry.ts  —  packages/ui/dnd-collections/virtual
+ 140  route.ts  —  apps/timeline-gstudio001/app/api/timelines/batch
+ 140  timeline-snapshot.mjs  —  apps/timeline-gstudio001/scripts
+ 139  graph-layer-frame-picker.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 139  graph-tool-buttons.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 139  use-virtual-collection-view.tsx  —  packages/ui/dnd-collections/virtual
+ 138  route.ts  —  apps/timeline-gstudio001/app/api/timelines/[id]
+ 137  firebase-media-store.ts  —  apps/timeline-gstudio001/lib
+ 137  edge-autoscroll-coordinator.ts  —  packages/ui/dnd-collections/react
+ 134  db-client.ts  —  packages/db/lib
+ 133  graph-item-details-trim-strip.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 133  bin-unreachable-timelines.mjs  —  apps/timeline-gstudio001/scripts
+ 132  audit-review-findings.mjs  —  apps/timeline-gstudio001/scripts
+ 130  inspect-squatted-fixtures.mjs  —  apps/timeline-gstudio001/scripts
+ 130  make-dev-fixture.mjs  —  apps/timeline-gstudio001/scripts
+ 130  use-flip-graph-animation.ts  —  packages/ui/dnd-collections/react
+ 128  waveform-cache.ts  —  apps/timeline-gstudio001/lib
+ 128  find-unreachable-ui.mjs  —  scripts
+ 127  count-loc.mjs  —  scripts
+ 126  audit-orphaned-timelines.mjs  —  apps/timeline-gstudio001/scripts
+ 125  graph-render-status.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 124  validate.ts  —  packages/timeline-model
+ 123  graph-item-details-trim-fields.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 123  core.ts  —  apps/timeline-gstudio001/lib/oauth
+ 122  layer-frame.ts  —  packages/timeline-model
+ 121  graph-card-badges.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 121  graph-remote-changes.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 117  derive-collection-summaries.ts  —  apps/timeline-gstudio001/lib
+ 117  graph-view-events.ts  —  apps/timeline-gstudio001/lib
+ 116  graph-persistence.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 116  fixture-timeline-store.ts  —  apps/timeline-gstudio001/lib
+ 114  graph-item-details-header.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 113  asset-tombstones.ts  —  apps/timeline-gstudio001/lib
+ 112  graph-seam-scrub.ts  —  apps/timeline-gstudio001/components/graph-view
+ 110  use-seeked-video.ts  —  apps/timeline-gstudio001/hooks
+ 110  timeline-app-html.ts  —  packages/timeline-widget
+ 110  use-palette-drag.ts  —  packages/ui/dnd-collections/react
+ 109  timeline-tree.ts  —  apps/timeline-gstudio001/lib/webmcp
+ 109  interaction-policy.ts  —  packages/ui/dnd-collections/react
+ 107  auth-provider.tsx  —  apps/timeline-gstudio001/components/auth
+ 107  preview-time-channel.ts  —  apps/timeline-gstudio001/components/graph-view
+ 107  measure-closure-batched-vs-per-document-reads.mjs  —  apps/timeline-gstudio001/scripts
+ 107  use-announcements.ts  —  packages/ui/dnd-collections/react
+ 107  use-background-clear.ts  —  packages/ui/dnd-collections/react
+ 106  route.ts  —  apps/timeline-gstudio001/app/api/renders
+ 106  graph-seam-bar-layout.ts  —  apps/timeline-gstudio001/components/graph-view
+ 105  route.ts  —  apps/timeline-gstudio001/app/api/timeline-media
+ 105  route.ts  —  apps/timeline-gstudio001/app/api/trash
+ 103  graph-item-details-panel-header.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 103  graph-trim-panel.tsx  —  apps/timeline-gstudio001/components/graph-view
+ 103  collections-components.tsx  —  packages/ui/dnd-collections/react
+ 101  aspect-correction.mjs  —  apps/timeline-gstudio001/scripts
+ 101  playback-skip.ts  —  packages/ui/timeline/viewport
+ 101  waveform-peaks.ts  —  packages/ui/timeline/viewport
+ 100  measure-project-query-vs-closure-walk.mjs  —  apps/timeline-gstudio001/scripts
+  99  create-collection.ts  —  apps/timeline-gstudio001/lib/mcp
+  99  render.ts  —  apps/timeline-gstudio001/lib/mcp
+  98  page.tsx  —  apps/timeline-gstudio001/app/oauth/authorize
+  98  graph-item-context-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
+  98  graph-selection-actions.tsx  —  apps/timeline-gstudio001/components/graph-view
+  98  graph-rsc-payloads.ts  —  apps/timeline-gstudio001/lib
+  98  audit-dead-asset-references.mjs  —  apps/timeline-gstudio001/scripts
+  97  route.ts  —  apps/timeline-gstudio001/app/api/timelines/import
+  97  load-timeline-closure.ts  —  apps/timeline-gstudio001/lib
+  96  view-tools.ts  —  packages/timeline-widget/src/tools
+  94  authorize-request.ts  —  apps/timeline-gstudio001/lib/oauth
+  94  node-thumbnail.tsx  —  packages/ui/dnd-collections/react
+  92  graph-card-caption.tsx  —  apps/timeline-gstudio001/components/graph-view
+  91  firebase-auth-session.ts  —  apps/timeline-gstudio001/lib
+  90  text-animations-word-highlight.tsx  —  .agents/skills/remotion-best-practices/rules/assets
+  89  text-animations-typewriter.tsx  —  .agents/skills/remotion-best-practices/rules/assets
+  89  route.ts  —  apps/timeline-gstudio001/app/api/timelines/batch-get
+  88  stamp-project-id-on-timeline-documents.mjs  —  apps/timeline-gstudio001/scripts
+  87  graph-trim-preview.tsx  —  apps/timeline-gstudio001/components/graph-view
+  86  graph-render-format.tsx  —  apps/timeline-gstudio001/components/graph-view
+  86  index.ts  —  packages/collections-core
+  86  types.ts  —  packages/timeline-model
+  85  graph-item-details-change-note.ts  —  apps/timeline-gstudio001/components/graph-view
+  83  graph-item-content.tsx  —  apps/timeline-gstudio001/components/graph-view
+  83  graph-clipboard.ts  —  apps/timeline-gstudio001/lib
+  83  prune-empty-orphans.mjs  —  apps/timeline-gstudio001/scripts
+  81  route.ts  —  apps/timeline-gstudio001/app/api/renders/[id]/report
+  81  audit-foreign-accounts.mjs  —  apps/timeline-gstudio001/scripts
+  81  default-item-content.tsx  —  packages/ui/dnd-collections/react
+  80  history-views.tsx  —  packages/ui/dnd-collections/react
+  79  route.ts  —  apps/timeline-gstudio001/app/api/assets/reclaim
+  78  graph-item-details-history.ts  —  apps/timeline-gstudio001/components/graph-view
+  78  store.ts  —  apps/timeline-gstudio001/lib/oauth
+  78  audit-ownerless-timelines.mjs  —  apps/timeline-gstudio001/scripts
+  78  clip-display.ts  —  packages/timeline-model
+  78  utils.ts  —  packages/ui/timeline
+  77  graph-inline-rename.tsx  —  apps/timeline-gstudio001/components/graph-view
+  77  graph-seam-strip.ts  —  apps/timeline-gstudio001/components/graph-view
+  77  tag-facets.ts  —  apps/timeline-gstudio001/lib
+  77  stamp-ownerless-timelines.mjs  —  apps/timeline-gstudio001/scripts
+  77  view-state.ts  —  packages/timeline-widget/src/app
+  76  graph-card-ghost.tsx  —  apps/timeline-gstudio001/components/graph-view
+  76  graph-collection-hover.tsx  —  apps/timeline-gstudio001/components/graph-view
+  76  graph-lane-rows.ts  —  apps/timeline-gstudio001/components/graph-view
+  76  graph-details-store.ts  —  apps/timeline-gstudio001/lib
+  75  graph-save-status.tsx  —  apps/timeline-gstudio001/components/graph-view
+  75  firebase-auth-rest.ts  —  apps/timeline-gstudio001/lib
+  74  change-log.ts  —  apps/timeline-gstudio001/lib
+  74  Clip.tsx  —  packages/timeline-widget/src/components
+  73  context-menu.tsx  —  apps/timeline-gstudio001/components/core
+  73  firestore-failure.ts  —  apps/timeline-gstudio001/lib
+  73  history.ts  —  packages/collections-core
+  72  trim-handles.tsx  —  packages/ui/dnd-collections/react
+  71  graph-card-model.ts  —  apps/timeline-gstudio001/components/graph-view
+  71  firebase-admin.ts  —  apps/timeline-gstudio001/lib
+  71  offline-media-store.ts  —  apps/timeline-gstudio001/lib
+  71  cut-list.ts  —  apps/timeline-gstudio001/lib/render
+  71  job-state.ts  —  apps/timeline-gstudio001/lib/render
+  70  route.ts  —  apps/timeline-gstudio001/app/api/oauth/authorize
+  70  route.ts  —  apps/timeline-gstudio001/app/api/timelines/[id]/export
+  69  graph-card-trim.tsx  —  apps/timeline-gstudio001/components/graph-view
+  68  layout.tsx  —  apps/timeline-gstudio001/app
+  68  graph-native-drop-insertion.ts  —  apps/timeline-gstudio001/components/graph-view
+  66  graph-add-collection-slot.tsx  —  apps/timeline-gstudio001/components/graph-view
+  65  graph-details-segmented.tsx  —  apps/timeline-gstudio001/components/graph-view
+  65  graph-node-clone.ts  —  apps/timeline-gstudio001/lib
+  65  metadata.ts  —  apps/timeline-gstudio001/lib/oauth
+  65  video-frame-url.ts  —  apps/timeline-gstudio001/lib
+  64  routes.d.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
+  64  graph-mcp-tools.tsx  —  apps/timeline-gstudio001/components/graph-view
+  64  graph-waveform-model.ts  —  apps/timeline-gstudio001/components/graph-view
+  64  eslint.config.mjs  —  apps/timeline-gstudio001
+  63  main.ts  —  apps/storybook/.storybook
+  63  graph-native-drag-signal.ts  —  apps/timeline-gstudio001/components/graph-view
+  62  global-error.tsx  —  apps/timeline-gstudio001/app
+  61  use-dialog-focus.ts  —  apps/timeline-gstudio001/hooks
+  60  default-layer-frame.ts  —  apps/timeline-gstudio001/lib
+  60  hydrate.ts  —  packages/collections-core
+  59  graph-history-format.ts  —  apps/timeline-gstudio001/components/graph-view
+  59  client-playback-manifest.ts  —  apps/timeline-gstudio001/lib
+  59  node-dom.ts  —  packages/ui/dnd-collections/react
+  57  graph-view-loading.tsx  —  apps/timeline-gstudio001/components/graph-view
+  56  use-frame-crossfade.ts  —  apps/timeline-gstudio001/hooks
+  55  s3-provider.ts  —  apps/timeline-gstudio001/lib/assets
+  54  host.ts  —  packages/timeline-widget/src/bridge
+  53  graph-details-neighbours.ts  —  apps/timeline-gstudio001/components/graph-view
+  53  preview-card-geometry.ts  —  apps/timeline-gstudio001/components/graph-view
+  53  trash-target.tsx  —  packages/ui/dnd-collections/react
+  52  button.tsx  —  apps/timeline-gstudio001/components/core
+  51  slider.tsx  —  apps/timeline-gstudio001/components/core
+  51  graph-item-details-context.tsx  —  apps/timeline-gstudio001/components/graph-view
+  51  flat-order.ts  —  packages/timeline-domain/src
+  50  route.ts  —  apps/timeline-gstudio001/app/api/auth/login
+  50  graph-insert-placement.ts  —  apps/timeline-gstudio001/lib
+  49  route.ts  —  apps/timeline-gstudio001/app/api/assets/marked
+  49  results.ts  —  apps/timeline-gstudio001/lib/webmcp
+  49  next.config.ts  —  apps/timeline-gstudio001
+  49  live-trim.ts  —  packages/ui/dnd-collections/react
+  47  graph-project-menu.tsx  —  apps/timeline-gstudio001/components/graph-view
+  47  placement.ts  —  packages/timeline-model
+  46  error.tsx  —  apps/timeline-gstudio001/app
+  46  load-project-button.tsx  —  apps/timeline-gstudio001/components/projects
+  46  asset-references.ts  —  apps/timeline-gstudio001/lib/assets
+  46  rate-limit.ts  —  apps/timeline-gstudio001/lib
+  45  route.ts  —  apps/timeline-gstudio001/app/api/timelines/[id]/preview-manifest
+  45  route.ts  —  apps/timeline-gstudio001/app/api/timelines/closure
+  45  graph-details-context.tsx  —  apps/timeline-gstudio001/components/graph-view
+  45  graph-item-disable-toggle.tsx  —  apps/timeline-gstudio001/components/graph-view
+  45  sidebar-tooltip-label.tsx  —  apps/timeline-gstudio001/components/timeline
+  44  types.ts  —  apps/timeline-gstudio001/lib/render
+  44  TimelineStrip.tsx  —  packages/timeline-widget/src/views
+  43  graph-history-persistence.tsx  —  apps/timeline-gstudio001/components/graph-view
+  43  graph-playbar-thumbnails.tsx  —  apps/timeline-gstudio001/components/graph-view
+  43  load-project.ts  —  apps/timeline-gstudio001/components/projects
+  43  placement.ts  —  apps/timeline-gstudio001/lib/webmcp
+  42  webmcp-adapter.ts  —  apps/timeline-gstudio001/lib/webmcp
+  41  route.ts  —  apps/timeline-gstudio001/app/api/auth/login/complete
+  40  graph-card-measure.ts  —  apps/timeline-gstudio001/components/graph-view
+  40  graph-remote-diff.ts  —  apps/timeline-gstudio001/components/graph-view
+  40  graph-view-config.ts  —  apps/timeline-gstudio001/components/graph-view
+  40  graph-trash-discard.ts  —  apps/timeline-gstudio001/lib
+  40  provider.ts  —  apps/timeline-gstudio001/lib/render
+  39  route.ts  —  apps/timeline-gstudio001/app/api/renders/[id]/upload-ticket
+  39  graph-paste-flash.ts  —  apps/timeline-gstudio001/lib
+  38  route.ts  —  apps/timeline-gstudio001/app/api/timelines/revisions
+  37  tag-write-plan.ts  —  apps/timeline-gstudio001/lib
+  37  render-format.ts  —  packages/timeline-model
+  37  tags.ts  —  packages/timeline-model
+  36  route.ts  —  apps/timeline-gstudio001/app/api/timelines
+  36  graph-native-drop-chrome.tsx  —  apps/timeline-gstudio001/components/graph-view
+  36  use-hover-prefetch.ts  —  apps/timeline-gstudio001/components/projects
+  36  types.ts  —  packages/timeline-widget/src
+  36  palette.tsx  —  packages/ui/dnd-collections/react
+  36  constants.ts  —  packages/ui/timeline
+  35  route.ts  —  apps/timeline-gstudio001/app/api/renders/[id]
+  35  graph-strip-swipe.ts  —  apps/timeline-gstudio001/components/graph-view
+  35  graph-tag-filter.tsx  —  apps/timeline-gstudio001/components/graph-view
+  35  trash-groups.ts  —  apps/timeline-gstudio001/lib
+  35  index.ts  —  packages/timeline-domain
+  34  format-duration.ts  —  apps/timeline-gstudio001/lib
+  34  project-asset-scope.ts  —  apps/timeline-gstudio001/lib
+  33  preview-scroller.ts  —  apps/timeline-gstudio001/components/graph-view
+  33  collection-shortcuts.ts  —  apps/timeline-gstudio001/lib
+  33  http-range.ts  —  apps/timeline-gstudio001/lib
+  33  apply-flag.mjs  —  apps/timeline-gstudio001/scripts
+  32  route.ts  —  apps/timeline-gstudio001/app/api/renders/claim
+  32  page.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]/graph/[[...activeTimelinePath]]
+  32  graph-dropped-media.ts  —  apps/timeline-gstudio001/components/graph-view
+  32  preview-contexts.tsx  —  apps/timeline-gstudio001/components/graph-view
+  32  renders-collection.ts  —  apps/timeline-gstudio001/lib/render
+  32  tool-fields.ts  —  apps/timeline-gstudio001/lib/webmcp
+  31  read-timeline.ts  —  apps/timeline-gstudio001/lib/mcp
+  30  page.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]
+  30  caption-tag-fit.ts  —  apps/timeline-gstudio001/lib
+  30  compile-timeline-manifest.ts  —  apps/timeline-gstudio001/lib
+  29  client-graph-view.tsx  —  apps/timeline-gstudio001/components/graph-view
+  29  graph-layer-frame.ts  —  apps/timeline-gstudio001/components/graph-view
+  29  provider.ts  —  apps/timeline-gstudio001/lib/assets
+  28  timeline-ownership.ts  —  apps/timeline-gstudio001/lib
+  28  trash-provenance.ts  —  apps/timeline-gstudio001/lib
+  28  virtual-droppable.ts  —  packages/ui/dnd-collections/react
+  27  cache-life.d.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
+  27  graph-card-dimming.ts  —  apps/timeline-gstudio001/components/graph-view
+  27  preview-items.ts  —  packages/timeline-model
+  26  graph-pending-details.ts  —  apps/timeline-gstudio001/components/graph-view
+  26  derived-cache.ts  —  apps/timeline-gstudio001/lib
+  26  ErrorBoundary.tsx  —  packages/timeline-widget/src/app
+  26  pointer-sensors.ts  —  packages/ui/dnd-collections/react
+  25  layout.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]/graph
+  25  sidebar-icon-styles.ts  —  apps/timeline-gstudio001/components/timeline
+  24  main.ts  —  apps/timeline-gstudio001/.storybook
+  24  graph-card-placeholders.tsx  —  apps/timeline-gstudio001/components/graph-view
+  24  card-ghost-frames.ts  —  apps/timeline-gstudio001/lib
+  24  view-transition.ts  —  apps/timeline-gstudio001/lib
+  24  container-context.ts  —  packages/ui/dnd-collections/react
+  23  sonner.tsx  —  apps/timeline-gstudio001/components/core
+  23  graph-item-details-bar-reach.ts  —  apps/timeline-gstudio001/components/graph-view
+  23  press-feedback.ts  —  apps/timeline-gstudio001/components/graph-view
+  23  make-scale-probe.mjs  —  apps/timeline-gstudio001/scripts
+  23  numeric.ts  —  packages/collections-core
+  22  tag-accent-dot.tsx  —  apps/timeline-gstudio001/components/graph-view
+  21  preview.ts  —  apps/timeline-gstudio001/.storybook
+  21  render-poll.ts  —  apps/timeline-gstudio001/lib/render
+  21  edge-autoscroll-math.ts  —  packages/ui/dnd-collections/react
+  20  graph-details-design.ts  —  apps/timeline-gstudio001/components/graph-view
+  20  graph-item-details-view-count.ts  —  apps/timeline-gstudio001/components/graph-view
+  20  map-with-concurrency.ts  —  apps/timeline-gstudio001/lib
+  20  worker-request.ts  —  apps/timeline-gstudio001/lib/render
+  19  use-mobile.ts  —  apps/timeline-gstudio001/hooks
+  19  frame-count-settle.ts  —  apps/timeline-gstudio001/lib
+  19  mcp-timeline-summary.ts  —  apps/timeline-gstudio001/lib
+  18  graph-seam-lane-size.ts  —  apps/timeline-gstudio001/components/graph-view
+  18  cloudinary-provider.ts  —  apps/timeline-gstudio001/lib/assets
+  18  types.ts  —  apps/timeline-gstudio001/lib/webmcp
+  18  use-edge-autoscroll.ts  —  packages/ui/dnd-collections/react
+  18  insert-noop.ts  —  packages/ui/dnd-collections/virtual
+  17  route.ts  —  apps/timeline-gstudio001/app/.well-known/oauth-authorization-server
+  17  route.ts  —  apps/timeline-gstudio001/app/.well-known/oauth-protected-resource
+  17  trim-preview-context.ts  —  packages/ui/dnd-collections/react
+  16  graph-gateway-primer.tsx  —  apps/timeline-gstudio001/components/graph-view
+  16  auth-allowlist.ts  —  apps/timeline-gstudio001/lib
+  16  hydration-skeletons.ts  —  apps/timeline-gstudio001/lib
+  16  build-html-module.mjs  —  packages/timeline-widget
+  16  vite.config.ts  —  packages/timeline-widget
+  15  middleware-build-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
+  15  card-provenance.ts  —  apps/timeline-gstudio001/lib
+  15  use-coarse-pointer.ts  —  apps/timeline-gstudio001/lib
+  15  engine.ts  —  packages/timeline-domain/src
+  14  hydration-target.ts  —  apps/timeline-gstudio001/lib
+  13  graph-card-frame-loading.tsx  —  apps/timeline-gstudio001/components/graph-view
+  13  types.ts  —  apps/timeline-gstudio001/lib/assets
+  12  route.ts  —  apps/timeline-gstudio001/app/api/auth/me
+  12  skeleton.tsx  —  apps/timeline-gstudio001/components/core
+  12  graph-clip-names.tsx  —  apps/timeline-gstudio001/components/graph-view
+  12  graph-seam-preview-anchor.ts  —  apps/timeline-gstudio001/components/graph-view
+  12  graph-sub-timeline-status.ts  —  apps/timeline-gstudio001/components/graph-view
+  12  disabled-visuals.ts  —  apps/timeline-gstudio001/lib
+  12  local-provider.ts  —  apps/timeline-gstudio001/lib/render
+  12  main.tsx  —  packages/timeline-widget/src
+  11  preview.ts  —  apps/storybook/.storybook
+  11  _buildManifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/static/development
+  11  loading.tsx  —  apps/timeline-gstudio001/app/timeline/[timelineId]
+  11  graph-seam-metrics.ts  —  apps/timeline-gstudio001/components/graph-view
+  11  sidebar-rail-preference.ts  —  apps/timeline-gstudio001/components/timeline
+  11  asset-deletion-window.ts  —  apps/timeline-gstudio001/lib
+  10  graph-details-motion.ts  —  apps/timeline-gstudio001/components/graph-view
+  10  bearer-token.ts  —  apps/timeline-gstudio001/lib
+  10  cloudinary-scrub-proxy.ts  —  apps/timeline-gstudio001/lib
+  10  index.ts  —  packages/timeline-model
+   9  route.ts  —  apps/timeline-gstudio001/app/api/auth/register
+   9  project-thumbnail.ts  —  apps/timeline-gstudio001/lib
+   9  types.ts  —  packages/ui/timeline
+   8  preview.css  —  apps/storybook/.storybook
+   8  boot-session-key.ts  —  apps/timeline-gstudio001/components/graph-view
+   7  postcss.config.mjs  —  apps/storybook
+   7  route.ts  —  apps/timeline-gstudio001/app/api/auth/logout
+   7  graph-item-details-shared.ts  —  apps/timeline-gstudio001/components/graph-view
+   7  registry.ts  —  apps/timeline-gstudio001/lib/assets
+   7  postcss.config.mjs  —  apps/timeline-gstudio001
+   6  read-json-body.ts  —  apps/timeline-gstudio001/lib
+   5  utils.ts  —  apps/timeline-gstudio001/lib
+   5  utils.ts  —  packages/ui/lib
+   4  registry.ts  —  apps/timeline-gstudio001/lib/render
+   4  gesture-thresholds.ts  —  packages/ui/dnd-collections/react
+   3  preview.css  —  apps/timeline-gstudio001/.storybook
+   3  trash-document-id.ts  —  apps/timeline-gstudio001/components/graph-view
+   3  bar-collection-colours-flag.ts  —  apps/timeline-gstudio001/lib
+   3  cloudinary-public-id.ts  —  apps/timeline-gstudio001/lib
+   3  index.ts  —  packages/db
+   3  constants.ts  —  packages/timeline-model
+   3  duration-format.ts  —  packages/ui/dnd-collections/react
+   2  es-toolkit-compat-get.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-isPlainObject.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-last.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-maxBy.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-minBy.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-omit.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-range.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-sortBy.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-sumBy.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-throttle.ts  —  apps/storybook/.storybook/shims
+   2  es-toolkit-compat-uniqBy.ts  —  apps/storybook/.storybook/shims
+   2  sidebar-collection-shortcuts-flag.ts  —  apps/timeline-gstudio001/lib
+   2  next-env.d.ts  —  apps/timeline-gstudio001
+   1  interception-route-rewrite-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
+   1  next-font-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
+   1  server-reference-manifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/server
+   1  _clientMiddlewareManifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/static/development
+   1  _ssgManifest.js  —  apps/timeline-gstudio001/.next-turbo-probe/dev/static/development
+   1  root-params.d.ts  —  apps/timeline-gstudio001/.next-turbo-probe/dev/types
+   1  lane-tracks-flag.ts  —  apps/timeline-gstudio001/lib
+   1  timeline-documents.ts  —  apps/timeline-gstudio001/lib
+   1  index.ts  —  packages/timeline-widget
+   1  commands.ts  —  packages/ui/dnd-collections/core
+   1  graph.ts  —  packages/ui/dnd-collections/core
+   1  history.ts  —  packages/ui/dnd-collections/core
+   1  hydrate.ts  —  packages/ui/dnd-collections/core
+   1  index.ts  —  packages/ui/dnd-collections/core
+   1  intents.ts  —  packages/ui/dnd-collections/core
+   1  keyboard.ts  —  packages/ui/dnd-collections/core
+   1  numeric.ts  —  packages/ui/dnd-collections/core
+   1  patches.ts  —  packages/ui/dnd-collections/core
+   1  index.ts  —  packages/ui
 
-623 files, 96235 lines of code
-  440 source     51768
-  183 test/story 44467   (marked T)
+432 files, 50928 lines of code
+  tests and stories excluded — pass --tests to include them

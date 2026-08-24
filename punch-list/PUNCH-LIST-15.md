@@ -695,19 +695,30 @@ become "cannot tell it armed".
 - Status: Complete. `npm run audit:loc`; the run is in
   `punch-list/PUNCH-LIST-15-loc.txt`.
 
-**The result, as of the end of this punch list: 623 files, 96,235 lines of
-code** — 51,768 across 440 source files and 44,467 across 183 tests and
-stories, which are marked `T`.
+**The result, as of the end of this punch list: 432 files, 50,928 lines of
+application code.** Full list in `punch-list/PUNCH-LIST-15-loc.txt`.
 
-That ratio is the finding. Coverage is 46% of the code in this repo by line,
-and the single largest file in the tree is the e2e suite at 5,525 — more than
-three times the largest component. Two of the top three files are stories.
+TESTS AND STORIES ARE EXCLUDED, on request and rightly. They were counted and
+marked `T` at first, on the reasoning that a 3,000-line stories file is a
+different fact about a codebase than a 3,000-line component. True — and exactly
+why they do not belong in the same list: mixed in they dominated it. The single
+largest file in the tree is the e2e suite at 5,525, two of the top three were
+stories, and a list meant to show where the CODE is was mostly showing where
+the tests are. `--tests` puts them back.
 
-Worth reading beside the counts: comments are excluded, and this repo comments
-heavily, so these numbers are much smaller than the files look. `graph-board.tsx`
-is 1,515 lines of code inside a file more than twice that.
-- Area: `scripts/` (new), root `package.json`
-- Screenshot: Not captured
+Excluding them by FILENAME was not enough. `tests/demo/foobar-demo.mjs` is 475
+lines of harness and is none of `.test.`, `.spec.` or `.stories.`, so it sat
+fifteenth among the application code. The rule is by name, by directory
+(`tests/`, `e2e/`, `test-support/`, `fixtures/`) and by job (runner configs, a
+stories helper). Maintenance scripts and the offline fixture STORE stay — those
+are real code that happens to have "fixture" in the name.
+
+For scale, with tests included it is 623 files and 96,235 lines, so coverage is
+46% of this repo by line.
+
+Comments are excluded throughout, and this repo comments heavily, so every
+number is much smaller than the file looks: `graph-board.tsx` is 1,515 lines of
+code in a file more than twice that.
 
 **Do this LAST, after every OTHER item is complete** — including any added
 after it, since numbering is the order they were dictated and not the order

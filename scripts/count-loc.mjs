@@ -49,12 +49,39 @@ const SKIP_DIRECTORIES = new Set([
   ".vercel",
 ]);
 
-/** A file that exists to check another one. Counted, but reported apart: a
- *  3,000-line stories file is a different fact about a codebase than a
- *  3,000-line component, and one list that does not say which is misleading. */
+/**
+ * A file that exists to check another one.
+ *
+ * EXCLUDED BY DEFAULT. They were counted and marked `T`, on the reasoning that
+ * a 3,000-line stories file is a different fact about a codebase than a
+ * 3,000-line component — which is true, and is exactly why they do not belong
+ * in the same list. Mixed in they dominate it: the largest file in this repo is
+ * the e2e suite, and two of the top three are stories, so a list meant to show
+ * where the CODE is was mostly showing where the tests are.
+ *
+ * `--tests` puts them back for the times that is the question being asked.
+ */
 function isCoverage(path) {
-  return /\.(test|spec|stories)\.[cm]?[jt]sx?$/.test(path);
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return (
+    // By NAME: the three suffixes the suites actually use.
+    /\.(test|spec|stories)\.[cm]?[jt]sx?$/.test(name) ||
+    // By PLACE. The filename pattern alone let `tests/demo/foobar-demo.mjs`
+    // through — 475 lines of harness sitting fifteenth in a list of
+    // application code, because it is neither a `.test.` nor a `.spec.` nor a
+    // `.stories.` file. Anything living in a test directory is test-related
+    // whatever it is called, and `test-support` is the same case one level up:
+    // it exists only to be imported BY tests.
+    /(^|\/)(tests?|__tests__|e2e|test-support|fixtures)\//.test(path) ||
+    // By JOB, for the handful that are neither. A runner's config and a
+    // stories helper are not application code by any reading.
+    /^(vitest|playwright)\.config\./.test(name) ||
+    /^(smoke-test|stories-helpers)\./.test(name)
+  );
 }
+
+
+const INCLUDE_TESTS = process.argv.includes("--tests");
 
 function sourceFiles(dir, found = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -149,6 +176,7 @@ function main() {
       };
     })
     .filter((file) => file.lines > 0)
+    .filter((file) => INCLUDE_TESTS || !file.coverage)
     // Descending by code lines; path as the tie-break so two runs over an
     // unchanged tree print the same list.
     .sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path));
@@ -158,18 +186,16 @@ function main() {
     const slash = file.path.lastIndexOf("/");
     const name = slash < 0 ? file.path : file.path.slice(slash + 1);
     const where = slash < 0 ? "." : file.path.slice(0, slash);
-    console.log(
-      `${String(file.lines).padStart(width)}  ${file.coverage ? "T" : " "}  ${name}  —  ${where}`,
-    );
+    const mark = INCLUDE_TESTS ? `  ${file.coverage ? "T" : " "}` : "";
+    console.log(`${String(file.lines).padStart(width)}${mark}  ${name}  —  ${where}`);
   }
 
-  const code = files.filter((f) => !f.coverage);
-  const cover = files.filter((f) => f.coverage);
   const sum = (list) => list.reduce((n, f) => n + f.lines, 0);
   console.log("");
   console.log(`${files.length} files, ${sum(files)} lines of code`);
-  console.log(`  ${code.length} source     ${sum(code)}`);
-  console.log(`  ${cover.length} test/story ${sum(cover)}   (marked T)`);
+  if (!INCLUDE_TESTS) {
+    console.log("  tests and stories excluded — pass --tests to include them");
+  }
 }
 
 // Only when RUN, not when imported. `codeLines` is exported so its handling of
