@@ -639,7 +639,32 @@ export function DetailsPanel({
             // where it renders, so both axes finish together because they finish
             // at all.
             ? "@min-[30rem]:h-[68vh] h-auto"
-            : "@min-[30rem]:h-[38.9vh] h-auto",
+            // THE NEIGHBOUR'S HEIGHT NO LONGER DEPENDS ON ITS WIDTH
+            // (PL15-005), and dropping that query fixes two things at once.
+            //
+            // It was `@min-[30rem]:h-[38.9vh] h-auto`: a definite height when
+            // the panel is wide, and fitted to its own picture when it is not.
+            //
+            // ONE — the query was defeating the rule directly above it at
+            // exactly five-up. Measured at 1920: three-up makes a neighbour
+            // 490px, over the 30rem threshold, so it takes the fixed height;
+            // five-up makes it 314px, under it, so all four fall back to
+            // fitting their own pictures — which is precisely the "four
+            // neighbours at four different heights, which reads as a broken
+            // row" that the fixed height was introduced to prevent. The rule
+            // only held in the layout that needed it least.
+            //
+            // TWO — it is why changing the count read as a replacement rather
+            // than a resize. Crossing 30rem swaps `h-auto` for a vh value, and
+            // `auto` cannot be interpolated, so every neighbour's height
+            // JUMPED in one frame while its width eased over the step. That is
+            // the same fault the height was added to this transition list to
+            // cure, arriving by a different route: one dimension gliding while
+            // the other teleports. With one definite height in both counts the
+            // height simply does not change across a step, and what is left is
+            // a width easing and two panels arriving — which is what a count
+            // change actually is.
+            : "h-[38.9vh]",
         ].join(" ")}
         onPointerDown={(event) => event.stopPropagation()}
       >

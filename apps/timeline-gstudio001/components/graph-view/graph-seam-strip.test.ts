@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSeamStrip,
   segmentFor,
+  clampStripOffset,
   stripCentreOffset,
   stripPositionAt,
   stripXFor,
@@ -121,5 +122,40 @@ describe("stripPositionAt", () => {
       PPS,
     );
     expect(stripPositionAt(strip, 40)?.clipId).toBe("c");
+  });
+});
+
+// THE FILM IS HELD AGAINST THE TRACK'S ENDS (PL15-025). Centring the subject is
+// right in the middle of a sequence and wrong at either end: clip 2 of 13
+// centred pushes the film most of the way across and leaves a screen of empty
+// space beside it.
+describe("clampStripOffset", () => {
+  // A film twice the track, and 46px of lead for the end stop's own mark.
+  const TOTAL = 2000;
+  const TRACK = 1000;
+  const LEAD = 46;
+
+  it("stops the film's START at the lead rather than centring past it", () => {
+    // Centring an early clip asks to push the film 400px right, which is 354px
+    // of empty track. It goes as far as the lead and no further.
+    expect(clampStripOffset(400, TOTAL, TRACK, LEAD)).toBe(LEAD);
+  });
+
+  it("stops the film's END at the far edge", () => {
+    expect(clampStripOffset(-5000, TOTAL, TRACK, LEAD)).toBe(TRACK - TOTAL - LEAD);
+  });
+
+  it("leaves an offset in the middle of the range alone", () => {
+    expect(clampStripOffset(-500, TOTAL, TRACK, LEAD)).toBe(-500);
+  });
+
+  it("keeps CENTRING a film shorter than the track", () => {
+    // Nothing is being pushed off here — there is no edge to hold it against,
+    // so the complaint this clamp answers does not apply and centring stands.
+    expect(clampStripOffset(300, 400, TRACK, LEAD)).toBe(300);
+  });
+
+  it("does nothing before the track has been measured", () => {
+    expect(clampStripOffset(400, TOTAL, 0, LEAD)).toBe(400);
   });
 });

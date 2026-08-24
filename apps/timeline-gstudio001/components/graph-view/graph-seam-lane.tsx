@@ -47,6 +47,22 @@ const SEAM_MOVE_CLAIM_MS = 120;
 const CAP_WIDTH_PX = 6;
 
 /**
+ * How far the stop sits from the film, and the room its label sits in.
+ *
+ * ITS OWN NUMBER, and that is the change (PL15-014). This used to be
+ * `BOX_INSET_PX` — 2.5px, the same inset the gap between two boxes is made of,
+ * chosen so the stop sat "at the distance the eye already reads as next thing
+ * along". Which is exactly why it read as another clip's edge rather than as
+ * the end of the film. Sharing the number is what made the two look the same,
+ * so a multiplier of it would put the next reader back here; this is separate
+ * on purpose.
+ *
+ * 40px because the LABEL lives in it. The gap is not decoration now — it is
+ * the space the word occupies, between the stop and the first or last box.
+ */
+const CAP_GAP_PX = 40;
+
+/**
  * WHERE THE PROJECT ENDS, drawn just outside the first and last boxes.
  *
  * The bar is a window: at most reaches it shows a stretch with more either
@@ -66,27 +82,60 @@ const CAP_WIDTH_PX = 6;
  * about the project, and the two are not in the same place at most zooms.
  */
 function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: number }>) {
+  // NO CLAMP, and that was a wrong turn worth leaving written down.
+  //
+  // Clamping the pair to `max(0px, …)` looked like the same care the
+  // active-clip triangle takes to stay inside the bar. It is not: THIS lane's
+  // coordinate space begins at the FILM's start, so `atPx` is 0 for the first
+  // box and the stop belongs at a negative offset by construction. `max(0px, …)`
+  // therefore forbade the only position the start stop can occupy and parked it
+  // on top of the first clip — caught by the story that asserts the stop sits
+  // outside the boxes rather than over them.
+  //
+  // The label sits in the GAP, between the stop and the film, so it is the
+  // stop that moves outboard and the word that stays beside the picture.
+  const capLeft =
+    side === "start" ? atPx - CAP_WIDTH_PX - CAP_GAP_PX : atPx + CAP_GAP_PX;
+  const labelLeft = side === "start" ? atPx - CAP_GAP_PX : atPx;
+
   return (
-    <span
-      data-seam-cap={side}
-      aria-hidden="true"
-      style={{
-        // Just outside the box's own edge, using the same inset the gap
-        // between two boxes is made of — so the stop sits at the distance the
-        // eye already reads as "next thing along".
-        left: side === "start" ? atPx - CAP_WIDTH_PX - BOX_INSET_PX : atPx + BOX_INSET_PX,
-        width: CAP_WIDTH_PX,
-      }}
-      className={[
-        "absolute inset-y-1 rounded-[2px]",
-        // The gradient runs AWAY from the film: solid against the last frame,
-        // gone by the outer edge. A flat bar would read as one more clip in a
-        // colour nobody chose.
-        side === "start"
-          ? "bg-gradient-to-l from-zinc-300/85 to-zinc-300/0"
-          : "bg-gradient-to-r from-zinc-300/85 to-zinc-300/0",
-      ].join(" ")}
-    />
+    <>
+      <span
+        data-seam-cap={side}
+        aria-hidden="true"
+        style={{ left: capLeft, width: CAP_WIDTH_PX }}
+        className={[
+          "absolute inset-y-1 rounded-[2px]",
+          // The gradient runs AWAY from the film: solid against the last frame,
+          // gone by the outer edge. A flat bar would read as one more clip in a
+          // colour nobody chose.
+          side === "start"
+            ? "bg-gradient-to-l from-zinc-300/85 to-zinc-300/0"
+            : "bg-gradient-to-r from-zinc-300/85 to-zinc-300/0",
+        ].join(" ")}
+      />
+      {/* THE WORD (PL15-014). A bare mark left "is this the end or just where
+          the boxes ran out" to be inferred, and the bar cannot answer that from
+          its boxes — a window cropped at the reach looks identical to one that
+          has reached the real end. The stop is only drawn when it HAS, so
+          saying which end it is costs nothing and settles it.
+
+          NOT `aria-hidden`, unlike the mark beside it. The mark is a graphic
+          restating what the boxes say; this is content, and hiding readable
+          text from assistive tech to keep an attribute the graphic needed would
+          be the wrong way round.
+
+          A FIXED WIDTH so the clamps above can be arithmetic rather than a
+          measurement, and `text-center` so the word sits in the middle of the
+          room the gap makes for it. */}
+      <span
+        data-seam-cap-label={side}
+        style={{ left: labelLeft, width: CAP_GAP_PX }}
+        className="pointer-events-none absolute inset-y-0 flex items-center justify-center text-[8px] font-semibold tracking-[0.08em] text-zinc-400 uppercase select-none"
+      >
+        {side === "start" ? "Start" : "End"}
+      </span>
+    </>
   );
 }
 
@@ -98,6 +147,7 @@ function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: numb
 // re-export is so nothing that already imported them from the lane had to
 // move.
 export { BOX_INSET_PX, SEAM_LANE_HEIGHT_PX, SEAM_PREVIEW_GAP_PX };
+export { CAP_GAP_PX, CAP_WIDTH_PX };
 
 /**
  * How strongly a NON-ACTIVE on-screen clip draws its picture in grey-box mode.
@@ -111,7 +161,11 @@ export { BOX_INSET_PX, SEAM_LANE_HEIGHT_PX, SEAM_PREVIEW_GAP_PX };
 const SOFTENED_PANEL_FRAME_OPACITY = 0.8;
 
 /** One cell per bar-height, so a filmstrip cell reads as a square. */
-const FILMSTRIP_CELL_PX = SEAM_LANE_HEIGHT_PX;
+/** A filmstrip cell is SQUARE, so the lane's height is also its cell width —
+ *  which means a taller film is a coarser filmstrip as well as a bigger one.
+ *  Passed rather than read from the constant now that the height is a setting
+ *  (PL15-022); the constant remains the `sm` value and the default. */
+const filmstripCellPx = (laneHeight: number) => laneHeight;
 /** Past this the cells stretch rather than multiply — see `SegmentFrames`. */
 const MAX_FILMSTRIP_CELLS = 12;
 
@@ -125,6 +179,7 @@ const MAX_FILMSTRIP_CELLS = 12;
  * dozen image lists per box per frame is exactly the cost this is not worth.
  */
 function SegmentFrames({
+  laneHeight,
   clipId,
   clip,
   posterSrc,
@@ -146,6 +201,8 @@ function SegmentFrames({
    * colour stays exactly the tone the rest of the run is.
    */
   opacity?: number;
+  /** The lane's height, which is also a filmstrip cell's width. */
+  laneHeight?: number;
 }>) {
   // HOW MANY CELLS FIT, at roughly one per bar-height so each reads as a
   // square. Capped, because a long clip at a high zoom is a box thousands of
@@ -157,14 +214,14 @@ function SegmentFrames({
     if (style !== "filmstrip" || clip?.posterSrcs === undefined) return null;
     const wanted = Math.min(
       MAX_FILMSTRIP_CELLS,
-      Math.max(1, Math.round(widthPx / FILMSTRIP_CELL_PX)),
+      Math.max(1, Math.round(widthPx / filmstripCellPx(laneHeight ?? SEAM_LANE_HEIGHT_PX))),
     );
     const urls = videoFrameUrls(clip.posterSrcs, wanted, {
       trimInSeconds: clip.trimInSeconds ?? 0,
       effectiveSeconds: clip.showingSeconds,
     });
     return urls.length === 0 ? null : urls;
-  }, [clip, style, widthPx]);
+  }, [clip, style, widthPx, laneHeight]);
 
   /**
    * THE ONE FRAME, TAKEN AFTER THE TRIM RATHER THAN BEFORE IT.
@@ -414,6 +471,7 @@ export type SeamHover = Readonly<{
  * cannot read exactly when you need it.
  */
 export function SeamLane({
+  laneHeight = SEAM_LANE_HEIGHT_PX,
   laneRef,
   strip,
   clips,
@@ -430,6 +488,9 @@ export function SeamLane({
   atEnd,
 }: Readonly<{
   /** The element the bar attaches its non-passive wheel listener to. */
+  /** The film's drawn height, and therefore its filmstrip cell size — a
+   *  cell is square. Defaults to the `sm` value the bar has always used. */
+  laneHeight?: number;
   laneRef: React.RefObject<HTMLDivElement | null>;
   strip: SeamStrip;
   clips: readonly SeamBarClip[];
@@ -573,7 +634,7 @@ export function SeamLane({
       // have to escape it: a time chip drawn INSIDE the boxes covers the frames
       // it is reporting on, which is the one thing you are looking at while you
       // drag.
-      style={{ height: SEAM_LANE_HEIGHT_PX }}
+      style={{ height: laneHeight }}
       className="relative cursor-ew-resize touch-none select-none"
     >
       <div className="absolute inset-0 overflow-hidden">
@@ -671,6 +732,7 @@ export function SeamLane({
               >
                 {framed ? (
                   <SegmentFrames
+                    laneHeight={laneHeight}
                     clipId={segment.clipId}
                     clip={clipById.get(segment.clipId)}
                     posterSrc={segment.posterSrc}
@@ -905,6 +967,7 @@ export function SeamLane({
           find out — the thing a bar of anonymous boxes cannot do. */}
       {hover !== null && (
         <SeamPreviewCard
+          laneHeight={laneHeight}
           hover={hover}
           previewAnchor={previewAnchor}
           leftPx={viewportX(hover.x)}
@@ -929,6 +992,7 @@ export function SeamLane({
  * there is no effect and nothing to keep in step.
  */
 function SeamPreviewCard({
+  laneHeight = SEAM_LANE_HEIGHT_PX,
   hover,
   previewAnchor,
   leftPx,
@@ -937,6 +1001,8 @@ function SeamPreviewCard({
   previewAnchor: PreviewAnchor;
   /** Where the card points, already in the lane's coordinates. */
   leftPx: number;
+  /** The film's height, which is what this card hangs below. */
+  laneHeight?: number;
 }>) {
   // WHETHER THE CARD HAS A PICTURE TO BE THE SIZE OF YET.
   //
@@ -990,7 +1056,7 @@ function SeamPreviewCard({
       // block, which IS the track, so the bound follows a resize with no
       // observer and no re-render. 9rem is half the card.
       style={{
-        top: SEAM_LANE_HEIGHT_PX + SEAM_PREVIEW_GAP_PX,
+        top: laneHeight + SEAM_PREVIEW_GAP_PX,
         left:
           previewAnchor === "pinned"
             ? "50%"

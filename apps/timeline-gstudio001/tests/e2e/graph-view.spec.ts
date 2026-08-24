@@ -528,29 +528,31 @@ async function openGraph(page: Page): Promise<void> {
   await strip(page, PROJECT_ID)
     .locator('[data-node-id="alpha"]')
     .waitFor({ state: "visible", timeout: 30000 });
-  await leaveFlatMode(page);
   // Children timelines are OFF by default now; this suite predates that
   // and reads the tree throughout, so reveal it through the real control
   // (the sidebar's children icon).
   await page.getByRole("button", { name: "Show children timelines" }).click();
 }
 
-/**
- * Put the board back into its NESTED reading.
+/*
+ * `leaveFlatMode` USED TO LIVE HERE, and every test in this file called it —
+ * through `openGraph`, or by hand where a test navigates itself.
  *
- * The strip opens FLAT, and a flat run has no collection cards — it replaces
- * every collection with its leaves — so a test about drilling in, dropping,
- * or reordering is asking about a shape that is not on screen. Flat also
- * refuses `move-nodes` outright (see `commandPolicy`), so a drag still runs,
- * still animates, and is then declined: the card returns and nothing says why
- * except a toast the test never reads.
+ * It existed because the strip opened FLAT, and a flat run has no collection
+ * cards (it replaces every collection with its leaves), so a test about
+ * drilling in, dropping or reordering was asking about a shape that was not on
+ * screen. Flat also refuses `move-nodes` outright (see `commandPolicy`), so a
+ * drag ran, animated, and was then declined.
  *
- * Separate from `openGraph` because several tests navigate themselves — they
- * are about what a bare URL does — and still need the nested board afterwards.
+ * THE STRIP OPENS IN COLLECTIONS NOW (PL15-003), so there is nothing to leave
+ * and the helper is gone rather than kept as a no-op. Note what its removal
+ * would have looked like if it had been left calling the old control: the
+ * button is named for the state it moves you TO, so "Show collections" simply
+ * does not exist on arrival any more, and every call would have waited out its
+ * timeout — a suite that hangs rather than one that fails.
  *
- * The control is named for the state it moves you TO, so it reads "Show
- * collections" while flat. Leaving restores "Show all items in order", which
- * is what the flat-specific tests click to go back.
+ * `enableRuler` below still clicks "Show all items in order" to ENTER flat,
+ * which is the direction that still has somewhere to go.
  */
 /**
  * Add a collection through the Collection tool — the CLICK route.
@@ -562,10 +564,6 @@ async function openGraph(page: Page): Promise<void> {
  */
 async function addCollectionViaButton(page: Page): Promise<void> {
   await page.locator('[data-tool-button="collection"]').click();
-}
-
-async function leaveFlatMode(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Show collections" }).click();
 }
 
 /** A collection card's metadata row in the project strip, which carries
@@ -1032,6 +1030,22 @@ test.describe("graph view E2E", () => {
       .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().right)));
     expect(thumbRights.length).toBeGreaterThan(1);
     expect(new Set(thumbRights).size).toBe(1);
+
+    // EVERY THUMBNAIL WEARS THE COLLECTION MARK (PL15-011), the same `Layers`
+    // its card wears — on the card it is drawn whether or not there are frames
+    // behind it, and the row is the tree view of those cards.
+    const thumbs = page.locator("[data-subtimeline-thumbs]");
+    await expect(thumbs.locator("[data-subtimeline-collection-mark]")).toHaveCount(
+      thumbRights.length,
+    );
+
+    // AND A RING, NOT A BORDER. Asserted as a box-shadow rather than by eye
+    // because the distinction is the point: a border would have widened these
+    // boxes and pushed them off the single column just asserted above.
+    const ring = await thumbs
+      .first()
+      .evaluate((el) => getComputedStyle(el).boxShadow);
+    expect(ring).not.toBe("none");
   });
 
   test("a collection id containing a comma is one row, not two broken ones", async ({ page }) => {
@@ -1095,6 +1109,30 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, SLASH_ID), { timeout: 15000 }).toEqual(["s1"]);
   });
 
+  test("the whole row header opens the timeline, and the name still renames", async ({
+    page,
+  }) => {
+    // PL15-010. The row was expanded by a 20px folder button and nothing else,
+    // in a header that is most of the width of the board.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const section = page.locator('section[aria-label="Sub-timeline: Scene A"]');
+    const folder = section.locator("button[aria-expanded]").first();
+    await expect(folder).toHaveAttribute("aria-expanded", "false");
+
+    // The CLIP COUNT — an inert readout, nowhere near the folder, and the kind
+    // of place a press used to do nothing at all.
+    await section.getByText(/clips$/).click();
+    await expect(folder).toHaveAttribute("aria-expanded", "true");
+
+    // The folder still works, and works ONCE. It sits inside the clickable
+    // header now, so without stopping propagation a press would run the toggle
+    // twice and the row would read as inert.
+    await folder.click();
+    await expect(folder).toHaveAttribute("aria-expanded", "false");
+  });
+
   test("renaming a sub-graph in place persists to the child document title", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
@@ -1102,6 +1140,17 @@ test.describe("graph view E2E", () => {
     // Double-click the (collapsed) row's name → inline edit; commit with Enter.
     const section = page.locator('section[aria-label="Sub-timeline: Scene A"]');
     await section.getByRole("heading", { name: "Scene A" }).dblclick();
+
+    // THE NAME IS THE ONE PART OF THE HEADER THAT DOES NOT TOGGLE (PL15-010).
+    // The first click of this double-click is a single click on a row that is
+    // otherwise clickable everywhere — and expanding a row HYDRATES it, so
+    // without the exclusion every rename would fire a fetch, flash the body
+    // open and collapse it again on the second click.
+    await expect(section.locator("button[aria-expanded]").first()).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
     const input = page.getByRole("textbox", { name: "Timeline name" });
     await input.fill("Opening Scene");
     await input.press("Enter");
@@ -1647,14 +1696,24 @@ test.describe("graph view E2E", () => {
     ).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
 
-    // Strip icon → strip layout, which OPENS FLAT. The ruler is scoped to a
-    // single continuous time axis, which only the flat run is — so the toggle
-    // arrives with the strip rather than needing a second control first. It
-    // used to take entering flat by hand; the default moved, and this is the
-    // half of the claim that changed.
+    // Strip icon → strip layout, which OPENS IN COLLECTIONS (PL15-003). The
+    // ruler is scoped to a single continuous time axis, which only the FLAT
+    // run is, so the toggle is not there on arrival and entering flat by hand
+    // is what summons it.
+    //
+    // THIS HALF OF THE CLAIM HAS NOW MOVED TWICE, which is worth saying rather
+    // than quietly rewriting again: the strip opened flat for a while, so the
+    // ruler arrived with it and this test asserted that. Opening flat also
+    // meant opening with drag-to-reorder refused, which is what sent the
+    // default back. The ruler's own rule never changed — it belongs to the
+    // flat run — only which state the strip starts in.
     await surfaceButton(page, "strip").click();
     await expect(strip(page, PROJECT_ID)).toBeVisible();
     await expect(surfaceButton(page, "strip")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: /time ruler/i })).toHaveCount(0);
+
+    // Into the flat run, and the ruler's control arrives with it.
+    await page.getByRole("button", { name: "Show all items in order" }).click();
     const rulerToggle = page.getByRole("button", { name: /show time ruler/i });
     await expect(rulerToggle).toBeVisible();
 
@@ -1734,7 +1793,14 @@ test.describe("graph view E2E", () => {
     const dividerLineColor = () =>
       dividerLine.evaluate((el) => getComputedStyle(el).color);
     const restLineColor = await dividerLineColor();
-    await divider.hover({ position: { x: 20, y: 10 } });
+    // x=60, NOT x=20 (PL15-008). The divider's left end carries the preview's
+    // audio icon now — a 28px control at `left-2`, so it occupies roughly the
+    // first 36 pixels — and hovering THAT is not hovering the divider. Moving
+    // the point is only honest because of what is left: the drag target is
+    // still everything but the first 36px of a divider that runs the full
+    // width, which is why one icon was allowed there when a button AND a 64px
+    // slider previously were not.
+    await divider.hover({ position: { x: 60, y: 10 } });
     await expect.poll(dividerLineColor).not.toBe(restLineColor);
     await page.mouse.move(0, 0); // unhover before the resize steps below
 
@@ -2040,12 +2106,6 @@ test.describe("graph view E2E", () => {
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    // This test navigates itself (it checks what a bare URL does at the root),
-    // so it does not go through `openGraph` and has to leave flat on its own.
-    // Flat refuses `move-nodes`, so the drag below would run, animate, and be
-    // declined — the card returning to where it started, with the reason only
-    // in a toast.
-    await leaveFlatMode(page);
     expect(await stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
     const projectCrumb = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
     await expect(projectCrumb).toHaveCount(1);
@@ -2097,10 +2157,6 @@ test.describe("graph view E2E", () => {
     await strip(page, GRANDCHILD_ID)
       .locator('[data-node-id="g1"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    // Deep-linked rather than opened through `openGraph`, so flat is still on
-    // and would refuse the move below. See `leaveFlatMode`.
-    await leaveFlatMode(page);
-
     // BOTH ancestors are drop targets — the project (root) and Scene A (parent).
     await expect(page.locator("[data-graph-ancestor-drop]")).toHaveCount(2);
     const projectCrumb = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
@@ -2715,7 +2771,14 @@ test.describe("graph view E2E", () => {
     ).toBeCloseTo(36, 0);
 
     // Divider hover does not resize or move the transport.
-    await divider.hover({ position: { x: 20, y: 6 } });
+    // x=60, NOT x=20 (PL15-008). The divider's left end carries the preview's
+    // audio icon now — a 28px control at `left-2`, so it occupies roughly the
+    // first 36 pixels — and hovering THAT is not hovering the divider. Moving
+    // the point is only honest because of what is left: the drag target is
+    // still everything but the first 36px of a divider that runs the full
+    // width, which is why one icon was allowed there when a button AND a 64px
+    // slider previously were not.
+    await divider.hover({ position: { x: 60, y: 6 } });
     const groupAfterHover = await buttonGroup.boundingBox();
     expect(groupAfterHover).not.toBeNull();
     expect(groupAfterHover!.x).toBeCloseTo(groupBox!.x, 0);
@@ -2765,15 +2828,23 @@ test.describe("graph view E2E", () => {
     await expect(divider).toHaveAttribute("aria-valuenow", surfaceHeightBeforePlay!);
 
     // The rest of the divider remains a resize target.
+    //
+    // AT x=60, NOT x=20 (PL15-008). The divider's left end carries the
+    // preview's audio icon now — 28px at `left-2` — and that control stops
+    // pointer propagation for exactly the reason the transport does: a press on
+    // it must not begin a resize. So x=20 lands ON the island and the drag
+    // correctly does nothing, which is a pass for the island and a false
+    // failure for this assertion. The claim here is about the REST of the
+    // divider, and 36px in is where the rest begins.
     const dividerBoxAfterPlay = await divider.boundingBox();
     expect(dividerBoxAfterPlay).not.toBeNull();
     await page.mouse.move(
-      dividerBoxAfterPlay!.x + 20,
+      dividerBoxAfterPlay!.x + 60,
       dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2,
     );
     await page.mouse.down();
     await page.mouse.move(
-      dividerBoxAfterPlay!.x + 20,
+      dividerBoxAfterPlay!.x + 60,
       dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2 + 24,
     );
     await page.mouse.up();
@@ -2866,6 +2937,12 @@ test.describe("graph view E2E", () => {
     await expect(surface).toHaveAttribute("data-preview-muted", "false");
     await expect(surface).toHaveAttribute("data-preview-volume", "1");
 
+    // THE SLIDER AND MUTE LIVE BEHIND THE ICON NOW (PL15-008): the divider
+    // carries one audio icon, and a press on it reveals the pair. Opening is
+    // part of the flow rather than setup noise — the state being pinned here
+    // is reached the way a user reaches it.
+    const audioToggle = page.getByTestId("workbench-preview-volume-toggle");
+    await audioToggle.click();
     const volume = page.getByTestId("workbench-preview-volume");
     await expect(volume).toHaveValue("1");
 
@@ -2881,6 +2958,10 @@ test.describe("graph view E2E", () => {
     await previewToggle(page).click();
     await expect(surface).toHaveAttribute("data-preview-muted", "true");
 
+    // Reopened pane, reopened popover: the surface unmounted with the pane, so
+    // the reveal is closed again while the MUTE it was showing survived on the
+    // channel — which is the point of the round trip above.
+    await audioToggle.click();
     await page.getByRole("button", { name: "Unmute workbench preview" }).click();
     await expect(surface).toHaveAttribute("data-preview-muted", "false");
   });
@@ -4862,10 +4943,15 @@ test.describe("graph view E2E", () => {
   });
 
   test("hovering a child row's folder calls out its collection card", async ({ page }) => {
-    // PL9-002, revising PL8-012: ONE direction now, and the card is called out
-    // by an animation rather than its icon changing. PL10-001 made that
-    // animation an elastic SCALE on the card itself (the old inset glow
-    // overlay is gone), so the marker moved onto the card.
+    // PL9-002, revising PL8-012: ONE direction, and the card is called out
+    // rather than its icon changing.
+    //
+    // The MARK has been round a loop. PL9-002 was a glow, PL10-001 replaced it
+    // with an elastic scale on the card itself, and PL15-009 removed the
+    // jiggle — landing back on a glow, which had survived the whole time
+    // inside `prefers-reduced-motion` as the version for users who could not
+    // see the scale. What never changed is the claim: this row and that card
+    // are the same collection.
     await installGraphApi(page);
     await openGraph(page); // children timelines on
     const cardIcon = drillButton(page, "Scene A");
@@ -4888,85 +4974,58 @@ test.describe("graph view E2E", () => {
     await rowFolder.hover();
     await expect(calledOut).toHaveCount(1);
 
-    // EVERYTHING that has to be observed mid-animation is read in ONE
-    // evaluate, because the keyframes last 320ms and each round trip to the
-    // page spends part of that. Split across four calls, as this once was, a
-    // loaded CI runner reaches the end of the animation before the last one
-    // lands and the test fails on timing rather than on behaviour.
+    // THE MARK IS A STEADY GLOW, NOT AN ANIMATION (PL15-009).
     //
-    // The class is not the point — the KEYFRAMES are. Assert the card is
-    // actually running them, and that they scale it (an animation whose name
-    // resolves but whose rule was renamed away would still pass on class
-    // presence alone).
-    const running = await calledOut.evaluate((el) => {
+    // It was an elastic scale, and most of what this test used to do was cope
+    // with that: everything had to be read in ONE evaluate because the
+    // keyframes lasted 320ms and each round trip spent part of them, and the
+    // flick had to be judged by recording `animation.finished` up front rather
+    // than by looking for the class again and hoping to be quick enough. None
+    // of that is needed against a mark that simply stays while the pointer
+    // does — which is worth noting, because a test that stops racing the clock
+    // is most of the benefit of the change.
+    const marked = await calledOut.evaluate((el) => {
       const style = getComputedStyle(el);
-      const animation = el
-        .getAnimations()
-        .find(
-          (candidate) =>
-            (candidate as CSSAnimation).animationName === "collection-paired-callout",
-        );
-
-      // How the flick is judged, instead of by looking for the class again
-      // later and hoping to be quick enough. `finished` resolves if the
-      // keyframes play out and REJECTS if the animation is cancelled — and
-      // dropping the class is exactly what cancels it. So the outcome is
-      // recorded here, while the animation is definitely still in hand, and
-      // simply read back afterwards. No wall-clock race either way.
-      const target = window as Window & { __calloutOutcome?: string };
-      target.__calloutOutcome = "pending";
-      animation?.finished.then(
-        () => {
-          target.__calloutOutcome = "finished";
-        },
-        () => {
-          target.__calloutOutcome = "cancelled";
-        },
-      );
-
       return {
-        name: style.animationName,
-        scales: animation !== undefined,
+        glow: style.boxShadow,
+        // The class alone is not the point: a rule renamed away would still
+        // leave the class on the element and nothing on the screen.
+        //
+        // `animationName`, NOT `getAnimations().length`. A CSS TRANSITION is an
+        // Animation as far as `getAnimations` is concerned, and the glow has
+        // one (it fades in over 150ms), so counting them can never reach zero
+        // and the assertion would be testing nothing it claims to. The
+        // computed `animation-name` asks the question actually meant: are any
+        // KEYFRAMES running on this card.
+        animationName: style.animationName,
         inCard: el
           .closest("[data-node-wrapper]")
           ?.querySelector("[data-node-id]")
           ?.getAttribute("data-node-id"),
       };
     });
-    expect(running.inCard).toBe(CHILD_ID);
-    expect(running.name).toBe("collection-paired-callout");
-    expect(running.scales).toBe(true);
+    expect(marked.inCard).toBe(CHILD_ID);
+    expect(marked.glow).not.toBe("none");
+    expect(marked.animationName).toBe("none");
 
-    // It is a TRANSFORM, so it reflows nothing: the neighbour must not budge
-    // while the called-out card is mid-animation. (The called-out card's own
-    // box does change under the scale — that is the effect, and measuring it
-    // mid-flight would only race the keyframes.)
+    // IT REFLOWS NOTHING, and the claim is now stronger than it was. Under the
+    // scale only the NEIGHBOUR could be asserted still — the called-out card's
+    // own box changed, because changing it was the effect. A box-shadow paints
+    // outside the border box and takes no part in layout or scroll size, so
+    // both boxes hold.
     const neighbourDuring = (await neighbour.boundingBox())!;
     expect(neighbourDuring.x).toBeCloseTo(neighbourBefore.x, 0);
     expect(neighbourDuring.width).toBeCloseTo(neighbourBefore.width, 0);
+    const cardDuring = (await card.boundingBox())!;
+    expect(cardDuring.x).toBeCloseTo(cardBefore.x, 0);
+    expect(cardDuring.width).toBeCloseTo(cardBefore.width, 0);
 
-    // PL10-002: a flick still plays the whole animation. Without the hold the
-    // class would come off one or two frames in, cancelling the animation
-    // mid-keyframe; with it, the keyframes run to their end.
-    //
-    // This used to assert `calledOut.count() === 1` right after the move —
-    // "the class is still there" — which is only true inside the remaining
-    // slice of those 320ms. It was reading the clock, not the behaviour, and
-    // failed whenever the runner was slow enough to have spent the animation
-    // already. Waiting for the recorded outcome asks the real question, and a
-    // torn-off animation reports `cancelled` however long the wait takes.
+    // IT FOLLOWS THE POINTER. The hold that used to keep the class on past a
+    // flick is gone with the animation it protected — there is no play left to
+    // let finish, and a highlight outliving the pointer by a third of a second
+    // would read as lag.
     await page.mouse.move(0, 0);
-    await page.waitForFunction(
-      () => (window as Window & { __calloutOutcome?: string }).__calloutOutcome !== "pending",
-    );
-    const outcome = await page.evaluate(
-      () => (window as Window & { __calloutOutcome?: string }).__calloutOutcome,
-    );
-    expect(outcome).toBe("finished");
-
-    // ...and then it ends on its own.
     await expect(calledOut).toHaveCount(0);
-    // And the card comes back to exactly the box it started in.
     const cardAfter = (await card.boundingBox())!;
     const neighbourAfter = (await neighbour.boundingBox())!;
     expect(neighbourAfter.x).toBeCloseTo(neighbourBefore.x, 0);
@@ -5907,12 +5966,23 @@ test.describe("graph view E2E", () => {
     await expect(frame).toHaveCount(0);
   });
 
-  test("the call-out's scale never grows a scroll area", async ({ page }) => {
+  test("the call-out never grows a scroll area", async ({ page }) => {
     // PL10-003. A transform that spills past its box counts as SCROLLABLE
     // overflow, so the call-out used to grow whichever scroller held the card
     // and flash a scrollbar for the length of the animation. The card's
     // wrapper is `overflow: clip` (with a margin wide enough for the growth
     // and for the drop bars) so nothing above it ever hears about the scale.
+    //
+    // THE SCALE IS GONE (PL15-009) and the mark is a box-shadow, which cannot
+    // produce scrollable overflow at all — so this now passes by construction
+    // rather than by the clipping wrapper. Kept anyway, and rewritten rather
+    // than deleted: the invariant it states is about the CALL-OUT, not about
+    // one implementation of it, and it is the test that would catch a future
+    // mark going back to a transform and taking the scrollbars with it.
+    //
+    // Simpler for it, too. The old version had to pause the animation and
+    // drive `currentTime` to the 1.06 peak, because sampling a 320ms one-shot
+    // from the test side raced it. A steady mark can just be looked at.
     await installGraphApi(page);
     await openGraph(page);
     const rowFolder = page
@@ -5920,43 +5990,29 @@ test.describe("graph view E2E", () => {
       .getByRole("button", { name: "Expand" })
       .first();
 
+    // Every ancestor's scroll size, measured from the card's own wrapper
+    // upward. Start ABOVE the clip box itself: a clip container still reports
+    // its own scrollWidth, it just stops handing it upward, and that upward
+    // propagation is the whole bug.
+    const ancestorSizes = () =>
+      page.evaluate((childId) => {
+        const card = document.querySelector(`[data-node-id="${childId}"]`);
+        if (!card) return ["no card"];
+        const sizes: string[] = [];
+        for (let n = card.closest("[data-node-wrapper]")?.parentElement; n; n = n.parentElement) {
+          sizes.push(`${n.tagName}.${n.className}: ${n.scrollWidth}x${n.scrollHeight}`);
+        }
+        return sizes;
+      }, CHILD_ID);
+
+    const rest = await ancestorSizes();
+    expect(rest.length).toBeGreaterThan(0);
+    expect(rest[0]).not.toBe("no card");
+
     await rowFolder.hover();
     await expect(page.locator(".is-called-out-card")).toHaveCount(1);
 
-    // Measure every ancestor at rest and at the animation's peak. Pausing the
-    // animation is what makes this deterministic — sampling a 320ms one-shot
-    // from the test side would race it.
-    const changed = await page.evaluate(() => {
-      const card = document.querySelector(".is-called-out-card");
-      if (!card) return ["no call-out"];
-      const animation = card.getAnimations()[0];
-      if (!animation) return ["no animation"];
-      const chain: Element[] = [];
-      // Start ABOVE the clip box itself: a clip container still reports its
-      // own scrollWidth, it just stops handing it upward, and that upward
-      // propagation is the whole bug.
-      for (let n = card.closest("[data-node-wrapper]")?.parentElement; n; n = n.parentElement) {
-        chain.push(n);
-      }
-      const snap = () => chain.map((n) => `${n.scrollWidth}x${n.scrollHeight}`);
-      animation.pause();
-      animation.currentTime = 0;
-      const rest = snap();
-      animation.currentTime = 128; // the 1.06 peak
-      const peak = snap();
-      animation.play();
-      return peak.flatMap((size, i) => {
-        // Read into locals: this runs in the BROWSER, so the test file's
-        // helpers do not exist here.
-        const before = rest[i];
-        const element = chain[i];
-        if (before === undefined || element === undefined) return [];
-        return size === before
-          ? []
-          : [`${element.tagName}.${element.className}: ${before} -> ${size}`];
-      });
-    });
-    expect(changed).toEqual([]);
+    expect(await ancestorSizes()).toEqual(rest);
   });
 
   test("clicking away anywhere that is not a control clears the selection", async ({

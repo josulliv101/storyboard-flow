@@ -2478,12 +2478,20 @@ export function GraphBoard({
                     shape of what is drawn, not its contents: whether this run
                     is grouped into its collections, and whether the nested
                     timelines draw below it. */}
-                {/* INVERTED against the state it drives. The strip opens flat
-                    (see `flatOn`'s default), so the thing left to offer is the
-                    nesting, and `active` is `!flatOn` — pressed means you have
-                    left the flat run for the collections. Writing it the other
-                    way round would give the strip a control that is lit on
-                    arrival and whose job is to turn itself off.
+                {/* INVERTED against the state it drives: `active` is
+                    `!flatOn`, so lit means you are IN collections and the
+                    press takes you to the flat run.
+
+                    THIS COMMENT USED TO ARGUE THE OPPOSITE, and the reason it
+                    changed is the default, not the reasoning. The strip opened
+                    flat, so the thing left to offer was the nesting, and the
+                    objection to writing it the other way round was that it
+                    would leave "a control that is lit on arrival and whose job
+                    is to turn itself off". The strip opens in COLLECTIONS now
+                    (PL15-003), which makes lit-on-arrival simply true — the
+                    control reports the posture you are in rather than dangling
+                    an unused offer, and the alternative would be a toggle
+                    wearing the collection mark to mean "not collections".
 
                     Strip only: grid keeps its nesting, so there is nothing to
                     flatten there. */}

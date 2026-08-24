@@ -11,6 +11,7 @@
     "build-storybook": "npm run build-storybook --workspace=apps/storybook",
     "dev:frontend": "npm run dev --workspace=apps/timeline-gstudio001",
     "audit:ui": "node scripts/find-unreachable-ui.mjs",
+    "audit:loc": "node scripts/count-loc.mjs",
     "audit:ownership": "npm run audit:ownership --workspace=apps/timeline-gstudio001 --",
     "audit:orphans": "npm run audit:orphans --workspace=apps/timeline-gstudio001 --",
     "prune:orphans": "npm run prune:orphans --workspace=apps/timeline-gstudio001 --",

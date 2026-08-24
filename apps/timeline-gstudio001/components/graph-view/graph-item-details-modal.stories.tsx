@@ -439,7 +439,42 @@ function centreBox(): HTMLElement {
  * scope for the session, so a story that leaves frames on hands them to
  * whichever story runs next in the same browser.
  */
+/**
+ * Open the bar's settings gear, if its contents are not already showing.
+ *
+ * FRAMES, CARD AND FIT LIVE BEHIND IT NOW (PL15-006) — they were three
+ * labelled groups strung along the controls row and are one menu. Every story
+ * that presses one of their segments has to open the menu first, and a handle
+ * behind an unopened trigger fails as a TIMEOUT rather than an assertion, so
+ * this exists to be called rather than each story remembering.
+ *
+ * Idempotent on purpose: several of these helpers are called in sequence, and
+ * a second click on an open trigger would close it again.
+ */
+function openBarSettings(): void {
+  if (document.querySelector("[data-seam-settings-content]") !== null) return;
+  const trigger = document.querySelector<HTMLButtonElement>("[data-seam-settings-menu]");
+  expect(trigger).not.toBeNull();
+  // POINTERDOWN, NOT `click()`. Radix opens a dropdown on the pointer going
+  // DOWN — a synthetic `click()` dispatches only the click and the menu never
+  // opens, so every helper below then looked for its group inside content that
+  // was not there and failed on a null that had nothing to do with the group.
+  fireEvent.pointerDown(trigger!, { button: 0, isPrimary: true });
+  const content = document.querySelector<HTMLElement>("[data-seam-settings-content]");
+  expect(content).not.toBeNull();
+
+  // AND IT IS IN FRONT OF THE MODAL. Radix portals this to `document.body`, so
+  // the menu is a SIBLING of the details view rather than a descendant — and
+  // the view is `z-[80]` while `DropdownMenuContent` defaults to `z-50`. It
+  // opened, in the right place, behind the scrim: a gear that visibly did
+  // nothing. Asserted as a NUMBER rather than a class, because the class is
+  // merged with the component's default and which of the two wins is the
+  // actual question.
+  expect(Number(getComputedStyle(content!).zIndex)).toBeGreaterThan(80);
+}
+
 function framesTo(label: string): void {
+  openBarSettings();
   const group = document.querySelector<HTMLElement>("[data-details-bar-frames]");
   expect(group).not.toBeNull();
   const button = Array.from(group!.querySelectorAll("button")).find(
@@ -1274,6 +1309,139 @@ export const TagsAreAddedFromAnIcon: Story = {
  * the panel fits its picture instead of holding two thirds of the screen with
  * most of it black.
  */
+/**
+ * A COUNT CHANGE IS A RESIZE, NOT A REPLACEMENT (PL15-005).
+ *
+ * Switching 3 to 5 read as the three panels animating off and five animating
+ * on. Nothing is actually being replaced: the subject is the same clip and its
+ * neighbours are the same clips, so what should happen is that the panels on
+ * screen shrink into their new width and two more arrive at the edges.
+ *
+ * IT WAS NEVER A KEYING PROBLEM, which is what made it worth pinning here. The
+ * row renders every id in the flat order keyed by `id`, and mounts real panels
+ * within `MOUNTED_RADIUS = floor(count / 2) + 1` — so at three the visible set
+ * is centre +/-1 and the mounted set is centre +/-2, and at five the visible
+ * set is centre +/-2. The two panels that BECOME visible were already mounted;
+ * React never threw anything away. The identity assertion below states that,
+ * so a future "fix" that starts remounting them fails here.
+ *
+ * What did change discontinuously was HEIGHT — see the neighbour branch in
+ * `graph-item-details-panel`. That is what the second assertion is for.
+ */
+/**
+ * THE FILM CAN BE DRAWN TALLER (PL15-022).
+ *
+ * `sm` is the height the bar has always used, so the control changes nothing
+ * until it is pressed. What makes it worth a story is the part that is not
+ * obvious from the label: a filmstrip CELL IS SQUARE, so the height also sets
+ * how many frames a clip's box is cut into — a taller film is a coarser
+ * filmstrip as well as a bigger one.
+ */
+export const TheFilmCanBeDrawnTaller: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+
+    const lane = () =>
+      document.querySelector<HTMLElement>("[data-seam-boxes]")?.getBoundingClientRect().height ??
+      0;
+    const press = (label: string) => {
+      openBarSettings();
+      const group = document.querySelector<HTMLElement>("[data-details-bar-size]")!;
+      const button = Array.from(group.querySelectorAll("button")).find(
+        (candidate) => candidate.textContent?.trim() === label,
+      )!;
+      fireEvent.click(button);
+    };
+
+    const small = lane();
+    expect(small).toBeGreaterThan(0);
+
+    press("MD");
+    await waitFor(() => expect(lane()).toBeGreaterThan(small));
+    const medium = lane();
+
+    press("LG");
+    await waitFor(() => expect(lane()).toBeGreaterThan(medium));
+
+    // PUT IT BACK. Like the reach and the view count, this is remembered at
+    // module scope for the session — a story that leaves the film tall hands
+    // it to whichever story runs next in the same browser.
+    press("SM");
+    await waitFor(() => expect(lane()).toBe(small));
+  },
+};
+
+export const ChangingTheCountResizesTheSamePanels: Story = {
+  // A LONG scene on purpose. `TRIMMED_SCENE` holds three clips, so "show five"
+  // has nothing to show and the step this story is about cannot happen at all.
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    const panels = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
+    await waitFor(() => expect(panels().length).toBeGreaterThanOrEqual(3));
+
+    const press = async (label: string) => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>("[data-details-view-count] button"),
+      ).find((b) => b.textContent?.trim() === label)!;
+      fireEvent.click(button);
+      await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
+    };
+
+    // The ELEMENTS, held across the step. Identity, not a count or a name — a
+    // replacement would satisfy either of those and is exactly what is being
+    // ruled out.
+    const before = panels();
+    const heightsBefore = before.map((panel) => Math.round(panel.getBoundingClientRect().height));
+
+    await press("5");
+    // MOUNTED, not visible: the row keeps a spare panel either side of what can
+    // be seen, so the count is `min(ids, count + 2)` rather than the count.
+    // What matters here is that it GREW — five-up mounts more than three-up —
+    // and the identity assertions below carry the actual claim.
+    await waitFor(() => expect(panels().length).toBeGreaterThan(before.length));
+
+    const after = panels();
+    for (const panel of before) {
+      expect(after).toContain(panel);
+    }
+
+    // AND A NEIGHBOUR'S HEIGHT IS A RULE, NOT ITS PICTURE'S.
+    //
+    // The height used to be a container query on the panel's own WIDTH — a
+    // definite 38.9vh over 30rem, `h-auto` under it — and a count change walks
+    // straight across that threshold: measured at 1920, a neighbour is 490px
+    // at three-up and 314px at five-up. `auto` cannot be interpolated, so
+    // every neighbour's height jumped in one frame while its width eased,
+    // which is most of what read as a replacement.
+    //
+    // ASSERTED AS THE VALUE, not as a before/after delta, and that distinction
+    // was learned the hard way here: this story's viewport is far narrower
+    // than 1880, so BOTH counts fall under 30rem and both were `h-auto`
+    // together. A delta comparison passed against the unfixed code — it was
+    // measuring a threshold neither state crossed. The rule itself is
+    // width-independent and holds at any viewport.
+    const neighbourHeight = () => {
+      const neighbour = panels().find(
+        (panel) => panel.getAttribute("data-item-details-panel") === "neighbour",
+      )!;
+      return neighbour.getBoundingClientRect().height;
+    };
+    expect(neighbourHeight()).toBeCloseTo(window.innerHeight * 0.389, 0);
+    expect(heightsBefore.length).toBeGreaterThan(0);
+
+    // Back again, and every panel that remains was one of the originals — the
+    // return trip is a resize too, not a fresh set.
+    await press("3");
+    await waitFor(() => expect(panels().length).toBe(before.length));
+    for (const panel of panels()) {
+      expect(before).toContain(panel);
+    }
+  },
+};
+
 export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
@@ -2158,6 +2326,37 @@ export const TheMinimapMovesTheWindow: Story = {
     const ink = marked.backgroundColor.match(/[\d.]+/g)!.slice(0, 3).map(Number);
     expect(Math.min(...ink)).toBeGreaterThan(200);
 
+    // AND A CARET UNDER IT (PL15-017) — the bar's own mark at map scale,
+    // pointing up at the segment instead of down at the film.
+    //
+    // ONE, and inside the marked segment. Being a CHILD is not decoration in
+    // the test either: it is how the caret finds the segment's centre at all.
+    // The segments are flex items sized by duration with a margin at every
+    // collection seam, so their centres are not a percentage of the run —
+    // asserting containment is asserting that nothing has quietly gone back
+    // to positioning it by arithmetic.
+    const carets = document.querySelectorAll<HTMLElement>("[data-seam-mini-active-mark]");
+    expect(carets.length).toBe(1);
+    expect(live[0]!.contains(carets[0]!)).toBe(true);
+
+    // CENTRED ON THE SEGMENT, and hanging directly beneath it. Half a pixel of
+    // slack on each: the segment's width is a flex fraction of a duration, so
+    // both numbers land on subpixels routinely.
+    const caretBox = carets[0]!.getBoundingClientRect();
+    const liveBox = live[0]!.getBoundingClientRect();
+    expect(Math.abs((caretBox.left + caretBox.right) / 2 - (liveBox.left + liveBox.right) / 2))
+      .toBeLessThanOrEqual(0.5);
+    expect(Math.abs(caretBox.top - liveBox.bottom)).toBeLessThanOrEqual(0.5);
+
+    // IT STAYS INSIDE THE RAIL. The caret is wider than the narrowest possible
+    // segment, so a short clip at either end is where it would hang off — and
+    // a mark drawn past the end of the map is not reporting a position, for
+    // the same reason the bar's own mark is clamped.
+    const rail = minimap.getBoundingClientRect();
+    expect(caretBox.left).toBeGreaterThanOrEqual(rail.left - 0.5);
+    expect(caretBox.right).toBeLessThanOrEqual(rail.right + 0.5);
+    expect(caretBox.bottom).toBeLessThanOrEqual(rail.bottom + 0.5);
+
     // ── AND THE PANELS EITHER SIDE, ONE TIER DOWN ────────────────────────
     //
     // The map marks what is ON SCREEN, the same set the film strip draws
@@ -2646,6 +2845,7 @@ export const ThePlaybarOpensAsFilm: Story = {
 
     // The control says so too, which is what makes the bar's state readable
     // rather than merely true.
+    openBarSettings();
     const group = document.querySelector<HTMLElement>("[data-details-bar-frames]")!;
     const badges = Array.from(group.querySelectorAll("button"));
     expect(badges.map((badge) => badge.textContent?.trim())).toEqual([
@@ -2753,7 +2953,10 @@ export const TheTwoBarsAreAdjacent: Story = {
 
     // ── AND EVERYTHING ELSE IS IN THAT ROW WITH IT ────────────────────────
     const row = document.querySelector<HTMLElement>("[data-seam-controls]")!;
-    expect(row.querySelector("[data-details-bar-frames]")).not.toBeNull();
+    // THE SETTINGS ARE BEHIND THE GEAR, NOT IN THE ROW (PL15-006) — what is
+    // left in it is what you drive while reading the bar.
+    expect(row.querySelector("[data-seam-settings-menu]")).not.toBeNull();
+    expect(row.querySelector("[data-details-bar-frames]")).toBeNull();
     expect(row.querySelector("[data-details-bar-reach]")).not.toBeNull();
     expect(row.querySelector("[data-seam-transport]")).not.toBeNull();
     // The clock, which used to sit at the far right of the scrub bar itself.
@@ -2762,9 +2965,12 @@ export const TheTwoBarsAreAdjacent: Story = {
     // because the left half MOVES and the second decimal is a blur at
     // playback speed.
     expect(row.textContent).toMatch(/\d+:\d\d\.\d\s*\/\s*\d+:\d\d\.\d/);
-    // And the fit control, which shares the row for the same reason the reach
-    // does: both are questions about how much of the bar you are looking at.
-    expect(row.querySelector("[data-seam-fit]")).not.toBeNull();
+    // FIT WENT INTO THE GEAR WITH THE OTHER TWO and reach did not, which is
+    // the whole distinction this item drew: reach changes how much of the
+    // sequence is on the bar, so you reach for it while reading; fit is a
+    // scale you set. Asserted here because "everything is in the row" is no
+    // longer the claim.
+    expect(row.querySelector("[data-seam-fit]")).toBeNull();
 
     // ── AND THE TRACK GOT THE WIDTH THE TRANSPORT AND CLOCK GAVE UP ───────
     // They were siblings of the track, so the bar was as wide as the modal
@@ -2843,6 +3049,35 @@ export const TheBarMarksTheEndsOfTheProject: Story = {
       .querySelector<HTMLElement>('[data-seam-cap="end"]')!
       .getBoundingClientRect();
     expect(endCap.left).toBeGreaterThanOrEqual(last.right - 0.5);
+
+    // THE SUBJECT'S COLUMN RUNS PAST THE FILM (PL15-026). The ruler tinted the
+    // active clip's stretch of scale and stopped at its own band, so the clip
+    // being worked on was marked ABOVE the film and nowhere else. The block
+    // continues down through it now, into the space before the minimap.
+    const column = document.querySelector<HTMLElement>("[data-seam-active-column]")!;
+    const columnBox = column.getBoundingClientRect();
+    const laneBox = document.querySelector<HTMLElement>("[data-seam-boxes]")!.getBoundingClientRect();
+    // PAST the film, not merely as tall as it — the point of the item is the
+    // space underneath.
+    expect(columnBox.bottom).toBeGreaterThan(laneBox.bottom);
+    // And it is the SUBJECT's width, not the whole track's.
+    expect(columnBox.width).toBeLessThan(laneBox.width);
+    expect(columnBox.width).toBeGreaterThan(0);
+
+    // AND EACH STOP SAYS WHICH END IT IS (PL15-014), in the room the widened
+    // gap makes for it — between the stop and the film, not on top of either.
+    const startLabel = document.querySelector<HTMLElement>('[data-seam-cap-label="start"]')!;
+    const endLabel = document.querySelector<HTMLElement>('[data-seam-cap-label="end"]')!;
+    expect(startLabel.textContent).toBe("Start");
+    expect(endLabel.textContent).toBe("End");
+
+    // THE GAP IS BIGGER THAN THE ONE BETWEEN TWO BOXES, which is the whole
+    // point of the item: at the old inset the stop read as another clip's edge.
+    // Measured against this scene's own box gap rather than a literal, so the
+    // assertion survives a change to either number.
+    const boxGap = seamBoxes()[1]!.getBoundingClientRect().left - first.right;
+    expect(first.left - startCap.right).toBeGreaterThan(boxGap);
+    expect(endCap.left - last.right).toBeGreaterThan(boxGap);
 
     // CROPPED AT BOTH ENDS: the subject is ten clips in and five either side
     // reaches neither, so neither stop is true and neither is drawn.
@@ -3348,7 +3583,8 @@ export const FitRescalesTheBar: Story = {
     const scale = () => Number(track.getAttribute("data-seam-pps"));
     const button = (label: string) =>
       Array.from(
-        document.querySelectorAll<HTMLButtonElement>("[data-seam-fit] button"),
+        (openBarSettings(),
+        document.querySelectorAll<HTMLButtonElement>("[data-seam-fit] button")),
       ).find((found) => found.textContent?.trim() === label)!;
 
     // It opens fitted to the subject's own collection, so that is what is lit.
@@ -3438,6 +3674,7 @@ export const TheHoverCardCanBePinned: Story = {
 
     const lane = document.querySelector<HTMLElement>("[data-seam-boxes]")!;
     const press = (label: string) => {
+      openBarSettings();
       const group = document.querySelector<HTMLElement>("[data-details-bar-card]")!;
       Array.from(group.querySelectorAll("button"))
         .find((button) => button.textContent?.trim() === label)!
@@ -3949,11 +4186,23 @@ export const TheTransportSitsOnTheControlRow: Story = {
       return box.top + box.height / 2;
     };
     const transport = centreY("[data-seam-transport]");
+    // THE CLOCK IS ON THE LEFT NOW (PL15-021), where the settings used to be.
+    // Asserted against the transport rather than as a pixel: it has to be left
+    // of the thing it reports on, and the row is a grid so the two cannot be
+    // compared by class.
+    const clockBox = document.querySelector<HTMLElement>("[data-seam-clock]")!;
+    const transportBox = document.querySelector<HTMLElement>("[data-seam-transport]")!;
+    expect(clockBox.getBoundingClientRect().right).toBeLessThan(
+      transportBox.getBoundingClientRect().left,
+    );
+
+    // WHAT IS LEFT IN THE ROW, which is now reach and the gear (PL15-006).
+    // Frames, card and fit are inside the gear's menu and are no longer on
+    // this line at all, so asking them to share its centre would be asserting
+    // the geometry of a popover against the row that opens it.
     for (const group of [
-      "[data-details-bar-frames]",
-      "[data-details-bar-card]",
-      "[data-seam-fit]",
       "[data-details-bar-reach]",
+      "[data-seam-settings-menu]",
     ]) {
       expect(`${group} offset ${Math.round(centreY(group) - transport)}`).toBe(
         `${group} offset 0`,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, Settings2 } from "lucide-react";
 
 import {
   BAR_COLLECTION_COLOURS_ENABLED,
@@ -15,13 +15,29 @@ import {
   zoomByWheel,
   type SeamBarClip,
 } from "./graph-seam-bar-layout";
-import { SEAM_LANE_HEIGHT_PX, SeamLane, type SeamHover } from "./graph-seam-lane";
+import {
+  CAP_GAP_PX,
+  CAP_WIDTH_PX,
+  SEAM_LANE_HEIGHT_PX,
+  SeamLane,
+  type SeamHover,
+} from "./graph-seam-lane";
 import { HAIRLINE, SURFACE_WELL } from "./graph-details-design";
 import { SegmentedControl } from "./graph-details-segmented";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/core/dropdown-menu";
 import { SeamMinimap } from "./graph-seam-minimap";
-import { SEAM_RULER_TOTAL_PX, SeamRuler } from "./graph-seam-ruler";
+import {
+  RULER_BLOCK_ACTIVE_COLOUR,
+  SEAM_RULER_TOTAL_PX,
+  SeamRuler,
+} from "./graph-seam-ruler";
 import {
   buildSeamStrip,
+  clampStripOffset,
   stripCentreOffset,
   stripPositionAt,
   stripXFor,
@@ -159,6 +175,16 @@ function readSeconds(value: number): string {
  */
 type FitMode = "clip" | "all";
 
+/**
+ * The gap between the film's track and the minimap under it.
+ *
+ * KEEP IN STEP WITH `mt-1.5` on the minimap's own root. It is a Tailwind class
+ * over there and a number here, and nothing connects them — the failure if they
+ * drift is the active column either stopping short of the map or running into
+ * it.
+ */
+const MINIMAP_GAP_PX = 6;
+
 export function SeamStripBar({
   clips,
   panelClipIds,
@@ -174,6 +200,7 @@ export function SeamStripBar({
   onPreviewingChange,
   atStart,
   atEnd,
+  laneHeight = SEAM_LANE_HEIGHT_PX,
   settingsLeft,
   settingsRight,
   previewAnchor = "follow",
@@ -229,6 +256,8 @@ export function SeamStripBar({
    * clock sits with the controls, and that the whole thing lands between the
    * scrub bar and the minimap — and none of that changes with what is passed.
    */
+  /** The film's drawn height — the `size` picker in the gear (PL15-022). */
+  laneHeight?: number;
   settingsLeft?: React.ReactNode;
   settingsRight?: React.ReactNode;
   /** Whether the hover card follows the pointer or parks under the middle of
@@ -313,6 +342,10 @@ export function SeamStripBar({
     pxPerSecond ??
     (trackWidth > 0 ? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth) : 9);
   const strip = useMemo(() => buildSeamStrip(clips, scale), [clips, scale]);
+  // The subject's own box in strip coordinates — what the active column below
+  // is drawn against. `undefined` while the subject is not on the bar at all,
+  // which is a real state at a tight reach.
+  const activeSegment = strip.segments.find((segment) => segment.clipId === centreClipId);
 
   // ONE NEUTRAL FOR EVERY BOX unless the tint is switched on. Substituted here
   // rather than at the derivation, so the collection tones are still computed
@@ -336,7 +369,21 @@ export function SeamStripBar({
     centreClipId,
     centreAtPx > 0 ? centreAtPx * 2 : trackWidth,
   );
-  const offset = panPx ?? centredOffset;
+  // HELD AGAINST THE ENDS (PL15-025). Centring the subject is right in the
+  // middle of a sequence and wrong at either end of it — clip 2 of 13 centred
+  // pushes the film most of the way across the track and leaves a screen of
+  // empty space beside it. Applied to the USER's pan as well as the default,
+  // because a flick can overshoot into the same gap.
+  //
+  // The lead is the end stop's own room: `SeamEndCap` draws the mark and its
+  // label OUTSIDE the first and last boxes, so a film held flush to the track
+  // would push its own "start" off screen.
+  const offset = clampStripOffset(
+    panPx ?? centredOffset,
+    strip.totalPx,
+    trackWidth,
+    CAP_WIDTH_PX + CAP_GAP_PX,
+  );
 
   // Set by any deliberate pan, cleared by any deliberate seek. While it is
   // set, playback stops dragging the bar around under the reader.
@@ -1067,6 +1114,47 @@ export function SeamStripBar({
         // nothing under it stops being clickable.
         className="relative z-30 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
+        {/* THE ACTIVE CLIP'S COLUMN (PL15-026).
+            The ruler already tints the active clip's stretch of scale sky —
+            "the one thing in this band with a hue", and the only saturated
+            thing up there, which is what makes it findable on a bar of two
+            dozen blocks. It stopped at the ruler's own band, so the clip being
+            worked on was marked ABOVE the film and nowhere else.
+
+            This continues the same block downward, through the film and into
+            the space before the minimap, so the subject reads as a column
+            rather than as a tab over it. The SAME constant, not a matched
+            value: two ends of one band that drifted apart would be worse than
+            no band at all.
+
+            BEHIND EVERYTHING — `-z-10` against the track's own stacking, so it
+            passes under the boxes rather than washing the frames it is
+            pointing at. `pointer-events-none` for the same reason: the lane
+            below owns every gesture on this track.
+
+            It travels with the film, because `offset` is the same value the
+            strip is translated by. */}
+        {activeSegment !== undefined && (
+          <span
+            data-seam-active-column={centreClipId}
+            aria-hidden="true"
+            style={{
+              left: activeSegment.leftPx + offset,
+              width: activeSegment.widthPx,
+              top: SEAM_RULER_TOTAL_PX,
+              // PAST THE TRACK'S OWN BOTTOM, which is exactly the film's:
+              // measured, the lane ends where the track ends, so `bottom: 0`
+              // stopped the column flush with the frames and filled none of
+              // the space this item is about. The overhang is the minimap's
+              // own top margin, so the band closes the gap between the film
+              // and the map and stops at it.
+              bottom: -MINIMAP_GAP_PX,
+              backgroundColor: RULER_BLOCK_ACTIVE_COLOUR,
+            }}
+            className="pointer-events-none absolute -z-10"
+          />
+        )}
+
         {/* THE SCALE, ABOVE THE FILM IT MEASURES — and the hover target.
             See `graph-seam-ruler` for both: a ruler belongs against what it
             measures, and a preview card belongs somewhere other than on top
@@ -1103,6 +1191,7 @@ export function SeamStripBar({
         />
 
         <SeamLane
+          laneHeight={laneHeight}
           laneRef={laneRef}
           panelClipIds={panelClipIds}
           hoveredClipId={hoveredClipId}
@@ -1138,14 +1227,14 @@ export function SeamStripBar({
           aria-hidden="true"
           data-seam-fade="left"
           hidden={offset >= -0.5}
-          style={{ top: SEAM_RULER_TOTAL_PX, height: SEAM_LANE_HEIGHT_PX }}
+          style={{ top: SEAM_RULER_TOTAL_PX, height: laneHeight }}
           className="pointer-events-none absolute left-0 w-6 bg-gradient-to-r from-zinc-950 to-transparent"
         />
         <span
           aria-hidden="true"
           data-seam-fade="right"
           hidden={strip.totalPx + offset <= trackWidth + 0.5}
-          style={{ top: SEAM_RULER_TOTAL_PX, height: SEAM_LANE_HEIGHT_PX }}
+          style={{ top: SEAM_RULER_TOTAL_PX, height: laneHeight }}
           className="pointer-events-none absolute right-0 w-6 bg-gradient-to-l from-zinc-950 to-transparent"
         />
       </div>
@@ -1205,12 +1294,40 @@ export function SeamStripBar({
         // between the minimap and the top of the controls.
         className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 pt-3 pb-2"
       >
-        {/* HIDDEN, NOT WRAPPED, on a narrow view. Wrapping this row costs the
-            strip below a line of height it has to be told about — see the
-            scrim's top padding — and the two settings here are set once, while
-            the transport and the clock are used continuously. The row keeps
-            what is being USED. */}
-        <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsLeft}</div>
+        {/* THE CLOCK, ON THE LEFT (PL15-021).
+            It sat at the far right beside reach and the gear, because it
+            arrived there with the transport and the settings ended up around
+            it. This cell was emptied when those moved into the gear
+            (PL15-006), leaving a bare third on one side and three things
+            crowded on the other.
+
+            It belongs on the transport's line either way: it says where
+            playback IS, which is the question the play button answers, and
+            reading the two together is why it came down out of the scrub bar
+            in the first place.
+
+            The cell keeps the column open regardless — the row is a
+            three-column grid and the middle track is what centres the
+            transport. */}
+        <div className="flex min-w-0 items-center">
+          {/* THE CLOCK, which came from the far right of the scrub bar. It
+              belongs with the transport rather than with the track: it says
+              where playback IS, which is the same question the play button
+              answers, and reading the two together is why it moved. */}
+          {/* CLOCK NOTATION, NOT SECONDS. `252.90s` is accurate and unusable —
+              nobody can place it in a four-minute cut without doing division.
+              Tenths rather than hundredths because this number MOVES: the
+              second decimal is a blur at playback speed, and the first is
+              exactly enough to see time passing. */}
+          <span
+            data-seam-clock
+            className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+          >
+            <span className="text-blue-300">{formatClock(atSeconds)}</span>
+            {" / "}
+            <span>{formatClock(totalSeconds)}</span>
+          </span>
+        </div>
 
         {/* THE TRANSPORT, AS ONE OBJECT AND THE BIGGEST THING IN THE ROW.
             It was three small icon buttons with the same weight as the
@@ -1307,49 +1424,85 @@ export function SeamStripBar({
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-3">
-          {/* THE CLOCK, which came from the far right of the scrub bar. It
-              belongs with the transport rather than with the track: it says
-              where playback IS, which is the same question the play button
-              answers, and reading the two together is why it moved. */}
-          {/* CLOCK NOTATION, NOT SECONDS. `252.90s` is accurate and unusable —
-              nobody can place it in a four-minute cut without doing division.
-              Tenths rather than hundredths because this number MOVES: the
-              second decimal is a blur at playback speed, and the first is
-              exactly enough to see time passing. */}
-          <span
-            data-seam-clock
-            className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
-          >
-            <span className="text-blue-300">{formatClock(atSeconds)}</span>
-            {" / "}
-            <span>{formatClock(totalSeconds)}</span>
-          </span>
 
-          {/* FIT: the two scales worth one press.
-              Zoom was ⌘-wheel and nothing else, which meant the two scales
-              anyone actually wants — this scene, and the lot — were reachable
-              only by rolling until they happened to arrive. Both are one
-              `fitPixelsPerSecond` call the bar was already making on open;
-              this just gives them a button. */}
-          <div className="hidden shrink-0 md:flex">
-            <SegmentedControl
-              label="fit"
-              ariaLabel="Fit the bar to"
-              groupAttribute="data-seam-fit"
-              segments={(["clip", "all"] as const).map((mode) => ({
-                value: mode,
-                label: mode,
-                title:
-                  mode === "clip"
-                    ? "Fit this clip's collection"
-                    : "Fit everything the bar reaches",
-                active: mode === fitMode,
-              }))}
-              onSelect={fitTo}
-            />
-          </div>
+          {/* FIT MOVED INTO THE GEAR (PL15-006). It is the two scales worth
+              one press — this scene, and the lot — but it is still a thing you
+              set rather than a thing you drive, so it sits with the other two
+              settings rather than in the row. */}
 
           <div className="hidden min-w-0 items-center gap-1 md:flex">{settingsRight}</div>
+
+          {/* THE VIEW'S SETTINGS, BEHIND ONE CONTROL (PL15-006).
+              What the bar's boxes draw, where the hover card sits, and what the
+              zoom fits to were three labelled groups strung along this row —
+              nine or ten segments of chrome around a transport, all of them
+              things you set once and then work. REACH STAYS OUT because it is
+              not that kind of setting: it changes how much of the sequence the
+              bar is showing, which is a thing you reach for while reading it.
+
+              A GEAR, NOT AN ELLIPSIS. The project menu next door documents the
+              distinction and it holds here: an ellipsis says "more things to DO
+              here", a cog says "how this is configured". These are all the
+              second kind.
+
+              Non-modal for the reason every other menu in this header is:
+              Radix's modal default puts `pointer-events: none` on the body,
+              which stops the trigger receiving the click that should close its
+              own menu.
+
+              NOT gated on `md:` like the groups it replaces. Those were hidden
+              on a narrow view because a row of segmented controls has nowhere
+              to go; a menu is the same size whatever the viewport, so folding
+              them behind it makes them reachable on a phone for the first
+              time. */}
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-seam-settings-menu
+                aria-label="Bar settings"
+                title="Bar settings — frames, hover card, and what the zoom fits"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+              >
+                <Settings2 aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              side="top"
+              align="end"
+              data-seam-settings-content
+              // `z-[90]` IS THE WHOLE REASON THIS MENU IS VISIBLE.
+              //
+              // Radix portals its content to `document.body`, so the menu is a
+              // SIBLING of the details modal rather than a descendant — and the
+              // modal is `z-[80]` while `DropdownMenuContent` defaults to
+              // `z-50`. The menu opened correctly, in the right place, behind
+              // the modal's own scrim: a gear that visibly did nothing.
+              //
+              // The other menus in this app sit in the board's header, outside
+              // any modal, which is why none of them needed this and why the
+              // default has never been wrong before. Anything portalled from
+              // INSIDE the details view has to clear 80.
+              className="z-[90] flex w-auto flex-col items-start gap-3 p-3"
+            >
+              {settingsLeft}
+              <SegmentedControl
+                label="fit"
+                ariaLabel="Fit the bar to"
+                groupAttribute="data-seam-fit"
+                segments={(["clip", "all"] as const).map((mode) => ({
+                  value: mode,
+                  label: mode,
+                  title:
+                    mode === "clip"
+                      ? "Fit this clip's collection"
+                      : "Fit everything the bar reaches",
+                  active: mode === fitMode,
+                }))}
+                onSelect={fitTo}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 # WebMCP agent tools
 
 **Status: shipped, and still growing.** Two surfaces are live — the in-page
-**WebMCP** tools (11 tools; real-time, mutate the live store) and a **remote
+**WebMCP** tools (18 tools; real-time, mutate the live store) and a **remote
 MCP** endpoint at `/api/mcp` (read-only, OAuth 2.1 + PKCE, reachable by URL
 with no browser open). The design below is what they were built from; the
 decision log at the bottom is the running record of what actually shipped and

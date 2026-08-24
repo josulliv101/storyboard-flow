@@ -282,15 +282,24 @@ export function GraphTimelineView({
   const [waveformOn, setWaveformOn] = useState(false);
   // Flat mode: every item in the focused closure, in order, no nesting.
   // Strip-only — grid has no equivalent, and leaving grid turns it off below.
-  // STRIP OPENS FLAT. The strip is a time axis, and a run of every shot in
-  // order is what a time axis is for — collections are a way to ORGANISE that
-  // run, not the default way to read it. So the control below is inverted: it
-  // offers "Collections", and turning it on is what leaves the flat run.
   //
-  // The cost, stated plainly: flat mode refuses `move-nodes` (see
-  // `commandPolicy`), so a strip that opens flat opens without drag-to-reorder
-  // until you switch to Collections.
-  const [flatOn, setFlatOn] = useState(initialSurface === "strip");
+  // THE STRIP OPENS IN COLLECTIONS (PL15-003), and used to open FLAT. The
+  // argument for flat was that the strip is a time axis and a run of every
+  // shot in order is what a time axis is for — collections being a way to
+  // ORGANISE that run rather than the default way to read it.
+  //
+  // What settled it against that was the cost the old comment already stated
+  // and then accepted: flat mode refuses `move-nodes` (see `commandPolicy`),
+  // so a strip that opened flat opened WITHOUT drag-to-reorder, and nothing on
+  // screen said why. A default posture that quietly disables the board's main
+  // gesture is the wrong default however good the reading is. Opening grouped
+  // means the strip is reorderable on arrival and going flat is an explicit
+  // trade.
+  //
+  // `false`, not `initialSurface !== "strip"`: flat is strip-only, so grid
+  // arriving false is the same answer for its own reason, and one literal says
+  // it once.
+  const [flatOn, setFlatOn] = useState(false);
   const [flatLoading, setFlatLoading] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
   // The sidebar owns the layout switch and the ruler toggle (its top icons /
@@ -353,7 +362,14 @@ export function GraphTimelineView({
     // Leaving the strip drops flat (grid has no flat run to show); arriving at
     // it restores the strip's default rather than whatever the grid left
     // behind. Both directions, so the strip is the same on every arrival.
-    setFlatOn(surface === "strip");
+    //
+    // THE STRIP'S DEFAULT IS COLLECTIONS (PL15-003), so both directions now
+    // land on the same value. It stays written as a reset rather than being
+    // deleted: what this block guarantees is "the strip is the same on every
+    // arrival", and that is a promise about arrivals, not about the constant
+    // that currently satisfies it — a later default would have to be applied
+    // here or grid → strip would carry the previous session's posture back in.
+    setFlatOn(false);
   }
 
   // The ruler is scoped to flat mode (its toggle only mounts there), so flat

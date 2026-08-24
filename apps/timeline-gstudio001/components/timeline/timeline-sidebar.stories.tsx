@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import { AuthProvider } from "@/components/auth/auth-provider";
+import { AuthProvider, type AuthUser } from "@/components/auth/auth-provider";
 
 import { TimelineSidebar } from "./timeline-sidebar";
 import { RAIL_OPEN_WIDTH_PX, RAIL_WIDTH_PX } from "./sidebar-icon-styles";
@@ -45,19 +45,33 @@ function forgetRailPreference(): void {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
-const USER = {
+// ANNOTATED, not inferred. Inference gives `picture` the literal type `null`,
+// which makes every helper taking `typeof USER` reject a user that HAS a
+// picture — including the one the avatar-fallback story is built on.
+const USER: AuthUser = {
   uid: "u-story",
   email: "editor@example.test",
   name: "Story Editor",
   picture: null,
 };
 
-/** Everything this component asks the network for, answered locally. */
-function stubFetch() {
+/**
+ * Everything this component asks the network for, answered locally.
+ *
+ * IT MUST ANSWER WITH THE SAME USER THE HARNESS WAS GIVEN, which is why this
+ * takes one. `AuthProvider` background-revalidates against `/api/auth/me` on
+ * mount and `setUser`s whatever comes back — so a stub that always replied
+ * with the default silently REPLACED any user a story had passed as
+ * `initialUser`, a frame after render. The avatar story caught this the
+ * expensive way: it passed with the fix removed, because the picture it was
+ * testing had been swapped for the default's `null` before the assertion ran,
+ * and "no picture" falls back for a reason that has nothing to do with the bug.
+ */
+function stubFetch(user: AuthUser = USER) {
   window.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
     const body = url.includes("/api/auth/me")
-      ? { user: USER }
+      ? { user }
       : url.includes("/api/assets/marked")
         ? { assets: [] }
         : {};
@@ -68,17 +82,30 @@ function stubFetch() {
   }) as typeof window.fetch;
 }
 
-function Harness() {
+function Harness({ user = USER }: { user?: AuthUser }) {
   return (
     // The rail is `h-screen` and sticky; the frame gives it a page to sit in
     // and the app's ground to be read against.
     <div className="graph-view-theme flex min-h-[560px] bg-zinc-950">
-      <AuthProvider initialUser={USER}>
+      <AuthProvider initialUser={user}>
         <TimelineSidebar />
       </AuthProvider>
     </div>
   );
 }
+
+/**
+ * A `picture` that is a real value and cannot be decoded — the shape of the
+ * bug in PL15-007.
+ *
+ * A DATA URI OF NON-IMAGE BYTES, not a URL that 404s. It fails in the decoder
+ * rather than on the network, so the story needs nothing served, cannot be
+ * rescued by a cache, and fires `onError` on every run — which a same-origin
+ * 404 does too but only as long as nobody puts a file at that path.
+ */
+const UNDECODABLE_PICTURE = "data:image/png;base64,Zm9v";
+
+const BROKEN_PICTURE_USER = { ...USER, picture: UNDECODABLE_PICTURE };
 
 const meta: Meta<typeof TimelineSidebar> = {
   title: "timeline/TimelineSidebar",
@@ -281,5 +308,43 @@ export const RepeatedTogglingStaysInStep: Story = {
         "false",
       );
     }
+  },
+};
+
+/**
+ * THE PICTURE FAILS AND THE INITIAL TAKES OVER (PL15-007).
+ *
+ * The branch used to be `picture ? <img> : <initial>`, which covers a picture
+ * that is ABSENT and not one that is BROKEN — a real URL that 404s took the
+ * image branch and had nothing behind it, so the rail drew the browser's
+ * broken-image glyph. Both places that render the avatar had it, so this
+ * checks both: the tile, and the popover behind it.
+ */
+export const TheAvatarFallsBackWhenThePictureFails: Story = {
+  render: () => {
+    // BOTH the initial user and the revalidation answer, or the picture under
+    // test is replaced by the default's `null` a frame after mount and the
+    // story passes for the wrong reason. See `stubFetch`.
+    stubFetch(BROKEN_PICTURE_USER);
+    forgetRailPreference();
+    return <Harness user={BROKEN_PICTURE_USER} />;
+  },
+  play: async ({ canvasElement }) => {
+    const account = canvasElement.querySelector<HTMLElement>('[aria-label="Account"]')!;
+
+    // The <img> is REMOVED, not merely covered. Asserting the letter alone
+    // would pass with a broken glyph sitting underneath it.
+    await waitFor(() => expect(account.querySelector("img")).toBeNull());
+    expect(account.textContent).toContain("S");
+
+    // ...and the popover, which carries its own copy of the same branch.
+    await userEvent.click(account);
+    const popover = await waitFor(() => {
+      const found = canvasElement.querySelector<HTMLElement>(".profile-popover-animate");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    await waitFor(() => expect(popover.querySelector("img")).toBeNull());
+    expect(popover.textContent).toContain("S");
   },
 };
