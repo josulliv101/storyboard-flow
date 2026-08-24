@@ -45,6 +45,7 @@ import {
   usePreviewCardSpans,
   type PreviewTimeChannel,
 } from "./graph-preview";
+import { usePreviewSettled } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 import {
   GRID_GAP,
   GRID_UNCAPPED_HEIGHT,
@@ -128,7 +129,24 @@ function SubTimelineNode({
   // On the projection fallback a sub-row's local times don't line up with the
   // global clock, so the marker would lie — better absent for that ~2.5s.
   const clockWindow = spans?.get(id);
-  const showPlayhead = previewOn && clockWindow !== undefined;
+  // GATED ON SETTLED, NOT ON ASKED-FOR (PL15-023).
+  //
+  // `previewOn` flips the instant the toggle is pressed, and the pane then
+  // takes the reveal to slide open — so this drew the playhead over a preview
+  // that was not on screen yet, a readout of something you cannot see.
+  //
+  // `usePreviewSettled` ALREADY EXISTED and is already published to the board
+  // by context (`settled = mounted && revealed && !sliding`) — the pane's own
+  // chrome waits on the same flag, for the same reason: "controls for a thing
+  // that is not there yet while the pane is still opening". Nothing needed to
+  // be plumbed; this was one condition looking at the wrong flag.
+  //
+  // It is false through a CLOSE as well, which is right here even though the
+  // pane's chrome deliberately rides the close down: a playhead is a position
+  // in a picture, and there is no picture to be a position in once it is on
+  // its way out.
+  const previewSettled = usePreviewSettled();
+  const showPlayhead = previewOn && previewSettled && clockWindow !== undefined;
   const dims = ITEM_SIZE_DIMENSIONS[itemSize];
 
   const [expanded, setExpanded] = useState(false);
