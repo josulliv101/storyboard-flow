@@ -1412,3 +1412,41 @@ Acceptance criteria:
 - Whatever is decided about `fit` is written next to the code, since the name
   is a promise.
 
+## PL15-025 — The film holds the track's edges instead of centring past them
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open clip 2 of a long collection)
+- Area: `components/graph-view/graph-seam-strip.ts` (`clampStripOffset`, new),
+  `components/graph-view/graph-seam-strip-bar.tsx`
+- Screenshot: Supplied by the owner — clip 2 of 13, the film pushed to the
+  right-hand third and most of the track empty.
+
+The bar centres the clip you are on. That is right in the middle of a sequence
+and wrong at either end of it: centring clip 2 of 13 pushes the film most of
+the way across the track and leaves a screen of empty space beside it. It
+should travel until its own edge reaches the track's and then stop, the way any
+scroller does.
+
+**The cause is one unclamped line.** `stripCentreOffset` returns
+`containerPx / 2 - centre` and nothing bounds it, so an early subject yields a
+large positive offset and the film is simply pushed off to the right.
+
+Acceptance criteria:
+
+- At the start of a collection the film's first box sits at the left of the
+  track, not in the middle of it.
+- At the end, the last box sits at the right.
+- In the middle of a long sequence the subject still centres, unchanged.
+- A film SHORTER than the track still centres — there is no edge to hold it
+  against and nothing is being pushed off.
+- The clamp applies to a user PAN as well as the default, or a flick lands back
+  in the same gap.
+
+**The lead is not slop.** `SeamEndCap` draws the end stop and its label OUTSIDE
+the first and last boxes, at negative coordinates before the film begins — so
+holding the film flush to the track would push its own `Start` marker off
+screen. The clamp reserves exactly the stop's own room
+(`CAP_WIDTH_PX + CAP_GAP_PX`), which is why that constant had to be exported
+rather than guessed at here.
+

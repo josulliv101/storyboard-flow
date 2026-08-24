@@ -99,6 +99,42 @@ export function stripCentreOffset(
 }
 
 /**
+ * Hold the film against the track's ends instead of centring past them.
+ *
+ * `stripCentreOffset` puts the subject in the middle, which is right in the
+ * middle of a long sequence and wrong at either end of it: centring clip 2 of
+ * 13 pushes the film most of the way across the track and leaves a screen of
+ * empty space beside it. The film should travel until its own edge reaches the
+ * track's and then stop, exactly as any scroller does.
+ *
+ * `leadPx` IS NOT SLOP. The end stops and their labels are drawn OUTSIDE the
+ * first and last boxes (see `SeamEndCap`), at negative coordinates before the
+ * film begins — so clamping the film's start flush to the track's left edge
+ * would push its own "start" marker off screen. The lead is the room that mark
+ * needs, and it is passed rather than assumed here because this module does
+ * not own that number.
+ *
+ * A film SHORTER than the track keeps its centring: there is no edge to hold
+ * it against and nothing is being pushed off, so the complaint does not apply.
+ */
+export function clampStripOffset(
+  offset: number,
+  totalPx: number,
+  containerPx: number,
+  leadPx: number,
+): number {
+  if (containerPx <= 0 || totalPx <= 0) return offset;
+  // The film fits — centring is the whole answer.
+  if (totalPx + leadPx <= containerPx) return offset;
+  // Furthest RIGHT the film may sit: its start, plus room for the start mark.
+  const maxOffset = leadPx;
+  // Furthest LEFT: its end flush with the track, plus the same room for the
+  // end mark on the other side.
+  const minOffset = containerPx - totalPx - leadPx;
+  return Math.min(maxOffset, Math.max(minOffset, offset));
+}
+
+/**
  * Where the playhead goes for a position the CLOCK reported.
  *
  * The clock and the strip are two views of the same clips: the clock knows

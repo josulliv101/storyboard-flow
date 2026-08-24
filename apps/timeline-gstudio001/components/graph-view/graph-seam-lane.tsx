@@ -147,6 +147,7 @@ function SeamEndCap({ side, atPx }: Readonly<{ side: "start" | "end"; atPx: numb
 // re-export is so nothing that already imported them from the lane had to
 // move.
 export { BOX_INSET_PX, SEAM_LANE_HEIGHT_PX, SEAM_PREVIEW_GAP_PX };
+export { CAP_GAP_PX, CAP_WIDTH_PX };
 
 /**
  * How strongly a NON-ACTIVE on-screen clip draws its picture in grey-box mode.

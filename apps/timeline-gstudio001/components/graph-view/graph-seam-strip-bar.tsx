@@ -15,7 +15,13 @@ import {
   zoomByWheel,
   type SeamBarClip,
 } from "./graph-seam-bar-layout";
-import { SEAM_LANE_HEIGHT_PX, SeamLane, type SeamHover } from "./graph-seam-lane";
+import {
+  CAP_GAP_PX,
+  CAP_WIDTH_PX,
+  SEAM_LANE_HEIGHT_PX,
+  SeamLane,
+  type SeamHover,
+} from "./graph-seam-lane";
 import { HAIRLINE, SURFACE_WELL } from "./graph-details-design";
 import { SegmentedControl } from "./graph-details-segmented";
 import {
@@ -27,6 +33,7 @@ import { SeamMinimap } from "./graph-seam-minimap";
 import { SEAM_RULER_TOTAL_PX, SeamRuler } from "./graph-seam-ruler";
 import {
   buildSeamStrip,
+  clampStripOffset,
   stripCentreOffset,
   stripPositionAt,
   stripXFor,
@@ -344,7 +351,21 @@ export function SeamStripBar({
     centreClipId,
     centreAtPx > 0 ? centreAtPx * 2 : trackWidth,
   );
-  const offset = panPx ?? centredOffset;
+  // HELD AGAINST THE ENDS (PL15-025). Centring the subject is right in the
+  // middle of a sequence and wrong at either end of it — clip 2 of 13 centred
+  // pushes the film most of the way across the track and leaves a screen of
+  // empty space beside it. Applied to the USER's pan as well as the default,
+  // because a flick can overshoot into the same gap.
+  //
+  // The lead is the end stop's own room: `SeamEndCap` draws the mark and its
+  // label OUTSIDE the first and last boxes, so a film held flush to the track
+  // would push its own "start" off screen.
+  const offset = clampStripOffset(
+    panPx ?? centredOffset,
+    strip.totalPx,
+    trackWidth,
+    CAP_WIDTH_PX + CAP_GAP_PX,
+  );
 
   // Set by any deliberate pan, cleared by any deliberate seek. While it is
   // set, playback stops dragging the bar around under the reader.
