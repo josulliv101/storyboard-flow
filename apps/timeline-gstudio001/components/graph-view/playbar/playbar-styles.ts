@@ -517,11 +517,12 @@ export const PLAYBAR_CSS = `.pb{
   animation-duration: 380ms;
   object-fit: contain;
 }
-@media (prefers-reduced-motion: reduce){
-  ::view-transition-group(trim-subject),
-  ::view-transition-old(trim-subject),
-  ::view-transition-new(trim-subject){ animation-duration: 1ms; }
-}
+/* NO REDUCED-MOTION OVERRIDE HERE, deliberately and by request. It used to cut
+   this to 1ms, which would have quietly undone the decision made in
+   the view-transition helper to run this one flight regardless of the preference:
+   the transition would start and finish inside a frame, which looks exactly
+   like the nothing it was meant to replace. The two have to agree, so the
+   override is gone rather than left as a second opinion. */
 
 /* FRONT-MOST WHILE BEING TRIMMED. Nothing overlaps — the shots after it slide
    live, so the film stays a continuous run throughout the drag — but its

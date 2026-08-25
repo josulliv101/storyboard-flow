@@ -159,15 +159,23 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
       }
 
       card.style.setProperty("view-transition-name", HERO);
-      void withViewTransition(() => {
+      void withViewTransition(
+        () => {
         // The card gives the name up in the same frame the view takes it, so
         // exactly one element ever carries it. `withViewTransition` flushes
         // this synchronously — the browser captures the "after" state as soon
         // as the callback returns, and a queued update would leave nothing to
         // fly to.
-        card.style.removeProperty("view-transition-name");
-        setPending(next);
-      });
+          card.style.removeProperty("view-transition-name");
+          setPending(next);
+        },
+        // RUNS EVEN UNDER REDUCED MOTION, asked for by name. The helper skips
+        // entirely by default and that is right for things that slide about;
+        // this is one picture becoming the same picture somewhere else, and it
+        // is the only thing connecting the card you clicked to the view that
+        // replaced it. Without it, opening a clip is a hard cut.
+        { ignoreReducedMotion: true },
+      );
       // The URL catches up after, and changes nothing anyone can see: `pending`
       // is already showing the view it names.
       commit();

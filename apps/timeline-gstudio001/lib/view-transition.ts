@@ -37,9 +37,33 @@ type ViewTransitionDocument = Document & {
  * required, not decorative: the browser captures the "after" state the moment
  * the callback returns, and a normal React update would still be queued.
  */
-export function withViewTransition(mutate: () => void): Promise<void> {
+export type ViewTransitionOptions = Readonly<{
+  /**
+   * Run even when the system asks for less motion.
+   *
+   * OFF BY DEFAULT, and it should stay off for anything that MOVES — the
+   * default here exists because a preference for less motion is an
+   * accessibility setting, not a style choice.
+   *
+   * The one caller that sets it is the board card flying into the details
+   * view, at the owner's explicit request after finding it silently absent on
+   * a machine with the preference on. That flight is a morph between two
+   * positions of the same picture rather than something sliding across the
+   * page, and it is the only thing that says the card and the view are the
+   * same shot — without it opening a clip is a hard cut.
+   *
+   * Anything new that wants this should be asked for the same way, out loud.
+   */
+  ignoreReducedMotion?: boolean;
+}>;
+
+export function withViewTransition(
+  mutate: () => void,
+  options: ViewTransitionOptions = {},
+): Promise<void> {
   const doc = document as ViewTransitionDocument;
-  if (!doc.startViewTransition || prefersReducedMotion()) {
+  const quiet = prefersReducedMotion() && options.ignoreReducedMotion !== true;
+  if (!doc.startViewTransition || quiet) {
     mutate();
     return Promise.resolve();
   }
