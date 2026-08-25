@@ -50,7 +50,14 @@ import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
 import type { SeamBarClip } from "./graph-seam-bar-layout";
 import { ClipDeck } from "./playbar/clip-deck";
-import { FilmStrip } from "./playbar/film-strip";
+import { monitorPosterUrl } from "@/lib/video-frame-url";
+
+import { FilmStrip, type FilmStripSkimPreview } from "./playbar/film-strip";
+import {
+  usePublishTrimPreview,
+  useTrimPreview,
+  type TrimPreviewFrame,
+} from "./graph-trim-preview";
 import { type FilmStripShot } from "./playbar/film-strip-data";
 import {
   buildSeamTimeline,
@@ -582,6 +589,70 @@ function DetailsFilmstripModal({
   // Until then every panel rests on its own frame, which is what makes opening
   // the view show the cut rather than a playback state nobody asked for.
   const position = scrubbed ? seamAt(timeline, shownSeconds) : null;
+
+  /**
+   * THE SCRUB PREVIEW, AND WHO SHOWS IT.
+   *
+   * Moving the playhead used to change the clock and nothing you could see:
+   * the old bar answered this with a hover card and the swap to the film strip
+   * left the question unanswered (PL15-030).
+   *
+   * The rule is not new. `usePublishTrimPreview` publishes the frame into the
+   * preview pane when the pane is OPEN and reports whether it took it; the
+   * caller draws its own card only when it did not. Pane open: the big picture
+   * changes, which is the whole reason it is open. Pane closed: a card above
+   * the playhead. Exactly one of the two, which is what that seam exists for —
+   * it was built for trim drags and this is the same question asked by a
+   * different gesture.
+   */
+  const [skimSeconds, setSkimSeconds] = useState<number | null>(null);
+  const skimAt = skimSeconds === null ? null : seamAt(timeline, skimSeconds);
+  const skimNode = (() => {
+    if (skimAt === null) return null;
+    const found = graph.nodesById.get(parseNodeId(skimAt.clipId));
+    return found && found.kind === "media" ? (found as MediaNode) : null;
+  })();
+  const skimSourceTime =
+    skimAt === null || skimNode === null
+      ? null
+      : (hasSourceWindow(skimNode) ? skimNode.trimInSeconds : 0) + skimAt.clipSeconds;
+  // NARROWED FIRST. `MediaNode` is a union and only the video member carries
+  // frame grabs; reaching for them on the union is what `seamClipOf` above is
+  // careful about too.
+  const skimPosterBase =
+    skimNode !== null && skimNode.mediaKind === "video" ? skimNode.posterSrcs?.[0] : undefined;
+  const skimSrc = skimNode?.src;
+
+  const skimFrame = useMemo<TrimPreviewFrame | null>(() => {
+    if (skimSrc === undefined || skimSourceTime === null) return null;
+    return skimPosterBase === undefined
+      ? { src: skimSrc, sourceTime: skimSourceTime }
+      : { src: skimSrc, poster: skimPosterBase, sourceTime: skimSourceTime };
+  }, [skimSrc, skimPosterBase, skimSourceTime]);
+  const skimTaken = usePublishTrimPreview(skimFrame);
+
+  const skimPreview = useMemo<FilmStripSkimPreview | null>(() => {
+    if (skimTaken || skimNode === null || skimAt === null || skimSourceTime === null) {
+      return null;
+    }
+    // QUANTISED TO A QUARTER SECOND, because the URL is a Cloudinary frame grab
+    // and every distinct time is a distinct fetch — a pointer sweeping the bar
+    // would ask for hundreds. Finer than the eye tracks mid-sweep, and coarse
+    // enough that a second pass over the same stretch comes from cache. The
+    // pane's copy above is NOT quantised: it seeks an element it already holds.
+    const poster =
+      skimNode.mediaKind === "audio"
+        ? undefined
+        : skimPosterBase === undefined
+          ? skimNode.src
+          : monitorPosterUrl(skimPosterBase, Math.round(skimSourceTime * 4) / 4);
+    const total = mediaDurationSeconds(skimNode);
+    return {
+      ...(poster === undefined ? {} : { posterSrc: poster }),
+      name: skimNode.name,
+      meta: `${skimAt.clipSeconds.toFixed(2)}s / ${total.toFixed(2)}s`,
+    };
+  }, [skimTaken, skimNode, skimAt, skimSourceTime, skimPosterBase]);
   // ANY clip the bar covers, not just the three it used to. With nine panels
   // the playhead can be inside a clip four along, and the monitor still has to
   // be able to paint it.
@@ -1113,6 +1184,7 @@ function DetailsFilmstripModal({
   // It tracks the rail opening and closing, the window resizing, and the
   // preview pane taking height, with nothing to keep in sync.
   const viewRef = useRef<HTMLElement | null>(null);
+  const { previewOpen } = useTrimPreview();
   useLayoutEffect(() => {
     const element = viewRef.current;
     if (!element) return;
@@ -1121,6 +1193,23 @@ function DetailsFilmstripModal({
         DETAILS_BASIS_VAR,
         `${Math.round(element.getBoundingClientRect().width)}px`,
       );
+
+      // ── ONLY WHEN THE PREVIEW PANE IS UP ────────────────────────────────
+      //
+      // With the pane down there is nothing above competing for the height, so
+      // the view is ordinary content: the bar, then the deck below it, and the
+      // page scrolls if that runs past the fold. Fitting it to the window in
+      // that case bought nothing and cost the design its own sizes — a strip
+      // shortened and cards narrowed to avoid a scrollbar nobody minded.
+      //
+      // With the pane up the height is genuinely contested, and THAT is when
+      // both have to give so the two of them stay readable together.
+      if (!previewOpen) {
+        element.style.removeProperty("height");
+        element.style.removeProperty("gap");
+        element.style.removeProperty("--strip-h");
+        return;
+      }
 
       // AND THE VIEW ENDS WHERE THE WINDOW DOES.
       //
@@ -1193,7 +1282,7 @@ function DetailsFilmstripModal({
       observer.disconnect();
       window.removeEventListener("resize", publish);
     };
-  }, []);
+  }, [previewOpen]);
 
   const rowTransform =
     `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + var(--drag-px, 0px)))`;
@@ -1251,12 +1340,22 @@ function DetailsFilmstripModal({
         containerType: "inline-size",
         maskImage: DECK_EDGE_FADE,
         WebkitMaskImage: DECK_EDGE_FADE,
+        // SCROLLS ONLY WHEN IT IS BOUNDED.
+        //
+        // `auto` makes this a scroll container, and a scroll container inside
+        // ancestors that allow shrinking takes the scroll off the PAGE and puts
+        // it in here — measured, 222px of internal scroll with the pane down
+        // where the page had simply been longer. With the pane down the view
+        // should be ordinary content, so it clips like it always did and grows;
+        // with the pane up it is a fixed box and needs somewhere for the
+        // remainder to go.
+        overflowY: previewOpen ? "auto" : "clip",
       }}
       // `overflow-x: clip` still, for the row's scrim — but the Y axis is
       // `auto`: the height above is a CEILING, and on a window too short for
       // even the smallest deck the scroll belongs INSIDE this view rather than
       // on the page, where it would carry the header and the bar away with it.
-      className="relative flex min-h-0 flex-1 flex-col overflow-x-clip overflow-y-auto"
+      className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-x-clip"
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
@@ -1326,6 +1425,8 @@ function DetailsFilmstripModal({
                 setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
+              onSkim={setSkimSeconds}
+              skimPreview={skimPreview}
               onTogglePlay={() => setPlaying((was) => !was)}
               onSelect={(clipId) => landOn(clipId, position)}
             />
@@ -1374,13 +1475,16 @@ function DetailsFilmstripModal({
           which dispatches the same `update-media` the trim fields did. */}
       <ClipDeck
         standalone={false}
-        // TAKES WHAT THE BAR LEAVES. The view is a bounded column now, so the
-        // deck is the part that absorbs the difference between a tall window
-        // and a short one — it fits its cards to the height it ends up with.
-        // `min-h-0` because a flex item's default `min-height: auto` refuses to
-        // shrink below its content, which is exactly the refusal that put the
-        // cards below the fold.
-        className="min-h-0 flex-1"
+        // TAKES WHAT THE BAR LEAVES — but only when the pane is up and the
+        // height is actually contested. `min-h-0` because a flex item's default
+        // `min-height: auto` refuses to shrink below its content, which is the
+        // refusal that would otherwise put the cards below the fold.
+        //
+        // With the pane down this is deliberately NOT a flex item: left as one
+        // it shrank instead of letting the column grow, so the page stopped
+        // scrolling and the section clipped 222px of deck instead.
+        className={previewOpen ? "min-h-0 flex-1" : undefined}
+        fitToHeight={previewOpen}
         clips={deckClips}
         activeId={node.id as string}
         onActivate={(clipId) => landOn(clipId, position)}

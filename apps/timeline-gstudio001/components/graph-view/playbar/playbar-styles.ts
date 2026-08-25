@@ -446,6 +446,54 @@ export const PLAYBAR_CSS = `.pb{
    resolves to the reference's own 150px. ─────────────────────────────────── */
 .pb .strip{ height: var(--strip-h, 150px); }
 
+/* ── THE SKIM CARD ───────────────────────────────────────────────────────
+   Not in the reference, which has no need of one: it always has the player
+   above the bar, and hovering the ruler skims frames straight into it. Here
+   the preview pane is dismissible, so when it is closed a scrub had nothing
+   to show for itself — the playhead moved and the picture did not.
+
+   The rule is the seam's, not a new one: \`usePublishTrimPreview\` publishes
+   into the pane when it is open and reports whether it took the frame, and
+   the caller draws this card only when it did not. Exactly one of the two is
+   ever up.
+
+   ABOVE THE BAR rather than inside it. Above the playhead means above the
+   chip, and the chip sits at the top of the content — so anywhere "above"
+   inside the bar is on top of the ruler, which is the surface being dragged.
+   A card under the pointer during the gesture it exists to serve is no card
+   at all. ──────────────────────────────────────────────────────────────── */
+.pb .skim{
+  position:absolute; top:0; left:0; /* both set from JS, measured off the film */
+  transform:translateX(-50%);
+  width:216px; padding:8px 8px 7px;
+  display:flex; flex-direction:column; gap:5px;
+  background:rgba(12,15,20,.97);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:12px;
+  box-shadow:0 26px 60px -24px rgba(0,0,0,.95), 0 0 0 1px rgba(0,0,0,.5);
+  pointer-events:none; z-index:60;
+}
+/* A FIXED SHAPE, so the card cannot resize once it is up: the poster is a
+   bare image with no intrinsic size until its bytes land, and a card that
+   grows under a moving pointer is the "it appears then corrects itself"
+   fault. \`contain\` rather than \`cover\` because a preview that crops answers
+   the question with part of the answer missing. */
+.pb .skim-shot{
+  position:relative; aspect-ratio:16/9; border-radius:7px; overflow:hidden;
+  background:#05070a; box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);
+}
+.pb .skim-shot img{
+  width:100%; height:100%; object-fit:contain; display:block;
+}
+.pb .skim-name{
+  font-size:11.5px; font-weight:500; color:#d8dfe9; letter-spacing:.01em;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.pb .skim-meta{
+  font-size:10.5px; color:#8b94a2; letter-spacing:.02em;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
 /* ── THE ACCENT IS OURS, NOT THE REFERENCE'S ─────────────────────────────
    \`--signal\` is the reference's selection teal (#3cdbc0). Ours is sky blue and
    it is load-bearing: PL15-026 runs the subject's blue from the film through to

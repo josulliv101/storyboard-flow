@@ -110,6 +110,17 @@ export type ClipDeckProps = Readonly<{
   onTrim?: (id: string, next: Readonly<{ in: number; out: number }>) => void;
   /** On its own page, or embedded in one — see `PlaybarFrame`. */
   standalone?: boolean;
+  /**
+   * FIT THE CARDS TO THE HEIGHT ON OFFER, rather than take the design's own.
+   *
+   * Off by default, which is the reference's behaviour: a 480px deck holding a
+   * card at its natural width, with whatever is below it pushed down. On means
+   * the deck fills the space it is given and narrows its cards until they fit —
+   * only worth doing when the height is genuinely contested, because the price
+   * is a smaller card. The details view turns it on exactly when the preview
+   * pane is up.
+   */
+  fitToHeight?: boolean;
   className?: string;
 }>;
 
@@ -119,6 +130,7 @@ export function ClipDeck({
   onActivate,
   onTrim,
   standalone = true,
+  fitToHeight = false,
   className,
 }: ClipDeckProps) {
   const CLIPS = useMemo(() => clipsProp ?? REFERENCE_CLIPS, [clipsProp]);
@@ -286,7 +298,13 @@ export function ClipDeck({
    */
   useEffect(() => {
     const deck = deckRef.current;
-    if (deck === null || standalone) return;
+    if (deck === null || standalone || !fitToHeight) {
+      // Hand the cards back to the reference's own `clamp(300px, 30vw, 440px)`,
+      // so turning fitting off restores the design rather than freezing
+      // whatever width the last fit happened to land on.
+      deckRef.current?.style.removeProperty("--clip-w");
+      return;
+    }
     const fit = () => {
       const card = cardRefs.current.find((candidate) => candidate !== null);
       const view = card?.querySelector<HTMLElement>(".c-view");
@@ -311,7 +329,7 @@ export function ClipDeck({
     const observer = new ResizeObserver(fit);
     observer.observe(deck);
     return () => observer.disconnect();
-  }, [layout, standalone, CLIPS]);
+  }, [layout, standalone, fitToHeight, CLIPS]);
 
   useEffect(() => {
     layout();
@@ -462,12 +480,15 @@ export function ClipDeck({
             style={
               standalone
                 ? undefined
-                : // NO MARGIN IN EITHER DIRECTION when embedded. `height: 100%`
-                  // and a 4px bottom margin means a box 4px taller than the slot
-                  // it was given, which is a scrollbar on the whole view for
-                  // spacing nobody asked for — measured, 7px of overflow on a
-                  // window where the cards themselves had 5px to spare.
-                  { marginTop: 0, marginBottom: 0, height: "100%", minHeight: 0 }
+                : // NO MARGIN IN EITHER DIRECTION when embedded: the view's own
+                  // gap is the spacing, and the two together read as a gap
+                  // nobody chose. The HEIGHT is only taken when fitting —
+                  // `height: 100%` on a deck that is not a bounded flex item
+                  // resolves against a parent with no height of its own, and
+                  // the deck collapses under its own cards.
+                  fitToHeight
+                  ? { marginTop: 0, marginBottom: 0, height: "100%", minHeight: 0 }
+                  : { marginTop: 0, marginBottom: 0 }
             }
             aria-label="Clip takes"
             onPointerDown={onPointerDown}

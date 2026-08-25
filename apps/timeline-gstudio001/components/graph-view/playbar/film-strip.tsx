@@ -49,6 +49,9 @@ function prefersReducedMotion(): boolean {
  */
 
 /** A press that moves less than this is a tap, not a pan. */
+/** Breathing room between the film's lower edge and the skim card. */
+const SKIM_GAP_PX = 8;
+
 const TAP_SLOP_PX = 4;
 
 type Pan = {
@@ -61,6 +64,15 @@ type Pan = {
   shotIndex: number | null;
 };
 
+/** The card the strip floats above the playhead while a scrub is running. */
+export type FilmStripSkimPreview = Readonly<{
+  /** A frame grab at the scrubbed moment. Absent for audio, which has no
+   *  picture, and for anything whose poster could not be addressed. */
+  posterSrc?: string;
+  name: string;
+  meta: string;
+}>;
+
 export type FilmStripProps = Readonly<{
   /** The sequence to draw. Defaults to the reference design's own. */
   shots?: readonly FilmStripShot[];
@@ -71,6 +83,26 @@ export type FilmStripProps = Readonly<{
   /** The shot drawn as the subject. */
   selectedId?: string | null;
   onScrub?: (seconds: number) => void;
+  /**
+   * The time under a running scrub, and `null` the moment it ends.
+   *
+   * Separate from `onScrub` because they answer different questions. `onScrub`
+   * moves the clock and is the edit; this is "a pointer is dragging the
+   * playhead and it is HERE", which is what decides whether a preview should be
+   * up at all. Folding them together would leave the caller unable to tell a
+   * scrub that finished from one parked on the same frame.
+   */
+  onSkim?: (seconds: number | null) => void;
+  /**
+   * What to draw above the playhead while scrubbing, or `null` to draw nothing.
+   *
+   * THE CALLER DECIDES, because only it knows whether the preview pane is open
+   * and took the frame instead — `usePublishTrimPreview` returns exactly that,
+   * and the rule it was built around is that precisely one of the two is ever
+   * showing. The strip does not get an opinion; it is handed a card or it is
+   * not.
+   */
+  skimPreview?: FilmStripSkimPreview | null;
   onTogglePlay?: () => void;
   onSelect?: (id: string) => void;
   /**
@@ -91,6 +123,8 @@ export function FilmStrip({
   playing: playingProp,
   selectedId,
   onScrub,
+  onSkim,
+  skimPreview,
   onTogglePlay,
   onSelect,
   standalone = true,
@@ -313,7 +347,56 @@ export function FilmStrip({
 
   /* ── scroll-driven chrome, written directly ─────────────────────────── */
 
+  // WHERE THE CARD SITS, in the bar's own pixels rather than the film's.
+  //
+  // Written straight onto the node, like the section labels and the minimap
+  // window above it: this has to follow both the clock and the scroll, and a
+  // re-render per pointer move to move one box is the cost this component
+  // avoids everywhere else.
+  const skimRef = useRef<HTMLDivElement | null>(null);
+  const timeRef = useRef(time);
+  const placeSkim = useCallback(() => {
+    const card = skimRef.current;
+    const viewport = viewportRef.current;
+    if (card === null || viewport === null) return;
+    // UNDER THE FILM, MEASURED OFF IT.
+    //
+    // "Above the playhead" was the ask and does not fit: the bar's top sits
+    // ~92px below the view's, the card is ~173 tall, and the view clips — so
+    // above the bar is simply off-screen. Above the film INSIDE the bar is the
+    // ruler and the label lane, which is both the surface being dragged and,
+    // as the old bar put it, the scale that makes the box widths mean anything
+    // — covering it answers "which shot" while hiding "how long".
+    //
+    // So it hangs under the film, over the minimap, which is where the bar
+    // this replaced ended up for the same reasons. Read DURING the gesture,
+    // clear of the hand, and close to the box it describes.
+    //
+    // Measured from the strip rather than summed from the bar's paddings: the
+    // film's height is now a variable that concedes on short windows, and a
+    // restated constant would be wrong on exactly those.
+    const strip = stripRef.current;
+    const anchor = card.offsetParent;
+    if (strip !== null && anchor instanceof HTMLElement) {
+      card.style.top = `${
+        strip.getBoundingClientRect().bottom - anchor.getBoundingClientRect().top + SKIM_GAP_PX
+      }px`;
+    }
+    const half = card.offsetWidth / 2;
+    const x = timeRef.current * PXS - viewport.scrollLeft;
+    // KEPT INSIDE THE BAR. Near either end the playhead runs out of room and a
+    // card centred on it would hang off the side — which is worst at exactly
+    // the moment the picture is the whole point.
+    card.style.left = `${clamp(x, half, Math.max(half, viewport.clientWidth - half))}px`;
+  }, []);
+
+  useEffect(() => {
+    timeRef.current = time;
+    placeSkim();
+  }, [time, placeSkim, skimPreview]);
+
   const syncToScroll = useCallback(() => {
+    placeSkim();
     const viewport = viewportRef.current;
     const content = contentRef.current;
     const lane = laneRef.current;
@@ -338,7 +421,7 @@ export function FilmStrip({
       win.style.left = `${(scroll / width) * 100}%`;
       win.style.width = `${(viewport.clientWidth / width) * 100}%`;
     }
-  }, [sections]);
+  }, [sections, placeSkim]);
 
   useEffect(() => {
     syncToScroll();
@@ -391,12 +474,23 @@ export function FilmStrip({
 
   /* ── scrubbing ──────────────────────────────────────────────────────── */
 
-  const seekToClientX = useCallback((clientX: number) => {
+  // ONE conversion, used by both the seek and the skim, so the card can never
+  // describe a different moment from the one the playhead landed on.
+  const secondsAtClientX = useCallback((clientX: number): number | null => {
     const viewport = viewportRef.current;
-    if (viewport === null) return;
+    if (viewport === null) return null;
     const box = viewport.getBoundingClientRect();
-    setTime(clamp((clientX - box.left + viewport.scrollLeft) / PXS, 0, DUR));
+    return clamp((clientX - box.left + viewport.scrollLeft) / PXS, 0, DUR);
   }, []);
+
+  const seekToClientX = useCallback(
+    (clientX: number) => {
+      const at = secondsAtClientX(clientX);
+      if (at === null) return;
+      setTime(at);
+    },
+    [secondsAtClientX],
+  );
 
   const edgeScroll = useCallback((clientX: number) => {
     const viewport = viewportRef.current;
@@ -443,6 +537,7 @@ export function FilmStrip({
     scrubbingRef.current = true;
     setGhostX(null);
     seekToClientX(event.clientX);
+    onSkim?.(secondsAtClientX(event.clientX));
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -467,6 +562,10 @@ export function FilmStrip({
       setHot(true);
       edgeScroll(event.clientX);
       seekToClientX(event.clientX);
+      // AFTER the edge scroll, so a skim near the edge reports the frame the
+      // playhead actually reached rather than the one under the pointer before
+      // the strip moved beneath it.
+      onSkim?.(secondsAtClientX(event.clientX));
       return;
     }
     if (momentumRef.current !== null) return; // coasting — keep overlays hidden
@@ -493,6 +592,7 @@ export function FilmStrip({
       }
       panRef.current = null;
     }
+    if (scrubbingRef.current) onSkim?.(null);
     scrubbingRef.current = false;
   };
 
@@ -635,6 +735,28 @@ export function FilmStrip({
             tabIndex={0}
             onKeyDown={onKeyDown}
           >
+            {/* THE SKIM CARD, OUTSIDE THE VIEWPORT ON PURPOSE.
+                `.viewport` is `overflow-x: auto`, and a box that scrolls on one
+                axis clips the other — a card placed inside it would be cut off
+                the moment it rose above the film. So it hangs off the bar
+                itself and is positioned in SCREEN pixels rather than content
+                ones, which is why `syncToScroll` moves it: the strip travelling
+                under a still pointer has to carry the card with it. */}
+            {skimPreview == null ? null : (
+              <div ref={skimRef} className="skim" aria-hidden="true">
+                <div className="skim-shot">
+                  {skimPreview.posterSrc === undefined ? null : (
+                    // `contain` on a dark ground rather than `cover`: a preview
+                    // that crops is answering the question with part of the
+                    // answer missing. The box is a fixed shape so the card
+                    // cannot resize under a pointer once it is up.
+                    <img src={skimPreview.posterSrc} alt="" draggable={false} />
+                  )}
+                </div>
+                <span className="skim-name">{skimPreview.name}</span>
+                <span className="skim-meta">{skimPreview.meta}</span>
+              </div>
+            )}
             <div data-seam-viewport className="viewport" ref={viewportRef}>
               <div
                 // THE SAME HOOKS THE OLD BAR PUBLISHED, kept on purpose.
