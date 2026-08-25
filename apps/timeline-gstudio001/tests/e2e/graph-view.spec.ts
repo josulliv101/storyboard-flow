@@ -5111,11 +5111,20 @@ test.describe("graph view E2E", () => {
       ),
     ).toBe("trim-subject");
 
-    // The whole source is in there, and it is the only map on the page.
-    const maps = page.locator("[data-trim-overview]");
+    // The whole source is in there, and it is the map for THIS clip.
+    //
+    // SCOPED TO THE OPENED PANEL, the way the still's assertion further down
+    // already is and for the same reason: the row shows this clip's
+    // NEIGHBOURS beside it and every one of them draws its own map. "The only
+    // map on the page" was a true statement about a single panel and is a
+    // false one about a deck — it reads five, and the claim being made here
+    // has always been about alpha's map rather than about the row's.
+    const maps = detailsPanel(page).locator("[data-trim-overview]");
     await expect(maps).toHaveCount(1);
     expect(await maps.evaluate((el) => !!el.closest("[data-item-details]"))).toBe(true);
-    const windowBox = (await page.locator("[data-trim-overview-window]").boundingBox())!;
+    const windowBox = (await detailsPanel(page)
+      .locator("[data-trim-overview-window]")
+      .boundingBox())!;
     const mapBox = (await maps.boundingBox())!;
     expect(windowBox.width / mapBox.width).toBeCloseTo(6 / 8, 1);
 
@@ -5127,15 +5136,23 @@ test.describe("graph view E2E", () => {
     // like a broken gesture.
     await settleViewTransition(page);
 
-    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const grip = detailsPanel(page).locator('[data-trim-overview-handle="right"]');
     const gripBox = (await grip.boundingBox())!;
     await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
     await page.mouse.down();
     await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
+    // WHICH EDGE IS MOVING, said out loud while it moves. This used to be the
+    // monitor's job and the monitor went with the panel row; the card carries
+    // it now, which is where the trim is.
     await expect(detailsPanel(page).locator("[data-item-details-edge]")).toHaveCount(1);
     await page.mouse.up();
     await expect
-      .poll(async () => (await page.locator("[data-trim-overview-window]").boundingBox())!.width)
+      .poll(
+        async () =>
+          (await detailsPanel(page)
+            .locator("[data-trim-overview-window]")
+            .boundingBox())!.width,
+      )
       .toBeLessThan(windowBox.width - 5);
 
     // Escape closes it and the name goes back where it came from — nothing
@@ -5696,10 +5713,12 @@ test.describe("graph view E2E", () => {
     await expect(redo).toBeDisabled();
 
     // Trim in here, and it lights up.
-    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const grip = detailsPanel(page).locator('[data-trim-overview-handle="right"]');
     const gripBox = (await grip.boundingBox())!;
     const windowWidth = async () =>
-      (await page.locator("[data-trim-overview-window]").boundingBox())!.width;
+      (await detailsPanel(page)
+        .locator("[data-trim-overview-window]")
+        .boundingBox())!.width;
     const before = await windowWidth();
     await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
     await page.mouse.down();

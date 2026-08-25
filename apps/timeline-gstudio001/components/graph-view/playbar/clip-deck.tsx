@@ -593,6 +593,23 @@ export function ClipDeck({
    * Measured across a card, the window band was the one place a press moved
    * nothing — which is most of what "grab does not work reliably" was.
    */
+  /**
+   * WHICH EDGE IS MOVING, while it is moving.
+   *
+   * The view used to say this on the monitor — a `data-item-details-edge` of
+   * "left" or "right" that appeared for the length of a drag, so the picture
+   * you were reading told you which end of the window you were pulling. The
+   * monitor went with the panel row and the signal went with it, leaving a
+   * trim that changes numbers with nothing saying which end you have hold of.
+   *
+   * It lives on the CARD now, which is where the trim itself lives. A slide
+   * (`move`) sets nothing: it takes both edges at once, so naming one would be
+   * a lie about which.
+   */
+  const [liveTrim, setLiveTrim] = useState<{ index: number; edge: "left" | "right" } | null>(
+    null,
+  );
+
   const dragTrim =
     (index: number, mode: "in" | "out" | "move") => (event: React.PointerEvent) => {
     event.stopPropagation();
@@ -608,6 +625,9 @@ export function ClipDeck({
     const grabbedAt = ((event.clientX - box.left) / box.width) * clip.source;
     const grabOffset = grabbedAt - startTrim.in;
     const windowLength = startTrim.out - startTrim.in;
+    setLiveTrim(
+      mode === "move" ? null : { index, edge: mode === "in" ? "left" : "right" },
+    );
 
     const move = (moveEvent: PointerEvent) => {
       const ratio = clamp((moveEvent.clientX - box.left) / box.width, 0, 1);
@@ -632,6 +652,7 @@ export function ClipDeck({
     // digitiser, the window losing focus. Measured: after a cancel the card's
     // big picture kept showing the dragged frame instead of the committed one.
     const cancel = () => {
+      setLiveTrim(null);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
@@ -639,6 +660,7 @@ export function ClipDeck({
       applyTrims(CLIPS.map((entry) => ({ in: entry.trimIn, out: entry.trimOut })));
     };
     const up = () => {
+      setLiveTrim(null);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
@@ -741,6 +763,9 @@ export function ClipDeck({
                         : undefined
                     }
                     data-i={index}
+                    data-item-details-edge={
+                      liveTrim?.index === index ? liveTrim.edge : undefined
+                    }
                     // THE NAME GOES ON THE CARD, NOT ON THE PICTURE INSIDE IT.
                     //
                     // Every card carries a transform and a filter, written by
@@ -822,7 +847,16 @@ export function ClipDeck({
                       </span>
                     </div>
 
-                    <div className="c-strip" data-trim-strip-slot="">
+                    <div
+                      className="c-strip"
+                      // THE MAP OF THE WHOLE SOURCE, under the name the view
+                      // has always been read by. `data-trim-overview` is what
+                      // the e2e suite calls this and what the panel's own trim
+                      // strip carried; the deck draws it differently and it is
+                      // still the same thing — the full source with a window
+                      // on it.
+                      data-trim-overview=""
+                    >
                       {Array.from({ length: CELLS }, (_, cell) => (
                         <div
                           key={cell}
@@ -842,11 +876,20 @@ export function ClipDeck({
                       />
                       <div
                         className="c-win"
+                        data-trim-overview-window=""
                         style={{ left: `${left}%`, width: `${width}%` }}
                         onPointerDown={dragTrim(index, "move")}
                       >
-                        <i className="c-h l" onPointerDown={dragTrim(index, "in")} />
-                        <i className="c-h r" onPointerDown={dragTrim(index, "out")} />
+                        <i
+                          className="c-h l"
+                          data-trim-overview-handle="left"
+                          onPointerDown={dragTrim(index, "in")}
+                        />
+                        <i
+                          className="c-h r"
+                          data-trim-overview-handle="right"
+                          onPointerDown={dragTrim(index, "out")}
+                        />
                       </div>
                     </div>
 

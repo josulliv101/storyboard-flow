@@ -1716,7 +1716,7 @@ export const NarrowPanelsShedTheirControlsAndStayAligned: Story = {
     for (const panel of panels()) {
       const strip = panel.querySelector<HTMLElement>("[data-trim-overview]");
       if (strip === null) continue;
-      const slot = panel.querySelector<HTMLElement>("[data-trim-strip-slot]")!;
+      const slot = panel.querySelector<HTMLElement>("[data-trim-overview]")!;
       expect(
         Math.abs(strip.getBoundingClientRect().width - slot.getBoundingClientRect().width),
       ).toBeLessThan(1);
@@ -2840,7 +2840,7 @@ export const TheTrimStripsShareOneLine: Story = {
     expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThan(1);
 
     // Every clip in this scene is a windowed video, so every panel draws a strip.
-    const strips = topsOf("[data-trim-strip-slot]");
+    const strips = topsOf("[data-trim-overview]");
     expect(strips.length).toBe(panels().length);
 
     // AND THE CONSEQUENCE. This holds only while the rows BELOW the strip
@@ -2858,7 +2858,7 @@ export const TheTrimStripsShareOneLine: Story = {
     // Asserted at whatever width the runner gives us, which is the point:
     // this used to be a claim that was only true on a wide canvas.
     const belowStrip = panels().map((panel) => {
-      const strip = panel.querySelector<HTMLElement>("[data-trim-strip-slot]")!;
+      const strip = panel.querySelector<HTMLElement>("[data-trim-overview]")!;
       return panel.getBoundingClientRect().bottom - strip.getBoundingClientRect().top;
     });
     expect(Math.max(...belowStrip) - Math.min(...belowStrip)).toBeLessThan(1);
