@@ -1807,7 +1807,7 @@ export function GraphItemDetailsModal() {
   useLayoutEffect(() => {
     if (!wantedNow) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName ?? "";
       if (target?.isContentEditable === true) return;
@@ -1815,8 +1815,21 @@ export function GraphItemDetailsModal() {
       event.preventDefault();
       setOpenId(null);
     };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    // ON THE CAPTURE PHASE, AND WITHOUT A `defaultPrevented` GUARD.
+    //
+    // Both were wrong, and together they made Escape work from one route and
+    // not the other. Opening by CLICKING A CARD leaves focus on that card, and
+    // a card is a dnd-kit draggable whose keyboard sensor takes Escape to mean
+    // "cancel the drag" and calls `preventDefault` on it. Bubbling in behind
+    // that, this handler saw a defaulted-prevented event and stood down — so
+    // Escape closed the view when it had been opened through the helper (focus
+    // elsewhere) and did nothing when opened by hand, which is every real use.
+    //
+    // Capturing is safe here rather than merely convenient: the board is GONE
+    // while this view is up, so there is no drag in flight for the sensor's
+    // reading of the key to be about.
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [wantedNow, setOpenId]);
 
   if (!mounted || node === null) return null;
