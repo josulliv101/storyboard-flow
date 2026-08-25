@@ -1723,3 +1723,49 @@ eager graph.
 So the change is kept on its MECHANISM and explicitly not on evidence. The
 measurement that would settle it is transferred JS before FCP in a real browser
 load, and it has not been taken.
+
+## PL15-027 — the server-rendered list, measured
+
+Same conditions throughout: production build, 4x CPU, Slow 4G, `/`.
+
+| | client-fetched | server-rendered |
+| --- | ---: | ---: |
+| LCP | 1,671 ms | **768 / 909 ms** |
+| Load delay | 1,405 ms | **402 / 275 ms** |
+| TTFB | 152 ms | 312 / 481 ms |
+| CLS | 0.00 | **0.18** |
+
+**LCP roughly halves and load delay drops by about a second**, which is exactly
+the mechanism the insight named: the poster is in the initial HTML now, so the
+preload scanner starts it instead of waiting for React to download, parse,
+execute, fetch the list and render a card.
+
+**TTFB rises ~160-330ms** because the server now does the Firestore read. That
+is a real trade and a good one — a few hundred milliseconds on the server
+bought about a second on the client.
+
+**`fetchPriority` ALONE DID NOTHING, and that is the honest result rather than
+a surprising one.** Applied without the server render it measured 2,095 ms
+against a 1,671 ms baseline — noise, not harm. A browser cannot prioritise a
+request it does not know exists. The two checks Chrome makes are not
+independent: the hint only means something once the resource is discoverable.
+
+**THE CLS IS UNRESOLVED AND THE BRANCH SHOULD NOT SHIP UNTIL IT IS.** CLS went
+0.00 to 0.18, above the 0.1 "good" threshold, and CLS is one of the four inputs
+to the Real Experience Score — so this currently trades one Core Web Vital for
+another.
+
+What is known about it:
+
+- It reproduces in TRACED loads, 2 of 2, as a single shift of 0.1837 about a
+  second in. DevTools reports "no potential root causes identified".
+- A `layout-shift` PerformanceObserver installed before navigation sees **zero
+  shifts** — on a normal navigation and on a hard reload with the cache
+  ignored.
+- The before/after comparison is like-for-like (both traced), which argues the
+  regression is real rather than an artifact.
+
+Those two facts do not sit together yet, and until they do the cause is not
+known. The next step is to reconcile them — an observer that survives the
+trace's own reload — rather than to guess at a culprit. `AuthGate` wrapping the
+page in `RootLayout` is the obvious suspect and is only a suspect.
