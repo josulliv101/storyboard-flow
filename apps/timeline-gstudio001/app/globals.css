@@ -355,6 +355,18 @@ html body[data-scroll-locked] {
    own; this only slows it enough to be read as the same object moving, and
    eases it so the growth decelerates into place instead of arriving flat.
    The scrim and the panel chrome cross-fade on the root transition. */
+/* THE BOARD CARD THE DETAILS VIEW FLEW FROM.
+   Applied by attribute rather than by inline style: React manages the `style`
+   of the elements it renders, and `startViewTransition` captures the old state
+   at the NEXT rendering opportunity rather than when it is called — so any
+   render in between rewrote the attribute and took the name with it. A real
+   click does render in between; dispatching the open event directly does not,
+   which is why this only ever failed for the gesture. React leaves an
+   attribute it was never given alone. */
+[data-details-hero] {
+  view-transition-name: trim-subject;
+}
+
 ::view-transition-old(trim-subject),
 ::view-transition-new(trim-subject) {
   animation-duration: 260ms;

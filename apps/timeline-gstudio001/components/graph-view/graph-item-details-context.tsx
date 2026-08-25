@@ -81,6 +81,9 @@ export const ITEM_DETAILS_PARAM = "details";
  */
 const HERO = "trim-subject";
 
+/** Carries `view-transition-name: trim-subject` via a rule in `globals.css`. */
+const HERO_ATTRIBUTE = "data-details-hero";
+
 /** The board card for this node, if it is on screen to fly from. */
 function boardCard(id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
@@ -130,7 +133,13 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
 
   const setOpenId = useCallback(
     (next: string | null) => {
-      setPending(next);
+      // NOTHING PUBLISHES THE NEW ITEM UNTIL THE PATH IS CHOSEN, and an earlier
+      // version published here. `setPending` swaps the board for the details
+      // view, so calling it at the top unmounted the card the flight is
+      // supposed to start from — measured, the source still carried the hero
+      // name at the moment `startViewTransition` was called and had collapsed
+      // to 0x0 one frame later, when the browser actually captures. Both
+      // branches below set it at the point where it is safe to.
       const { openId: current, pathname: path, searchParams: query } = latest.current;
       const params = new URLSearchParams(query.toString());
       if (next === null) params.delete(ITEM_DETAILS_PARAM);
@@ -158,7 +167,20 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
         return;
       }
 
-      card.style.setProperty("view-transition-name", HERO);
+      // AN ATTRIBUTE, NOT AN INLINE STYLE, and the difference is what makes
+      // this survive a real click.
+      //
+      // React manages the `style` attribute of elements it renders, so any
+      // re-render between here and the browser's capture rewrites it and drops
+      // an imperative `view-transition-name`. Dispatching the open event
+      // directly has nothing else in the task and never showed it; a genuine
+      // click does — selection, dnd-kit state, focus — and the source was gone
+      // by capture time, leaving a morph with nowhere to come from.
+      //
+      // React does not reconcile attributes it was never given, so this one is
+      // still there when the browser looks. The name itself is applied from a
+      // rule in `globals.css`.
+      card.setAttribute(HERO_ATTRIBUTE, "");
       void withViewTransition(
         () => {
           // The card gives the name up in the same frame the view takes it, so
@@ -166,7 +188,7 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
           // this synchronously — the browser captures the "after" state as soon
           // as the callback returns, and a queued update would leave nothing to
           // fly to.
-          card.style.removeProperty("view-transition-name");
+          card.removeAttribute(HERO_ATTRIBUTE);
           setPending(next);
           // AND THE URL MOVES IN HERE, which is the whole fix.
           //
