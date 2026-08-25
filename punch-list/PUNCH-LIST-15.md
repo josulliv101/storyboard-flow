@@ -1179,7 +1179,13 @@ production, and nobody notices until someone watches carefully.
 
 ## PL15-020 — A preview-height invariant regressed somewhere in this list
 
-- Status: OPEN — reproduced, NOT attributed, and INTERMITTENT. Raised by me,
+- Status: COMPLETE. The second contributor was the FIRST fix’s own leftover:
+  a `dividerRef` guard in `initialSurfaceHeight` that nothing below it used
+  any more. Measured at N=30, default workers, failures counted by kind:
+  the height assertion went 10 of 30 to 0 of 30. The residual 1-2 of 30 is a
+  DIFFERENT assertion — the divider’s hover colour — filed as PL15-031. See
+  "PL15-020 — the second contributor" at the end of this list.
+- Was: OPEN — reproduced, NOT attributed, and INTERMITTENT. Raised by me,
   against my own work. Rate measured at the end of the list: 4 of 6 passing in
   isolation, and a full suite run that came back entirely green — so a green
   run is NOT evidence this is fixed. `origin/main` passed it 6 of 6.
@@ -2280,3 +2286,91 @@ USER-OWNED and its mount-time sizing is the subject of PL15-020, which is open
 with a second contributor still unfound: animating a height that a known
 intermittent bug already mis-sets is how you get a third contributor. Worth
 doing after PL15-020 closes, not before.
+
+## PL15-020 — the second contributor, and it was a leftover
+
+**FOUND, AND IT WAS THE FIRST FIX'S OWN RESIDUE.** `initialSurfaceHeight` opened
+with a guard:
+
+```
+const divider = dividerRef.current;
+if (!divider) return false;
+```
+
+and then never touched `divider` again. It was needed while the ceiling was
+`available - divider.offsetHeight`, which is exactly what the FIRST half of this
+item removed — "omitting the argument is the fix" — but the guard it existed for
+stayed behind.
+
+So the sizing still bailed whenever the mount layout effect ran before the
+divider had attached, and on those passes the pane rendered at
+`DEFAULT_SURFACE_HEIGHT` and PUBLISHED it: `aria-valuenow` says 380. Latching on
+success made the retry work, which is why the rate improved — but a retry is a
+correction, and anything reading the height in that window reads one the pane is
+about to change. The test captures `initial` as soon as the value is above zero,
+so it was reading 380 and comparing it against the corrected 207.
+
+**MEASURED, SAME N AND SAME WORKER COUNT, WHICH THIS ITEM ALREADY KNEW TO HOLD
+CONSTANT.** N=30 at the default worker count, `--retries=0`, `test-results`
+cleared between runs so the failure kinds could be counted rather than guessed:
+
+| | height failures | hover failures | passed |
+| --- | ---: | ---: | ---: |
+| guard present | **10 / 30** | 2 / 30 | 18 / 30 |
+| guard removed | **0 / 30** | 1 / 30 | 29 / 30 |
+
+The height assertion has not failed once since. The whole `graph-view` project
+runs 162 passed, 4 skipped, 0 failed.
+
+**THE FAILURE KIND IS THE FINDING, NOT THE COUNT.** Reading only "9 of 10" and
+"26 of 30" would have said "better, still broken" and sent the next person back
+to the sizing code. The four remaining failures were a DIFFERENT assertion — the
+divider's hover colour, `not.toBe` rather than `toBe` — which the height failure
+had been masking by aborting the test first. Counting kinds took one command and
+turned an ambiguous rate into a closed item plus a new one.
+
+**A WARNING FOR THE NEXT MEASUREMENT.** `test-results/` accumulates across runs,
+so a `find` over it mixes this run's failures with the last one's. The first
+attribution I made from it was wrong in exactly that way — it showed the fixed
+run's leftovers beside the baseline's. Clear the directory before each run.
+
+## PL15-031 — the divider's hover colour does not always take
+
+- Status: OPEN, measured but not diagnosed. 1-2 in 30 at the default worker
+  count; unchanged by PL15-020's fix, and present before it.
+- Area: `apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts`
+  (`preview height is the user's…`), `packages/ui/timeline/viewport`
+- Screenshot: Not captured
+
+The test hovers the divider and waits for its band to change colour:
+
+```
+await divider.hover({ position: { x: 60, y: 10 } });
+await expect.poll(dividerLineColor).not.toBe(restLineColor);
+```
+
+Occasionally the colour never changes and the poll times out after 5s, reporting
+`Expected: not "oklch(0.274 0.006 286.033)"` — the resting colour.
+
+**IT WAS HIDING BEHIND PL15-020.** The hover assertion comes BEFORE the height
+one, so a run that failed the hover never reached the height — and a run that
+failed the height had passed the hover. Only once the height stopped failing did
+this become the visible remainder, at 1 in 30 rather than the 10 in 30 it sat
+behind.
+
+What is NOT yet known: whether the pointer fails to land, whether the colour
+change is real but slower than the poll under parallel load, or whether
+something intermittently covers the divider at x=60. The band is painted from
+`currentColor` through a gradient, and the test already had to be corrected once
+for reading `backgroundColor` on a gradient-backed element — so the read itself
+is worth re-checking before the cause is assumed.
+
+Acceptance criteria:
+
+- The cause is named, not the rate improved. A number that moves without an
+  explanation is the thing this list keeps catching.
+- The fix is measured the way PL15-020 was: N=30, worker count held constant,
+  `test-results` cleared between runs, and failures counted BY KIND.
+- If it turns out to be the test rather than the component, the assertion is
+  corrected rather than loosened — a poll that passes because it waits longer is
+  a poll that has stopped asserting.

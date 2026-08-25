@@ -2557,8 +2557,22 @@ export function WorkbenchSplitPane({
     if (dragStartRef.current) return false;
     if (typeof window === "undefined") return false;
 
-    const divider = dividerRef.current;
-    if (!divider) return false;
+    // NO DIVIDER GUARD, and removing it is the second half of PL15-020.
+    //
+    // This bailed when `dividerRef.current` was null, which it is whenever the
+    // mount layout effect runs before the divider has attached. On those passes
+    // the pane rendered at `DEFAULT_SURFACE_HEIGHT` and PUBLISHED it —
+    // `aria-valuenow` says 380 — and only reached its real height on a later
+    // re-run. Anything reading the height in that window read one the pane was
+    // about to correct, which is precisely what `preview height is the user's`
+    // was catching: it captures `initial` as soon as the value is above zero.
+    //
+    // The guard was left over from the ceiling fix above. It existed because
+    // the old ceiling was `available - divider.offsetHeight`, so the divider
+    // had to be measurable; that argument is gone — `clampSurfaceHeight` is
+    // called with no max now — and nothing below reads `divider` at all.
+    // Latching on success (see the mount effect) made the retry work; this
+    // removes the need to retry.
 
     // A third of what the user can actually SEE, not of a <main> that may
     // run far below the fold — getViewportBoundaryBottom already resolves
