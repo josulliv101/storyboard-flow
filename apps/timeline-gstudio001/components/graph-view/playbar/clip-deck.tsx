@@ -321,52 +321,58 @@ export function ClipDeck({
    */
   useEffect(() => {
     const deck = deckRef.current;
-    if (deck === null || standalone || !fitToHeight) {
-      // Hand the cards back to the reference's own `clamp(300px, 30vw, 440px)`,
-      // so turning fitting off restores the design rather than freezing
-      // whatever width the last fit happened to land on.
-      deckRef.current?.style.removeProperty("--clip-w");
-      return;
-    }
+    if (deck === null || standalone) return;
+
     const fit = () => {
       const card = cardRefs.current.find((candidate) => candidate !== null);
-      const view = card?.querySelector<HTMLElement>(".c-view");
-      if (card == null || view == null) return;
-      const available = deck.clientHeight;
-      if (available <= 0) return;
-
-      const pictureHeight = view.offsetHeight;
-      const pictureWidth = view.offsetWidth;
+      const picture = card?.querySelector<HTMLElement>(".c-view");
+      if (card == null || picture == null) return;
+      const pictureHeight = picture.offsetHeight;
+      const pictureWidth = picture.offsetWidth;
       if (pictureHeight <= 0 || pictureWidth <= 0) return;
+
+      // A card is a fixed stack of rows plus a picture that is a fixed shape,
+      // so `fixed`, `aspect` and `sideways` are constants of the design and
+      // hold whatever width the card happens to be at right now.
       const fixed = card.offsetHeight - pictureHeight;
       const aspect = pictureWidth / pictureHeight;
       const sideways = card.offsetWidth - pictureWidth;
 
-      const widest = (available - CARD_BREATHING_PX - fixed) * aspect + sideways;
+      // WHAT THE DECK NEEDS TO SHOW A CARD AT THE DESIGN'S OWN WIDTH,
+      // published for the view to read.
+      //
+      // The view has to decide whether fitting can succeed BEFORE it starts
+      // conceding, and it cannot work this out for itself: the cards are
+      // absolutely positioned with the deck's overflow visible, so a deck
+      // squeezed under its card does not clip it — the card sprawls, and
+      // overflow that escapes a visible box is not scrollable content. Every
+      // measurement the view could take is blind to it. So the deck says.
+      //
+      // A custom property rather than a callback: no React state, so no render
+      // and no chance of the two components driving each other round a loop.
+      const need = Math.round(fixed + (CARD_MAX_WIDTH_PX - sideways) / aspect + CARD_BREATHING_PX);
+      if (deck.style.getPropertyValue("--deck-need") !== `${need}px`) {
+        deck.style.setProperty("--deck-need", `${need}px`);
+      }
 
-      // NARROW ONLY IF NARROWING ACTUALLY FITS.
-      //
-      // Below the floor the card cannot be made short enough however thin it
-      // gets — a card is a fixed stack of rows plus a picture, so there is a
-      // height it cannot go under. Clamping to the floor anyway produced the
-      // worst of both: cards shrunk to 300 AND still cut off, which reads as
-      // the deck having been broken rather than fitted. Measured at a 910-tall
-      // window with the pane open, the deck had 127px for a card that cannot be
-      // shorter than 374.
-      //
-      // So when a fit is out of reach, the design's own size is the better
-      // answer and the remainder scrolls. Conceding is for when conceding wins.
-      if (widest < CARD_MIN_WIDTH_PX) {
-        if (deck.style.getPropertyValue("--clip-w") === "") return;
-        deck.style.removeProperty("--clip-w");
-        layout();
+      if (!fitToHeight) {
+        // Hand the cards back to the reference's own `clamp(300px, 30vw,
+        // 440px)`, so turning fitting off restores the design rather than
+        // freezing whatever width the last fit landed on.
+        if (deck.style.getPropertyValue("--clip-w") !== "") deck.style.removeProperty("--clip-w");
+        if (deck.style.minHeight !== "") deck.style.removeProperty("min-height");
         return;
       }
+
+      const available = deck.clientHeight;
+      if (available <= 0) return;
+      const widest = (available - CARD_BREATHING_PX - fixed) * aspect + sideways;
       const next = Math.round(clamp(widest, CARD_MIN_WIDTH_PX, CARD_MAX_WIDTH_PX));
       if (deck.style.getPropertyValue("--clip-w") === `${next}px`) return;
       deck.style.setProperty("--clip-w", `${next}px`);
       layout();
     };
+
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(deck);
@@ -547,7 +553,10 @@ export function ClipDeck({
                   // resolves against a parent with no height of its own, and
                   // the deck collapses under its own cards.
                   fitToHeight
-                  ? { marginTop: 0, marginBottom: 0, height: "100%", minHeight: 0 }
+                  ? // `minHeight` is deliberately absent: `fit()` owns it, and a
+                    // value here would be rewritten over its answer on every
+                    // render. React only touches the properties it is given.
+                    { marginTop: 0, marginBottom: 0, height: "100%" }
                   : { marginTop: 0, marginBottom: 0 }
             }
             aria-label="Clip takes"

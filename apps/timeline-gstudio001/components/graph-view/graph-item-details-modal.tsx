@@ -129,26 +129,29 @@ const DETAILS_BOTTOM_GAP_PX = 12;
  */
 const DETAILS_MIN_FIT_PX = 360;
 
-/* ── THE ORDER IN WHICH THINGS GIVE ──────────────────────────────────────
-   Both the bar and the deck are height-hungry and the window is not, so
-   something has to concede. The strip concedes FIRST: a shot box still reads
-   as a shot box at 120px, whereas the deck's cards are mostly text and a
-   narrower card is a smaller typeface on the one surface carrying names,
-   timecodes and the trim fields.
+/* ── CONCEDE ONLY WHEN CONCEDING WINS ────────────────────────────────────
+   Something has to give in a window that cannot hold everything, and the
+   order is: the column's SPACING first, because it costs no content; then the
+   STRIP, because a shot box still reads as a shot box shorter. The deck is
+   told nothing — it fits its own cards to the height it ends up with.
 
-   MEASURED, not chosen. At a view height of 828px the deck received 400px and
-   wanted 461 for a full-width card, so the deck's share is `fit - 428` and the
-   comfort point — the height above which nothing needs to give — is 889.
-   Below it the strip hands back the shortfall, up to 30px. Every number here
-   came off the running app; if the bar's rows change, re-measure rather than
-   nudge. ─────────────────────────────────────────────────────────────────── */
+   BUT ONLY IF THE SHORTFALL IS COVERABLE. These two together can find 70px.
+   Past that the column cannot be made to fit however much is given up, and
+   spending the strip's height on a view that still scrolls buys a shorter
+   film and nothing else — the same trade the deck's cards were making when
+   they shrank to their floor AND stayed cut off. Measured with the pane open
+   at a 910-tall window, the shortfall is 159: far out of reach, so nothing
+   concedes and the strip stays at its full 150.
+
+   The shortfall is MEASURED off the live column rather than derived from a
+   comfort constant. The old `889` was a number fitted to one layout, and the
+   bar's rows have already changed twice under it. ────────────────────────── */
 const STRIP_FULL_HEIGHT_PX = 150;
 // 104 rather than 120 because 120 left a 1503x800 window 15px short — close
 // enough that the last of it should come from the strip, which is next in the
 // order anyway, rather than from shaving unrelated constants until it fits. A
 // shot box is still legibly a shot box here; below about 100 it stops being.
 const STRIP_FLOOR_HEIGHT_PX = 104;
-const STRIP_COMFORT_FIT_PX = 889;
 /** The column's own spacing concedes before either component does — it is the
  *  only give that costs no content at all. `gap-6` restated here because it is
  *  now written from JS and two sources for one number is how they drift. */
@@ -1184,6 +1187,10 @@ function DetailsFilmstripModal({
   // It tracks the rail opening and closing, the window resizing, and the
   // preview pane taking height, with nothing to keep in sync.
   const viewRef = useRef<HTMLElement | null>(null);
+  /** How much height the column has already given up, so the shortfall can be
+   *  measured without clearing the concessions to find it. */
+  const concededRef = useRef(0);
+  const [fitting, setFitting] = useState(false);
   const { previewOpen } = useTrimPreview();
   useLayoutEffect(() => {
     const element = viewRef.current;
@@ -1208,6 +1215,8 @@ function DetailsFilmstripModal({
         element.style.removeProperty("height");
         element.style.removeProperty("gap");
         element.style.removeProperty("--strip-h");
+        concededRef.current = 0;
+        setFitting(false);
         return;
       }
 
@@ -1235,30 +1244,63 @@ function DetailsFilmstripModal({
       // the same element, and an unconditional write is a loop.
       if (element.style.height !== `${fit}px`) element.style.height = `${fit}px`;
 
-      // ── THE CONCESSION LADDER ────────────────────────────────────────
+      // ── THE CONCESSION LADDER, IF IT CAN REACH ───────────────────────
       //
-      // A shortfall is paid down in a fixed order, each step taking only what
-      // the one before it could not: the column's SPACING first, because it
-      // costs no content; then the STRIP, because a shot box survives being
-      // shorter; and whatever is still owed is left to the DECK, which narrows
-      // its cards on its own from the height it ends up with.
+      // EVERY INPUT HERE IS INDEPENDENT OF THE OUTPUT, and that is the whole
+      // design of it. The first version measured `scrollHeight` — a RESULT of
+      // the concessions — and fed it back in, so the view conceded, the deck
+      // resized, the deck's observer refitted, the view's observer fired again,
+      // and the two drove each other in a circle. That is what the nonstop
+      // flickering of the deck was.
       //
-      // The deck is told nothing. It re-fits to whatever it is given, so
-      // handing over the height IS the negotiation — no second opinion about
-      // card sizes living up here to go stale.
-      let owed = Math.max(0, STRIP_COMFORT_FIT_PX - fit);
-      const take = (available: number) => {
-        const taken = Math.min(owed, Math.max(0, available));
-        owed -= taken;
-        return taken;
-      };
+      // These four cannot move in response to what is decided below: the
+      // header's height, the bar's height with its film at full size, the
+      // deck's own stated requirement, and the height on offer. So the answer
+      // is the same every time it is asked, and asking again changes nothing.
+      const headerHeight = (element.firstElementChild as HTMLElement | null)?.offsetHeight ?? 0;
+      const bar = element.querySelector<HTMLElement>(".playbar");
+      const strip = element.querySelector<HTMLElement>(".strip");
+      const deck = element.querySelector<HTMLElement>(".deck");
+      const barAtFullFilm =
+        bar === null
+          ? 0
+          : bar.offsetHeight + (STRIP_FULL_HEIGHT_PX - (strip?.offsetHeight ?? STRIP_FULL_HEIGHT_PX));
+      const deckNeed =
+        deck === null
+          ? 0
+          : Number.parseInt(getComputedStyle(deck).getPropertyValue("--deck-need"), 10) || 0;
 
-      // Two gaps in the column, so each pixel off the gap is two off the total.
-      const fromGaps = take(2 * (DETAILS_GAP_PX - DETAILS_GAP_FLOOR_PX));
-      element.style.gap = `${DETAILS_GAP_PX - fromGaps / 2}px`;
+      const needed = headerHeight + 2 * DETAILS_GAP_PX + barAtFullFilm + deckNeed;
+      const room = 2 * (DETAILS_GAP_PX - DETAILS_GAP_FLOOR_PX) + (STRIP_FULL_HEIGHT_PX - STRIP_FLOOR_HEIGHT_PX);
 
-      const fromStrip = take(STRIP_FULL_HEIGHT_PX - STRIP_FLOOR_HEIGHT_PX);
-      element.style.setProperty("--strip-h", `${STRIP_FULL_HEIGHT_PX - fromStrip}px`);
+      // OUT OF REACH: concede NOTHING. Spending the film's height on a column
+      // that still will not fit buys a shorter strip and nothing else — the
+      // same bad trade the cards were making when they shrank to their floor
+      // and stayed cut off. The remainder scrolls instead.
+      const owedTotal = needed <= fit ? 0 : needed - fit > room ? 0 : needed - fit;
+      if (owedTotal !== concededRef.current) {
+        concededRef.current = owedTotal;
+        if (owedTotal === 0) {
+          element.style.removeProperty("gap");
+          element.style.removeProperty("--strip-h");
+        } else {
+          let owed = owedTotal;
+          const take = (available: number) => {
+            const taken = Math.min(owed, Math.max(0, available));
+            owed -= taken;
+            return taken;
+          };
+          // Two gaps in the column, so a pixel off the gap is two off the total.
+          const fromGaps = take(2 * (DETAILS_GAP_PX - DETAILS_GAP_FLOOR_PX));
+          element.style.gap = `${DETAILS_GAP_PX - fromGaps / 2}px`;
+          const fromStrip = take(STRIP_FULL_HEIGHT_PX - STRIP_FLOOR_HEIGHT_PX);
+          element.style.setProperty("--strip-h", `${STRIP_FULL_HEIGHT_PX - fromStrip}px`);
+        }
+      }
+
+      // The deck only narrows its cards when the column is actually being made
+      // to fit; otherwise it keeps the design's width and the view scrolls.
+      setFitting(needed - fit <= room);
     };
     publish();
     const observer = new ResizeObserver(publish);
@@ -1407,8 +1449,8 @@ function DetailsFilmstripModal({
         // With the pane down this is deliberately NOT a flex item: left as one
         // it shrank instead of letting the column grow, so the page stopped
         // scrolling and the section clipped 222px of deck instead.
-        className={previewOpen ? "min-h-0 flex-1" : undefined}
-        fitToHeight={previewOpen}
+        className={fitting ? "min-h-0 flex-1" : undefined}
+        fitToHeight={fitting}
         // THE `3 · 5` CONTROL, WIRED BACK UP. It sized the old panel row and
         // has had nothing to act on since the deck replaced it — a setting
         // still on screen, still remembered, and inert. Five ADDS a card each

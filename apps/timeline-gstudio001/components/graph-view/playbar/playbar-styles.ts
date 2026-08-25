@@ -425,8 +425,21 @@ export const PLAYBAR_CSS = `.pb{
    the same thing. \`currentColor\` so it is the chip's ink and cannot drift
    from the numerals beside it; a hair below the cap height so it reads as a
    mark on the chip rather than a button in it. ─────────────────────────── */
-.pb .ph-chip{ display:inline-flex; align-items:center; gap:4px; }
-.pb .ph-tv{ width:9px; height:9px; flex:none; opacity:.8; }
+.pb .ph-chip{
+  display:inline-flex; align-items:center; gap:5px;
+  /* BIGGER THAN THE REFERENCE'S. Its chip is a 10.5px numeral in a page that
+     also has a player showing the same time; here it is the only readout of
+     where the playhead is, and it now carries the monitor mark as well. */
+  font-size:13px; padding:5px 10px 4px; border-radius:7px;
+}
+.pb .ph-tv{ width:12px; height:12px; flex:none; opacity:.85; }
+/* THE STEM FOLLOWS THE CHIP. Both offsets are measured from the chip's lower
+   edge in the reference — the arrow one pixel into it, the line six below —
+   so growing the chip without moving these leaves the arrow buried in it and
+   the line starting inside the label. Restated against the new height rather
+   than nudged. */
+.pb .ph-tri{ top:28px; }
+.pb .ph-line{ top:35px; }
 
 /* ── THE CARD IS SIZED BY WIDTH, SO WIDTH IS THE HEIGHT DIAL ─────────────
    The reference gives \`.clip\` \`width: clamp(300px, 30vw, 440px)\` and makes
