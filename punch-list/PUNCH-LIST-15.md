@@ -1285,7 +1285,52 @@ That reframes it as a product question rather than a bug: should a pane the
 user sized shrink because the page scrolled? If not, the ceiling has to come
 from something stable rather than from the live `rootTop`.
 
-**THREE ATTEMPTS, NONE AN IMPROVEMENT — do not repeat these.** The owner's
+**MEASURED PROPERLY AT LAST — N=10, WITH A CONTROL.** Every earlier reading in
+this item came from 3-to-6 sample runs with nothing to compare against, and all
+of them were noise. With ten repeats per point and a pre-branch control the
+picture is finally stable:
+
+| Point | Contents | Invariant | Reveal |
+| --- | --- | --- | --- |
+| `aba9145` — before #530 | — | **10 / 10** | 6 / 10 |
+| `7618fce` | PL15-001, 002, 007 | 9 / 10 | — |
+| **`d8b8250`** | **+ PL15-003, 004, 012** | **6 / 10** | — |
+| `a669bf5` | + 017, 009, 019 | 6 / 10 | — |
+| `62368e4` | + 010, 011, 014, 015, 005, 006 | 5 / 10 | — |
+| `origin/main` | everything | 5 / 10 | 5 / 10 |
+
+Two conclusions, and the second corrects something said earlier in this file:
+
+- **The drop is at `d8b8250`, which carries PL15-003** — the strip opening in
+  Collections instead of flat. That changes what the board draws on arrival,
+  so it changes the board's content height, so it changes where the page sits
+  when the clamp runs. PL15-003 did not break the preview; it moved the ground
+  under a ceiling that was always scroll-dependent.
+- **THE REVEAL TEST WAS ALREADY 6 / 10 BEFORE ANY OF THIS WORK.** Earlier notes
+  here blamed a clamp change for breaking it. That was wrong — it is a
+  pre-existing flake and it is not part of this regression.
+
+**Both candidate fixes were then measured the same way, and NEITHER works:**
+
+| Fix | Invariant |
+| --- | --- |
+| Clamp only when the viewport actually shrank | 6 / 10 |
+| Drop the live `rootTop` from the ceiling | 5 / 10 |
+
+So the model — "the ceiling moves with scroll, stop it moving" — is either
+wrong or incomplete. Something else is carrying this.
+
+**What the next person has that nobody had before:** a control that scores
+10 / 10 (`aba9145`), a bisect that localises the change to `d8b8250`, a
+measurement protocol that distinguishes signal from noise (N=10; anything
+smaller has produced flatly contradictory answers in this item three times),
+and two disproved hypotheses. Start by diffing `d8b8250` against `7618fce` for
+what it does to the BOARD's height, not for what it does to the preview.
+
+---
+
+**THE EARLIER ATTEMPTS, kept because they were reported here as conclusions
+and were not:** The owner's
 answer to the product question is settled: *no, a pane you sized should not
 shrink because the page scrolled.* Implementing that is what keeps failing.
 
