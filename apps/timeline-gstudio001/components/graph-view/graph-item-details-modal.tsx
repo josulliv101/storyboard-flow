@@ -1380,89 +1380,13 @@ function DetailsFilmstripModal({
           onClose={onClose}
         />
       </div>
-      {timeline.totalSeconds > 0 && (
-        <div
-          // IN FLOW, for the same reason the header above is — `top-16` was
-          // the header's height restated as a constant, and that is exactly
-          // the kind of number that goes stale silently.
-          className="px-6 pt-4"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          {/* THE SAME WIDTH AS THE ROW BELOW IT.
-
-              This was capped at `7xl` on the reasoning that the bar is a
-              map and gets more useful the more of the project it can show,
-              so it should be WIDER than the panels — which was true while
-              the panels were capped too.
-
-              They are not any more, and the cap inverted the intent it was
-              written for: measured at 1920 the cards ran 1872px and the bar
-              1280, so the cards overhung the thing they belong to by 296px
-              on each side. A ruler that does not reach as far as the row it
-              measures reads as a floating island rather than as the top of
-              one panel. Sharing the edge costs the bar nothing — it only
-              ever gets wider. */}
-          <div className="mx-auto w-full">
-            <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
-            {/* THE PORTED STRIP, IN PLACE OF THE WHOLE BAR (PL15-030).
-                The reference's film strip replaces the ruler, the boxes, the
-                playhead and the minimap — and the controls row goes with them,
-                which was an explicit call rather than a casualty: the clock, the
-                five transport buttons, the reach picker and the settings gear all
-                lived inside `SeamStripBar`.
-
-                REACH HAD NOTHING LEFT TO DO. It existed because the old bar could
-                not move, so seeing more of the sequence meant paging a window.
-                This strip PANS, with inertia, across every clip at once — so its
-                clock is the timeline's by construction. */}
-            <FilmStrip
-              standalone={false}
-              shots={stripShots}
-              seconds={shownSeconds}
-              playing={playing}
-              selectedId={node.id as string}
-              onScrub={(seconds) => {
-                setPlaying(false);
-                setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
-              }}
-              onSkim={setSkimSeconds}
-              skimPreview={skimPreview}
-              onTogglePlay={() => setPlaying((was) => !was)}
-              onSelect={(clipId) => landOn(clipId, position)}
-            />
-            </PlaybarThumbnailsProvider>
-          </div>
-        </div>
-      )}
-
-      {/* HOW MANY CLIPS TO SHOW, bottom right and out of the way.
-          Deliberately down here rather than up with the transport: that bar is
-          about the cut you are looking at, and this is about how much of the
-          timeline is on screen — a question you answer once and then work,
-          not a control you reach for while judging a seam. */}
-      <div
-        className="pointer-events-auto absolute right-6 bottom-6 z-10 transition-opacity duration-200"
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        {/* NO LABEL. Every other group in the view wears one, and this is the
-            single exception: `3 · 5` sits alone in a corner with nothing to be
-            confused with, and the words "clips on screen" are already in its
-            aria-label and in every segment's title. */}
-        <SegmentedControl
-          ariaLabel="Clips on screen"
-          groupAttribute="data-details-view-count"
-          segments={VIEW_COUNTS.map((count) => ({
-            value: count,
-            label: count,
-            title: "Show " + count + " clips",
-            active: count === viewCount,
-          }))}
-          onSelect={chooseViewCount}
-        />
-      </div>
-
-      {/* The STRIP: one row, translated. Centred by the scrim, then offset by
-          the subject's index so the clip being worked on lands mid-screen. */}
+      {/* THE DECK ABOVE, THE FILM BELOW.
+          Swapped from the reference's order, which puts its strip under the
+          player and the cards under that. Here the strip is the whole
+          sequence and the deck is the clip being worked on, so the film reads
+          as the ground the work sits on rather than a header above it — and
+          the skim card, which hangs above the playhead, now floats over the
+          cards instead of over the page furniture. */}
       {/* THE PORTED CLIP DECK, IN PLACE OF THE PANEL ROW (PL15-030).
           The reference's deck: same-width cards with the ones beside the
           subject scaled, dimmed and desaturated, swipeable with a fling.
@@ -1517,6 +1441,89 @@ function DetailsFilmstripModal({
           });
         }}
       />
+
+      {/* HOW MANY CLIPS TO SHOW, bottom right and out of the way.
+          Deliberately down here rather than up with the transport: that bar is
+          about the cut you are looking at, and this is about how much of the
+          timeline is on screen — a question you answer once and then work,
+          not a control you reach for while judging a seam. */}
+      <div
+        className="pointer-events-auto absolute right-6 bottom-6 z-10 transition-opacity duration-200"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {/* NO LABEL. Every other group in the view wears one, and this is the
+            single exception: `3 · 5` sits alone in a corner with nothing to be
+            confused with, and the words "clips on screen" are already in its
+            aria-label and in every segment's title. */}
+        <SegmentedControl
+          ariaLabel="Clips on screen"
+          groupAttribute="data-details-view-count"
+          segments={VIEW_COUNTS.map((count) => ({
+            value: count,
+            label: count,
+            title: "Show " + count + " clips",
+            active: count === viewCount,
+          }))}
+          onSelect={chooseViewCount}
+        />
+      </div>
+
+      {/* The STRIP: one row, translated. Centred by the scrim, then offset by
+          the subject's index so the clip being worked on lands mid-screen. */}
+      {timeline.totalSeconds > 0 && (
+        <div
+          // IN FLOW, for the same reason the header above is — `top-16` was
+          // the header's height restated as a constant, and that is exactly
+          // the kind of number that goes stale silently.
+          className="px-6 pt-4"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          {/* THE SAME WIDTH AS THE ROW BELOW IT.
+
+              This was capped at `7xl` on the reasoning that the bar is a
+              map and gets more useful the more of the project it can show,
+              so it should be WIDER than the panels — which was true while
+              the panels were capped too.
+
+              They are not any more, and the cap inverted the intent it was
+              written for: measured at 1920 the cards ran 1872px and the bar
+              1280, so the cards overhung the thing they belong to by 296px
+              on each side. A ruler that does not reach as far as the row it
+              measures reads as a floating island rather than as the top of
+              one panel. Sharing the edge costs the bar nothing — it only
+              ever gets wider. */}
+          <div className="mx-auto w-full">
+            <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
+            {/* THE PORTED STRIP, IN PLACE OF THE WHOLE BAR (PL15-030).
+                The reference's film strip replaces the ruler, the boxes, the
+                playhead and the minimap — and the controls row goes with them,
+                which was an explicit call rather than a casualty: the clock, the
+                five transport buttons, the reach picker and the settings gear all
+                lived inside `SeamStripBar`.
+
+                REACH HAD NOTHING LEFT TO DO. It existed because the old bar could
+                not move, so seeing more of the sequence meant paging a window.
+                This strip PANS, with inertia, across every clip at once — so its
+                clock is the timeline's by construction. */}
+            <FilmStrip
+              standalone={false}
+              shots={stripShots}
+              seconds={shownSeconds}
+              playing={playing}
+              selectedId={node.id as string}
+              onScrub={(seconds) => {
+                setPlaying(false);
+                setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
+              }}
+              onSkim={setSkimSeconds}
+              skimPreview={skimPreview}
+              onTogglePlay={() => setPlaying((was) => !was)}
+              onSelect={(clipId) => landOn(clipId, position)}
+            />
+            </PlaybarThumbnailsProvider>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
