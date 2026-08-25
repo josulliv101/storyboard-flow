@@ -707,6 +707,24 @@ export function ClipDeck({
                         : undefined
                     }
                     data-i={index}
+                    // THE NAME GOES ON THE CARD, NOT ON THE PICTURE INSIDE IT.
+                    //
+                    // Every card carries a transform and a filter, written by
+                    // `layout()` on every frame. A `view-transition-name` on a
+                    // DESCENDANT of a transformed, filtered subtree is captured
+                    // relative to that subtree — measured, the browser had both
+                    // boxes (a 320x220 board card and a 410x205 picture) and
+                    // still held the group at the destination for the whole
+                    // flight, cross-fading in place instead of travelling.
+                    //
+                    // The card is the transformed element itself rather than
+                    // something inside one, so its own transform is part of the
+                    // geometry the browser captures.
+                    style={
+                      heroName !== undefined && index === active
+                        ? { viewTransitionName: heroName }
+                        : undefined
+                    }
                     ref={(node) => {
                       cardRefs.current[index] = node;
                     }}
@@ -731,9 +749,6 @@ export function ClipDeck({
                       <div
                         className="c-frame cine"
                         style={{
-                          ...(heroName !== undefined && index === active
-                            ? { viewTransitionName: heroName }
-                            : {}),
                           // THE PICTURE FOLLOWS THE TRIM WHILE IT IS MOVING.
                           //
                           // A card's big image is the frame its clip starts on,
