@@ -2005,79 +2005,115 @@ Acceptance criteria:
 
 ## PL15-030 — The reference design for the details view
 
-- Status: Not started. **The spec below is READ OFF THE RENDERED ARTIFACT, not
-  off its source** — the artifact renders in a sandboxed iframe, so its text and
-  its code view could not be extracted, and screenshots crop at 800px. The owner
-  has the code and it supersedes everything here the moment it lands. Treat the
-  measurements as SHAPES, not values.
-- Reference: https://claude.ai/public/artifacts/d7b2d207-7326-4ad9-9022-152adb1250c8
-  (`storyboard-react-demo.html`)
+- Status: Not started, but SPECIFIED — the owner supplied the source, and three
+  open questions in the first draft of this item are now decided (see "The three
+  calls" below). What is left is a build, not a design.
+- Reference: `punch-list/reference/storyboard-playbar.html`, vendored into the
+  repo because that is the readable one and a Downloads folder is not a spec.
+  Also supplied: `storyboard-react-demo.html`, the same design as a Tailwind v4
+  build — it carries the identical tokens (`--color-ink: #08090d`,
+  `--color-signal: #3cdbc0`, …) but ships as a MINIFIED BUNDLE whose source
+  cannot be recovered, so it is a picture, not a spec. Rendered at
+  https://claude.ai/public/artifacts/d7b2d207-7326-4ad9-9022-152adb1250c8
 - Area: pairs with PL15-029 — that item is the CONTAINER change, this one is
-  what the container should look like and how it should behave.
+  what goes in it.
 - Screenshot: Not captured
 
-The artifact is the target for how the details view looks and behaves.
+**THE ONE IDEA WORTH TAKING, and the reference names it in a comment:
+`the one shared preview`, with `the content area lives below it`.** One preview
+at the top, whatever you are looking at feeds it, and everything else is
+underneath. That is our existing preview display — the reference does not ask
+for a second player, it says what the one we have should MIRROR.
 
-**THE PLAYER IS NOT PART OF THE BORROW.** We keep our existing preview display.
-The artifact is a reference for the CONTAINER, the layout and the chrome around
-the media — not for the thing that plays it. Anything in it that duplicates
-`workbench-display-surface`, the seam bar or the trim strip is a picture of what
-we already have, and the existing components stay.
+**IT AGREES WITH PL15-029 FROM THE OTHER DIRECTION.** No scrim, nothing dimmed,
+no overlay: a ground, a preview, and a content area below. Two independent routes
+to the same answer.
 
-**What the artifact shows, as observed.**
+**What the preview mirrors, with the precedence spelled out** (`playerRender()`).
+The reference orders it take > skim > sequence; takes are out (below), so:
 
-- **It reads as a place, not an overlay.** One near-black ground with a raised,
-  softly-bordered rounded panel sitting in it. No scrim, no dimmed page behind —
-  which is the same conclusion PL15-029 reached from the code side, arrived at
-  independently.
-- **Two stacked panels, not one.** The upper panel is the media and its
-  transport. A separate panel below it holds takes.
-- **Upper panel, top to bottom:**
-  - A 16:9 hero that fills the panel's width, letterboxed against black where
-    the image does not fill it.
-  - A scrub bar immediately under the hero, full panel width — teal/emerald
-    fill, white circular handle, and TICK MARKS along the track at what read as
-    clip boundaries. That is our seam bar's job, and it is drawn here as one
-    continuous element rather than as a separate strip.
-  - A footer row: a monospace, uppercase, wide-tracked muted label at the left
-    (`SEQ 04 · BOARDS` — a location, reading like a breadcrumb), and a transport
-    cluster at the right: five circular buttons, skip-to-start / previous /
-    PLAY / next / skip-to-end, with play larger and visually the primary.
-- **Lower panel:** a header row with a `Takes` pill (layers icon) at the left
-  and `17 takes · 02:00` at the right, then a row of take cards — `CLIP 7`,
-  `4.60s / 8.3…`, i.e. a duration within a total.
-- **Type and colour.** Metadata is monospace, uppercase, wide-tracked, low
-  contrast. The accent is TEAL/EMERALD. Ours is sky blue, and it is load-bearing
-  — PL15-026 runs the subject's blue from the film through to the minimap off
-  one exported constant. Adopting a teal would mean moving that constant, not
-  adding a second accent.
+- **Skimming** — hovering or scrubbing the ruler skims frames straight into the
+  player. Label is `SH nn · <section>`, time is `tc(skim) / tc(DUR)`.
+- **Otherwise** — the sequence playhead. Label `SEQ 04 · <section>`, time
+  `tc(t) / tc(DUR)`.
+- **The scrub fill tracks `t`, never the skim.** Skimming changes the FRAME and
+  the LABEL and leaves the fill where playback is. That is the detail that makes
+  skimming feel like looking rather than like seeking, and it is easy to lose.
 
-**Things this raises that the artifact cannot answer, and the code may not
-either:**
+**The preview is dismissible, and that is a real behaviour, not a nicety.**
+`setPlayerOpen()` animates height 0 <-> `scrollHeight` with opacity over **340ms**
+and `prefers-reduced-motion` short-circuits to `display:none` with no animation
+at all. Two controls: a toggle in the content area's header and a close on the
+player itself. Two details worth copying exactly:
 
-- **The transport is five buttons where ours is fewer.** Skip-to-start and
-  skip-to-end are new verbs, and "next/previous" here is ambiguous between the
-  next CLIP and the next TAKE. PL15-029's prev/next already means item, so the
-  two must not collide.
-- **Takes are a concept we do not have.** `17 takes` implies alternates per
-  clip. Nothing in the model carries that today, so this is either a rename of
-  something existing or a data-model item of its own — worth knowing which
-  before any of it is built.
-- **The details bar has a settled contract already**, including two behaviours
-  that were tried, reversed, and stay reversed. If the artifact's scrub or
-  transport contradicts them, the contract wins unless the owner says
-  otherwise — that is exactly the kind of thing a fresh reference design
-  quietly re-litigates.
+- It calls `playerRender()` BEFORE animating open, so the frame is current the
+  moment it reappears rather than one frame stale.
+- It scrolls the window to top on open, because the preview and the playbar
+  share the viewport — reopening the preview otherwise pushes the playbar out of
+  view.
+
+**The transport is start / prev / play / next / end**, and it is bounded rather
+than wrapping: prev and next go `disabled` at the ends. `start` sets the time to
+0 AND scrolls the viewport to 0; `end` sets it to `DUR` and scrolls to the end —
+time and scroll move together, which is what stops the playhead ending up
+somewhere you cannot see.
+
+**The playbar is the larger half, and most of it maps onto things we already
+have** — so the value here is the geometry and the gestures, not new concepts:
+
+- `--pxs: 44px` per second, deliberately mirrored in CSS and JS.
+- A 40px ruler with ticks and labels; 26px labelled section lanes, where clicking
+  a section smooth-scrolls the viewport to it.
+- A 150px filmstrip of shots built from per-frame cells, `cursor: grab`, with
+  real INERTIA — a fling with momentum and an explicit `cancelMomentum` on every
+  competing interaction.
+- A playhead in three parts: a line, a **timecode chip** (`--chip #f3f6f9`), and
+  a triangle; it gains a glow while playing.
+- A hover ghost that previews where a click would land.
+- A 28px minimap: drag the window to pan, click to jump, with its own playhead in
+  `--alarm #ff5c5c` — a different colour from the selection accent on purpose.
+- Timecode is `mm:ss:ff`, frames included.
+- A first-run coach mark, dismissed by the first skim — "the lesson is learned by
+  doing". The file explicitly notes the "seen" flag must be persisted by the app,
+  which is the part a copy would drop.
+
+**The three calls, made by the owner:**
+
+- **TAKES ARE OUT.** The deck of swipeable takes with the centre card active, the
+  `17 takes · 02:00` header, the `TAKE · SH nn` player source, and the
+  "auditioning: keep rolling on the next take" autoplay all drop. This is the
+  simplification that collapses the player's three-way precedence to two, and it
+  removes the only concept in the reference that our model does not have.
+- **PREV/NEXT MEAN THE NEXT CLIP.** Unambiguous now, and it settles the collision
+  the first draft flagged: PL15-029's item-level prev/next and this transport are
+  the same verb on the same thing, so there is one behaviour to build, not two
+  that have to be told apart.
+- **THE ACCENT STAYS SKY BLUE.** The reference's `--signal: #3cdbc0` teal is NOT
+  adopted. PL15-026 already runs the subject's blue from the film through to the
+  minimap off one exported constant, and that constant remains the single source
+  — the reference's teal is read as "there is one accent and it is used
+  consistently", which we already do, in our colour.
 
 Acceptance criteria:
 
-- The container matches the artifact's composition: a panel in the content area,
-  no scrim, media over a full-width scrub bar with clip ticks, a location label
-  left and a transport cluster right, takes in their own panel below.
-- Our preview display is the thing inside it. No second player.
-- The accent is decided ONCE and applied from the existing exported constant,
-  not restated.
-- Every transport verb has one unambiguous target — clip or take or item — and
-  the item names it.
-- Stories cover it, per the repo rule: selected state, missing poster, short and
-  long clips, a many-take row.
+- One preview, at the top, and it is the EXISTING preview display. No second
+  player anywhere in the tree.
+- The preview mirrors skim over sequence, with the labels and timecodes above,
+  and the scrub fill follows playback rather than the skim.
+- The preview can be dismissed and restored, from both controls, with the
+  reduced-motion path taking no animation; the frame is current on reopen and
+  the playbar stays in view.
+- Transport is start / prev / play / next / end, prev/next step CLIPS and
+  disable at the ends, and start/end move time and scroll together.
+- The accent comes from the existing exported constant. No teal is introduced.
+- Stories cover it per the repo rule: selected state, missing poster, short and
+  long clips, a many-clip timeline — plus the reduced-motion dismiss path, which
+  is the branch a story is the only cheap way to see.
+
+**One thing still to settle:** the reference loads **Martian Mono** and **Spline
+Sans Mono** from Google Fonts and uses them for every label. Our root layout says
+Grandstander is the only custom font and everything else rides `font-sans` — on
+purpose. Two new families for metadata is a typographic decision and a
+first-paint cost (the rail's own CLS fix in PL15-027 is what a late font does to
+a layout), so it should be an explicit yes or no rather than arriving with the
+component.
