@@ -684,19 +684,6 @@ export const AudioHasNoInsetPicker: Story = {
  * playback order rather than a look at the subject's own parent.
  */
 export const FlankedByItsNeighbours: Story = {
-  // PARKED FOR ONE LINE: the deck has no rename affordance.
-  //
-  // Everything above that line passes — the three panels, their order, the
-  // captions, the widths and the fit. The last assertion asks for a `Rename`
-  // button on every card, and the deck puts naming behind the card's own menu.
-  // Delete that assertion and the story comes straight back; this is the one
-  // here that is costing coverage rather than only hiding a gap.
-  //
-  // Excluded from the TEST RUN only. The story still renders in
-  // Storybook and its `play` still runs when it is opened by hand, so
-  // this stays a live description of what the view owes rather than
-  // dead code.
-  tags: ["!test"],
   render: () => <SeamHarness />,
   play: async () => {
     const canvas = within(document.body);
@@ -744,8 +731,20 @@ export const FlankedByItsNeighbours: Story = {
     expect(total).toBeLessThanOrEqual(window.innerWidth);
 
     // EVERY panel works, so every panel has its own controls — not just the
-    // centre. The rename button is the cheapest proof that the chrome is real.
-    expect(canvas.getAllByRole("button", { name: /^Rename / }).length).toBe(3);
+    // centre.
+    //
+    // The rename button used to be the cheapest proof of that, and the deck
+    // does not have one: naming moved behind the card's own ⋯ menu, which is
+    // the control this now counts instead. The claim is unchanged — a
+    // neighbour is a full copy of the view rather than a preview of it — and
+    // it is still being made by the cheapest thing on the card that would be
+    // missing if a neighbour were ever downgraded to a picture.
+    //
+    // COUNTED WITHIN THE MARKED PANELS, not across the document. The deck
+    // mounts every clip in the collection and draws the three; asking the
+    // whole page would count sixty menus for a view showing three.
+    const menus = panels.filter((panel) => panel.querySelector(".c-menu") !== null);
+    expect(menus.length).toBe(3);
   },
 };
 
