@@ -1919,3 +1919,86 @@ Acceptance criteria:
 posters rather than at Cloudinary at all. Test runs that bill a delivery account
 scale with how often the suite runs, which is exactly the thing this list has
 been doing more of.
+
+## PL15-029 — The details modal stops being a modal and becomes the content area
+
+- Status: Not started
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a clip's details from the board)
+- Area: `components/graph-view/graph-item-details-modal.tsx`,
+  `components/graph-view/graph-board.tsx` (mount point),
+  `components/graph-view/graph-view-config.ts` (panel geometry),
+  `hooks/use-dialog-focus.ts`
+- Screenshot: Not captured
+
+Opening an item's details should not throw a modal over the board. It should
+REPLACE what is in the content area, the way a view does — the board goes away,
+the details come in, and you come back to the board when you leave.
+
+**What it is today.** `GraphItemDetailsModal` is mounted once from
+`graph-board.tsx` and `createPortal`s itself onto `document.body` as
+`role="dialog" aria-modal="true"`, over a scrim
+(`fixed inset-0 z-[80] ... bg-black/80 backdrop-blur-sm`). It is 1,555 lines and
+it is not only a clip panel: for a collection node it renders
+`CollectionDetails` instead, so it is already the router between two bodies
+rather than one screen.
+
+**This is a container change, not a restyle, and four things are wired to the
+container.**
+
+- **`aria-modal` stops being true, and it currently IS true.** `useDialogFocus`
+  exists precisely because the attribute was once a lie: it moves focus in,
+  cycles Tab inside, and restores focus on close to the card the modal was
+  opened from. A content view must NOT trap Tab — trapping focus in something
+  that is not modal is the same defect in the other direction. But the RESTORE
+  is still wanted, because it is what keeps the board's roving focus from
+  resetting. So the hook is split, not deleted.
+- **Escape needs an explicit owner.** Today "Escape, the close button and the
+  scrim all go through one path", and the scrim is about to stop existing. A
+  view that fills the content area and closes on Escape is competing with every
+  other Escape handler on the page, and that competition is already a known
+  sore spot in the selection work.
+- **The geometry is viewport-relative and will be wrong in flow.**
+  `DETAILS_PANEL_HEIGHT_CLASS` is `h-[68vh] max-h-full` and
+  `DETAILS_ROW_FLOOR_CLASS` is `min-h-[min(68vh,calc(100vh-26.625rem))]`. Those
+  are correct for a panel centred in the viewport under a fixed scrim with
+  `pt-[14.75rem]`; inside `main` they size to the window rather than to the
+  region, so the panel will overflow or float depending on what else is on
+  screen. They have to be derived from the CONTAINER.
+- **The board underneath has to go somewhere.** Unmounting it loses scroll
+  position, selection and any in-flight dnd state; hiding it keeps the whole
+  board mounted behind a view that covers it, which is the cost the grid
+  virtualization item is already about. Neither is obviously right and the
+  choice should be made deliberately.
+
+Acceptance criteria:
+
+- Opening details replaces the board in the content area. No scrim, no portal
+  to `document.body`, no `aria-modal`.
+- Tab is not trapped. Focus still moves into the view on open and still returns
+  to the originating card on leave.
+- Escape has ONE named owner and the item says who it is.
+- The panel sizes to the content area, not to the viewport, at both rail widths
+  and with the preview pane open and closed. PL15-020's invariant still holds:
+  nothing here may steal the preview's height.
+- Prev/next between items — `detailsWindow`, and the swipe path — still works.
+- Storybook covers the new container, per the repo rule that timeline/media
+  changes bring stories: selected state, a missing poster, a short clip and a
+  long one.
+
+**Three things to settle when this is worked:**
+
+- **WHICH modals.** Read here as the ITEM DETAILS modal. The shortcuts sheet is
+  the other portalled dialog and should stay a modal — it is help ABOUT the
+  screen, not a screen. Collection details is reached through this same
+  component, so on the face of it it moves too; if it should stay a dialog, that
+  splits the component and is worth knowing before starting.
+- **Does it get a URL?** A modal is a state; a content view is a place. If
+  details now replace the content area, back/forward and a shareable link are
+  the natural expectation — and that is a router change well beyond "stop
+  portalling", so it should be an explicit yes or no rather than discovered
+  halfway.
+- **Does it animate in, and how.** `withViewTransition` is already used here.
+  Beware the known trap: a view transition does not paint the page, so a moved
+  named element leaves a black cut-out, and a snapshot cannot deform. Card to
+  full-width view is exactly the shape that bites.
