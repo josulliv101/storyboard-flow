@@ -71,7 +71,7 @@ import {
 import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
 import { DetailsPanel } from "./graph-item-details-panel";
 import { ItemDetailsHeader } from "./graph-item-details-header";
-import { HERO, PANEL_GAP, cardElement } from "./graph-item-details-shared";
+import { HERO, HERO_ATTRIBUTE, PANEL_GAP, cardElement } from "./graph-item-details-shared";
 import { useScopedHistory } from "./graph-item-details-history";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
@@ -1751,17 +1751,35 @@ export function GraphItemDetailsModal() {
 
   useEffect(() => {
     if (wantedNow || mountedId === null) return;
-    // The card the view is collapsing back into. `mountedId` still holds it:
-    // the context has let go, and clearing this is what finally unmounts.
-    const card = cardElement(mountedId);
+    // THE CARD IS LOOKED UP INSIDE THE CALLBACK, AND HAS TO BE.
+    //
+    // This read used to sit out here, and at this moment the board DOES NOT
+    // EXIST: the details view is still the content area, so there is no card
+    // to collapse back into and `cardElement` returned null every time. The
+    // name was then handed to nothing, the browser had an old state and no new
+    // one to morph toward, and closing was a fade — the exact mirror of the
+    // opening bug, where the SOURCE had gone by capture time instead of the
+    // destination never arriving.
+    //
+    // `setMountedId(null)` is what puts the board back, and `withViewTransition`
+    // flushes it synchronously, so one line later the card is in the DOM. The
+    // holder carries it out to the cleanup, which cannot re-query it — by then
+    // it may have moved again.
+    const holder: { card: HTMLElement | null } = { card: null };
     void withViewTransition(() => {
       // Clearing this is what unmounts the view, and it happens HERE — inside
       // the callback, after the browser has captured the frame the view is
       // still in. That ordering is the animation.
       setMountedId(null);
-      card?.style.setProperty("view-transition-name", HERO);
+      holder.card = cardElement(mountedId);
+      // AN ATTRIBUTE, for the same reason the opening flight uses one: React
+      // is rendering this card now, and it rewrites the `style` attribute it
+      // manages on any re-render that lands before the browser captures. It
+      // does not touch an attribute it was never given. The name itself comes
+      // from the `[data-details-hero]` rule in `globals.css`.
+      holder.card?.setAttribute(HERO_ATTRIBUTE, "");
     }).then(() => {
-      card?.style.removeProperty("view-transition-name");
+      holder.card?.removeAttribute(HERO_ATTRIBUTE);
     });
   }, [mountedId, wantedNow]);
 
@@ -1778,7 +1796,15 @@ export function GraphItemDetailsModal() {
   // focus is on a handle, after a swipe it is nowhere. Fields are excluded:
   // Escape in a text field means "abandon this edit", and the field is
   // entitled to keep it.
-  useEffect(() => {
+  //
+  // A LAYOUT EFFECT, so the view owns the key from the frame it appears in.
+  // A passive effect runs after paint, and the view appears mid-transition —
+  // the browser is holding a snapshot over the page for ~380ms, which is
+  // exactly long enough for a hand (or a test) to reach Escape before the
+  // listener is attached. Measured: the e2e case passed alone and failed under
+  // a loaded six-worker run, which is the shape of a race rather than a bug in
+  // what it asserts.
+  useLayoutEffect(() => {
     if (!wantedNow) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;

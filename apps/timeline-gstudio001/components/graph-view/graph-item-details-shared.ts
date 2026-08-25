@@ -6,6 +6,21 @@
  *  is handed over inside the transition callback, never held by both. */
 export const HERO = "trim-subject";
 
+/**
+ * How an element is given `HERO`, on BOTH flights.
+ *
+ * Not an inline style, which is what this used to be. React manages the
+ * `style` attribute of anything it renders and rewrites it on any re-render —
+ * and both flights have one landing in the window between the call and the
+ * browser's capture, because both hand the name to a card React is rendering
+ * at that moment. The name was gone by the time the browser looked, so the
+ * morph had one end and rendered as a fade.
+ *
+ * React does not reconcile an attribute it was never given. The rule that
+ * turns this into `view-transition-name: trim-subject` lives in `globals.css`.
+ */
+export const HERO_ATTRIBUTE = "data-details-hero";
+
 /** The gap between panels in the row; also part of the width arithmetic. */
 export const PANEL_GAP = "1rem";
 

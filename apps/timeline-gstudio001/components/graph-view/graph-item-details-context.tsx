@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { withViewTransition } from "@/lib/view-transition";
+import { HERO as SHARED_HERO, HERO_ATTRIBUTE } from "./graph-item-details-shared";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
@@ -79,10 +80,7 @@ export const ITEM_DETAILS_PARAM = "details";
  * by the subject card's picture inside the details view. Only one element may
  * hold it, which the handover inside the callback guarantees.
  */
-const HERO = "trim-subject";
-
-/** Carries `view-transition-name: trim-subject` via a rule in `globals.css`. */
-const HERO_ATTRIBUTE = "data-details-hero";
+const HERO = SHARED_HERO;
 
 /** The board card for this node, if it is on screen to fly from. */
 function boardCard(id: string): HTMLElement | null {

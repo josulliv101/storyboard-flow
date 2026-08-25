@@ -4059,7 +4059,20 @@ test.describe("graph view E2E", () => {
     // and leaves the selection exactly where it was. The overlay is dismissed
     // so the rest of the test runs against the board.
     await bravo.click();
-    const overlay = page.getByRole("dialog");
+    // THE DETAILS VIEW IS NOT A DIALOG ANY MORE, and every dialog locator in
+    // this file used to be this one thing.
+    //
+    // It was a portal onto `document.body` with a dialog role and
+    // `aria-modal="true"` over a scrim. PL15-029 made it the CONTENT AREA: the
+    // board is gone while it is up, so there is nothing left for it to be modal
+    // about, and `aria-modal` on something that covers nothing is a lie told to
+    // a screen reader. The role went with the scrim.
+    //
+    // Addressed by `[data-item-details]` now — the attribute the view has
+    // carried all along, and the same one the story suite reads it by. Nothing
+    // in this file ever opens the keyboard-shortcuts overlay, which IS still a
+    // dialog, so there is no ambiguity being flattened here.
+    const overlay = page.locator("[data-item-details]");
     await expect(overlay).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(overlay).toHaveCount(0);
@@ -5058,32 +5071,60 @@ test.describe("graph view E2E", () => {
     await selectCard(alpha);
     await expect(page.locator("[data-item-details]")).toHaveCount(0);
 
+    // COUNTED OFF THE COMPUTED STYLE, not off the inline one.
+    //
+    // The name reaches an element two ways now. The view's own card takes it
+    // as an inline style, because React is rendering that card and can simply
+    // be told. The BOARD card wearing it during the opening flight takes it
+    // from a `[data-details-hero]` rule in `globals.css` instead — an inline
+    // value there was rewritten by any re-render landing between the call and
+    // the browser's capture, which is the bug that made the flight a fade.
+    //
+    // Only the computed value sees both, and what these tests are about is
+    // which element the BROWSER thinks is the hero — which is the computed
+    // value by definition.
     const heroCount = () =>
       page.evaluate(
         () =>
           [...document.querySelectorAll<HTMLElement>("*")].filter(
-            (el) => el.style?.viewTransitionName === "trim-subject",
+            (el) => getComputedStyle(el).viewTransitionName === "trim-subject",
           ).length,
       );
     expect(await heroCount()).toBe(0);
 
     await openItemDetails(page, "alpha");
-    const modal = page.getByRole("dialog");
+    const modal = page.locator("[data-item-details]");
     await expect(modal).toHaveCount(1);
     // Only the modal's frame holds the name while it is open — the card gave
     // it up in the same frame.
     expect(await heroCount()).toBe(1);
+    // ON THE CARD, NOT ON THE PICTURE INSIDE IT. Every card carries a transform
+    // and a filter written every frame, and a `view-transition-name` on a
+    // DESCENDANT of a transformed, filtered subtree is captured relative to
+    // that subtree — measured, the browser held the group at the destination
+    // for the whole flight and cross-faded in place instead of travelling. The
+    // card IS the transformed element, so its own transform is part of the
+    // geometry that gets captured.
     expect(
-      await detailsPanel(page).locator("[data-item-details-frame]").evaluate((el) =>
-        el instanceof HTMLElement ? el.style.viewTransitionName : "",
+      await detailsPanel(page).evaluate((el) =>
+        el instanceof HTMLElement ? getComputedStyle(el).viewTransitionName : "",
       ),
     ).toBe("trim-subject");
 
-    // The whole source is in there, and it is the only map on the page.
-    const maps = page.locator("[data-trim-overview]");
+    // The whole source is in there, and it is the map for THIS clip.
+    //
+    // SCOPED TO THE OPENED PANEL, the way the still's assertion further down
+    // already is and for the same reason: the row shows this clip's
+    // NEIGHBOURS beside it and every one of them draws its own map. "The only
+    // map on the page" was a true statement about a single panel and is a
+    // false one about a deck — it reads five, and the claim being made here
+    // has always been about alpha's map rather than about the row's.
+    const maps = detailsPanel(page).locator("[data-trim-overview]");
     await expect(maps).toHaveCount(1);
     expect(await maps.evaluate((el) => !!el.closest("[data-item-details]"))).toBe(true);
-    const windowBox = (await page.locator("[data-trim-overview-window]").boundingBox())!;
+    const windowBox = (await detailsPanel(page)
+      .locator("[data-trim-overview-window]")
+      .boundingBox())!;
     const mapBox = (await maps.boundingBox())!;
     expect(windowBox.width / mapBox.width).toBeCloseTo(6 / 8, 1);
 
@@ -5095,15 +5136,23 @@ test.describe("graph view E2E", () => {
     // like a broken gesture.
     await settleViewTransition(page);
 
-    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const grip = detailsPanel(page).locator('[data-trim-overview-handle="right"]');
     const gripBox = (await grip.boundingBox())!;
     await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
     await page.mouse.down();
     await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
+    // WHICH EDGE IS MOVING, said out loud while it moves. This used to be the
+    // monitor's job and the monitor went with the panel row; the card carries
+    // it now, which is where the trim is.
     await expect(detailsPanel(page).locator("[data-item-details-edge]")).toHaveCount(1);
     await page.mouse.up();
     await expect
-      .poll(async () => (await page.locator("[data-trim-overview-window]").boundingBox())!.width)
+      .poll(
+        async () =>
+          (await detailsPanel(page)
+            .locator("[data-trim-overview-window]")
+            .boundingBox())!.width,
+      )
       .toBeLessThan(windowBox.width - 5);
 
     // Escape closes it and the name goes back where it came from — nothing
@@ -5114,7 +5163,7 @@ test.describe("graph view E2E", () => {
 
     // And it reopens, which is what a stranded name would have broken.
     await openItemDetails(page, "alpha");
-    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(page.locator("[data-item-details]")).toHaveCount(1);
     expect(await heroCount()).toBe(1);
   });
 
@@ -5165,7 +5214,10 @@ test.describe("graph view E2E", () => {
             // By `ready` the callback has run, so whoever holds the name now
             // is what the modal is morphing INTO.
             const holder = [...document.querySelectorAll<HTMLElement>("*")].find(
-              (el) => el.style?.viewTransitionName === "trim-subject",
+              // Computed, for the reason `heroCount` above spells out: the
+              // board card takes the name from a rule, not from its style
+              // attribute, and this probe is looking for exactly that card.
+              (el) => getComputedStyle(el).viewTransitionName === "trim-subject",
             );
             probe.heroHolderAtReady =
               holder?.closest("[data-node-id]")?.getAttribute("data-node-id") ?? null;
@@ -5239,7 +5291,7 @@ test.describe("graph view E2E", () => {
     await openItemDetails(page, "bravo");
     await expect(bravo).toHaveAttribute("data-selected", "true");
 
-    const details = page.getByRole("dialog");
+    const details = page.locator("[data-item-details]");
     await expect(details).toHaveCount(1);
     await expect(details).toContainText("bravo");
     // A still: its own image, no source map, and the duration it holds.
@@ -5284,7 +5336,7 @@ test.describe("graph view E2E", () => {
     await expect(edit).toBeFocused();
     await page.keyboard.press("Enter");
     await settleViewTransition(page);
-    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(page.locator("[data-item-details]")).toHaveCount(1);
   });
 
   test("F2 renames a media card in place", async ({ page }) => {
@@ -5494,7 +5546,7 @@ test.describe("graph view E2E", () => {
       // it is no longer even reachable by tapping, because a tap does not
       // select. Touch gets the best version of this: one tap, straight in.
       await page.locator('[data-node-id="alpha"]').first().tap();
-      await expect(page.getByRole("dialog")).toHaveCount(1);
+      await expect(page.locator("[data-item-details]")).toHaveCount(1);
 
       // …and it opened without selecting anything, which is what makes the
       // one-tap route safe: nothing is left armed behind the overlay.
@@ -5661,10 +5713,12 @@ test.describe("graph view E2E", () => {
     await expect(redo).toBeDisabled();
 
     // Trim in here, and it lights up.
-    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const grip = detailsPanel(page).locator('[data-trim-overview-handle="right"]');
     const gripBox = (await grip.boundingBox())!;
     const windowWidth = async () =>
-      (await page.locator("[data-trim-overview-window]").boundingBox())!.width;
+      (await detailsPanel(page)
+        .locator("[data-trim-overview-window]")
+        .boundingBox())!.width;
     const before = await windowWidth();
     await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
     await page.mouse.down();
@@ -5745,7 +5799,7 @@ test.describe("graph view E2E", () => {
     const reopened = page.getByRole("textbox", { name: "Clip name" });
     await reopened.fill("Discarded");
     await reopened.press("Escape");
-    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(page.locator("[data-item-details]")).toHaveCount(1);
     await expect(page.locator("[data-item-details]")).toContainText("Belushi close-up");
     expect(storedTitle()).toBe("Belushi close-up");
   });
@@ -5914,7 +5968,7 @@ test.describe("graph view E2E", () => {
 
     // And the pan did not open the clip on the way past either — the press
     // began on a handle, whose preventDefault swallows the trailing click.
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
   });
 
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {
@@ -6045,9 +6099,9 @@ test.describe("graph view E2E", () => {
     // selection survives, so nothing here counts as clearing it.
     const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
     await bravo.click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.locator("[data-item-details]")).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
     await expect(alpha).toHaveAttribute("data-selected", "true");
 
     // The breadcrumb row's own empty space — chrome, but not a control.
@@ -7067,7 +7121,7 @@ test.describe("graph view E2E", () => {
     // why the row uses the ARIA attribute instead of the native one.
     await edit.click({ force: true });
     await expect(edit).toBeVisible();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
   });
 
   test("cut leaves the originals in place until a paste says where", async ({ page }) => {
@@ -7535,7 +7589,7 @@ test.describe("graph view E2E", () => {
     // on a clip opens its edit overlay and touches the selection not at all —
     // so the two cards collected above are still held behind it.
     await surface.locator('[data-node-id="charlie"]').click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.locator("[data-item-details]")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
   });
@@ -7595,9 +7649,9 @@ test.describe("graph view E2E", () => {
     // outside the mode a click on a clip now opens its editor, so the way to
     // tell the mode is really off is that two clicks add nothing.
     await surface.locator('[data-node-id="bravo"]').click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.locator("[data-item-details]")).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
     await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
   });
 
@@ -8235,7 +8289,7 @@ test.describe("graph view E2E", () => {
 
     // And the card still does what a card does under an un-checkboxed cursor.
     await card.click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.locator("[data-item-details]")).toBeVisible();
   });
 
   test("select mode shows it on EVERY card, picked or not", async ({ page }) => {
@@ -8282,7 +8336,7 @@ test.describe("graph view E2E", () => {
     await checkbox.click();
     await expect(collection).toHaveAttribute("data-selected", "true");
     // It selected rather than drilling: the breadcrumb has not moved.
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
     await expect(surface).toBeVisible();
 
     await checkbox.click();
@@ -8310,9 +8364,9 @@ test.describe("graph view E2E", () => {
       await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
 
       await card.tap();
-      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.locator("[data-item-details]")).toBeVisible();
       await page.keyboard.press("Escape");
-      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(page.locator("[data-item-details]")).toHaveCount(0);
       await expect(card.locator("[data-selection-indicator]")).toHaveCount(0);
 
       await page.locator("[data-select-mode-toggle]").tap();
@@ -8376,10 +8430,10 @@ test.describe("graph view E2E", () => {
 
       // A tap opens the clip's edit overlay and selects nothing.
       await alpha.tap();
-      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.locator("[data-item-details]")).toBeVisible();
       await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
       await page.keyboard.press("Escape");
-      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(page.locator("[data-item-details]")).toHaveCount(0);
 
       // The way in: the header's Select control, which is on screen whether or
       // not anything is selected — the only one of the three routes that a
@@ -8859,7 +8913,7 @@ test.describe("graph view E2E", () => {
     // browser does not, which is exactly why the button uses the ARIA
     // attribute instead of the native one (R7.7).
     await page.locator('[data-header-action="details"]').click({ force: true });
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
   });
 
