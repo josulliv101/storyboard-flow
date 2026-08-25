@@ -236,6 +236,24 @@ export function ClipDeck({
     cardIndex: number | null;
   } | null>(null);
   const spacingRef = useRef(480);
+  /**
+   * THE CARD'S WIDTH, MEASURED ONCE PER CHANGE RATHER THAN ONCE PER FRAME.
+   *
+   * `layout()` used to open with `first.offsetWidth`, and `layout()` runs on
+   * every frame of a glide — immediately after the previous frame wrote a
+   * transform to every card. Reading geometry after writing it is a forced
+   * synchronous layout, so the deck was making the browser re-lay-out the whole
+   * view sixty times a second, and again on every mount effect against a
+   * subtree React had just built.
+   *
+   * Traced on a real click: 551ms of the 580ms of forced reflow in the whole
+   * recording came from this one function — far more than the element counts
+   * that looked like the problem.
+   *
+   * The width only moves when `--clip-w` does (a fit) or when the window
+   * resizes, and both of those say so by zeroing this.
+   */
+  const cardWidthRef = useRef(0);
   /** Whether the deck has been put on a subject yet — the first one is a jump,
    *  not a glide. */
   const placedRef = useRef(false);
@@ -323,7 +341,10 @@ export function ClipDeck({
     // styles, which is dead centre and fully painted.
     const first = cards.find((card) => card != null);
     if (first == null) return;
-    const width = first.offsetWidth || 480;
+    // The only geometry read in here, and it is skipped whenever the answer is
+    // already known — which is every frame of a glide but the first.
+    if (cardWidthRef.current === 0) cardWidthRef.current = first.offsetWidth || 480;
+    const width = cardWidthRef.current;
     spacingRef.current = width * 0.93 + CARD_GAP_PX;
     const pos = posRef.current;
     const near = Math.round(clamp(pos, 0, CLIPS.length - 1));
@@ -494,7 +515,10 @@ export function ClipDeck({
         // Hand the cards back to the reference's own `clamp(300px, 30vw,
         // 440px)`, so turning fitting off restores the design rather than
         // freezing whatever width the last fit landed on.
-        if (deck.style.getPropertyValue("--clip-w") !== "") deck.style.removeProperty("--clip-w");
+        if (deck.style.getPropertyValue("--clip-w") !== "") {
+          deck.style.removeProperty("--clip-w");
+          cardWidthRef.current = 0;
+        }
         if (deck.style.minHeight !== "") deck.style.removeProperty("min-height");
         return;
       }
@@ -505,6 +529,8 @@ export function ClipDeck({
       const next = Math.round(clamp(widest, CARD_MIN_WIDTH_PX, CARD_MAX_WIDTH_PX));
       if (deck.style.getPropertyValue("--clip-w") === `${next}px`) return;
       deck.style.setProperty("--clip-w", `${next}px`);
+      // The cards are a different width now, by construction.
+      cardWidthRef.current = 0;
       layout();
     };
 
@@ -539,7 +565,11 @@ export function ClipDeck({
 
   useEffect(() => {
     layout();
-    const onResize = () => layout();
+    const onResize = () => {
+      // A viewport change can move the width even when `fit()` does not run.
+      cardWidthRef.current = 0;
+      layout();
+    };
     window.addEventListener("resize", onResize);
     return () => {
       cancelAnimationFrame(rafRef.current);

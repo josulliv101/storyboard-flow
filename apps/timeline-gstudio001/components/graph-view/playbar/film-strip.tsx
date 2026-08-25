@@ -190,6 +190,13 @@ export type FilmStripProps = Readonly<{
   className?: string;
 }>;
 
+/** Seconds of scale kept built beyond each edge of the viewport, so a scroll
+ *  has somewhere to go before the next measurement lands. */
+const RULER_MARGIN_SECONDS = 30;
+/** Seconds built before the viewport has been measured — about one screen at
+ *  the reference's pixels-per-second, so the first paint is not visibly short. */
+const RULER_FIRST_PAINT_SECONDS = 60;
+
 export function FilmStrip({
   shots: shotsProp,
   seconds: secondsProp,
@@ -264,26 +271,89 @@ export function FilmStrip({
 
   /* ── the parts that never change with the clock ──────────────────────── */
 
-  const ticks = useMemo(
-    () =>
-      Array.from({ length: Math.floor(DUR) + 1 }, (_, i) => {
-        const kind = i % 10 === 0 ? " t10" : i % 2 === 0 ? " t2" : "";
-        return (
-          <span key={`tick-${i}`}>
-            <div data-seam-tick className={`tick${kind}`} style={{ left: i * PXS }} />
-            {i % 2 === 0 && i < DUR ? (
-              <span
-                className={`tlabel${i % 10 === 0 ? " big" : ""}`}
-                style={{ left: i * PXS }}
-              >
-                {i}s
-              </span>
-            ) : null}
-          </span>
-        );
-      }),
-    [DUR],
-  );
+  /**
+   * THE SCALE IS BUILT FOR WHAT THE VIEWPORT CAN SHOW, not for the timeline.
+   *
+   * One tick a second across the whole cut, each a span wrapping a rule and —
+   * every two seconds — a label. That is three elements per two seconds of
+   * material, with no ceiling: measured on a 58-clip collection the ruler was
+   * 707 elements, more than half of the entire details view.
+   *
+   * It matters more than its size suggests because of WHEN it is built. The
+   * view mounts inside the opening transition's callback, which runs
+   * synchronously — the browser captures the "after" state the moment that
+   * callback returns — so every tick past the edge of the screen sits between
+   * the click and the animation starting.
+   *
+   * The strip's own ruler was windowed for exactly this reason and has a test
+   * saying so ("ruler ticks are windowed to the visible strip, not the whole
+   * timeline"); this one simply never got the same treatment.
+   *
+   * WINDOWED, NOT DEFERRED. Holding the bar back until after the transition
+   * would take all 1,070 of its elements off the critical path in one move, and
+   * the bar would then arrive DURING the morph instead of being part of it.
+   * Sizing it to the viewport keeps it on screen the whole way and just makes
+   * it smaller.
+   */
+  const [tickRange, setTickRange] = useState({ from: 0, to: RULER_FIRST_PAINT_SECONDS });
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    // AFTER PAINT, deliberately. A layout effect here would measure before the
+    // browser's capture and put the corrected set of ticks back on the very
+    // critical path this exists to clear. The first paint carries a viewport's
+    // worth from the constant above, and the real range lands a frame later —
+    // by which time the transition is already running.
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const from = Math.max(
+        0,
+        Math.floor(viewport.scrollLeft / PXS) - RULER_MARGIN_SECONDS,
+      );
+      const to =
+        Math.ceil((viewport.scrollLeft + viewport.clientWidth) / PXS) + RULER_MARGIN_SECONDS;
+      // Compared before it is set: a scroll that stays inside the margin must
+      // not re-render the bar, and this fires on every frame of one.
+      setTickRange((current) =>
+        current.from === from && current.to === to ? current : { from, to },
+      );
+    };
+    const onScroll = () => {
+      if (frame === 0) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      cancelAnimationFrame(frame);
+      viewport.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, []);
+
+  const ticks = useMemo(() => {
+    const last = Math.min(Math.floor(DUR), tickRange.to);
+    const out: React.ReactNode[] = [];
+    for (let i = Math.max(0, tickRange.from); i <= last; i += 1) {
+      const kind = i % 10 === 0 ? " t10" : i % 2 === 0 ? " t2" : "";
+      out.push(
+        <span key={`tick-${i}`}>
+          <div data-seam-tick className={`tick${kind}`} style={{ left: i * PXS }} />
+          {i % 2 === 0 && i < DUR ? (
+            <span
+              className={`tlabel${i % 10 === 0 ? " big" : ""}`}
+              style={{ left: i * PXS }}
+            >
+              {i}s
+            </span>
+          ) : null}
+        </span>,
+      );
+    }
+    return out;
+  }, [DUR, tickRange.from, tickRange.to]);
 
 
   const scrollToSection = useCallback((startSeconds: number) => {
