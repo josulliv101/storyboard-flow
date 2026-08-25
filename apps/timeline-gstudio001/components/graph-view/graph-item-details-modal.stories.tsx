@@ -1365,11 +1365,55 @@ export const TheFilmCanBeDrawnTaller: Story = {
     press("LG");
     await waitFor(() => expect(lane()).toBeGreaterThan(medium));
 
-    // PUT IT BACK. Like the reach and the view count, this is remembered at
-    // module scope for the session — a story that leaves the film tall hands
-    // it to whichever story runs next in the same browser.
+    // AND THE TIME AXIS CAME WITH IT (PL15-024). PL15-022 made the film taller
+    // and left the boxes' widths alone, so `md` and `lg` stretched each
+    // thumbnail vertically against an unchanged scale. A box is wider at a
+    // bigger size, which is also what keeps a filmstrip CELL square and the
+    // frame count per clip constant.
+    const boxWidth = () => seamBoxes()[0]!.getBoundingClientRect().width;
+    const wideBox = boxWidth();
     press("SM");
     await waitFor(() => expect(lane()).toBe(small));
+    expect(wideBox).toBeGreaterThan(boxWidth());
+    press("LG");
+    await waitFor(() => expect(lane()).toBeGreaterThan(medium));
+
+    // BUT `FIT` STILL FITS, which is the half that constrains the design.
+    //
+    // `fit` means "this collection spans the track" and computes its answer
+    // FROM the measured width — so the size factor must NOT be applied on top
+    // of what it stores, or the collection would stop fitting at `md` and `lg`
+    // and a control whose whole promise is in its name would break.
+    //
+    // Asserted as INVARIANCE rather than against the track's width, and the
+    // difference matters: the bar shows the whole REACH window, which is more
+    // clips than the collection `fit clip` fits, so the boxes legitimately
+    // span wider than the track. What must hold is that fitting lands on the
+    // same scale whatever size the film is drawn at.
+    const fitNow = () => {
+      openBarSettings();
+      const group = document.querySelector<HTMLElement>("[data-seam-fit]")!;
+      const clip = Array.from(group.querySelectorAll("button")).find(
+        (candidate) => candidate.textContent?.trim() === "clip",
+      )!;
+      fireEvent.click(clip);
+    };
+    const spanNow = () => {
+      const boxes = seamBoxes();
+      return (
+        boxes[boxes.length - 1]!.getBoundingClientRect().right -
+        boxes[0]!.getBoundingClientRect().left
+      );
+    };
+
+    fitNow();
+    await waitFor(() => expect(spanNow()).toBeGreaterThan(0));
+    const fittedAtLarge = spanNow();
+
+    press("SM");
+    await waitFor(() => expect(lane()).toBe(small));
+    fitNow();
+    await waitFor(() => expect(Math.abs(spanNow() - fittedAtLarge)).toBeLessThan(2));
   },
 };
 
