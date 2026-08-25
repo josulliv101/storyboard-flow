@@ -55,26 +55,34 @@ function prefersReducedMotion(): boolean {
 /** A trimmed shot may not vanish; a tenth of a second is the floor, the same
  *  one the deck's handles use. */
 /**
- * A trim in progress: the shot being dragged, the length it will be, and how
- * much every shot AFTER it slides while the drag runs.
+ * A trim in progress, and the two edges move the sequence differently because
+ * they are cutting at different ENDS of it.
  *
- * `delta` replaced a `shift` that moved the trimmed box's own left edge, which
- * was wrong in the way a ripple edit is always wrong when it is not rippled.
- * Holding the downstream shots still meant a box being lengthened grew OVER its
- * neighbour and a box being shortened left a black gap where it used to be —
- * two pictures of the sequence that are not the sequence.
+ * `delta` is how far every shot AFTER this one slides during the drag; `shift`
+ * is how far this shot's own left edge has moved. Only one is ever non-zero:
  *
- * So the trimmed box keeps its place, its width follows the pointer, and
- * everything after it moves by the difference. Both edges look the same doing
- * it, which is what a ripple looks like in any editor: trimming a head closes
- * the gap behind it, so the clip's left edge does not move — its right edge and
- * everything past it do.
+ *   OUT drag — the edge under the pointer is the one the next shot is against,
+ *   so the next shot follows it: `delta` moves everything downstream and the
+ *   film stays a continuous run. Anything else overlaps the neighbour when
+ *   lengthening or leaves a black gap when shortening.
+ *
+ *   IN drag — the edge under the pointer is the one the PREVIOUS shot is
+ *   against, and preceding shots do not move in a ripple. So `shift` walks this
+ *   shot's left edge with the pointer and a gap opens where the head is being
+ *   cut away. That gap is the point: it is the material being removed, and the
+ *   first version of this hid it by holding the left edge still and moving the
+ *   right — which showed a head trim as though it were a tail trim.
+ *
+ * The gap does not survive the gesture. Releasing commits, the film re-flows,
+ * and the eased move closes it in front of you — so the ripple is something you
+ * watch happen rather than a rearrangement you find afterwards.
  */
 type Trimming = Readonly<{
   index: number;
   id: string;
   seconds: number;
   delta: number;
+  shift: number;
 }>;
 
 const TRIM_FLOOR_SECONDS = 0.1;
@@ -147,6 +155,18 @@ export type FilmStripProps = Readonly<{
    */
   onTrim?: (id: string, next: Readonly<{ in: number; out: number }>) => void;
   /**
+   * The SOURCE frame a trim drag is currently sitting on, and `null` when it
+   * ends — so the caller can put the same preview up that a scrub does.
+   *
+   * A clip and a source time rather than a position on the sequence, which is
+   * what `onSkim` reports. The sequence has not been re-timed yet: a drag that
+   * LENGTHENS a shot asks for a frame past where that shot currently ends, and
+   * reading that position off the old clock lands in the next clip and previews
+   * the wrong footage entirely. The clip knows its own source; nothing has to
+   * be inferred.
+   */
+  onTrimSkim?: (frame: Readonly<{ clipId: string; sourceSeconds: number }> | null) => void;
+  /**
    * What to draw above the playhead while scrubbing, or `null` to draw nothing.
    *
    * THE CALLER DECIDES, because only it knows whether the preview pane is open
@@ -178,6 +198,7 @@ export function FilmStrip({
   onScrub,
   onSkim,
   onTrim,
+  onTrimSkim,
   skimPreview,
   onTogglePlay,
   onSelect,
@@ -596,12 +617,64 @@ export function FilmStrip({
           // Cannot cross itself, and cannot reach past the end of the source.
           const longest = Math.max(TRIM_FLOOR_SECONDS, source - trimIn);
           const seconds = clamp(used + travelled, TRIM_FLOOR_SECONDS, longest);
-          return { seconds, next: { in: trimIn, out: trimIn + seconds } };
+          return {
+            seconds,
+            shift: 0,
+            // What the rest of the sequence owes this edit, live.
+            delta: seconds - used,
+            next: { in: trimIn, out: trimIn + seconds },
+          };
         }
         // Dragging the head right shortens; dragging it left RECOVERS material,
         // as far back as the source's own start.
         const nextIn = clamp(trimIn + travelled, 0, outPoint - TRIM_FLOOR_SECONDS);
-        return { seconds: outPoint - nextIn, next: { in: nextIn, out: outPoint } };
+        return {
+          seconds: outPoint - nextIn,
+          // The head moves; the tail and everything past it stay put until the
+          // commit re-flows them.
+          shift: nextIn - trimIn,
+          delta: 0,
+          next: { in: nextIn, out: outPoint },
+        };
+      };
+
+      // THE PLAYHEAD RIDES THE HANDLE.
+      //
+      // The edge being dragged is a moment, and the bar already has a way to
+      // show you a moment — so the scrubber goes to it and the preview follows,
+      // rather than the trim being the one gesture on this strip that changes a
+      // time without showing you the frame. Reported through `onScrub`, the
+      // same path a scrub takes, which is also what stops playback: a transport
+      // running while you choose a cut point is two clocks disagreeing.
+      // ONE REPORT PER FRAME, NOT PER POINTER EVENT.
+      //
+      // `onScrub` sets state in the caller, and that state comes back down as
+      // this component's `seconds` prop — so calling it on every pointermove
+      // put a parent re-render inside the gesture at the pointer's own rate.
+      // Measured, the drag stopped tracking: pulling the out edge steadily
+      // left, the box's width went 213 → 260 → 245 → 273 → 267 instead of
+      // shrinking, while the left edge and the scroll both held still.
+      //
+      // A pointer can fire several times between frames and only the last one
+      // is worth reporting — nothing can be seen in between. So the newest
+      // value is stashed and the frame drains it.
+      let pending: { seconds: number; shift: number } | null = null;
+      let frame = 0;
+      const drain = () => {
+        frame = 0;
+        const at = pending;
+        pending = null;
+        if (at === null) return;
+        const edgeAt = edge === "out" ? shot.start + at.seconds : shot.start + at.shift;
+        onScrub?.(clamp(edgeAt, 0, DUR));
+        onTrimSkim?.({
+          clipId: shot.id,
+          sourceSeconds: edge === "out" ? trimIn + at.seconds : trimIn + at.shift,
+        });
+      };
+      const follow = (at: { seconds: number; shift: number }) => {
+        pending = at;
+        if (frame === 0) frame = requestAnimationFrame(drain);
       };
 
       const move = (moveEvent: PointerEvent) => {
@@ -610,29 +683,46 @@ export function FilmStrip({
           index,
           id: shot.id,
           seconds: at.seconds,
-          // What the rest of the sequence owes this edit, live.
-          delta: at.seconds - used,
+          delta: at.delta,
+          shift: at.shift,
         };
         trimmingRef.current = next;
         setTrimming(next);
+        follow(at);
       };
-      const up = (upEvent: PointerEvent) => {
+      const stop = () => {
+        cancelAnimationFrame(frame);
+        frame = 0;
+        pending = null;
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        window.removeEventListener("pointercancel", up);
+        window.removeEventListener("pointercancel", cancel);
         const moved = trimmingRef.current !== null;
         trimmingRef.current = null;
         setTrimming(null);
+        onTrimSkim?.(null);
+        return moved;
+      };
+      const up = (upEvent: PointerEvent) => {
         // A press that never travelled is not an edit. Committing one would put
         // an identical window on the undo stack for every accidental tap.
-        if (!moved) return;
+        if (!stop()) return;
         // ONE EDIT FOR THE WHOLE DRAG. Dispatching per pointer move would fill
         // the undo stack with a hundred steps nobody took.
         onTrim?.(shot.id, measure(upEvent.clientX).next);
       };
+      // A CANCELLED POINTER ABANDONS THE TRIM. It was wired to the same
+      // handler as release, so anything that takes the pointer away mid-drag —
+      // the browser deciding it was a scroll, a touch leaving the digitiser, a
+      // window losing focus — COMMITTED the length the drag happened to be at.
+      // Cancel means the gesture did not happen; the preview goes and nothing
+      // is written.
+      const cancel = () => {
+        stop();
+      };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
-      window.addEventListener("pointercancel", up);
+      window.addEventListener("pointercancel", cancel);
     };
 
   // BELOW THE DRAG IT READS FROM. The boxes were declared above `cancelMomentum`
@@ -671,7 +761,7 @@ export function FilmStrip({
               // new width; every shot after it slides by the difference, so the
               // film stays a continuous run at every moment of the drag rather
               // than overlapping its neighbour or opening a gap.
-              left: (shot.start + slide) * PXS + 2,
+              left: (shot.start + slide + (dragging ? trimming.shift : 0)) * PXS + 2,
               width: seconds * PXS - 4,
             }}
           >
@@ -1085,7 +1175,15 @@ export function FilmStrip({
                       data-seam-active-mark={selectedShot.id}
                       className="underline"
                       style={{
-                        left: selectedShot.start * PXS + 2,
+                        // Travels with the head when the head is what is being
+                        // trimmed, for the same reason the box does.
+                        left:
+                          (selectedShot.start +
+                            (trimming !== null && trimming.id === selectedShot.id
+                              ? trimming.shift
+                              : 0)) *
+                            PXS +
+                          2,
                         // FOLLOWS A TRIM IN PROGRESS. The mark sits against the
                         // subject's box, so a box whose width is being dragged
                         // and a mark still drawn at the committed width are two

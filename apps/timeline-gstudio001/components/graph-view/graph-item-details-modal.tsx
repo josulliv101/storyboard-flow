@@ -49,8 +49,8 @@ import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
 import type { SeamBarClip } from "./graph-seam-bar-layout";
-import { ClipDeck } from "./playbar/clip-deck";
-import { monitorPosterUrl } from "@/lib/video-frame-url";
+import { CLIP_DECK_STRIP_CELLS, ClipDeck } from "./playbar/clip-deck";
+import { monitorPosterUrl, videoFrameUrls } from "@/lib/video-frame-url";
 
 import { FilmStrip, type FilmStripSkimPreview } from "./playbar/film-strip";
 import {
@@ -114,6 +114,17 @@ import {
 /** The row's edges fade rather than cutting a card in half — see the note on
  *  the view's own element. */
 /** Breathing room below the view, so the deck's cards do not sit on the edge. */
+/**
+ * How far either side of the subject a card gets a real strip of frames.
+ *
+ * Every cell is a Cloudinary frame grab — one request each — and the deck holds
+ * every clip in the collection, so sampling all of them would be sixteen
+ * requests times sixty-odd clips for a view that draws five cards. PL15-028 is
+ * open on exactly that kind of spike. Cards outside this radius get the single
+ * frame they had before; they are past the fade and nobody is reading them.
+ */
+const DECK_STRIP_RADIUS = 3;
+
 const DETAILS_BOTTOM_GAP_PX = 12;
 /**
  * A floor on the bound height, so a freak measurement cannot collapse the view
@@ -645,16 +656,32 @@ function DetailsFilmstripModal({
   );
 
   const [skimSeconds, setSkimSeconds] = useState<number | null>(null);
+  // A TRIM IN PROGRESS NAMES ITS OWN FRAME, and takes precedence over the
+  // scrub's. Both raise the same preview; they differ in how the frame is
+  // found. A scrub knows a place on the sequence and reads across to a clip; a
+  // trim knows the clip already and is asking for a source time the sequence
+  // does not have a place for yet — the whole point of dragging the edge is
+  // that the timing is about to change.
+  const [trimSkim, setTrimSkim] = useState<Readonly<{
+    clipId: string;
+    sourceSeconds: number;
+  }> | null>(null);
+
   const skimAt = skimSeconds === null ? null : seamAt(timeline, skimSeconds);
+  const skimClipId = trimSkim?.clipId ?? skimAt?.clipId ?? null;
   const skimNode = (() => {
-    if (skimAt === null) return null;
-    const found = graph.nodesById.get(parseNodeId(skimAt.clipId));
+    if (skimClipId === null) return null;
+    const found = graph.nodesById.get(parseNodeId(skimClipId));
     return found && found.kind === "media" ? (found as MediaNode) : null;
   })();
   const skimSourceTime =
-    skimAt === null || skimNode === null
+    skimNode === null
       ? null
-      : (hasSourceWindow(skimNode) ? skimNode.trimInSeconds : 0) + skimAt.clipSeconds;
+      : trimSkim !== null
+        ? trimSkim.sourceSeconds
+        : skimAt === null
+          ? null
+          : (hasSourceWindow(skimNode) ? skimNode.trimInSeconds : 0) + skimAt.clipSeconds;
   // NARROWED FIRST. `MediaNode` is a union and only the video member carries
   // frame grabs; reaching for them on the union is what `seamClipOf` above is
   // careful about too.
@@ -671,9 +698,7 @@ function DetailsFilmstripModal({
   const skimTaken = usePublishTrimPreview(skimFrame);
 
   const skimPreview = useMemo<FilmStripSkimPreview | null>(() => {
-    if (skimTaken || skimNode === null || skimAt === null || skimSourceTime === null) {
-      return null;
-    }
+    if (skimTaken || skimNode === null || skimSourceTime === null) return null;
     // QUANTISED TO A QUARTER SECOND, because the URL is a Cloudinary frame grab
     // and every distinct time is a distinct fetch — a pointer sweeping the bar
     // would ask for hundreds. Finer than the eye tracks mid-sweep, and coarse
@@ -689,9 +714,12 @@ function DetailsFilmstripModal({
     return {
       ...(poster === undefined ? {} : { posterSrc: poster }),
       name: skimNode.name,
-      meta: `${skimAt.clipSeconds.toFixed(2)}s / ${total.toFixed(2)}s`,
+      // HOW FAR INTO THE CLIP, which for a trim is the source time itself:
+      // the window is being redrawn, so "into the clip" is what is being
+      // chosen rather than something to measure against.
+      meta: `${(trimSkim === null ? (skimAt?.clipSeconds ?? 0) : skimSourceTime).toFixed(2)}s / ${total.toFixed(2)}s`,
     };
-  }, [skimTaken, skimNode, skimAt, skimSourceTime, skimPosterBase]);
+  }, [skimTaken, skimNode, skimAt, skimSourceTime, skimPosterBase, trimSkim]);
   // ANY clip the bar covers, not just the three it used to. With nine panels
   // the playhead can be inside a clip four along, and the monitor still has to
   // be able to paint it.
@@ -974,15 +1002,22 @@ function DetailsFilmstripModal({
               trimInSeconds: seam?.trimInSeconds ?? 0,
             }
           : {};
+      // THE FRAME THE CLIP STARTS ON, which is the same picture the card's big
+      // image shows — one shot, one representative frame, wherever you are
+      // looking at it. It was the source's opening frame, so a clip trimmed
+      // eight seconds in advertised itself with a moment it does not contain,
+      // and trimming it changed nothing about how it looked.
+      const grabs = media !== null && media.mediaKind === "video" ? media.posterSrcs : undefined;
+      const at =
+        grabs === undefined
+          ? poster
+          : (monitorPosterUrl(grabs[0], seam?.trimInSeconds ?? 0) ?? poster);
       return {
         id,
         ...windowed,
         label: found?.name ?? id,
         seconds: media === null ? 0 : mediaDurationSeconds(media),
-        frames:
-          poster === undefined
-            ? ["#0d0d10"]
-            : [`center/cover no-repeat url("${poster}")`],
+        frames: at === undefined ? ["#0d0d10"] : [`center/cover no-repeat url("${at}")`],
         sectionName: parent?.name ?? null,
       };
     })
@@ -1003,7 +1038,7 @@ function DetailsFilmstripModal({
    * dispatch that undoes it.
    */
   const deckClips = useMemo(() => {
-    return ids.flatMap((id) => {
+    return ids.flatMap((id, index) => {
       const found = graph.nodesById.get(parseNodeId(id));
       const media = found && found.kind === "media" ? (found as MediaNode) : null;
       if (media === null) return [];
@@ -1011,6 +1046,26 @@ function DetailsFilmstripModal({
       const full = seam?.fullSeconds ?? mediaDurationSeconds(media);
       const trimIn = seam?.trimInSeconds ?? 0;
       const poster = seam?.posterSrc;
+      // Frame grabs are a video's business; a still is one picture and audio is
+      // none, and asking either for a moment rewrites a good URL into one that
+      // names a time the file does not have.
+      const grabs = media.mediaKind === "video" ? media.posterSrcs : undefined;
+      const background = (url: string | undefined) =>
+        url === undefined ? "#0d0d10" : `center/cover no-repeat url("${url}")`;
+
+      // ACROSS THE SOURCE, because the strip these fill is a picture of the
+      // source with the window drawn over it — so the cells outside the window
+      // are the material being trimmed away, and they have to be the frames
+      // that are actually there.
+      const near = Math.abs(index - centre) <= DECK_STRIP_RADIUS;
+      const cells =
+        grabs === undefined || !near
+          ? [background(poster)]
+          : videoFrameUrls(grabs, CLIP_DECK_STRIP_CELLS, {
+              trimInSeconds: 0,
+              effectiveSeconds: full,
+            }).map(background);
+
       return [
         {
           id,
@@ -1018,15 +1073,16 @@ function DetailsFilmstripModal({
           source: full,
           trimIn,
           trimOut: trimIn + mediaDurationSeconds(media),
-          frames:
-            poster === undefined
-              ? ["#0d0d10"]
-              : [`center/cover no-repeat url("${poster}")`],
+          frames: cells.length > 0 ? cells : [background(poster)],
+          // THE FRAME THE CLIP ACTUALLY STARTS ON, not the source's first.
+          poster: background(
+            grabs === undefined ? poster : (monitorPosterUrl(grabs[0], trimIn) ?? poster),
+          ),
           tags: [] as readonly string[],
         },
       ];
     });
-  }, [graph, ids]);
+  }, [graph, ids, centre]);
 
   // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a
   // released scrub differ only in how the clip was chosen; what happens next
@@ -1587,6 +1643,7 @@ function DetailsFilmstripModal({
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
               onSkim={setSkimSeconds}
+              onTrimSkim={setTrimSkim}
               skimPreview={skimPreview}
               onTrim={commitTrim}
               onTogglePlay={() => setPlaying((was) => !was)}

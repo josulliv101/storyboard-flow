@@ -29,7 +29,18 @@ import { PLAYBAR_CSS, PLAYBAR_PAGE_CLASS, PLAYBAR_SCOPE } from "./playbar-styles
 
 const MODELS = ["H3 4-ref", "ref2va", "minimax-h3", "comfy-cloud H3"] as const;
 /** Frames sampled across a clip's source for its trim strip. */
-const CELLS = 16;
+/**
+ * Cells in a card's trim strip.
+ *
+ * WIDER THAN THE REFERENCE'S SIXTEEN, and fewer for the same reason: each cell
+ * is now a real frame at its own moment rather than the same picture repeated,
+ * so a cell is a Cloudinary frame grab and a request. Sixteen 25px slivers of a
+ * 16:9 frame is a column of noses; eight at ~50px are readable pictures AND
+ * half the fetches. Exported because the caller builds the frames and the two
+ * counts have to be one number.
+ */
+export const CLIP_DECK_STRIP_CELLS = 8;
+const CELLS = CLIP_DECK_STRIP_CELLS;
 /** How much of a card's width the next one sits away by, plus the gap. */
 const CARD_GAP_PX = 18;
 
@@ -95,7 +106,23 @@ export type ClipDeckClip = Readonly<{
   /** The window inside it — `out` is an absolute point, not a tail length. */
   trimIn: number;
   trimOut: number;
+  /**
+   * Backgrounds sampled across the WHOLE SOURCE, one per cell of the trim
+   * strip. The strip depicts the source with the window drawn over it, so the
+   * cells have to span the source too — a row of identical pictures says the
+   * clip does not change, which is a claim about the footage rather than a
+   * placeholder.
+   */
   frames: readonly string[];
+  /**
+   * The big picture: the frame at the TRIM-IN point.
+   *
+   * Separate from `frames[0]`, which is the source's opening frame and stays
+   * that whatever the window is set to. A card whose window starts eight
+   * seconds in was showing a frame it does not contain. Falls back to the
+   * first cell when absent, which is what a caller with no frame grabs gets.
+   */
+  poster?: string;
   tags: readonly string[];
 }>;
 
@@ -606,7 +633,7 @@ export function ClipDeck({
                     <div className="c-view">
                       <div
                         className="c-frame cine"
-                        style={{ background: clip.frames[0] ?? "#0d0d10" }}
+                        style={{ background: clip.poster ?? clip.frames[0] ?? "#0d0d10" }}
                       />
                     </div>
 
