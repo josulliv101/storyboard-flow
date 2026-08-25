@@ -2002,3 +2002,82 @@ Acceptance criteria:
   Beware the known trap: a view transition does not paint the page, so a moved
   named element leaves a black cut-out, and a snapshot cannot deform. Card to
   full-width view is exactly the shape that bites.
+
+## PL15-030 — The reference design for the details view
+
+- Status: Not started. **The spec below is READ OFF THE RENDERED ARTIFACT, not
+  off its source** — the artifact renders in a sandboxed iframe, so its text and
+  its code view could not be extracted, and screenshots crop at 800px. The owner
+  has the code and it supersedes everything here the moment it lands. Treat the
+  measurements as SHAPES, not values.
+- Reference: https://claude.ai/public/artifacts/d7b2d207-7326-4ad9-9022-152adb1250c8
+  (`storyboard-react-demo.html`)
+- Area: pairs with PL15-029 — that item is the CONTAINER change, this one is
+  what the container should look like and how it should behave.
+- Screenshot: Not captured
+
+The artifact is the target for how the details view looks and behaves.
+
+**THE PLAYER IS NOT PART OF THE BORROW.** We keep our existing preview display.
+The artifact is a reference for the CONTAINER, the layout and the chrome around
+the media — not for the thing that plays it. Anything in it that duplicates
+`workbench-display-surface`, the seam bar or the trim strip is a picture of what
+we already have, and the existing components stay.
+
+**What the artifact shows, as observed.**
+
+- **It reads as a place, not an overlay.** One near-black ground with a raised,
+  softly-bordered rounded panel sitting in it. No scrim, no dimmed page behind —
+  which is the same conclusion PL15-029 reached from the code side, arrived at
+  independently.
+- **Two stacked panels, not one.** The upper panel is the media and its
+  transport. A separate panel below it holds takes.
+- **Upper panel, top to bottom:**
+  - A 16:9 hero that fills the panel's width, letterboxed against black where
+    the image does not fill it.
+  - A scrub bar immediately under the hero, full panel width — teal/emerald
+    fill, white circular handle, and TICK MARKS along the track at what read as
+    clip boundaries. That is our seam bar's job, and it is drawn here as one
+    continuous element rather than as a separate strip.
+  - A footer row: a monospace, uppercase, wide-tracked muted label at the left
+    (`SEQ 04 · BOARDS` — a location, reading like a breadcrumb), and a transport
+    cluster at the right: five circular buttons, skip-to-start / previous /
+    PLAY / next / skip-to-end, with play larger and visually the primary.
+- **Lower panel:** a header row with a `Takes` pill (layers icon) at the left
+  and `17 takes · 02:00` at the right, then a row of take cards — `CLIP 7`,
+  `4.60s / 8.3…`, i.e. a duration within a total.
+- **Type and colour.** Metadata is monospace, uppercase, wide-tracked, low
+  contrast. The accent is TEAL/EMERALD. Ours is sky blue, and it is load-bearing
+  — PL15-026 runs the subject's blue from the film through to the minimap off
+  one exported constant. Adopting a teal would mean moving that constant, not
+  adding a second accent.
+
+**Things this raises that the artifact cannot answer, and the code may not
+either:**
+
+- **The transport is five buttons where ours is fewer.** Skip-to-start and
+  skip-to-end are new verbs, and "next/previous" here is ambiguous between the
+  next CLIP and the next TAKE. PL15-029's prev/next already means item, so the
+  two must not collide.
+- **Takes are a concept we do not have.** `17 takes` implies alternates per
+  clip. Nothing in the model carries that today, so this is either a rename of
+  something existing or a data-model item of its own — worth knowing which
+  before any of it is built.
+- **The details bar has a settled contract already**, including two behaviours
+  that were tried, reversed, and stay reversed. If the artifact's scrub or
+  transport contradicts them, the contract wins unless the owner says
+  otherwise — that is exactly the kind of thing a fresh reference design
+  quietly re-litigates.
+
+Acceptance criteria:
+
+- The container matches the artifact's composition: a panel in the content area,
+  no scrim, media over a full-width scrub bar with clip ticks, a location label
+  left and a transport cluster right, takes in their own panel below.
+- Our preview display is the thing inside it. No second player.
+- The accent is decided ONCE and applied from the existing exported constant,
+  not restated.
+- Every transport verb has one unambiguous target — clip or take or item — and
+  the item names it.
+- Stories cover it, per the repo rule: selected state, missing poster, short and
+  long clips, a many-take row.
