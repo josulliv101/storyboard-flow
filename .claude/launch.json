@@ -4,7 +4,12 @@
     {
       "name": "timeline-gstudio001",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/timeline-gstudio001", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "apps/timeline-gstudio001",
+        "run",
+        "dev"
+      ],
       "port": 3000,
       "autoPort": false
     },
@@ -16,8 +21,28 @@
     {
       "name": "storybook",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/storybook", "run", "storybook"],
+      "runtimeArgs": [
+        "--prefix",
+        "apps/storybook",
+        "run",
+        "storybook"
+      ],
       "port": 6006
+    },
+    {
+      "name": "timeline-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "apps/timeline-gstudio001",
+        "run",
+        "start",
+        "--",
+        "-p",
+        "3002"
+      ],
+      "port": 3002,
+      "autoPort": false
     }
   ]
 }

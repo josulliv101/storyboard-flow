@@ -2549,12 +2549,16 @@ export function WorkbenchSplitPane({
    * is predictable, and the moment the user drags the divider their height
    * takes over for good (see the restore path in the mount effect).
    */
+  /**
+   * Returns whether it actually sized. The caller latches "done" on that,
+   * NOT on having been called — see the mount effect.
+   */
   const initialSurfaceHeight = useCallback(() => {
-    if (dragStartRef.current) return;
-    if (typeof window === "undefined") return;
+    if (dragStartRef.current) return false;
+    if (typeof window === "undefined") return false;
 
     const divider = dividerRef.current;
-    if (!divider) return;
+    if (!divider) return false;
 
     // A third of what the user can actually SEE, not of a <main> that may
     // run far below the fold — getViewportBoundaryBottom already resolves
@@ -2587,6 +2591,7 @@ export function WorkbenchSplitPane({
     setSurfaceHeight((height) =>
       Math.abs(height - nextHeight) < 0.5 ? height : nextHeight,
     );
+    return true;
   }, [clampSurfaceHeight, getViewportBoundaryBottom]);
 
   /** Keep the current height LEGAL for the viewport without re-deriving it —
@@ -2777,9 +2782,30 @@ export function WorkbenchSplitPane({
     // mounted earlier with only its lower pane so that the lower content keeps
     // its DOM identity and scroll position across this toggle.
     if (hasSurface && !didInitialSizeRef.current) {
-      didInitialSizeRef.current = true;
-      if (restoredSurfaceHeight !== undefined) clampToViewport();
-      else initialSurfaceHeight();
+      // LATCHED ON SUCCESS, NOT ON THE ATTEMPT (PL15-020).
+      //
+      // This set the flag first and then called the sizing, and the sizing
+      // bails when `dividerRef.current` is still null — which it is whenever
+      // this layout effect runs before the divider has attached. On those
+      // passes the pane kept `DEFAULT_SURFACE_HEIGHT` (380) and, because the
+      // flag was already set, NEVER TRIED AGAIN. It only reached its real
+      // height later, when some unrelated clamp happened to fire.
+      //
+      // That is the whole of the intermittency `preview height is the user's`
+      // has been reporting. Instrumented across six runs, the geometry was
+      // identical every time — `innerHeight` 480, `rootTop` -119, the final
+      // height always 207 — and the only thing that varied was whether the
+      // pane STARTED at 380 or at 207. Passes were the runs where the divider
+      // happened to be attached on this pass.
+      //
+      // Retrying costs nothing: this effect re-runs, and the flag still stops
+      // a second successful sizing from ever overriding the user's height.
+      if (restoredSurfaceHeight !== undefined) {
+        didInitialSizeRef.current = true;
+        clampToViewport();
+      } else if (initialSurfaceHeight()) {
+        didInitialSizeRef.current = true;
+      }
     }
 
     const root = rootRef.current;

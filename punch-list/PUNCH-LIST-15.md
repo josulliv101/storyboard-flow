@@ -1644,3 +1644,476 @@ What actually has to hold is INVARIANCE: fitting must land on the same scale
 whatever size the film is drawn at. That is what the story asserts now, and it
 is a direct test of the design — `fit` computes from the measured width, so the
 size factor must not be applied on top of what it stores.
+
+## PL15-020 — the pane opened at a height it had to be talked down from
+
+**THE MECHANISM, FOUND.** Instrumenting the failing assertion across six runs
+showed the geometry is IDENTICAL every time (`innerHeight` 480, `rootTop` -119,
+`scrollY` 132) and the final height is ALWAYS 207. The only thing that varied
+was `initial` — the height captured just after the pane opens:
+
+```
+fail   want=380   got=207
+pass   want=207   got=207
+```
+
+So nothing was shrinking the pane. It sometimes OPENED at 380 and was
+corrected, and the test caught it mid-correction. Every hypothesis in this item
+until now — ceilings that disagree, a ceiling that moves with scroll, a clamp
+firing on content change — was chasing a shrink that was not happening.
+
+380 is `DEFAULT_SURFACE_HEIGHT`, the unclamped value `surfaceHeight`
+initialises to. The mount layout effect replaces it, and it set
+`didInitialSizeRef.current = true` BEFORE calling the sizing — which bails when
+`dividerRef.current` is still null. On those passes the pane kept 380 and,
+because the flag was already set, never tried again; it reached its real height
+only when some later clamp happened to fire. Latched on SUCCESS now.
+
+**It improves the rate without eliminating it.** Identical conditions, N=10,
+`--workers=1`: main 7 of 10, with the fix 9 of 10 (an earlier run scored 10).
+Default parallel workers: 5 of 10 against 6 of 10. A second contributor is
+still unfound.
+
+**A measurement warning that caught me twice while doing this:** `--workers=1`
+and the default worker count give materially different rates on this test. A
+comparison has to hold that constant as well as N.
+
+## PL15-027 — what the measurement actually found
+
+**THE PREMISE IS PROBABLY WRONG. There may be no regression at all.** Speed
+Insights was installed on **22 August at 22:52** (#514) — the day the chart
+begins. The line is a smooth decay from ~95 to 66, not a step. A deploy
+regression is a cliff on one date; an average converging as samples accumulate
+is a curve. The score did not fall so much as it was never really 90.
+
+That does not make the numbers acceptable — FCP 3.3s and LCP 5.43s are poor by
+any reading — but it moves the question from "what did we break on the 23rd" to
+"why has first paint always been slow", which is a different search.
+
+**Sizes, gzipped, from a production build:**
+
+```
+all chunks   1771 kB raw   544 kB gzip
+  router       234 kB       63 kB
+  React        196 kB       61 kB
+  framework    185 kB       58 kB
+  main         130 kB       37 kB
+  polyfills    109 kB       38 kB
+```
+
+544 kB gzipped across EVERY chunk on disk — not the first-load figure, so a
+visitor fetches less than that. Heavy, but not obviously 3.2 seconds of
+pre-paint work on a desktop connection. **Which points at execution rather than
+bytes**, and makes the next instrument a profile of the first load rather than
+more trimming.
+
+**One real finding, and it is UNPROVEN.** `zod` reaches the client through a
+STATIC chain: `graph-timeline-view` → `McpToolsBridge` → `lib/webmcp/tools.ts`
+(653 lines of agent tool definitions) → `zod`. Everyone who opens a board
+carries the agent tooling, and PL15-018 made it bigger this week. The bridge is
+`dynamic(..., { ssr: false })` now.
+
+**THE BEFORE/AFTER SHOWED NOTHING, AND THE INSTRUMENT IS WHY.** 544 kB baseline
+against 545 kB with the change. Summing the chunks ON DISK cannot detect a
+lazy-loading win — the chunk still exists, it simply is not fetched. The
+manifests do not answer it either: the route's client-reference manifest lists
+6 chunks totalling 98 kB, which is the server-boundary set rather than the
+eager graph.
+
+So the change is kept on its MECHANISM and explicitly not on evidence. The
+measurement that would settle it is transferred JS before FCP in a real browser
+load, and it has not been taken.
+
+## PL15-027 — the server-rendered list, measured
+
+Same conditions throughout: production build, 4x CPU, Slow 4G, `/`.
+
+| | client-fetched | server-rendered |
+| --- | ---: | ---: |
+| LCP | 1,671 ms | **768 / 909 ms** |
+| Load delay | 1,405 ms | **402 / 275 ms** |
+| TTFB | 152 ms | 312 / 481 ms |
+| CLS | 0.00 | **0.18** |
+
+**LCP roughly halves and load delay drops by about a second**, which is exactly
+the mechanism the insight named: the poster is in the initial HTML now, so the
+preload scanner starts it instead of waiting for React to download, parse,
+execute, fetch the list and render a card.
+
+**TTFB rises ~160-330ms** because the server now does the Firestore read. That
+is a real trade and a good one — a few hundred milliseconds on the server
+bought about a second on the client.
+
+**`fetchPriority` ALONE DID NOTHING, and that is the honest result rather than
+a surprising one.** Applied without the server render it measured 2,095 ms
+against a 1,671 ms baseline — noise, not harm. A browser cannot prioritise a
+request it does not know exists. The two checks Chrome makes are not
+independent: the hint only means something once the resource is discoverable.
+
+**THE CLS IS RESOLVED — see PL15-027, the CLS, found and fixed, below.** It
+was the root layout's `null` Suspense fallback, which predates this branch; the
+notes here are kept as the state of the search at the time.
+
+**(AS IT STOOD) THE CLS IS UNRESOLVED AND THE BRANCH SHOULD NOT SHIP UNTIL IT IS.** CLS went
+0.00 to 0.18, above the 0.1 "good" threshold, and CLS is one of the four inputs
+to the Real Experience Score — so this currently trades one Core Web Vital for
+another.
+
+What is known about it:
+
+- It reproduces in TRACED loads, 2 of 2, as a single shift of 0.1837 about a
+  second in. DevTools reports "no potential root causes identified".
+- A `layout-shift` PerformanceObserver installed before navigation sees **zero
+  shifts** — on a normal navigation and on a hard reload with the cache
+  ignored.
+- The before/after comparison is like-for-like (both traced), which argues the
+  regression is real rather than an artifact.
+
+Those two facts do not sit together yet, and until they do the cause is not
+known. The next step is to reconcile them — an observer that survives the
+trace's own reload — rather than to guess at a culprit. `AuthGate` wrapping the
+page in `RootLayout` is the obvious suspect and is only a suspect.
+
+## PL15-027 — the CLS, found and fixed
+
+**THE TWO INSTRUMENTS NEVER DISAGREED. ONE OF THEM WAS NEVER RUNNING.** The
+contradiction that blocked this item — a trace reporting 0.1837 and a
+`layout-shift` observer reporting zero — was an artifact of how the observer was
+installed. CDP's `initScript` is consumed by the navigation that installs it, so
+it does not re-run on a reload; every traced measurement reloads the page, and
+the observer was therefore absent from precisely the load being measured. Proved
+directly: a trace started with `reload: false` plus a navigation that carries the
+observer put both instruments on ONE load, and they agreed exactly — 0.00 and
+0.00.
+
+The instrument that does survive a reload is one injected SERVER-SIDE. A thin
+proxy in front of `next start` that inlines the observer into every HTML response
+measures every load, traced or not — that is what turned this from intermittent
+to 13 of 13.
+
+**THE SHIFT, MEASURED.** `main` moves `x:0 w:1385` to `x:260 w:1125`. One shift,
+0.1837, the whole CLS of the page. 260px is `RAIL_OPEN_WIDTH_PX` exactly.
+
+**THE CAUSE IS THE SUSPENSE FALLBACK IN THE ROOT LAYOUT, AND IT PREDATES THIS
+BRANCH.** The rail is server-rendered, but inside `Suspense` with a `null`
+fallback. The shell flushes with the boundary still pending — the initial HTML
+literally reads `<!--$?--><template id="B:0"></template>` followed by `<main>` —
+and the rail's markup arrives at 46% of the same response, inside
+`<div hidden id="S:0">`, to be swapped in by script. While pending, a `null`
+fallback reserves NO width, so `main` — its `flex-1` sibling — lays out across the
+whole row and is shoved when the boundary resolves.
+
+`origin/main` carries that same `null` fallback verbatim, and `app/layout.tsx`
+was last touched before this branch. **So PL15-027 did not introduce this shift.
+It made the page paint early enough to SHOW it** — the shift only scores when a
+paint lands between the shell and the boundary resolving, and a 1,671ms LCP left
+no such window. Speeding up first paint is what turned a latent bug into a
+measured one, which is the honest version of "CLS regressed".
+
+**THE FIX** reserves the rail's width in the fallback, from the variable the
+server already publishes on the `html` element from the cookie — the same
+variable, and the same reasoning, as #471. It is correct for both rail states
+before anything paints, which no hardcoded number would be.
+
+**MEASURED, before and after, same build pipeline, 4x CPU / Slow 4G, signed in:**
+
+| | before | after |
+| --- | ---: | ---: |
+| loads shifting (injected observer) | 13 of 13 | 0 of 12 |
+| worst CLS | 0.1837 | **0.0002** |
+| `main` shoves | 13 | **0** |
+| CLS (DevTools trace, raw server) | 0.18 | **0.00, 2 of 2** |
+| LCP (raw server, warm) | 710 / 756 / 761 / 789 ms | 664 / 672 / 676 ms |
+
+The only residual shift is a `span` whose truncated label fills in — 0.0002,
+three orders of magnitude under the 0.1 threshold.
+
+**LCP IS NOT PAID FOR IT, AND THE FIRST READING SAID IT WAS.** The first two
+post-fix traces came back 1,159 and 1,085ms and looked like a regression. They
+were a cold `next start`: render delay 546ms against about 100ms warm. Three warm
+samples land at 664-676ms. Reporting the cold pair would have been wrong in the
+same way that dropping `fetchPriority` on its null result would have been.
+
+**A GUARD SHIPS WITH IT.** `app/root-layout-rail-reservation.test.ts` reads the
+layout as source and fails if the fallback is `null`, does not reserve
+`RAIL_WIDTH_VAR`, or is not `shrink-0`. Checked against `origin/main`: all three
+assertions fail there and pass here, so it catches the real defect rather than
+restating the fix. It needs to exist precisely because a future `null` fallback
+reads as tidier rather than as a regression, and because nothing about the defect
+is visible until the page is fast.
+
+## PL15-028 — Cloudinary usage jumped; find out what changed
+
+- Status: OPEN — first pass done from the five exported CSVs below. The
+  mechanism is NARROWED but the attribution is CORRELATION, not proof: nothing
+  here separates localhost and e2e traffic from real visitors, and that is the
+  one split that decides whether this matters at all.
+- Area: Cloudinary account usage (delivery, not storage); `app/page.tsx`,
+  `app/projects-client.tsx` (poster delivery), `tests/e2e/`
+- Screenshot: Not captured
+
+Usage rose sharply over 21-23 August. The question is what changed.
+
+**IT IS NOT UPLOADS.** Storage moved 795.5 to 903.1 MB across the week, +13.5%,
+and +104 MB of that is video. A steady climb, no step. Whatever happened is on
+the DELIVERY side.
+
+**THE NUMBERS** (assumed MB — the export carries no unit header, and the totals
+are the right order of magnitude for this account; worth confirming before
+quoting them anywhere). 24 August is a partial day.
+
+| date | image impressions | image MB | video MB | total MB | delivered video s | transformed video s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 18 Aug | 66 | 6.7 | 0.6 | 7.3 | 0 | — |
+| 19 Aug | 133 | 3.2 | 1.5 | 4.6 | 0 | — |
+| 20 Aug | 1,427 | 14.9 | 192.1 | 206.9 | 0 | — |
+| 21 Aug | 967 | 36.6 | 113.5 | 150.0 | 864 | 260 |
+| 22 Aug | 11,202 | 18.9 | 562.4 | 581.3 | 1,150 | 388 |
+| 23 Aug | 13,907 | 161.2 | 236.6 | 397.8 | 616 | 20 |
+| 24 Aug | 777 | 1.4 | 18.2 | 19.6 | 10 | 0 |
+
+**THERE ARE TWO SPIKES, NOT ONE, AND THEY HAVE DIFFERENT SHAPES.**
+
+- **Video bandwidth, 20-23 Aug** — 192, 113, 562, 237 MB against under 1.5 MB on
+  the 18th and 19th. **20 August is the anomaly that matters:** 192 MB of video
+  bandwidth with ZERO delivered video seconds. Delivered-seconds counts
+  streamed or derived delivery, so bandwidth without it is originals being
+  fetched whole. The transformed-seconds column says the same thing from the
+  other side — 260, 388, 20, 0, which is almost nothing served through a derived
+  rendition. Per-second rates agree: 22 August is 562 MB over 1,150s, about
+  3.9 Mbps for something labelled 480p, which is not a 480p rendition.
+- **Image impressions, 22-23 Aug** — 11,202 and 13,907, against 66-133/day on the
+  18th and 19th. A hundredfold. At about 11.9 KB per impression on the 23rd these
+  are thumbnails, so the cost is in the COUNT, not the size.
+
+**WHAT CHANGED IN THAT WINDOW, and this is the correlation to test rather than
+believe.** 22-24 August is this punch list's heaviest run of work, and two things
+in it move image impressions specifically:
+
+- **The e2e suite and the PL15-020 investigation.** PL15-020 alone ran the full
+  176-test suite repeatedly, plus N=10 comparisons twice over, on the 23rd and
+  24th. Every app load renders project cards with real posters. 13,907
+  impressions is not a human browsing a three-project account.
+- **PL15-027 made the projects list server-rendered.** Posters are in the initial
+  HTML now, so the preload scanner fetches them on EVERY load — before it, a load
+  that never executed React never fetched them at all. That structurally raises
+  impressions per page view. It landed on the 24th-25th, so it does NOT explain
+  the 22-23 spike; it is what to watch in the NEXT export.
+
+Acceptance criteria:
+
+- The spike is attributed to a NAMED source, with the report that proves it —
+  Cloudinary's breakdown by referrer or user-agent, or by `public_id`. "Probably
+  the e2e suite" is where this analysis stops, not where it should end.
+- Localhost and CI traffic are separated from real visitors. If it is our own
+  test runs, the finding is about test hygiene; if it is not, it is about
+  delivery.
+- The video question is answered separately from the image one: whether
+  originals are being delivered where a derived rendition should be. 20 August —
+  192 MB with zero delivered seconds — is the case to explain first.
+- Whether anything should CHANGE is decided last and explicitly. Cloudinary
+  public delivery was a deliberate call and is not a finding; a fetch or
+  transform default is a different question from access.
+
+**Worth settling while in there:** whether e2e runs should point at fixture
+posters rather than at Cloudinary at all. Test runs that bill a delivery account
+scale with how often the suite runs, which is exactly the thing this list has
+been doing more of.
+
+## PL15-029 — The details modal stops being a modal and becomes the content area
+
+- Status: Not started
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+  (open a clip's details from the board)
+- Area: `components/graph-view/graph-item-details-modal.tsx`,
+  `components/graph-view/graph-board.tsx` (mount point),
+  `components/graph-view/graph-view-config.ts` (panel geometry),
+  `hooks/use-dialog-focus.ts`
+- Screenshot: Not captured
+
+Opening an item's details should not throw a modal over the board. It should
+REPLACE what is in the content area, the way a view does — the board goes away,
+the details come in, and you come back to the board when you leave.
+
+**What it is today.** `GraphItemDetailsModal` is mounted once from
+`graph-board.tsx` and `createPortal`s itself onto `document.body` as
+`role="dialog" aria-modal="true"`, over a scrim
+(`fixed inset-0 z-[80] ... bg-black/80 backdrop-blur-sm`). It is 1,555 lines and
+it is not only a clip panel: for a collection node it renders
+`CollectionDetails` instead, so it is already the router between two bodies
+rather than one screen.
+
+**This is a container change, not a restyle, and four things are wired to the
+container.**
+
+- **`aria-modal` stops being true, and it currently IS true.** `useDialogFocus`
+  exists precisely because the attribute was once a lie: it moves focus in,
+  cycles Tab inside, and restores focus on close to the card the modal was
+  opened from. A content view must NOT trap Tab — trapping focus in something
+  that is not modal is the same defect in the other direction. But the RESTORE
+  is still wanted, because it is what keeps the board's roving focus from
+  resetting. So the hook is split, not deleted.
+- **Escape needs an explicit owner.** Today "Escape, the close button and the
+  scrim all go through one path", and the scrim is about to stop existing. A
+  view that fills the content area and closes on Escape is competing with every
+  other Escape handler on the page, and that competition is already a known
+  sore spot in the selection work.
+- **The geometry is viewport-relative and will be wrong in flow.**
+  `DETAILS_PANEL_HEIGHT_CLASS` is `h-[68vh] max-h-full` and
+  `DETAILS_ROW_FLOOR_CLASS` is `min-h-[min(68vh,calc(100vh-26.625rem))]`. Those
+  are correct for a panel centred in the viewport under a fixed scrim with
+  `pt-[14.75rem]`; inside `main` they size to the window rather than to the
+  region, so the panel will overflow or float depending on what else is on
+  screen. They have to be derived from the CONTAINER.
+- **The board underneath has to go somewhere.** Unmounting it loses scroll
+  position, selection and any in-flight dnd state; hiding it keeps the whole
+  board mounted behind a view that covers it, which is the cost the grid
+  virtualization item is already about. Neither is obviously right and the
+  choice should be made deliberately.
+
+Acceptance criteria:
+
+- Opening details replaces the board in the content area. No scrim, no portal
+  to `document.body`, no `aria-modal`.
+- Tab is not trapped. Focus still moves into the view on open and still returns
+  to the originating card on leave.
+- Escape has ONE named owner and the item says who it is.
+- The panel sizes to the content area, not to the viewport, at both rail widths
+  and with the preview pane open and closed. PL15-020's invariant still holds:
+  nothing here may steal the preview's height.
+- Prev/next between items — `detailsWindow`, and the swipe path — still works.
+- Storybook covers the new container, per the repo rule that timeline/media
+  changes bring stories: selected state, a missing poster, a short clip and a
+  long one.
+
+**Three things to settle when this is worked:**
+
+- **WHICH modals.** Read here as the ITEM DETAILS modal. The shortcuts sheet is
+  the other portalled dialog and should stay a modal — it is help ABOUT the
+  screen, not a screen. Collection details is reached through this same
+  component, so on the face of it it moves too; if it should stay a dialog, that
+  splits the component and is worth knowing before starting.
+- **Does it get a URL?** A modal is a state; a content view is a place. If
+  details now replace the content area, back/forward and a shareable link are
+  the natural expectation — and that is a router change well beyond "stop
+  portalling", so it should be an explicit yes or no rather than discovered
+  halfway.
+- **Does it animate in, and how.** `withViewTransition` is already used here.
+  Beware the known trap: a view transition does not paint the page, so a moved
+  named element leaves a black cut-out, and a snapshot cannot deform. Card to
+  full-width view is exactly the shape that bites.
+
+## PL15-030 — The reference design for the details view
+
+- Status: Not started, but SPECIFIED — the owner supplied the source, and three
+  open questions in the first draft of this item are now decided (see "The three
+  calls" below). What is left is a build, not a design.
+- Reference: `punch-list/reference/storyboard-playbar.html`, vendored into the
+  repo because that is the readable one and a Downloads folder is not a spec.
+  Also supplied: `storyboard-react-demo.html`, the same design as a Tailwind v4
+  build — it carries the identical tokens (`--color-ink: #08090d`,
+  `--color-signal: #3cdbc0`, …) but ships as a MINIFIED BUNDLE whose source
+  cannot be recovered, so it is a picture, not a spec. Rendered at
+  https://claude.ai/public/artifacts/d7b2d207-7326-4ad9-9022-152adb1250c8
+- Area: pairs with PL15-029 — that item is the CONTAINER change, this one is
+  what goes in it.
+- Screenshot: Not captured
+
+**THE ONE IDEA WORTH TAKING, and the reference names it in a comment:
+`the one shared preview`, with `the content area lives below it`.** One preview
+at the top, whatever you are looking at feeds it, and everything else is
+underneath. That is our existing preview display — the reference does not ask
+for a second player, it says what the one we have should MIRROR.
+
+**IT AGREES WITH PL15-029 FROM THE OTHER DIRECTION.** No scrim, nothing dimmed,
+no overlay: a ground, a preview, and a content area below. Two independent routes
+to the same answer.
+
+**What the preview mirrors, with the precedence spelled out** (`playerRender()`).
+The reference orders it take > skim > sequence; takes are out (below), so:
+
+- **Skimming** — hovering or scrubbing the ruler skims frames straight into the
+  player. Label is `SH nn · <section>`, time is `tc(skim) / tc(DUR)`.
+- **Otherwise** — the sequence playhead. Label `SEQ 04 · <section>`, time
+  `tc(t) / tc(DUR)`.
+- **The scrub fill tracks `t`, never the skim.** Skimming changes the FRAME and
+  the LABEL and leaves the fill where playback is. That is the detail that makes
+  skimming feel like looking rather than like seeking, and it is easy to lose.
+
+**The preview is dismissible, and that is a real behaviour, not a nicety.**
+`setPlayerOpen()` animates height 0 <-> `scrollHeight` with opacity over **340ms**
+and `prefers-reduced-motion` short-circuits to `display:none` with no animation
+at all. Two controls: a toggle in the content area's header and a close on the
+player itself. Two details worth copying exactly:
+
+- It calls `playerRender()` BEFORE animating open, so the frame is current the
+  moment it reappears rather than one frame stale.
+- It scrolls the window to top on open, because the preview and the playbar
+  share the viewport — reopening the preview otherwise pushes the playbar out of
+  view.
+
+**The transport is start / prev / play / next / end**, and it is bounded rather
+than wrapping: prev and next go `disabled` at the ends. `start` sets the time to
+0 AND scrolls the viewport to 0; `end` sets it to `DUR` and scrolls to the end —
+time and scroll move together, which is what stops the playhead ending up
+somewhere you cannot see.
+
+**The playbar is the larger half, and most of it maps onto things we already
+have** — so the value here is the geometry and the gestures, not new concepts:
+
+- `--pxs: 44px` per second, deliberately mirrored in CSS and JS.
+- A 40px ruler with ticks and labels; 26px labelled section lanes, where clicking
+  a section smooth-scrolls the viewport to it.
+- A 150px filmstrip of shots built from per-frame cells, `cursor: grab`, with
+  real INERTIA — a fling with momentum and an explicit `cancelMomentum` on every
+  competing interaction.
+- A playhead in three parts: a line, a **timecode chip** (`--chip #f3f6f9`), and
+  a triangle; it gains a glow while playing.
+- A hover ghost that previews where a click would land.
+- A 28px minimap: drag the window to pan, click to jump, with its own playhead in
+  `--alarm #ff5c5c` — a different colour from the selection accent on purpose.
+- Timecode is `mm:ss:ff`, frames included.
+- A first-run coach mark, dismissed by the first skim — "the lesson is learned by
+  doing". The file explicitly notes the "seen" flag must be persisted by the app,
+  which is the part a copy would drop.
+
+**The three calls, made by the owner:**
+
+- **TAKES ARE OUT.** The deck of swipeable takes with the centre card active, the
+  `17 takes · 02:00` header, the `TAKE · SH nn` player source, and the
+  "auditioning: keep rolling on the next take" autoplay all drop. This is the
+  simplification that collapses the player's three-way precedence to two, and it
+  removes the only concept in the reference that our model does not have.
+- **PREV/NEXT MEAN THE NEXT CLIP.** Unambiguous now, and it settles the collision
+  the first draft flagged: PL15-029's item-level prev/next and this transport are
+  the same verb on the same thing, so there is one behaviour to build, not two
+  that have to be told apart.
+- **THE ACCENT STAYS SKY BLUE.** The reference's `--signal: #3cdbc0` teal is NOT
+  adopted. PL15-026 already runs the subject's blue from the film through to the
+  minimap off one exported constant, and that constant remains the single source
+  — the reference's teal is read as "there is one accent and it is used
+  consistently", which we already do, in our colour.
+
+Acceptance criteria:
+
+- One preview, at the top, and it is the EXISTING preview display. No second
+  player anywhere in the tree.
+- The preview mirrors skim over sequence, with the labels and timecodes above,
+  and the scrub fill follows playback rather than the skim.
+- The preview can be dismissed and restored, from both controls, with the
+  reduced-motion path taking no animation; the frame is current on reopen and
+  the playbar stays in view.
+- Transport is start / prev / play / next / end, prev/next step CLIPS and
+  disable at the ends, and start/end move time and scroll together.
+- The accent comes from the existing exported constant. No teal is introduced.
+- Stories cover it per the repo rule: selected state, missing poster, short and
+  long clips, a many-clip timeline — plus the reduced-motion dismiss path, which
+  is the branch a story is the only cheap way to see.
+
+**One thing still to settle:** the reference loads **Martian Mono** and **Spline
+Sans Mono** from Google Fonts and uses them for every label. Our root layout says
+Grandstander is the only custom font and everything else rides `font-sans` — on
+purpose. Two new families for metadata is a typographic decision and a
+first-paint cost (the rail's own CLS fix in PL15-027 is what a late font does to
+a layout), so it should be an explicit yes or no rather than arriving with the
+component.
