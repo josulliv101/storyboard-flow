@@ -145,6 +145,33 @@ ${SCOPE} .deck{ touch-action: none; }
    under the settled contract it is now the ONLY one. ─────────────────── */
 ${SCOPE} .strip .shot{ cursor: grab; }
 
+/* ── THE CARD IS SIZED BY WIDTH, SO WIDTH IS THE HEIGHT DIAL ─────────────
+   The reference gives \`.clip\` \`width: clamp(300px, 30vw, 440px)\` and makes
+   the picture \`aspect-ratio: 2 / 1\`, so a card's height is a fixed stack of
+   rows plus half its width. Everything below the picture — the head, the
+   title, the transport row, the trim strip, the fields, the tags — is a
+   constant.
+
+   That makes the card proportional, and proportional is exactly what a
+   height-constrained deck needs: to fit a shorter window, narrow the card and
+   the picture gives back twice what it loses. Reaching instead for a flex
+   column with a shrinking picture would change the card's height on the spot,
+   because a block box collapses adjacent margins and a flex one does not, and
+   this card's rows carry 54px of margin between them.
+
+   \`--clip-w\` is published by the deck from the height it actually has (see
+   \`clip-deck.tsx\`); the fallback IS the reference's own rule, so a standalone
+   deck and any surface that never sets it are unchanged. ─────────────────── */
+${SCOPE} .clip{ width: var(--clip-w, clamp(300px, 30vw, 440px)); }
+
+/* ── AND THE STRIP GIVES A LITTLE BEFORE THE CARD GIVES A LOT ────────────
+   150px of film is generous on a short window, and the bar is the one part
+   whose job survives being shorter — a shot box still reads as a shot box at
+   112px. Ahead of the card in the order of concessions because the card is
+   where the text lives. Only ever SHRINKS: at any comfortable height this
+   resolves to the reference's own 150px. ─────────────────────────────────── */
+${SCOPE} .strip{ height: var(--strip-h, 150px); }
+
 /* ── THE ACCENT IS OURS, NOT THE REFERENCE'S ─────────────────────────────
    \`--signal\` is the reference's selection teal (#3cdbc0). Ours is sky blue and
    it is load-bearing: PL15-026 runs the subject's blue from the film through to

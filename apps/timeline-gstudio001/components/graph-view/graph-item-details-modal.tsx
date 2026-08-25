@@ -106,6 +106,48 @@ import {
 
 /** The row's edges fade rather than cutting a card in half — see the note on
  *  the view's own element. */
+/** Breathing room below the view, so the deck's cards do not sit on the edge. */
+const DETAILS_BOTTOM_GAP_PX = 12;
+/**
+ * A floor on the bound height, so a freak measurement cannot collapse the view
+ * to nothing. Not a "give up" threshold: the view ALWAYS bounds itself to the
+ * window, and when the window cannot hold everything the deck is what gets
+ * cropped, with the scroll inside this view.
+ *
+ * Letting it fall back to normal flow was tried and is worse. With the preview
+ * pane open the ancestors constrain the column anyway, so "flowing" produced a
+ * view that scrolled internally AND had thrown its concessions away — a strip
+ * back at its full 150 and cards at their 300 floor, which is the space being
+ * spent in exactly the wrong order.
+ */
+const DETAILS_MIN_FIT_PX = 360;
+
+/* ── THE ORDER IN WHICH THINGS GIVE ──────────────────────────────────────
+   Both the bar and the deck are height-hungry and the window is not, so
+   something has to concede. The strip concedes FIRST: a shot box still reads
+   as a shot box at 120px, whereas the deck's cards are mostly text and a
+   narrower card is a smaller typeface on the one surface carrying names,
+   timecodes and the trim fields.
+
+   MEASURED, not chosen. At a view height of 828px the deck received 400px and
+   wanted 461 for a full-width card, so the deck's share is `fit - 428` and the
+   comfort point — the height above which nothing needs to give — is 889.
+   Below it the strip hands back the shortfall, up to 30px. Every number here
+   came off the running app; if the bar's rows change, re-measure rather than
+   nudge. ─────────────────────────────────────────────────────────────────── */
+const STRIP_FULL_HEIGHT_PX = 150;
+// 104 rather than 120 because 120 left a 1503x800 window 15px short — close
+// enough that the last of it should come from the strip, which is next in the
+// order anyway, rather than from shaving unrelated constants until it fits. A
+// shot box is still legibly a shot box here; below about 100 it stops being.
+const STRIP_FLOOR_HEIGHT_PX = 104;
+const STRIP_COMFORT_FIT_PX = 889;
+/** The column's own spacing concedes before either component does — it is the
+ *  only give that costs no content at all. `gap-6` restated here because it is
+ *  now written from JS and two sources for one number is how they drift. */
+const DETAILS_GAP_PX = 24;
+const DETAILS_GAP_FLOOR_PX = 12;
+
 const DECK_EDGE_FADE =
   "linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)";
 
@@ -1079,11 +1121,78 @@ function DetailsFilmstripModal({
         DETAILS_BASIS_VAR,
         `${Math.round(element.getBoundingClientRect().width)}px`,
       );
+
+      // AND THE VIEW ENDS WHERE THE WINDOW DOES.
+      //
+      // Nothing above this bounded it: `main` is `flex-1` inside a `min-h-screen`
+      // shell, so the column simply grew and the PAGE scrolled — measured, 982px
+      // of document in a 910px window, with the bottom of the deck's cards below
+      // the fold. An instrument you have to scroll to see the bottom of is not
+      // one you can read at a glance, which is the point of this view.
+      //
+      // Bounded HERE rather than by giving the shell `h-screen`: the board and
+      // the grid share that shell and both legitimately scroll the page.
+      //
+      // `top` is read in DOCUMENT space, because the fix removes the very page
+      // scroll a viewport-relative reading would depend on — measure it in
+      // viewport space and the answer changes as it works.
+      const top = element.getBoundingClientRect().top + window.scrollY;
+      const fit = Math.max(
+        DETAILS_MIN_FIT_PX,
+        Math.round(window.innerHeight - top - DETAILS_BOTTOM_GAP_PX),
+      );
+
+      // Written only when it changes: this runs from a ResizeObserver watching
+      // the same element, and an unconditional write is a loop.
+      if (element.style.height !== `${fit}px`) element.style.height = `${fit}px`;
+
+      // ── THE CONCESSION LADDER ────────────────────────────────────────
+      //
+      // A shortfall is paid down in a fixed order, each step taking only what
+      // the one before it could not: the column's SPACING first, because it
+      // costs no content; then the STRIP, because a shot box survives being
+      // shorter; and whatever is still owed is left to the DECK, which narrows
+      // its cards on its own from the height it ends up with.
+      //
+      // The deck is told nothing. It re-fits to whatever it is given, so
+      // handing over the height IS the negotiation — no second opinion about
+      // card sizes living up here to go stale.
+      let owed = Math.max(0, STRIP_COMFORT_FIT_PX - fit);
+      const take = (available: number) => {
+        const taken = Math.min(owed, Math.max(0, available));
+        owed -= taken;
+        return taken;
+      };
+
+      // Two gaps in the column, so each pixel off the gap is two off the total.
+      const fromGaps = take(2 * (DETAILS_GAP_PX - DETAILS_GAP_FLOOR_PX));
+      element.style.gap = `${DETAILS_GAP_PX - fromGaps / 2}px`;
+
+      const fromStrip = take(STRIP_FULL_HEIGHT_PX - STRIP_FLOOR_HEIGHT_PX);
+      element.style.setProperty("--strip-h", `${STRIP_FULL_HEIGHT_PX - fromStrip}px`);
     };
     publish();
     const observer = new ResizeObserver(publish);
     observer.observe(element);
-    return () => observer.disconnect();
+    // AND EVERY ANCESTOR, because what this must react to is the view being
+    // PUSHED DOWN, and that changes nothing about the view's own size. Once the
+    // height here is explicit the element stops resizing at all, so an observer
+    // watching only itself goes deaf exactly when it matters: measured, opening
+    // the preview pane moved the top to 413 while the height stayed 828, and
+    // the deck sat 331px below the window with no callback fired.
+    //
+    // The whole chain rather than the parent, because the pane that grew is not
+    // a sibling of this view — watching one level up was tried and stayed deaf.
+    // Picking the "right" ancestor would be a guess about a layout above this
+    // component's business, and a wrong guess fails silently.
+    for (let up = element.parentElement; up !== null; up = up.parentElement) {
+      observer.observe(up);
+    }
+    window.addEventListener("resize", publish);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", publish);
+    };
   }, []);
 
   const rowTransform =
@@ -1143,7 +1252,11 @@ function DetailsFilmstripModal({
         maskImage: DECK_EDGE_FADE,
         WebkitMaskImage: DECK_EDGE_FADE,
       }}
-      className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-clip"
+      // `overflow-x: clip` still, for the row's scrim — but the Y axis is
+      // `auto`: the height above is a CEILING, and on a window too short for
+      // even the smallest deck the scroll belongs INSIDE this view rather than
+      // on the page, where it would carry the header and the bar away with it.
+      className="relative flex min-h-0 flex-1 flex-col overflow-x-clip overflow-y-auto"
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
@@ -1261,6 +1374,13 @@ function DetailsFilmstripModal({
           which dispatches the same `update-media` the trim fields did. */}
       <ClipDeck
         standalone={false}
+        // TAKES WHAT THE BAR LEAVES. The view is a bounded column now, so the
+        // deck is the part that absorbs the difference between a tall window
+        // and a short one — it fits its cards to the height it ends up with.
+        // `min-h-0` because a flex item's default `min-height: auto` refuses to
+        // shrink below its content, which is exactly the refusal that put the
+        // cards below the fold.
+        className="min-h-0 flex-1"
         clips={deckClips}
         activeId={node.id as string}
         onActivate={(clipId) => landOn(clipId, position)}

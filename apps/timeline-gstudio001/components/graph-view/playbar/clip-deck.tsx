@@ -32,6 +32,16 @@ const MODELS = ["H3 4-ref", "ref2va", "minimax-h3", "comfy-cloud H3"] as const;
 const CELLS = 16;
 /** How much of a card's width the next one sits away by, plus the gap. */
 const CARD_GAP_PX = 18;
+
+/** The reference's own `clamp(300px, 30vw, 440px)` ends, restated so the fitted
+ *  width can never exceed the design's intent or shrink past its floor. Below
+ *  the floor the deck stops narrowing and the view scrolls instead — a card is
+ *  mostly text, and text has a size past which it is not worth showing. */
+const CARD_MIN_WIDTH_PX = 300;
+const CARD_MAX_WIDTH_PX = 440;
+/** The side cards are scaled to 0.86 and sit at the same centre line, so a card
+ *  fitted flush to the deck would have its neighbours' shadows clipped. */
+const CARD_BREATHING_PX = 16;
 /** Eases `deckPos` toward its target; below this it has arrived. */
 const GLIDE_RATE = 0.16;
 const GLIDE_SETTLED = 0.002;
@@ -257,6 +267,52 @@ export function ClipDeck({
     goTo(index, false);
   }, [CLIPS, activeId, goTo]);
 
+  /**
+   * THE CARD IS FITTED TO THE DECK'S HEIGHT, BY NARROWING IT.
+   *
+   * A card is a fixed stack of rows plus a picture that is half its width, so
+   * its height is `fixed + width / aspect`. Solving that for the height on
+   * offer gives the widest card that fits — and because the picture gives back
+   * twice what the width loses, a modest narrowing buys a lot of height.
+   *
+   * MEASURED RATHER THAN ASSUMED. `fixed` is read off a real card as
+   * "everything that is not the picture", so a row added or removed later
+   * cannot leave a stale constant behind — which is the failure this file has
+   * already had once, in the divider guard that outlived its own reason.
+   *
+   * Driven by a ResizeObserver rather than from `layout()`: the answer only
+   * changes when the deck's height does, and `layout()` runs every frame of a
+   * glide.
+   */
+  useEffect(() => {
+    const deck = deckRef.current;
+    if (deck === null || standalone) return;
+    const fit = () => {
+      const card = cardRefs.current.find((candidate) => candidate !== null);
+      const view = card?.querySelector<HTMLElement>(".c-view");
+      if (card == null || view == null) return;
+      const available = deck.clientHeight;
+      if (available <= 0) return;
+
+      const pictureHeight = view.offsetHeight;
+      const pictureWidth = view.offsetWidth;
+      if (pictureHeight <= 0 || pictureWidth <= 0) return;
+      const fixed = card.offsetHeight - pictureHeight;
+      const aspect = pictureWidth / pictureHeight;
+      const sideways = card.offsetWidth - pictureWidth;
+
+      const widest = (available - CARD_BREATHING_PX - fixed) * aspect + sideways;
+      const next = Math.round(clamp(widest, CARD_MIN_WIDTH_PX, CARD_MAX_WIDTH_PX));
+      if (deck.style.getPropertyValue("--clip-w") === `${next}px`) return;
+      deck.style.setProperty("--clip-w", `${next}px`);
+      layout();
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(deck);
+    return () => observer.disconnect();
+  }, [layout, standalone, CLIPS]);
+
   useEffect(() => {
     layout();
     const onResize = () => layout();
@@ -403,7 +459,16 @@ export function ClipDeck({
             // `margin: 20px 0 4px` because it sits under a preview panel on its
             // own page; here the view's own `gap-6` is the spacing, and the two
             // together read as a gap nobody chose.
-            style={standalone ? undefined : { marginTop: 0 }}
+            style={
+              standalone
+                ? undefined
+                : // NO MARGIN IN EITHER DIRECTION when embedded. `height: 100%`
+                  // and a 4px bottom margin means a box 4px taller than the slot
+                  // it was given, which is a scrollbar on the whole view for
+                  // spacing nobody asked for — measured, 7px of overflow on a
+                  // window where the cards themselves had 5px to spare.
+                  { marginTop: 0, marginBottom: 0, height: "100%", minHeight: 0 }
+            }
             aria-label="Clip takes"
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
