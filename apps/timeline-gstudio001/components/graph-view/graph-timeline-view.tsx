@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -69,7 +70,29 @@ import {
 } from "./graph-hydration";
 import { GraphItemActionsBridge } from "./graph-item-actions";
 import { RemoteChangesBridge } from "./graph-remote-changes";
-import { McpToolsBridge } from "./graph-mcp-tools";
+/**
+ * LOADED AFTER THE PAINT, NOT BEFORE IT (PL15-027).
+ *
+ * This bridge registers the in-page agent tools, and it reaches
+ * `lib/webmcp/tools.ts` — 650-odd lines of tool definitions built on `zod`.
+ * Imported statically, every person who opens a board downloaded all of it
+ * before anything appeared on screen, for a feature most sessions never use.
+ * Measured on the production build: `zod` accounts for the bulk of a 307 kB
+ * chunk, against a first paint that takes 3.3s while the server answers in
+ * 0.13s.
+ *
+ * `ssr: false` because it is a browser-side registration with nothing to
+ * render — there is no markup to stream and no fallback worth showing.
+ *
+ * NOT a behaviour change for an agent: the tools register a tick later than
+ * they used to, and a connector that asks before then re-reads the list
+ * anyway. Registration was never synchronous with the route from the agent's
+ * side.
+ */
+const McpToolsBridge = dynamic(
+  () => import("./graph-mcp-tools").then((m) => m.McpToolsBridge),
+  { ssr: false },
+);
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
 import { GraphViewNavProvider } from "./graph-navigation";
 import {

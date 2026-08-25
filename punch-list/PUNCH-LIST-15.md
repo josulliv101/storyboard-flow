@@ -1644,3 +1644,82 @@ What actually has to hold is INVARIANCE: fitting must land on the same scale
 whatever size the film is drawn at. That is what the story asserts now, and it
 is a direct test of the design — `fit` computes from the measured width, so the
 size factor must not be applied on top of what it stores.
+
+## PL15-020 — the pane opened at a height it had to be talked down from
+
+**THE MECHANISM, FOUND.** Instrumenting the failing assertion across six runs
+showed the geometry is IDENTICAL every time (`innerHeight` 480, `rootTop` -119,
+`scrollY` 132) and the final height is ALWAYS 207. The only thing that varied
+was `initial` — the height captured just after the pane opens:
+
+```
+fail   want=380   got=207
+pass   want=207   got=207
+```
+
+So nothing was shrinking the pane. It sometimes OPENED at 380 and was
+corrected, and the test caught it mid-correction. Every hypothesis in this item
+until now — ceilings that disagree, a ceiling that moves with scroll, a clamp
+firing on content change — was chasing a shrink that was not happening.
+
+380 is `DEFAULT_SURFACE_HEIGHT`, the unclamped value `surfaceHeight`
+initialises to. The mount layout effect replaces it, and it set
+`didInitialSizeRef.current = true` BEFORE calling the sizing — which bails when
+`dividerRef.current` is still null. On those passes the pane kept 380 and,
+because the flag was already set, never tried again; it reached its real height
+only when some later clamp happened to fire. Latched on SUCCESS now.
+
+**It improves the rate without eliminating it.** Identical conditions, N=10,
+`--workers=1`: main 7 of 10, with the fix 9 of 10 (an earlier run scored 10).
+Default parallel workers: 5 of 10 against 6 of 10. A second contributor is
+still unfound.
+
+**A measurement warning that caught me twice while doing this:** `--workers=1`
+and the default worker count give materially different rates on this test. A
+comparison has to hold that constant as well as N.
+
+## PL15-027 — what the measurement actually found
+
+**THE PREMISE IS PROBABLY WRONG. There may be no regression at all.** Speed
+Insights was installed on **22 August at 22:52** (#514) — the day the chart
+begins. The line is a smooth decay from ~95 to 66, not a step. A deploy
+regression is a cliff on one date; an average converging as samples accumulate
+is a curve. The score did not fall so much as it was never really 90.
+
+That does not make the numbers acceptable — FCP 3.3s and LCP 5.43s are poor by
+any reading — but it moves the question from "what did we break on the 23rd" to
+"why has first paint always been slow", which is a different search.
+
+**Sizes, gzipped, from a production build:**
+
+```
+all chunks   1771 kB raw   544 kB gzip
+  router       234 kB       63 kB
+  React        196 kB       61 kB
+  framework    185 kB       58 kB
+  main         130 kB       37 kB
+  polyfills    109 kB       38 kB
+```
+
+544 kB gzipped across EVERY chunk on disk — not the first-load figure, so a
+visitor fetches less than that. Heavy, but not obviously 3.2 seconds of
+pre-paint work on a desktop connection. **Which points at execution rather than
+bytes**, and makes the next instrument a profile of the first load rather than
+more trimming.
+
+**One real finding, and it is UNPROVEN.** `zod` reaches the client through a
+STATIC chain: `graph-timeline-view` → `McpToolsBridge` → `lib/webmcp/tools.ts`
+(653 lines of agent tool definitions) → `zod`. Everyone who opens a board
+carries the agent tooling, and PL15-018 made it bigger this week. The bridge is
+`dynamic(..., { ssr: false })` now.
+
+**THE BEFORE/AFTER SHOWED NOTHING, AND THE INSTRUMENT IS WHY.** 544 kB baseline
+against 545 kB with the change. Summing the chunks ON DISK cannot detect a
+lazy-loading win — the chunk still exists, it simply is not fetched. The
+manifests do not answer it either: the route's client-reference manifest lists
+6 chunks totalling 98 kB, which is the server-boundary set rather than the
+eager graph.
+
+So the change is kept on its MECHANISM and explicitly not on evidence. The
+measurement that would settle it is transferred JS before FCP in a real browser
+load, and it has not been taken.
