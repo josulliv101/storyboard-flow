@@ -207,11 +207,15 @@ export function ClipDeck({
   const rafRef = useRef(0);
   const dragRef = useRef<{
     startX: number;
+    /** Only ever compared against `startX`, to tell a swipe from a scroll. */
+    startY: number;
     startPos: number;
     lastX: number;
     lastAt: number;
     velocity: number;
     moved: boolean;
+    /** Given up as a vertical scroll: no pan, and no tap on release either. */
+    abandoned: boolean;
     cardIndex: number | null;
   } | null>(null);
   const spacingRef = useRef(480);
@@ -496,11 +500,13 @@ export function ClipDeck({
     cancelAnimationFrame(rafRef.current);
     dragRef.current = {
       startX: event.clientX,
+      startY: event.clientY,
       startPos: posRef.current,
       lastX: event.clientX,
       lastAt: performance.now(),
       velocity: 0,
       moved: false,
+      abandoned: false,
       cardIndex: card === null ? null : Number(card.dataset.i),
     };
     // Capture is an ENHANCEMENT, not a requirement: it keeps the drag alive when
@@ -517,7 +523,29 @@ export function ClipDeck({
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
-    if (drag === null) return;
+    if (drag === null || drag.abandoned) return;
+    // A DRAG DOWN THE SCREEN IS NOT A SWIPE.
+    //
+    // The reference deck reads X and nothing else, which is safe on a surface
+    // that fills the window and scrolls nowhere. Here the view is a page —
+    // when the preview is down the cards sit in normal flow with a scrollbar —
+    // so a hand that means "scroll" was travelling far enough sideways to pan
+    // the deck as well, and the clip you were reading slid out from under it.
+    //
+    // Decided ONCE, at the moment the gesture first commits to a direction,
+    // and never revisited: a swipe that curls downward at the end is still a
+    // swipe, and re-testing every move would abandon it halfway. The same rule
+    // in reverse is what lets a slightly untidy horizontal drag through.
+    if (!drag.moved) {
+      const dx = Math.abs(event.clientX - drag.startX);
+      const dy = Math.abs(event.clientY - drag.startY);
+      if (Math.max(dx, dy) > TAP_SLOP_PX && dy > dx) {
+        drag.abandoned = true;
+        deckRef.current?.classList.remove("dragging");
+        animate();
+        return;
+      }
+    }
     const now = performance.now();
     const dt = now - drag.lastAt;
     if (dt > 0) drag.velocity = drag.velocity * 0.7 + ((event.clientX - drag.lastX) / dt) * 0.3;
@@ -537,6 +565,9 @@ export function ClipDeck({
     const drag = dragRef.current;
     if (drag === null) return;
     dragRef.current = null;
+    // Abandoned as a scroll: it never moved the deck, and it is not a tap
+    // either — the hand travelled, it just travelled the other way.
+    if (drag.abandoned) return;
     deckRef.current?.classList.remove("dragging");
     if (!drag.moved) {
       // A tap on a side card brings it to the centre; on the centre it does
@@ -654,6 +685,9 @@ export function ClipDeck({
                   : { marginTop: 0, marginBottom: 0 }
             }
             aria-label="Clip takes"
+            // THE ROW, under the name the row it replaced went by — see the
+            // note on `data-item-details-frame` below.
+            data-details-strip=""
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -748,6 +782,16 @@ export function ClipDeck({
                     <div className="c-view">
                       <div
                         className="c-frame cine"
+                        // THE NAMES THE VIEW IS READ BY, kept across the redraw.
+                        //
+                        // The deck changed how a card is painted, not what its
+                        // parts are: this is still "the picture", and the strip
+                        // below is still "the trim strip". Everything that
+                        // reasons about the view — stories, e2e, the details
+                        // bar — addresses them by these names, and renaming
+                        // them along with the CSS would have been a second
+                        // vocabulary for the same two things.
+                        data-item-details-frame=""
                         style={{
                           // THE PICTURE FOLLOWS THE TRIM WHILE IT IS MOVING.
                           //
@@ -778,7 +822,7 @@ export function ClipDeck({
                       </span>
                     </div>
 
-                    <div className="c-strip">
+                    <div className="c-strip" data-trim-strip-slot="">
                       {Array.from({ length: CELLS }, (_, cell) => (
                         <div
                           key={cell}

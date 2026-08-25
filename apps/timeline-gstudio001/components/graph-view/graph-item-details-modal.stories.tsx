@@ -358,6 +358,40 @@ type Story = StoryObj<typeof GraphItemDetailsModal>;
  * helper here deliberately travels, and a story that wants the click has to
  * ask for it — see `clickBox`.
  */
+/**
+ * WHICH CLIP A CARD IS, read off the card.
+ *
+ * These stories used to ask the rename button its `aria-label` — "Rename
+ * Subject" — because the heading WAS that button. The deck draws the name as a
+ * plain heading and puts editing behind the card's own menu, so the label is
+ * no longer the place a clip says who it is. The heading always was; asking it
+ * directly is both shorter and one indirection less to break.
+ */
+function clipName(panel: Element | null | undefined): string | null {
+  return panel?.querySelector(".c-title")?.textContent?.trim() ?? null;
+}
+
+/** The name of whichever clip is currently the subject. */
+function centreClipName(): string | null {
+  return clipName(document.querySelector('[data-item-details-panel="centre"]'));
+}
+
+/**
+ * THE PICTURE A CARD IS SHOWING, read off the paint.
+ *
+ * It used to be an `<img>` and these stories read its `src`. The deck paints
+ * the frame as a CSS background instead — one element carrying a poster, a
+ * live trim frame or a flat colour, swapped without a load event — so the URL
+ * now lives in `background-image`. Returns "" for a card showing no picture at
+ * all, which is a card with a colour rather than a card that is broken.
+ */
+function frameImage(panel: Element | null | undefined): string {
+  const frame = panel?.querySelector<HTMLElement>("[data-item-details-frame]");
+  if (frame === null || frame === undefined) return "";
+  const painted = getComputedStyle(frame).backgroundImage;
+  return painted === "none" ? "" : painted;
+}
+
 function seamTrack(): HTMLElement {
   const found = document.querySelector<HTMLElement>("[data-seam-track]");
   expect(found).not.toBeNull();
@@ -663,7 +697,15 @@ export const FlankedByItsNeighbours: Story = {
     const widths = panels.map((panel) => Math.round(panel.getBoundingClientRect().width));
     const [left, middle, right] = widths as [number, number, number];
     expect(left).toBe(right);
-    expect(middle / left).toBeCloseTo(1.75, 1);
+    // THE RATIO COMES FROM THE SIDE SCALE, not from a second width.
+    //
+    // The subject used to be sized separately — a wider box for the middle
+    // card, 1.75x a neighbour. The deck gives every card ONE width
+    // (`--clip-w`, fitted to the height it has) and pushes the neighbours back
+    // with `scale(1 - 0.14)` instead, so the emphasis is depth rather than
+    // measurement. 1 / 0.86 = 1.163 is that constant read off the boxes, and
+    // it moves only if `CARD` side scaling in `clip-deck.tsx` does.
+    expect(middle / left).toBeCloseTo(1 / 0.86, 1);
     // And now they DO fit, which is the other half of the change: three whole
     // panels and their gaps come to one viewport.
     const total = widths.reduce((sum, width) => sum + width, 0);
@@ -769,19 +811,24 @@ export const ClickingANeighbourAdvancesTheStrip: Story = {
       expect(document.querySelectorAll("[data-item-details-panel]").length).toBe(3),
     );
 
-    const centreName = () =>
-      document
-        .querySelector('[data-item-details-panel="centre"]')
-        ?.querySelector("button[aria-label^='Rename ']")
-        ?.getAttribute("aria-label");
-    expect(centreName()).toBe("Rename Subject");
+    const centreName = centreClipName;
+    expect(centreName()).toBe("Subject");
 
     // The RIGHT-hand panel's picture: one step forward.
     const panels = Array.from(
       document.querySelectorAll<HTMLElement>("[data-item-details-panel]"),
     );
     const rightHero = panels[2]!.querySelector<HTMLElement>("[data-item-details-frame]")!;
-    rightHero.click();
+    // A TAP, SPELLED AS POINTERS. The deck decides tap-versus-swipe from the
+    // pointer stream itself — down, how far it travelled, up — and never reads
+    // `click`, so `.click()` here dispatched an event nothing was listening
+    // for and the story reported a step that had simply never been asked for.
+    // Under `TAP_SLOP_PX` of travel is what makes this a tap.
+    const tap = { isPrimary: true, pointerId: 1, button: 0 };
+    const spot = rightHero.getBoundingClientRect();
+    const at = { clientX: spot.left + spot.width / 2, clientY: spot.top + spot.height / 2 };
+    fireEvent.pointerDown(rightHero, { ...tap, ...at });
+    fireEvent.pointerUp(rightHero, { ...tap, ...at });
 
     // NO TIMING ASSERTION HERE, DELIBERATELY. This used to sample the row
     // 120ms apart and require the two readings to differ — "still in flight a
@@ -796,7 +843,7 @@ export const ClickingANeighbourAdvancesTheStrip: Story = {
     // own story proves the other half geometrically, with the row at its seat
     // and staying there. Neither of those depends on catching a frame.
 
-    await waitFor(() => expect(centreName()).toBe("Rename After"));
+    await waitFor(() => expect(centreName()).toBe("After"));
 
     // THE ROW MOVED, rather than the panels swapping content where they stood.
     // The clip that was centred is now immediately to the LEFT of the centre,
@@ -807,10 +854,8 @@ export const ClickingANeighbourAdvancesTheStrip: Story = {
     const centreIndex = after.findIndex(
       (panel) => panel.dataset.itemDetailsPanel === "centre",
     );
-    const leftOfCentre = after[centreIndex - 1]
-      ?.querySelector("button[aria-label^='Rename ']")
-      ?.getAttribute("aria-label");
-    expect(leftOfCentre).toBe("Rename Subject");
+    const leftOfCentre = clipName(after[centreIndex - 1]);
+    expect(leftOfCentre).toBe("Subject");
     // And it is the last one: nothing plays after `after`.
     expect(centreIndex).toBe(after.length - 1);
     void canvas;
@@ -836,10 +881,10 @@ export const OpensShowingItsOwnPicture: Story = {
       expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
     );
     const centre = document.querySelector('[data-item-details-panel="centre"]')!;
-    const picture = centre.querySelector<HTMLImageElement>("[data-item-details-frame] img");
-    expect(picture).not.toBeNull();
+    const picture = frameImage(centre);
+    expect(picture).not.toBe("");
     // The SUBJECT's plate, not the one before it.
-    expect(picture!.src).toContain("SUBJECT");
+    expect(picture).toContain("SUBJECT");
     // And no playhead line anywhere yet: nothing is playing, so nothing claims
     // to be.
     expect(document.querySelectorAll("[data-seam-playhead-line]").length).toBe(0);
@@ -951,26 +996,34 @@ export const OnlyTheSubjectPanelIsMarked: Story = {
     );
     expect(borderAlpha(centre)).toBeGreaterThan(borderAlpha(neighbour));
 
-    // ...and a lighter surface under it. READ FROM WHICHEVER PROPERTY CARRIES
-    // THE PAINT: the card is a gradient now (PL15-030), so `backgroundColor` is
-    // transparent on both and comparing it says the two surfaces match when
-    // they plainly do not.
-    const surface = (element: HTMLElement) => {
-      const style = getComputedStyle(element);
-      return style.backgroundImage === "none" ? style.backgroundColor : style.backgroundImage;
-    };
-    expect(surface(centre)).not.toBe(surface(neighbour));
+    // ...AND A LIFT UNDER IT. Which second half this is has changed, and the
+    // rule it serves has not: the mark is two things, because either alone is
+    // too quiet to survive a screen full of pictures.
+    //
+    // It used to be the SURFACE — a lighter panel under the brighter edge. The
+    // deck stacks its cards in depth instead: one gradient on every card, and
+    // the subject separated by coming forward. So the second half is the
+    // SHADOW, which on the subject adds a ring and a glow the others do not
+    // have. Asserting the surface here would now be asserting that the deck
+    // never adopted the design it did adopt.
+    expect(getComputedStyle(centre).boxShadow).not.toBe(
+      getComputedStyle(neighbour).boxShadow,
+    );
 
-    // The white ring and the sky-blue one that used to follow the playhead are
-    // both gone: the shadow lifts the row off the board and says nothing about
-    // which panel you are in, so it is the SAME on every panel.
+    // AND IT STILL SAYS "SUBJECT" RATHER THAN "PLAYING". This is the half the
+    // story was written for: a ring that followed the PLAYHEAD meant the mark
+    // moved while you were reading, so nudging the clock must not change which
+    // card is marked or how.
+    const before = {
+      centre: getComputedStyle(centre).boxShadow,
+      neighbour: getComputedStyle(neighbour).boxShadow,
+    };
     await settleStrip();
     nudgePlayhead(1);
     await waitFor(() => expect(seamTrack()).not.toBeNull());
-    expect(getComputedStyle(centre).boxShadow).toBe(
-      getComputedStyle(neighbour).boxShadow,
-    );
-    expect(getComputedStyle(centre).boxShadow).not.toMatch(/56, 189, 248/);
+    expect(getComputedStyle(centre).boxShadow).toBe(before.centre);
+    expect(getComputedStyle(neighbour).boxShadow).toBe(before.neighbour);
+    expect(getComputedStyle(neighbour).boxShadow).not.toMatch(/56, 189, 248/);
   },
 };
 
@@ -991,13 +1044,9 @@ export const SwipingThePictureAdvancesTheStrip: Story = {
     await waitFor(() =>
       expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
     );
-    const titleOfCentre = () =>
-      document
-        .querySelector('[data-item-details-panel="centre"]')
-        ?.querySelector("button[aria-label^='Rename']")
-        ?.getAttribute("aria-label") ?? null;
+    const titleOfCentre = centreClipName;
 
-    expect(titleOfCentre()).toBe("Rename Subject");
+    expect(titleOfCentre()).toBe("Subject");
 
     const picture = document
       .querySelector('[data-item-details-panel="centre"]')!
@@ -1009,45 +1058,72 @@ export const SwipingThePictureAdvancesTheStrip: Story = {
     // native image drag on the first move and swallowed the rest of the
     // sequence before any of this code saw it.
     //
-    // ASSERTED AS AN ATTRIBUTE, not as behaviour, and the distinction is the
+    // ASSERTED AS STRUCTURE, not as behaviour, and the distinction is the
     // reason the bug survived this file: `fireEvent` pointers never start a
-    // native drag, so the swipe story below passes on an image fixture whether
-    // or not the guard is there. Only a real pointer reproduces it. This at
-    // least fails if the attribute is removed.
-    const still = picture.querySelector<HTMLImageElement>("img");
-    expect(still).not.toBeNull();
-    expect(still!.draggable).toBe(false);
+    // native drag, so the swipe below passes whether or not the guard is
+    // there. Only a real pointer reproduces it. This at least fails if an
+    // `<img>` comes back.
+    //
+    // THE GUARD BECAME UNNECESSARY RATHER THAN BEING REMOVED. The deck paints
+    // the frame as a background on a plain element, and there is no such thing
+    // as a native drag on a background — so the failure mode is gone at the
+    // root instead of being suppressed per element. Still worth pinning: a
+    // card that went back to an `<img>` would bring the bug back with it, and
+    // this is the line that would say so.
+    expect(picture.querySelector("img")).toBeNull();
+    expect(frameImage(document.querySelector('[data-item-details-panel="centre"]'))).not.toBe("");
 
     const box = picture.getBoundingClientRect();
     const y = box.top + box.height / 2;
 
-    const swipe = (from: number, to: number) => {
-      const args = { isPrimary: true, pointerId: 1, button: 0, clientY: y };
-      fireEvent.pointerDown(picture, { ...args, clientX: from });
-      // Two moves: the first crosses the "is this sideways" threshold, the
-      // second carries it past the distance rule.
-      fireEvent.pointerMove(picture, { ...args, clientX: from + (to - from) / 2 });
-      fireEvent.pointerMove(picture, { ...args, clientX: to });
-      fireEvent.pointerUp(picture, { ...args, clientX: to });
+    // SWIPED IN REAL TIME, and the reason is a bug this story hid rather than
+    // caught.
+    //
+    // The deck finishes a swipe by PROJECTING it: where the film would coast
+    // to at the speed the hand let go, `velocity * 160ms`. Three `fireEvent`
+    // calls in a row land inside a fraction of a millisecond, so half a card
+    // of travel read as hundreds of pixels per millisecond and every swipe
+    // flung to the end of the scene. This fixture has three clips, so "the end"
+    // and "one step" are the SAME CLIP going forward — the forward assertion
+    // passed for two releases while measuring nothing, and only the return trip
+    // (where the end is one clip too far) ever said so.
+    //
+    // Six moves, 25ms apart, is a hand covering ~300px in 150ms — about 2px/ms,
+    // which projects a third of a card and lands one along. The numbers are a
+    // real gesture rather than a tuned one; anything a hand could actually do
+    // gives the same answer.
+    const STEPS = 6;
+    const STEP_MS = 25;
+    const swipe = async (element: HTMLElement, from: number, to: number, at: number) => {
+      const args = { isPrimary: true, pointerId: 1, button: 0, clientY: at };
+      fireEvent.pointerDown(element, { ...args, clientX: from });
+      for (let step = 1; step <= STEPS; step += 1) {
+        await new Promise((resolve) => setTimeout(resolve, STEP_MS));
+        fireEvent.pointerMove(element, {
+          ...args,
+          clientX: from + ((to - from) * step) / STEPS,
+        });
+      }
+      fireEvent.pointerUp(element, { ...args, clientX: to });
     };
 
     // Dragged LEFT: the film moves the way the hand moves, so the clip after
     // this one arrives from the right.
-    swipe(box.left + box.width * 0.8, box.left + box.width * 0.1);
-    await waitFor(() => expect(titleOfCentre()).toBe("Rename After"));
+    await swipe(picture, box.left + box.width * 0.8, box.left + box.width * 0.1, y);
+    await waitFor(() => expect(titleOfCentre()).toBe("After"));
 
     // And back.
     const back = document
       .querySelector('[data-item-details-panel="centre"]')!
       .querySelector<HTMLElement>("[data-item-details-frame]")!;
     const backBox = back.getBoundingClientRect();
-    const backY = backBox.top + backBox.height / 2;
-    const args = { isPrimary: true, pointerId: 1, button: 0, clientY: backY };
-    fireEvent.pointerDown(back, { ...args, clientX: backBox.left + backBox.width * 0.1 });
-    fireEvent.pointerMove(back, { ...args, clientX: backBox.left + backBox.width * 0.4 });
-    fireEvent.pointerMove(back, { ...args, clientX: backBox.left + backBox.width * 0.9 });
-    fireEvent.pointerUp(back, { ...args, clientX: backBox.left + backBox.width * 0.9 });
-    await waitFor(() => expect(titleOfCentre()).toBe("Rename Subject"));
+    await swipe(
+      back,
+      backBox.left + backBox.width * 0.1,
+      backBox.left + backBox.width * 0.8,
+      backBox.top + backBox.height / 2,
+    );
+    await waitFor(() => expect(titleOfCentre()).toBe("Subject"));
   },
 };
 
@@ -1066,11 +1142,7 @@ export const ADragDownTheScreenIsNotASwipe: Story = {
     await waitFor(() =>
       expect(document.querySelector('[data-item-details-panel="centre"]')).not.toBeNull(),
     );
-    const titleOfCentre = () =>
-      document
-        .querySelector('[data-item-details-panel="centre"]')
-        ?.querySelector("button[aria-label^='Rename']")
-        ?.getAttribute("aria-label") ?? null;
+    const titleOfCentre = centreClipName;
 
     const picture = document
       .querySelector('[data-item-details-panel="centre"]')!
@@ -1086,8 +1158,8 @@ export const ADragDownTheScreenIsNotASwipe: Story = {
     fireEvent.pointerUp(picture, { ...args, clientX: x0 - 120, clientY: y0 + 300 });
 
     // Unmoved, and still unmoved after anything queued has run.
-    await waitFor(() => expect(titleOfCentre()).toBe("Rename Subject"));
-    expect(titleOfCentre()).toBe("Rename Subject");
+    await waitFor(() => expect(titleOfCentre()).toBe("Subject"));
+    expect(titleOfCentre()).toBe("Subject");
   },
 };
 
@@ -1398,20 +1470,28 @@ export const ChangingTheCountResizesTheSamePanels: Story = {
     // every neighbour's height jumped in one frame while its width eased,
     // which is most of what read as a replacement.
     //
-    // ASSERTED AS THE VALUE, not as a before/after delta, and that distinction
-    // was learned the hard way here: this story's viewport is far narrower
-    // than 1880, so BOTH counts fall under 30rem and both were `h-auto`
-    // together. A delta comparison passed against the unfixed code — it was
-    // measuring a threshold neither state crossed. The rule itself is
-    // width-independent and holds at any viewport.
+    // ASSERTED AS INVARIANCE, which is what the rule became.
+    //
+    // The number used to be 38.9vh, and it was pinned as a VALUE rather than a
+    // delta for a reason worth keeping: the old height was a container query on
+    // the panel's own WIDTH, `h-auto` under 30rem, and a count change walks
+    // straight across that threshold — but this story's viewport is narrower
+    // than 1880, so both counts fell under the gate together and a delta
+    // comparison passed against the unfixed code.
+    //
+    // The deck has no such gate. Every card is one box, sized from the height
+    // the deck was given, and `neighbours` changes only how many are DRAWN —
+    // so the height cannot depend on the count, and saying so directly is both
+    // stronger than the old number and immune to the trap that number was
+    // guarding against. A deck that resized its cards per count fails here.
     const neighbourHeight = () => {
       const neighbour = panels().find(
         (panel) => panel.getAttribute("data-item-details-panel") === "neighbour",
       )!;
       return neighbour.getBoundingClientRect().height;
     };
-    expect(neighbourHeight()).toBeCloseTo(window.innerHeight * 0.389, 0);
     expect(heightsBefore.length).toBeGreaterThan(0);
+    expect(neighbourHeight()).toBeCloseTo(Math.min(...heightsBefore), 0);
 
     // Back again, and every panel that remains was one of the originals — the
     // return trip is a resize too, not a fresh set.
@@ -1737,11 +1817,7 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     const at = () => Number(seamTrack().getAttribute("aria-valuenow"));
     const panels = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
-    const centreName = () =>
-      document
-        .querySelector('[data-item-details-panel="centre"]')
-        ?.querySelector("button[aria-label^='Rename ']")
-        ?.getAttribute("aria-label") ?? null;
+    const centreName = centreClipName;
     const monitorSrc = () =>
       document
         .querySelector('[data-item-details-panel="centre"]')!
@@ -1749,7 +1825,7 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     const playOf = (panel: HTMLElement) =>
       panel.querySelector<HTMLButtonElement>("[data-item-details-play]")!;
 
-    expect(centreName()).toBe("Rename Subject");
+    expect(centreName()).toBe("Subject");
 
     // Park the clock inside the SUBJECT first. Without this the assertion
     // below cannot tell "jumped to this clip" from "happened to already be
@@ -1801,7 +1877,7 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     // the clock — so the jump assertion below would fail too, on a number that
     // says nothing about why.
     const stayedCentred = centreName();
-    expect(stayedCentred).toBe("Rename Subject");
+    expect(stayedCentred).toBe("Subject");
     expect(jumped).toBeGreaterThanOrEqual(7);
     expect(jumped).toBeLessThan(7.5);
 
@@ -2233,7 +2309,7 @@ export const TheTwoBarsAreAdjacent: Story = {
     // viewport instead of being calibrated to one.
     expect(track.width).toBeGreaterThan(window.innerWidth * 0.9);
 
-    // ── AND THE ROW BELOW STILL CLEARS IT ─────────────────────────────────
+    // ── AND THE CARDS STILL CLEAR IT ──────────────────────────────────────
     //
     // This is the assertion that kept the old bar honest, and it is worth more
     // now rather than less. The scrim used to RESERVE the band above the cards
@@ -2243,8 +2319,16 @@ export const TheTwoBarsAreAdjacent: Story = {
     // obvious fault. The band is gone (PL15-029 put the bar in flow) and the
     // strip that replaced the bar is a different height again, so the one
     // thing still worth pinning is the outcome: they do not touch.
+    //
+    // THE STRIP IS UNDER THE CARDS NOW, so the clearance is measured the other
+    // way round. Asked for as an absolute gap rather than as "strip minus
+    // cards", because the direction is the part most likely to change again
+    // and the thing being protected — that neither rests on the other — is the
+    // same whichever is on top.
     const panel = box('[data-item-details-panel="centre"]');
-    expect(panel.top - minimap.bottom).toBeGreaterThan(8);
+    const gap =
+      panel.top >= minimap.bottom ? panel.top - minimap.bottom : minimap.top - panel.bottom;
+    expect(gap).toBeGreaterThan(8);
   },
 };
 
@@ -2398,26 +2482,45 @@ export const TheSubjectIsWiderThanItsNeighbours: Story = {
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]")).map(
         (panel) => ({
           role: panel.dataset.itemDetailsPanel,
-          spare: panel.parentElement!.hasAttribute("data-item-details-spare"),
           width: Math.round(panel.getBoundingClientRect().width),
-          hidden: getComputedStyle(panel.parentElement!).visibility === "hidden",
         }),
       );
 
-    const shown = slots().filter((slot) => !slot.spare);
+    const shown = slots();
     expect(shown.length).toBe(3);
     const centre = shown.find((slot) => slot.role === "centre")!;
     const neighbours = shown.filter((slot) => slot.role === "neighbour");
     expect(new Set(neighbours.map((slot) => slot.width)).size).toBe(1);
-    expect(centre.width / neighbours[0]!.width).toBeCloseTo(1.75, 1);
+    // THE RATIO COMES FROM THE SIDE SCALE, not from a second width.
+    //
+    // The subject used to be sized separately — a wider box for the middle
+    // card, 1.75x a neighbour. The deck gives every card ONE width
+    // (`--clip-w`, fitted to the height it has) and pushes the neighbours back
+    // with `scale(1 - 0.14)` instead, so the emphasis is depth rather than
+    // measurement. 1 / 0.86 = 1.163 is that constant read off the boxes, and
+    // it moves only if `CARD` side scaling in `clip-deck.tsx` does.
+    expect(centre.width / neighbours[0]!.width).toBeCloseTo(1 / 0.86, 1);
 
-    // THE SPARES ARE BUILT AND NOT SHOWN. Both halves matter: they keep their
-    // width so the row's centring still works, and they paint nothing so the
-    // count means what it says.
-    const spares = slots().filter((slot) => slot.spare);
-    expect(spares.length).toBeGreaterThan(0);
-    expect(spares.every((slot) => slot.hidden)).toBe(true);
-    expect(spares.every((slot) => slot.width === neighbours[0]!.width)).toBe(true);
+    // THE REST OF THE COLLECTION IS BUILT AND NOT SHOWN — the same guarantee
+    // the spare SLOTS used to carry, now made by the deck itself.
+    //
+    // Spares existed because the row centred itself by arithmetic over uniform
+    // neighbour widths: collapsing an unused slot would have shifted every
+    // panel between it and the middle, so they were kept at full width and
+    // hidden. The deck centres by writing each card's transform from its
+    // distance to the subject, so there is nothing to keep an empty box for
+    // and the concept went with the row.
+    //
+    // What still has to hold is the half that was ever visible: a card outside
+    // the window paints NOTHING, so the count of panels means what it says.
+    // Read off the cards themselves rather than off `[data-item-details-panel]`
+    // — that mark is only applied inside the window, which is the very thing
+    // being checked.
+    const cards = Array.from(document.querySelectorAll<HTMLElement>(".deck-track > .clip"));
+    const beyond = cards.filter((card) => !card.hasAttribute("data-item-details-panel"));
+    expect(beyond.length).toBeGreaterThan(0);
+    expect(beyond.every((card) => Number(getComputedStyle(card).opacity) === 0)).toBe(true);
+    expect(beyond.every((card) => getComputedStyle(card).pointerEvents === "none")).toBe(true);
   },
 };
 
@@ -2731,9 +2834,17 @@ export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
   render: () => <SeamHarness scene={TRIMMED_SCENE} />,
   play: async () => {
     await waitFor(() => expect(seamTrack()).not.toBeNull());
+    // FOUND AMONG THE CARDS, NOT AMONG THE MARKED PANELS, and that is the
+    // whole difference between the two designs.
+    //
+    // `data-item-details-panel` is applied only inside the window around the
+    // subject, so it is exactly what a leaving card LOSES the moment the step
+    // is taken — looking for the outgoing card there could only ever find
+    // nothing, whether or not it was still drawing itself. The deck keeps
+    // every card mounted and moves it; the card is the thing to ask.
     const panelFor = (name: string) =>
-      Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]")).find(
-        (panel) => panel.textContent?.includes(name),
+      Array.from(document.querySelectorAll<HTMLElement>(".deck-track > .clip")).find(
+        (card) => card.textContent?.includes(name),
       ) ?? null;
 
     // Settled on the middle clip: the clip to its right is a real panel.
@@ -2755,15 +2866,19 @@ export const TheOutgoingCardKeepsItsPictureWhileItLeaves: Story = {
     const leaving = panelFor("After");
     expect(leaving).not.toBeNull();
 
-    // ASKED OF VISIBILITY, not of the children. A spare keeps its whole
-    // subtree and its box — the row's centring is arithmetic over uniform
-    // neighbour widths, so collapsing one would shift every panel between it
-    // and the middle — and hides it with `visibility: hidden`. So the picture
-    // and the readout are still in the DOM either way, and a test that looked
-    // for them passed against the bug it was written for.
-    const box = leaving!.closest("[data-item-details-spare]");
-    expect(`spare while leaving: ${box !== null}`).toBe("spare while leaving: false");
+    // ASKED OF THE PAINT, not of the children. The subtree survives either way
+    // — a spare kept its whole box and hid it with `visibility: hidden`, and
+    // the deck keeps every card and fades it — so a test that looked for the
+    // picture and the readout passed against the bug it was written for.
+    //
+    // What must hold is that the card leaving is still being DRAWN. The deck
+    // fades a card out over its glide, so this is opacity rather than
+    // visibility, and it is asserted as "not yet gone" rather than as a number:
+    // the frame this catches is somewhere inside the ease, and pinning where
+    // would be testing the runner's timing.
     expect(getComputedStyle(leaving!).visibility).toBe("visible");
+    expect(frameImage(leaving)).not.toBe("");
+    expect(Number(getComputedStyle(leaving!).opacity)).toBeGreaterThan(0);
   },
 };
 
@@ -2859,7 +2974,7 @@ export const TheNameDoesNotReTruncateWhileTheCardResizes: Story = {
     const panels = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-item-details-panel]"));
     const heading = (panel: HTMLElement) =>
-      panel.querySelector<HTMLElement>("div.overflow-hidden")!;
+      panel.querySelector<HTMLElement>(".c-title")!;
 
     const centre = panels().find(
       (panel) => panel.getAttribute("data-item-details-panel") === "centre",

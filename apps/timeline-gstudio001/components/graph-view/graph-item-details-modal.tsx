@@ -1765,6 +1765,34 @@ export function GraphItemDetailsModal() {
     });
   }, [mountedId, wantedNow]);
 
+  // ESCAPE CLOSES — AND IT NEEDED AN OWNER TO.
+  //
+  // The comment above has claimed this for two revisions and nothing has
+  // listened for the key since the port: the handler went with the scrim it
+  // used to live on, and because the story that covers it also asserts the
+  // scrim does NOT close, the failure read as "the scrim dismissed" rather
+  // than "nothing closes at all".
+  //
+  // On the DOCUMENT, because the thing that must answer the key is the view
+  // rather than whatever inside it happens to have focus — after a trim the
+  // focus is on a handle, after a swipe it is nowhere. Fields are excluded:
+  // Escape in a text field means "abandon this edit", and the field is
+  // entitled to keep it.
+  useEffect(() => {
+    if (!wantedNow) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName ?? "";
+      if (target?.isContentEditable === true) return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      event.preventDefault();
+      setOpenId(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [wantedNow, setOpenId]);
+
   if (!mounted || node === null) return null;
   if (node.kind === "collection") {
     return <CollectionDetails node={node} onClose={() => setOpenId(null)} />;
