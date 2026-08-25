@@ -24,6 +24,19 @@ export type FilmStripShot = Readonly<{
   /** The run this shot belongs to; consecutive shots sharing one are a
    *  labelled section on the ruler. `null` is "no section". */
   sectionName: string | null;
+  /**
+   * WHAT THE STRIP NEEDS TO TRIM THIS SHOT, and its absence is what says the
+   * shot cannot be trimmed at all (PL15-030).
+   *
+   * `seconds` above is the USED length — the box's width. Trimming needs the
+   * two things a box cannot show: where in the source the used part begins,
+   * and how much source there is to reach into. A still has neither and gets
+   * no handle rather than a handle that quietly does nothing; the same
+   * condition the store applies, which accepts a window for audio and video
+   * and refuses everything else.
+   */
+  sourceSeconds?: number;
+  trimInSeconds?: number;
 }>;
 
 /** A shot with its place on the clock worked out. */

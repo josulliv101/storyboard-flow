@@ -9,6 +9,7 @@ import {
   placeSections,
   placeShots,
   type FilmStripShot,
+  type PlacedShot,
 } from "./film-strip-data";
 import { PIXELS_PER_SECOND as PXS, clamp, timecode } from "./playbar-model";
 import {
@@ -51,6 +52,23 @@ function prefersReducedMotion(): boolean {
  */
 
 /** A press that moves less than this is a tap, not a pan. */
+/** A trimmed shot may not vanish; a tenth of a second is the floor, the same
+ *  one the deck's handles use. */
+const TRIM_FLOOR_SECONDS = 0.1;
+
+/**
+ * The canonical handle's own numbers, from `GraphTrimHandle`: 8px wide, and
+ * gone entirely once two of them would take more than a quarter of the clip.
+ *
+ * That second rule matters far more here than on a card. A card is a fixed
+ * width; a box on this strip is its DURATION, so a two-second shot next to a
+ * twenty-second one is a tenth of the width — and handles that cover the shot
+ * they are trimming hide the thing being judged. Below the threshold the card
+ * is where the trim is made, which is where it was made before this existed.
+ */
+const TRIM_HANDLE_PX = 8;
+const MAX_HANDLE_SHARE = 0.25;
+
 /** Breathing room between the playhead's top and the skim card below it. */
 const SKIM_GAP_PX = 10;
 /** How close the card may come to the window's edges before it is held back. */
@@ -98,6 +116,14 @@ export type FilmStripProps = Readonly<{
    */
   onSkim?: (seconds: number | null) => void;
   /**
+   * Commit a trim on the shot the strip was dragging, in SOURCE seconds.
+   *
+   * The same shape the deck's handles report, so one handler in the caller
+   * serves both surfaces and the two cannot drift into disagreeing about what
+   * a trim is.
+   */
+  onTrim?: (id: string, next: Readonly<{ in: number; out: number }>) => void;
+  /**
    * What to draw above the playhead while scrubbing, or `null` to draw nothing.
    *
    * THE CALLER DECIDES, because only it knows whether the preview pane is open
@@ -128,6 +154,7 @@ export function FilmStrip({
   selectedId,
   onScrub,
   onSkim,
+  onTrim,
   skimPreview,
   onTogglePlay,
   onSelect,
@@ -185,6 +212,13 @@ export function FilmStrip({
     },
     [onSelect, selectedId, shots],
   );
+  const [trimming, setTrimming] = useState<{
+    id: string;
+    seconds: number;
+    shift: number;
+  } | null>(null);
+  const trimmingRef = useRef<{ id: string; seconds: number; shift: number } | null>(null);
+
   const [ghostX, setGhostX] = useState<number | null>(null);
   const [hot, setHot] = useState(false);
 
@@ -211,38 +245,6 @@ export function FilmStrip({
     [DUR],
   );
 
-  const shotBoxes = useMemo(
-    () =>
-      shots.map((shot, index) => {
-        const seconds = shot.seconds;
-        return (
-          <div
-            key={shot.id}
-            className={shot.id === activeId ? "shot selected" : "shot"}
-            data-i={index}
-            data-seam-segment={shot.id}
-            data-seam-segment-live={shot.id === activeId ? "" : undefined}
-            style={{ left: shot.start * PXS + 2, width: seconds * PXS - 4 }}
-          >
-            {shot.frames.map((frame, k) => (
-              <div
-                key={k}
-                data-seam-thumbnail
-                className="frame"
-                style={{ width: `${100 / shot.frames.length}%`, background: frame }}
-              />
-            ))}
-            <span className="tag">{shot.label}</span>
-          </div>
-        );
-      }),
-    // `activeId` BELONGS IN HERE. The boxes were memoised on `shots` alone
-    // while reading `activeId` inside, so the array was reused across a
-    // selection change and every box kept the mark it had when the memo last
-    // ran. `data-seam-segment-live` was already going stale that way; the
-    // `selected` class would have joined it.
-    [shots, activeId],
-  );
 
   const scrollToSection = useCallback((startSeconds: number) => {
     viewportRef.current?.scrollTo({ left: startSeconds * PXS - 24, behavior: "smooth" });
@@ -273,6 +275,14 @@ export function FilmStrip({
 
     const bring = () => {
       // THE HAND ALWAYS WINS: a pan or a coast in progress is left alone.
+        // THE HAND ALWAYS WINS, and a trim is a hand too.
+      //
+      // This watches the strip for boxes MOVING, and a trim drag moves one on
+      // every pointer event — so centring would run mid-drag, scroll the
+      // viewport, and shift the very coordinate base the drag measures travel
+      // against. Measured: a 50px pull on the in edge was read as 77px, and the
+      // box narrowed from both sides instead of holding its out point.
+      if (trimmingRef.current !== null) return;
       if (panRef.current !== null || momentumRef.current !== null) return;
 
       // FOUND BY COMPARING ATTRIBUTES, not by building a selector. A node id is
@@ -494,6 +504,192 @@ export function FilmStrip({
       setTime(at);
     },
     [secondsAtClientX],
+  );
+
+  /**
+   * THE OUT HANDLE (PL15-030).
+   *
+   * ONLY THE OUT EDGE, and only on the subject. The in edge would be ambiguous
+   * here in a way it is not on a card: the card shows the whole SOURCE with the
+   * discarded parts shaded, so you can see what a trim is doing, while a box on
+   * this strip is only the USED length and has no room to depict a source.
+   * Dragging its left edge right and its right edge left would look identical
+   * and mean different things. The card remains where the in point is set.
+   *
+   * DOWNSTREAM SHOTS HOLD STILL FOR THE DRAG. The strip's clock is cumulative —
+   * boxes are laid end to end and a width IS a duration — so a committed trim
+   * ripples: everything after it moves and the total changes. Doing that live
+   * would slide the whole sequence under a pointer that is trying to land on an
+   * edge, and take the playhead with it. So the drag resizes this box alone,
+   * raised above its neighbours, and the re-flow happens once on release when
+   * the store answers.
+   */
+  /**
+   * BOTH EDGES (PL15-030).
+   *
+   * `seconds` is the length the box previews; `shift` is how far its LEFT edge
+   * has moved while an in-drag is running, and is always 0 for an out-drag.
+   *
+   * The two edges do genuinely different things, and the shift is what makes
+   * that visible. Trimming the OUT point holds the left edge and moves the
+   * right. Trimming the IN point holds the source's out point, so the used
+   * length changes from the FRONT: the edge under the pointer moves and the
+   * right edge stays put. Without the shift both gestures would resize the box
+   * from the right and look identical — which is exactly the ambiguity that
+   * made me build the out edge first.
+   *
+   * WHAT SNAPS BACK ON RELEASE, said plainly: a box's place on this strip is
+   * the sum of the durations before it, and trimming this shot's head does not
+   * change any of those. So the left edge returns to where it was pinned and
+   * the box is simply shorter — the drag moved it, the commit does not. That
+   * is the honest picture of a ripple edit, and it is why the drag previews
+   * rather than re-flows.
+   */
+
+  const onTrimHandleDown =
+    (shot: PlacedShot, edge: "in" | "out") => (event: React.PointerEvent) => {
+      if (event.button !== 0) return;
+      if (shot.sourceSeconds === undefined || shot.trimInSeconds === undefined) return;
+      // The strip is a pan surface and a scrub surface; neither may claim this.
+      event.stopPropagation();
+      event.preventDefault();
+      cancelMomentum();
+
+      const viewport = viewportRef.current;
+      if (viewport === null) return;
+      const source = shot.sourceSeconds;
+      const trimIn = shot.trimInSeconds;
+      const used = shot.seconds;
+      // Where the used part ends in the SOURCE. Fixed for an in-drag: trimming
+      // the head is not slipping the clip.
+      const outPoint = trimIn + used;
+
+      const secondsUnderPointer = (clientX: number) => {
+        const box = viewport.getBoundingClientRect();
+        return (clientX - box.left + viewport.scrollLeft) / PXS;
+      };
+      const startedAt = secondsUnderPointer(event.clientX);
+
+      const measure = (clientX: number) => {
+        const travelled = secondsUnderPointer(clientX) - startedAt;
+        if (edge === "out") {
+          // Cannot cross itself, and cannot reach past the end of the source.
+          const longest = Math.max(TRIM_FLOOR_SECONDS, source - trimIn);
+          const seconds = clamp(used + travelled, TRIM_FLOOR_SECONDS, longest);
+          return { seconds, shift: 0, next: { in: trimIn, out: trimIn + seconds } };
+        }
+        // Dragging the head right shortens; dragging it left RECOVERS material,
+        // as far back as the source's own start.
+        const nextIn = clamp(trimIn + travelled, 0, outPoint - TRIM_FLOOR_SECONDS);
+        return {
+          seconds: outPoint - nextIn,
+          shift: nextIn - trimIn,
+          next: { in: nextIn, out: outPoint },
+        };
+      };
+
+      const move = (moveEvent: PointerEvent) => {
+        const at = measure(moveEvent.clientX);
+        const next = { id: shot.id, seconds: at.seconds, shift: at.shift };
+        trimmingRef.current = next;
+        setTrimming(next);
+      };
+      const up = (upEvent: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        const moved = trimmingRef.current !== null;
+        trimmingRef.current = null;
+        setTrimming(null);
+        // A press that never travelled is not an edit. Committing one would put
+        // an identical window on the undo stack for every accidental tap.
+        if (!moved) return;
+        // ONE EDIT FOR THE WHOLE DRAG. Dispatching per pointer move would fill
+        // the undo stack with a hundred steps nobody took.
+        onTrim?.(shot.id, measure(upEvent.clientX).next);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    };
+
+  // BELOW THE DRAG IT READS FROM. The boxes were declared above `cancelMomentum`
+  // and the trim state; a memo cannot close over bindings that do not exist yet,
+  // and React Compiler says so rather than letting it through.
+  const shotBoxes = useMemo(
+    () =>
+      shots.map((shot, index) => {
+        const selected = shot.id === activeId;
+        // THE PREVIEW LENGTH, this box alone. Its neighbours keep the places
+        // they already have until the store answers — see `onTrimOutDown`.
+        const dragging = trimming !== null && trimming.id === shot.id;
+        const seconds = dragging ? trimming.seconds : shot.seconds;
+        // A handle only where a window means anything, and only on the subject:
+        // an edge on every box would be two dozen grab targets on a surface
+        // whose main gesture is a pan across all of them.
+        const trimmable =
+          selected &&
+          shot.sourceSeconds !== undefined &&
+          shot.trimInSeconds !== undefined &&
+          // Measured against the width the box will HAVE, so a shot being
+          // dragged narrow loses its handles at the same point a resting one
+          // would rather than at the width it started from.
+          (2 * TRIM_HANDLE_PX) / Math.max(1, seconds * PXS) <= MAX_HANDLE_SHARE;
+        return (
+          <div
+            key={shot.id}
+            className={`shot${selected ? " selected" : ""}${dragging ? " trimming" : ""}`}
+            data-i={index}
+            data-seam-segment={shot.id}
+            data-seam-segment-live={selected ? "" : undefined}
+            style={{
+              // The shift moves the LEFT edge during an in-drag and is zero for
+              // everything else, so an out-drag and a resting box are laid out
+              // exactly as they always were.
+              left: (shot.start + (dragging ? trimming.shift : 0)) * PXS + 2,
+              width: seconds * PXS - 4,
+            }}
+          >
+            {shot.frames.map((frame, k) => (
+              <div
+                key={k}
+                data-seam-thumbnail
+                className="frame"
+                style={{ width: `${100 / shot.frames.length}%`, background: frame }}
+              />
+            ))}
+            <span className="tag">{shot.label}</span>
+            {!trimmable ? null : (
+              <>
+                <i
+                  data-seam-trim-in={shot.id}
+                  className="s-edge s-in"
+                  title="Drag to change where this shot starts"
+                  onPointerDown={onTrimHandleDown(shot, "in")}
+                />
+                <i
+                  data-seam-trim-out={shot.id}
+                  className="s-edge s-out"
+                  title="Drag to change where this shot ends"
+                  onPointerDown={onTrimHandleDown(shot, "out")}
+                />
+                {/* THE LENGTH IT WILL BE, while a drag is running. A box's width
+                    is its duration on this strip, but a width is not a number
+                    you can read — and the thing being chosen here is a number.
+                    Shown only during the drag, so the film is not carrying a
+                    readout nobody asked for the rest of the time. */}
+                {dragging ? <span className="s-read">{seconds.toFixed(2)}s</span> : null}
+              </>
+            )}
+          </div>
+        );
+      }),
+    // `activeId` BELONGS IN HERE. The boxes were memoised on `shots` alone
+    // while reading `activeId` inside, so the array was reused across a
+    // selection change and every box kept the mark it had when the memo last
+    // ran. `data-seam-segment-live` was already going stale that way; the
+    // `selected` class would have joined it.
+    [shots, activeId, trimming],
   );
 
   const edgeScroll = useCallback((clientX: number) => {

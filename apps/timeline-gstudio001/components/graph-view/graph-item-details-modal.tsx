@@ -608,6 +608,42 @@ function DetailsFilmstripModal({
    * it was built for trim drags and this is the same question asked by a
    * different gesture.
    */
+  /**
+   * WHAT A TRIM IS, defined once for both surfaces that can make one.
+   *
+   * The deck's handles and the film's out handle report the same shape — a
+   * window in SOURCE seconds — and go through the same command. Two copies of
+   * this would be two chances to disagree about which end `trimOutSeconds`
+   * counts from, and the store holds it as a TAIL length while both surfaces
+   * think in out points.
+   *
+   * One dispatch per gesture, which is what makes a drag one undo entry.
+   */
+  const commitTrim = useCallback(
+    (clipId: string, next: Readonly<{ in: number; out: number }>) => {
+      const found = graph.nodesById.get(parseNodeId(clipId));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      // ONLY A CLIP WITH A TIMELINE CAN BE TRIMMED. `update-media` accepts a
+      // window for audio and video and for nothing else — a still has no
+      // duration to cut into, which is the same reason the bar draws it as one
+      // frame rather than a filmstrip, and why the strip gives it no handle.
+      const kind = media?.mediaKind;
+      if (media === null || (kind !== "audio" && kind !== "video")) return;
+      const full = hasSourceWindow(media) ? media.fullDurationSeconds : mediaDurationSeconds(media);
+      store.dispatch({
+        type: "update-media",
+        nodeId: media.id,
+        update: {
+          mediaKind: kind,
+          trimInSeconds: Math.max(0, next.in),
+          // BACK TO A TAIL LENGTH, which is how the store holds it.
+          trimOutSeconds: Math.max(0, full - next.out),
+        },
+      });
+    },
+    [graph, store],
+  );
+
   const [skimSeconds, setSkimSeconds] = useState<number | null>(null);
   const skimAt = skimSeconds === null ? null : seamAt(timeline, skimSeconds);
   const skimNode = (() => {
@@ -926,8 +962,21 @@ function DetailsFilmstripModal({
       // still's own image, and that audio has neither and should get no
       // thumbnail rather than a broken one.
       const poster = seamClipOf(media)?.posterSrc;
+      // TRIMMABLE ONLY WHERE A WINDOW MEANS ANYTHING. `update-media` accepts one
+      // for audio and video and for nothing else, so a still is handed no source
+      // length and the strip draws it no handle — the refusal is expressed once,
+      // here, rather than as a control that turns out to be inert.
+      const seam = seamClipOf(media);
+      const windowed =
+        media !== null && (media.mediaKind === "audio" || media.mediaKind === "video")
+          ? {
+              sourceSeconds: seam?.fullSeconds ?? mediaDurationSeconds(media),
+              trimInSeconds: seam?.trimInSeconds ?? 0,
+            }
+          : {};
       return {
         id,
+        ...windowed,
         label: found?.name ?? id,
         seconds: media === null ? 0 : mediaDurationSeconds(media),
         frames:
@@ -1461,27 +1510,7 @@ function DetailsFilmstripModal({
         clips={deckClips}
         activeId={node.id as string}
         onActivate={(clipId) => landOn(clipId, position)}
-        onTrim={(clipId, next) => {
-          const found = graph.nodesById.get(parseNodeId(clipId));
-          const media = found && found.kind === "media" ? (found as MediaNode) : null;
-          // ONLY A CLIP WITH A TIMELINE CAN BE TRIMMED. `update-media` accepts a
-          // window for audio and video and for nothing else — a still has no
-          // duration to cut into, which is the same reason the bar draws it as one
-          // frame rather than a filmstrip.
-          const kind = media?.mediaKind;
-          if (media === null || (kind !== "audio" && kind !== "video")) return;
-          const full = seamClipOf(media)?.fullSeconds ?? mediaDurationSeconds(media);
-          store.dispatch({
-            type: "update-media",
-            nodeId: media.id,
-            update: {
-              mediaKind: kind,
-              trimInSeconds: Math.max(0, next.in),
-              // BACK TO A TAIL LENGTH, which is how the store holds it.
-              trimOutSeconds: Math.max(0, full - next.out),
-            },
-          });
-        }}
+        onTrim={commitTrim}
       />
 
       {/* HOW MANY CLIPS TO SHOW, bottom right and out of the way.
@@ -1559,6 +1588,7 @@ function DetailsFilmstripModal({
               }}
               onSkim={setSkimSeconds}
               skimPreview={skimPreview}
+              onTrim={commitTrim}
               onTogglePlay={() => setPlaying((was) => !was)}
               onSelect={(clipId) => landOn(clipId, position)}
             />

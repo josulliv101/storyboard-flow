@@ -145,6 +145,72 @@ ${SCOPE} .deck{ touch-action: none; }
    under the settled contract it is now the ONLY one. ─────────────────── */
 ${SCOPE} .strip .shot{ cursor: grab; }
 
+/* ── THE TRIM HANDLES ──────────────────────────────────────────────────────
+   Not in the reference, whose strip is a picture of a sequence and not an
+   editor of one. Only on the subject: an edge on every box would be two dozen
+   grab targets on a surface whose main gesture is a pan across all of them.
+
+   BOTH EDGES, and they are told apart by which one MOVES. A box here is the
+   USED length with no room to depict the source, so if both gestures resized
+   from the right they would look identical and mean different things. An
+   in-drag moves the left edge and holds the right; an out-drag does the
+   reverse. The card remains the place to see the source itself, with its
+   discards shaded.
+
+   Wider than it looks: a 3px rule is a 3px target, and this one sits on the
+   edge of a box you are also meant to be able to grab and fling. The bar is
+   the affordance, the padding is the hit area. ──────────────────────────── */
+/* THE APP'S OWN HANDLE, worn by both surfaces that have one.
+   \`GraphTrimHandle\` is the design everywhere else on this board: an 8px white
+   collar down the clip's edge, rounded on the outside, with a dark grip line
+   centred in it — and the grip, not the collar, is what changes when the drag
+   arms, because a geometry change INSIDE the handle does not move anything
+   under the finger already on it. The reference's own edges are a thin accent
+   rule and a bare 2px tick; two trim handles that look different in one view
+   is one control with two stories. Restated here rather than imported because
+   the canonical one is a React component in the app and this stylesheet has to
+   stand on its own. */
+${SCOPE} .strip .shot .s-edge,
+${SCOPE} .c-h{
+  position:absolute; top:0; bottom:0; width:8px;
+  display:flex; align-items:center; justify-content:center;
+  cursor:ew-resize; z-index:6;
+  background:rgba(255,255,255,.95);
+  transition:background-color .15s ease;
+}
+${SCOPE} .strip .shot .s-in,
+${SCOPE} .c-h.l{ left:0; border-radius:6px 0 0 6px; }
+${SCOPE} .strip .shot .s-out,
+${SCOPE} .c-h.r{ right:0; border-radius:0 6px 6px 0; }
+
+/* The grip: 2px, rounded, black at 45% — full height and darker once armed. */
+${SCOPE} .strip .shot .s-edge::after,
+${SCOPE} .c-h::after{
+  content:""; position:static; transform:none;
+  width:2px; height:20px; border-radius:9999px;
+  background:rgba(0,0,0,.45);
+  transition:height .15s ease, background-color .15s ease;
+}
+${SCOPE} .strip .shot.trimming .s-edge::after,
+${SCOPE} .c-win:active .c-h::after{
+  height:100%; background:rgba(0,0,0,.7);
+}
+/* Taller on a coarse pointer, for the same reason the target is wider there. */
+@media (pointer: coarse){
+  ${SCOPE} .strip .shot .s-edge::after,
+  ${SCOPE} .c-h::after{ height:28px; }
+}
+
+${SCOPE} .strip .shot.trimming{ z-index:8; }
+${SCOPE} .strip .shot .s-read{
+  position:absolute; left:50%; top:6px; transform:translateX(-50%);
+  padding:2px 6px; border-radius:5px;
+  background:var(--chip); color:#0b0e13;
+  font-size:10.5px; font-weight:600; letter-spacing:.02em;
+  white-space:nowrap; pointer-events:none; z-index:7;
+  box-shadow:0 2px 10px rgba(0,0,0,.55);
+}
+
 /* ── THE PLAYHEAD CHIP CARRIES THE MONITOR ───────────────────────────────
    The chip is the moment the preview pane is showing, so it wears the pane's
    own glyph — the same one the Preview toggle uses, not a second icon meaning
