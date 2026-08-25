@@ -34,7 +34,13 @@ import {
   SeamLane,
   type SeamHover,
 } from "./graph-seam-lane";
-import { HAIRLINE, SURFACE_WELL } from "./graph-details-design";
+import {
+  BAR_LIFT,
+  HAIRLINE,
+  RADIUS_BAR,
+  SURFACE_BAR,
+  SURFACE_WELL,
+} from "./graph-details-design";
 import { SegmentedControl } from "./graph-details-segmented";
 import {
   DropdownMenu,
@@ -1200,7 +1206,29 @@ export function SeamStripBar({
   };
 
   return (
-    <div data-seam-bar className="flex w-full flex-col gap-2">
+    <div
+      data-seam-bar
+      // A PANEL, NOT A TRANSPARENT STACK (PL15-030). The bar had no
+      // surface of its own: ruler, film and minimap sat straight on the
+      // page, so the one instrument the view is arranged around was the
+      // only thing in it without edges. Giving it the lit panel the
+      // reference uses is what makes it read as a device rather than as
+      // three rows that happen to be adjacent.
+      //
+      // NO BORDER — the edge is an inset ring inside `BAR_LIFT`. A 1px border
+      // would move every row inside the panel in by a pixel, and the bar's
+      // rows are read against the cards below them; `TheBarSpansTheFullWidth`
+      // exists to catch exactly that.
+      //
+      // The vertical padding is the panel's, not the rows' — 14 above and 12
+      // below, matching the reference.
+      className={[
+        "flex w-full flex-col gap-2 pt-[14px] pb-3",
+        SURFACE_BAR,
+        RADIUS_BAR,
+        BAR_LIFT,
+      ].join(" ")}
+    >
       <div
         ref={trackRef}
         data-seam-track

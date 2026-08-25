@@ -34,6 +34,38 @@ export const SURFACE_CARD_FOCUS = "bg-[#141418]";
  *  second card stacked on the first. */
 export const SURFACE_WELL = "bg-[#08080a]";
 
+/**
+ * THE BAR'S OWN SURFACE — the one lit thing in the view (PL15-030).
+ *
+ * Every other surface here is flat, and deliberately: a card is a card and a
+ * well is a well, and lighting them would make depth a matter of degree
+ * instead of a matter of which of the three you are. The bar is the exception
+ * because it is not on the page in the same way — it is the instrument the
+ * whole view is arranged around, and the reference design gives it a top-lit
+ * panel to say so.
+ *
+ * A GRADIENT PLUS AN INSET HIGHLIGHT, and the highlight is the half that does
+ * the work. `inset 0 1px 0 rgba(255,255,255,.05)` is a single lit pixel along
+ * the top edge; without it the gradient alone reads as a slightly different
+ * grey rather than as a surface catching light from above.
+ *
+ * THE EDGE IS AN INSET RING, NOT A BORDER, and that is a correction rather than
+ * a preference. A 1px border on a panel this wide moves everything inside it in
+ * by a pixel — `TheBarSpansTheFullWidth` caught the ruler starting at 25 where
+ * it must start at 24, and its rule is exactly right: the bar's rows and the
+ * cards below them are read against each other, so anything that narrows one
+ * and not the other is a misalignment. A ring is drawn, not laid out.
+ *
+ * 18px, NOT `RADIUS_CARD`'s 12. The bar is wider than anything else in the
+ * view and a radius that reads as generous on a 400px card reads as tight
+ * across 1100px — the reference makes the same distinction, and for the same
+ * reason.
+ */
+export const SURFACE_BAR = "bg-[linear-gradient(180deg,#14181f,#0e1117_55%,#0b0d12)]";
+export const RADIUS_BAR = "rounded-[18px]";
+export const BAR_LIFT =
+  "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07),inset_0_1px_0_rgba(255,255,255,0.05),0_40px_90px_-40px_rgba(0,0,0,0.9),0_8px_30px_-18px_rgba(0,0,0,0.8)]";
+
 /* ── HAIRLINES ─────────────────────────────────────────────────────────── */
 
 /** Ordinary separation. */
@@ -51,8 +83,26 @@ export const HAIRLINE_STRONG = "border-white/[0.16]";
  * one thing a person wrote (the clip's name). That is why a 13px title and a
  * 13px readout look nothing alike and never need to be told apart by size. */
 
-/** A control's name, and any word that labels a value rather than being one. */
-export const TEXT_LABEL = "font-mono text-[11px] text-zinc-600";
+/**
+ * A control's name, and any word that labels a value rather than being one.
+ *
+ * SMALL, WIDE AND LIFTED (PL15-030) — the treatment the reference design uses
+ * for every label on the bar, and the thing that actually carries its look now
+ * that the two faces it loads are not being adopted. Tracking is doing the work
+ * a display face would have done: at this size, letters set close read as a
+ * word and letters set apart read as a LABEL, whatever family draws them.
+ *
+ * 10px with `0.14em` rather than the reference's 9.5px with `0.22em`. Tracking
+ * adds width per character, and these sit in control rows that are already
+ * full — the reference can afford more of it because its labels live in a strip
+ * with nothing beside them. Same treatment, sized for where ours actually go.
+ *
+ * `zinc-500`, up from `zinc-600`. The reference's quiet label is `#79828f` and
+ * ours was `#52525b` — dark enough that a label beside a value read as disabled
+ * rather than as quiet. `zinc-500` is `#71717a`, which is the same intent.
+ */
+export const TEXT_LABEL =
+  "font-mono text-[10px] tracking-[0.14em] text-zinc-500 uppercase";
 
 /** A value the machine produced: a duration, a count, a clip number. */
 export const TEXT_VALUE = "font-mono text-[11px] tabular-nums text-zinc-200";

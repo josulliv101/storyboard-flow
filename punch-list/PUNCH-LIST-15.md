@@ -2009,9 +2009,12 @@ Acceptance criteria:
 
 ## PL15-030 — The reference design for the details view
 
-- Status: Not started, but SPECIFIED — the owner supplied the source, and three
-  open questions in the first draft of this item are now decided (see "The three
-  calls" below). What is left is a build, not a design.
+- Status: MOSTLY COMPLETE. Built and verified in the app: the five-control
+  transport reaching both ends, skimming feeding the one shared preview with
+  the playhead untouched, and the visual pass (the bar’s lit panel, the
+  quiet-label treatment). ONE PIECE DELIBERATELY NOT BUILT — the preview’s
+  340ms dismiss animation, which collides with PL15-020 and should wait for
+  it. See "PL15-030 — what the reference actually asked for" at the end.
 - Reference: `punch-list/reference/storyboard-playbar.html`, vendored into the
   repo because that is the readable one and a Downloads folder is not a spec.
   Also supplied: `storyboard-react-demo.html`, the same design as a Tailwind v4
@@ -2192,3 +2195,88 @@ once, with nothing about routing in the message.
 history entry per open, Back closes it and restores the scroll, and the view is
 a `<section>` with the board hidden beside it. 1457 app tests, 807 unit, 334
 story interactions, lint 0 errors.
+
+## PL15-030 — what the reference actually asked for
+
+**THE TWO DESIGN SYSTEMS WERE ALREADY THE SAME SYSTEM.** The view has its own
+token file (`graph-details-design.ts`), and set beside the reference's `:root`
+block most of it matches outright:
+
+| reference | ours | |
+| --- | --- | --- |
+| `--stroke: rgba(255,255,255,.07)` | `HAIRLINE border-white/[0.07]` | identical |
+| `--r-card: 12px` | `RADIUS_CARD rounded-xl` | identical |
+| `--alarm` = the playhead, and only that | "RED — the playhead. Never anything else" | identical rule |
+| `--panel-lo: #0b0d12` | `SURFACE_CARD #0d0d10` | within a shade |
+| `--signal: #3cdbc0` | BLUE = a value you can edit | ours, by decision |
+
+So the visual pass was never a restyle. Two things were genuinely missing, and
+both are small:
+
+- **The bar had no surface at all.** `data-seam-bar` was
+  `flex w-full flex-col gap-2` — ruler, film and minimap sitting straight on the
+  page, so the one instrument the view is arranged around was the only thing in
+  it without edges. It gets the reference's lit panel: a `180deg` gradient
+  through `#14181f → #0e1117 55% → #0b0d12`, an inset ring, and the lift.
+  `inset 0 1px 0 rgba(255,255,255,.05)` is the half that does the work —
+  without that single lit pixel along the top the gradient reads as a slightly
+  different grey rather than as a surface catching light.
+- **The quiet labels were too dark and untracked.** `zinc-600` (`#52525b`)
+  against the reference's `#79828f`, with no tracking and no case change — dark
+  enough that a label beside a value read as disabled rather than as quiet.
+
+**THE TREATMENT IS WHAT CARRIES THE LOOK, WHICH IS EXACTLY WHY NO FONTS WERE
+NEEDED.** With Martian Mono and Spline Sans Mono ruled out, tracking does the
+work a display face would have done: at 10px, letters set close read as a word
+and letters set apart read as a LABEL, whatever family draws them. `0.14em`
+rather than the reference's `0.22em`, because tracking adds width per character
+and ours sit in control rows that are already full — the reference can afford
+more of it because its labels live in a strip with nothing beside them.
+
+**THE EDGE IS A RING, NOT A BORDER, AND A STORY IS WHY.** The first version
+used `border` + `HAIRLINE`, which is what every other surface here does. On a
+panel this wide it moves everything inside in by a pixel:
+`TheBarSpansTheFullWidth` caught the ruler starting at 25 where it must start
+at 24, and its rule — "nothing else may narrow them" — is exactly right,
+because the bar's rows and the cards below are read against each other. An
+inset ring is drawn rather than laid out, so the alignment survives.
+
+**THE TRANSPORT WAS HALF THERE.** Previous and next already stepped one CLIP
+and already went dim at the ends, which is the reference's behaviour; only the
+outer pair was missing. `jumpToEdge` is shared with `Home`/`End` so the key and
+the button cannot drift, and it clears `followSuspended` — time and scroll move
+together, which is the reference's own reason for setting both in one go.
+
+The two pairs move DIFFERENT things, and the story says so because the
+reference does not distinguish them: there, stepping the deck and moving the
+player are one act. Here the jumps move time along the whole sequence and the
+steps move which clip is the subject, so arriving at the last second says
+nothing about whether there is a next clip. The first version of that story
+asserted otherwise and failed.
+
+**SKIMMING REUSED A SEAM RATHER THAN INVENTING ONE.** `frameOverride` already
+hands the pane a frame to draw while `currentTime` is untouched — which IS the
+reference's rule that the fill tracks playback and never the skim. And
+`usePublishTrimPreview` already returns whether the pane took it, so the hover
+card is not replaced: it becomes the pane-closed fallback, which is that seam's
+own existing rule rather than a new one.
+
+**TWO INSTRUMENTS WERE WRONG BEFORE ONE WAS RIGHT.** The pane draws
+`frameOverride` to its own CANVAS from a cached element, so the visible
+`<video>.currentTime` never moves and measuring it proves nothing — it read as
+"the skim does not work" twice. The observable contract is the card: pane OPEN,
+hovering the ruler leaves the ghost up and shows no card; pane CLOSED, the same
+hover shows the card. Both measured, with the clock reading 0:10.2 throughout
+either way.
+
+**STILL OPEN ON THIS ITEM: the dismiss animation.** The reference opens and
+closes its preview over 340ms with a `prefers-reduced-motion` path, renders the
+frame BEFORE animating open so it is not one frame stale, and scrolls the
+window to top because the preview and the playbar share the viewport. Our pane
+is already dismissible — `previewOn`, with the pane's own close button going
+through the same event so there is one owner — but it appears and disappears
+without any of that. It is not built here because the pane's height is
+USER-OWNED and its mount-time sizing is the subject of PL15-020, which is open
+with a second contributor still unfound: animating a height that a known
+intermittent bug already mis-sets is how you get a third contributor. Worth
+doing after PL15-020 closes, not before.
