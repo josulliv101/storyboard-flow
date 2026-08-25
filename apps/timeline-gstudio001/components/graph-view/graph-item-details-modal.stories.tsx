@@ -3396,6 +3396,62 @@ export const TheBarTakesTheKeyboard: Story = {
 };
 
 /**
+ * THE TRANSPORT REACHES BOTH ENDS (PL15-030).
+ *
+ * Five controls, in the order the reference design uses: start, previous,
+ * play, next, end. The inner pair step one CLIP and go dim where there is no
+ * clip to step to; the outer pair jump the whole sequence and stay live,
+ * because arriving where you already are costs nothing and two kinds of
+ * disabled in one pill read as a fault.
+ *
+ * ASSERTED THROUGH THE SAME VALUE THE KEYBOARD STORY USES, deliberately. The
+ * buttons and `Home`/`End` are one call (`jumpToEdge`), and a story that
+ * checked them by a different measure would let the two drift apart without
+ * failing.
+ */
+export const TheTransportReachesBothEnds: Story = {
+  render: () => <SeamHarness scene={TWO_ROOMS_SCENE} />,
+  play: async () => {
+    await waitFor(() => expect(document.querySelector("[data-seam-strip]")).not.toBeNull());
+    await settleStrip();
+    const track = seamTrack();
+    const at = () => Number(track.getAttribute("aria-valuenow"));
+    const max = Number(track.getAttribute("aria-valuemax"));
+    const jump = (edge: "start" | "end") =>
+      document.querySelector<HTMLButtonElement>(`[data-seam-jump="${edge}"]`)!;
+
+    // FIVE CONTROLS, IN ORDER. Read off the transport itself rather than
+    // assumed, so a button added in the wrong place fails here.
+    const order = Array.from(
+      document.querySelector<HTMLElement>("[data-seam-transport]")!.children,
+    ).map((child) =>
+      child.getAttribute("data-seam-jump") ??
+      child.getAttribute("data-seam-step") ??
+      (child.hasAttribute("data-seam-play") ? "play" : "?"),
+    );
+    expect(order).toEqual(["start", "back", "play", "forward", "end"]);
+
+    // THE TWO PAIRS MOVE DIFFERENT THINGS, which is worth stating because the
+    // reference design does not distinguish them: there, stepping the deck and
+    // moving the player are one act. Here the jumps move TIME along the whole
+    // sequence and the steps move which clip is the SUBJECT — so arriving at
+    // the last second says nothing about whether there is a next clip, and the
+    // first version of this story asserted otherwise and failed.
+    jump("end").click();
+    await waitFor(() => expect(at()).toBe(max));
+
+    jump("start").click();
+    await waitFor(() => expect(at()).toBe(0));
+
+    // NEVER DISABLED, at either end — arriving where you already are costs
+    // nothing, and two kinds of dimmed control in one pill read as a fault.
+    // Asserted at BOTH edges, having just been to each.
+    expect(jump("start").disabled).toBe(false);
+    expect(jump("end").disabled).toBe(false);
+  },
+};
+
+/**
  * THE BAR IS GREY, AND THE SEAMS STILL SHOW.
  *
  * The collection tint is parked behind `NEXT_PUBLIC_GSTUDIO_BAR_COLOURS`, off

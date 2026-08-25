@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Pause, Play, Settings2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Pause,
+  Play,
+  Settings2,
+  SkipBack,
+  SkipForward,
+} from "lucide-react";
 
 import {
   BAR_COLLECTION_COLOURS_ENABLED,
@@ -1098,6 +1106,24 @@ export function SeamStripBar({
   const windowFromSeconds = scale <= 0 ? 0 : -offset / scale;
   const windowToSeconds = scale <= 0 ? 0 : (-offset + trackWidth) / scale;
 
+  /**
+   * Jump to an EDGE of the sequence, and bring the bar with it (PL15-030).
+   *
+   * `setFollowSuspended(false)` is what makes the bar travel: suspended, the
+   * window stays where it was dragged and the playhead walks off it. Following
+   * again means time and scroll move together, which is what stops the
+   * playhead landing somewhere nobody can see — the reference design does the
+   * same thing by setting the time and the scroll offset in one go.
+   *
+   * SHARED WITH `Home`/`End`, which have always done this. The keys were the
+   * only way to reach either end; the buttons below are the same call, so the
+   * two cannot drift apart.
+   */
+  const jumpToEdge = (edge: "start" | "end") => {
+    setFollowSuspended(false);
+    onScrubSeconds(edge === "start" ? 0 : totalSeconds);
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const seekBy = (delta: number) => {
       event.preventDefault();
@@ -1118,9 +1144,11 @@ export function SeamStripBar({
         onStepForward?.();
       } else seekBy(1);
     } else if (event.key === "Home") {
-      seekBy(-Infinity);
+      event.preventDefault();
+      jumpToEdge("start");
     } else if (event.key === "End") {
-      seekBy(Infinity);
+      event.preventDefault();
+      jumpToEdge("end");
     }
   };
 
@@ -1403,6 +1431,32 @@ export function SeamStripBar({
           // design it came from.
           className={["flex items-center gap-1 rounded-full border p-[3px]", HAIRLINE, SURFACE_WELL].join(" ")}
         >
+          {/* THE EDGES, BRACKETING THE STEPS (PL15-030). Five controls in the
+              order the reference design uses: start, previous, play, next,
+              end — the outer pair jumping the whole sequence, the inner pair
+              stepping one clip.
+
+              NOT DISABLED AT THE ENDS, unlike the step buttons beside them.
+              Stepping past the last clip has nowhere to go, so that control
+              goes dim; jumping to the end while already at the end is simply
+              a no-op that costs nothing, and dimming it would put two
+              different kinds of disabled in one pill. Quieter than the steps
+              (`zinc-400` against `zinc-300`) because they are the outer ring
+              of the group and reached for less.
+
+              SAME CALL AS `Home` AND `End`, which have always done this — see
+              `jumpToEdge`. */}
+          <button
+            type="button"
+            data-seam-jump="start"
+            onClick={() => jumpToEdge("start")}
+            aria-label="Jump to start"
+            title="Jump to start (Home)"
+            className="grid h-7 w-7 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+          >
+            <SkipBack aria-hidden="true" className="h-3.5 w-3.5 fill-current" />
+          </button>
+
           {/* STEP ONE CLIP, either way, bracketing the thing they move.
               Disabled rather than hidden at the ends: a control that vanishes
               takes its own position with it and shifts the bar sideways. */}
@@ -1459,7 +1513,19 @@ export function SeamStripBar({
           >
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </button>
+
+          <button
+            type="button"
+            data-seam-jump="end"
+            onClick={() => jumpToEdge("end")}
+            aria-label="Jump to end"
+            title="Jump to end (End)"
+            className="grid h-7 w-7 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+          >
+            <SkipForward aria-hidden="true" className="h-3.5 w-3.5 fill-current" />
+          </button>
         </div>
+
 
         <div className="flex min-w-0 items-center justify-end gap-3">
 
