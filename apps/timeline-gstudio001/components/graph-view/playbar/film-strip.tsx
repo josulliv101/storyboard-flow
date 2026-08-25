@@ -54,6 +54,29 @@ function prefersReducedMotion(): boolean {
 /** A press that moves less than this is a tap, not a pan. */
 /** A trimmed shot may not vanish; a tenth of a second is the floor, the same
  *  one the deck's handles use. */
+/**
+ * A trim in progress: the shot being dragged, the length it will be, and how
+ * much every shot AFTER it slides while the drag runs.
+ *
+ * `delta` replaced a `shift` that moved the trimmed box's own left edge, which
+ * was wrong in the way a ripple edit is always wrong when it is not rippled.
+ * Holding the downstream shots still meant a box being lengthened grew OVER its
+ * neighbour and a box being shortened left a black gap where it used to be —
+ * two pictures of the sequence that are not the sequence.
+ *
+ * So the trimmed box keeps its place, its width follows the pointer, and
+ * everything after it moves by the difference. Both edges look the same doing
+ * it, which is what a ripple looks like in any editor: trimming a head closes
+ * the gap behind it, so the clip's left edge does not move — its right edge and
+ * everything past it do.
+ */
+type Trimming = Readonly<{
+  index: number;
+  id: string;
+  seconds: number;
+  delta: number;
+}>;
+
 const TRIM_FLOOR_SECONDS = 0.1;
 
 /**
@@ -212,12 +235,8 @@ export function FilmStrip({
     },
     [onSelect, selectedId, shots],
   );
-  const [trimming, setTrimming] = useState<{
-    id: string;
-    seconds: number;
-    shift: number;
-  } | null>(null);
-  const trimmingRef = useRef<{ id: string; seconds: number; shift: number } | null>(null);
+  const [trimming, setTrimming] = useState<Trimming | null>(null);
+  const trimmingRef = useRef<Trimming | null>(null);
 
   const [ghostX, setGhostX] = useState<number | null>(null);
   const [hot, setHot] = useState(false);
@@ -547,7 +566,8 @@ export function FilmStrip({
    */
 
   const onTrimHandleDown =
-    (shot: PlacedShot, edge: "in" | "out") => (event: React.PointerEvent) => {
+    (shot: PlacedShot, index: number, edge: "in" | "out") =>
+    (event: React.PointerEvent) => {
       if (event.button !== 0) return;
       if (shot.sourceSeconds === undefined || shot.trimInSeconds === undefined) return;
       // The strip is a pan surface and a scrub surface; neither may claim this.
@@ -576,21 +596,23 @@ export function FilmStrip({
           // Cannot cross itself, and cannot reach past the end of the source.
           const longest = Math.max(TRIM_FLOOR_SECONDS, source - trimIn);
           const seconds = clamp(used + travelled, TRIM_FLOOR_SECONDS, longest);
-          return { seconds, shift: 0, next: { in: trimIn, out: trimIn + seconds } };
+          return { seconds, next: { in: trimIn, out: trimIn + seconds } };
         }
         // Dragging the head right shortens; dragging it left RECOVERS material,
         // as far back as the source's own start.
         const nextIn = clamp(trimIn + travelled, 0, outPoint - TRIM_FLOOR_SECONDS);
-        return {
-          seconds: outPoint - nextIn,
-          shift: nextIn - trimIn,
-          next: { in: nextIn, out: outPoint },
-        };
+        return { seconds: outPoint - nextIn, next: { in: nextIn, out: outPoint } };
       };
 
       const move = (moveEvent: PointerEvent) => {
         const at = measure(moveEvent.clientX);
-        const next = { id: shot.id, seconds: at.seconds, shift: at.shift };
+        const next: Trimming = {
+          index,
+          id: shot.id,
+          seconds: at.seconds,
+          // What the rest of the sequence owes this edit, live.
+          delta: at.seconds - used,
+        };
         trimmingRef.current = next;
         setTrimming(next);
       };
@@ -624,6 +646,8 @@ export function FilmStrip({
         // they already have until the store answers — see `onTrimOutDown`.
         const dragging = trimming !== null && trimming.id === shot.id;
         const seconds = dragging ? trimming.seconds : shot.seconds;
+        // Everything downstream of the shot being trimmed moves with it.
+        const slide = trimming !== null && index > trimming.index ? trimming.delta : 0;
         // A handle only where a window means anything, and only on the subject:
         // an edge on every box would be two dozen grab targets on a surface
         // whose main gesture is a pan across all of them.
@@ -643,10 +667,11 @@ export function FilmStrip({
             data-seam-segment={shot.id}
             data-seam-segment-live={selected ? "" : undefined}
             style={{
-              // The shift moves the LEFT edge during an in-drag and is zero for
-              // everything else, so an out-drag and a resting box are laid out
-              // exactly as they always were.
-              left: (shot.start + (dragging ? trimming.shift : 0)) * PXS + 2,
+              // THE RIPPLE, LIVE. The trimmed box keeps its place and takes its
+              // new width; every shot after it slides by the difference, so the
+              // film stays a continuous run at every moment of the drag rather
+              // than overlapping its neighbour or opening a gap.
+              left: (shot.start + slide) * PXS + 2,
               width: seconds * PXS - 4,
             }}
           >
@@ -665,13 +690,13 @@ export function FilmStrip({
                   data-seam-trim-in={shot.id}
                   className="s-edge s-in"
                   title="Drag to change where this shot starts"
-                  onPointerDown={onTrimHandleDown(shot, "in")}
+                  onPointerDown={onTrimHandleDown(shot, index, "in")}
                 />
                 <i
                   data-seam-trim-out={shot.id}
                   className="s-edge s-out"
                   title="Drag to change where this shot ends"
-                  onPointerDown={onTrimHandleDown(shot, "out")}
+                  onPointerDown={onTrimHandleDown(shot, index, "out")}
                 />
                 {/* THE LENGTH IT WILL BE, while a drag is running. A box's width
                     is its duration on this strip, but a width is not a number
@@ -1044,7 +1069,13 @@ export function FilmStrip({
                   />
                 ))}
 
-                <div data-seam-strip className="strip" ref={stripRef}>
+                <div
+                  data-seam-strip
+                  // NO EASING WHILE A TRIM IS RUNNING — the boxes have to track
+                  // the pointer exactly. See the note on `.rippling`.
+                  className={`strip${trimming === null ? "" : " rippling"}`}
+                  ref={stripRef}
+                >
                   {shotBoxes}
                   {selectedShot === null ? null : (
                     <div
@@ -1055,7 +1086,16 @@ export function FilmStrip({
                       className="underline"
                       style={{
                         left: selectedShot.start * PXS + 2,
-                        width: (selectedShot.end - selectedShot.start) * PXS - 4,
+                        // FOLLOWS A TRIM IN PROGRESS. The mark sits against the
+                        // subject's box, so a box whose width is being dragged
+                        // and a mark still drawn at the committed width are two
+                        // different claims about the same shot.
+                        width:
+                          (trimming !== null && trimming.id === selectedShot.id
+                            ? trimming.seconds
+                            : selectedShot.end - selectedShot.start) *
+                            PXS -
+                          4,
                       }}
                     />
                   )}

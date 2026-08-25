@@ -201,6 +201,29 @@ ${SCOPE} .c-win:active .c-h::after{
   ${SCOPE} .c-h::after{ height:28px; }
 }
 
+/* ── THE FILM SETTLES INTO ITS NEW PLACES ────────────────────────────────
+   A trim moves every box after it, and moving them instantly makes the
+   sequence appear to cut to a different arrangement — you cannot see WHICH
+   way it went, only that it changed. The same easing the subject mark and the
+   ruler range already use, so the three things that move on this bar move
+   alike.
+
+   OFF WHILE THE DRAG IS RUNNING, which is the whole reason it is a class and
+   not a blanket rule. An eased box lags the pointer: the edge you are holding
+   would trail your hand by a quarter second and the ripple would arrive after
+   the gesture that caused it. Direct manipulation has to be direct; it is the
+   re-flow AFTERWARDS — a trim committed from the card, an undo, a clip
+   arriving — that benefits from being followed by eye. ──────────────────── */
+${SCOPE} .strip .shot{
+  transition:
+    left .28s cubic-bezier(.22,1,.3,1),
+    width .28s cubic-bezier(.22,1,.3,1);
+}
+${SCOPE} .strip.rippling .shot{ transition:none; }
+
+/* FRONT-MOST WHILE BEING TRIMMED. Nothing overlaps — the shots after it slide
+   live, so the film stays a continuous run throughout the drag — but its
+   handles must not pass under the box arriving beside it. */
 ${SCOPE} .strip .shot.trimming{ z-index:8; }
 ${SCOPE} .strip .shot .s-read{
   position:absolute; left:50%; top:6px; transform:translateX(-50%);
@@ -230,8 +253,22 @@ ${SCOPE} .ph-tv{ width:12px; height:12px; flex:none; opacity:.85; }
    so growing the chip without moving these leaves the arrow buried in it and
    the line starting inside the label. Restated against the new height rather
    than nudged. */
-${SCOPE} .ph-tri{ top:28px; }
-${SCOPE} .ph-line{ top:35px; }
+${SCOPE} .ph-chip{ top:-3px; }
+${SCOPE} .ph-tri{ top:25px; }
+
+/* THE LINE STOPS AT THE FILM, rather than running down through it.
+   The reference draws it to the bottom of the strip, a rule straight across
+   every thumbnail the playhead passes — measured, 150px of it, the whole
+   height of the film. The scale above is where a position is READ; the frames
+   are what you are trying to look at, and a line across them is in the way of
+   the one thing the strip is for.
+
+   Ended with the film's own height variable rather than a fixed length: the
+   playhead's lower edge and the strip's are the same line, so \`bottom\` set to
+   the film's height lands exactly on its top edge — and follows it when the
+   film concedes height on a short window, which a restated constant would
+   not. ─────────────────────────────────────────────────────────────────── */
+${SCOPE} .ph-line{ top:32px; bottom:var(--strip-h, 150px); }
 
 /* ── THE CARD IS SIZED BY WIDTH, SO WIDTH IS THE HEIGHT DIAL ─────────────
    The reference gives \`.clip\` \`width: clamp(300px, 30vw, 440px)\` and makes
