@@ -158,6 +158,32 @@ export type ClipDeckProps = Readonly<{
    * which is the accepted cost of not shrinking the three anyone is reading.
    */
   neighbours?: number;
+  /**
+   * A frame from a clip's source, for showing where a trim currently sits.
+   *
+   * A PROP RATHER THAN A REPORT BACK. The deck could publish the in-point and
+   * take a new poster in return, but that is a state round trip through the
+   * caller on every pointer move — the film strip's own drag stopped tracking
+   * when it did exactly that. Asking a pure function during render costs a
+   * render and nothing else.
+   *
+   * The caller decides how often a distinct frame is worth fetching; every
+   * distinct time is a distinct request.
+   */
+  frameAt?: (clipId: string, sourceSeconds: number) => string | undefined;
+  /**
+   * A `view-transition-name` for the SUBJECT card's picture.
+   *
+   * The board card the user clicked wears this name until the details view
+   * mounts, and then this picture wears it — so the browser morphs the
+   * thumbnail into the card rather than the view simply appearing. The name is
+   * the caller's to choose because the card and the board have to agree on it,
+   * and neither of them is this component.
+   *
+   * ONE ELEMENT AT A TIME, which is why it goes on the active card alone: two
+   * elements holding one name makes the browser skip the morph entirely.
+   */
+  heroName?: string;
   className?: string;
 }>;
 
@@ -169,6 +195,8 @@ export function ClipDeck({
   standalone = true,
   fitToHeight = false,
   neighbours = 1,
+  frameAt,
+  heroName,
   className,
 }: ClipDeckProps) {
   const CLIPS = useMemo(() => clipsProp ?? REFERENCE_CLIPS, [clipsProp]);
@@ -187,6 +215,9 @@ export function ClipDeck({
     cardIndex: number | null;
   } | null>(null);
   const spacingRef = useRef(480);
+  /** Whether the deck has been put on a subject yet — the first one is a jump,
+   *  not a glide. */
+  const placedRef = useRef(false);
 
   const [ownActive, setOwnActive] = useState(6);
   const active =
@@ -326,8 +357,29 @@ export function ClipDeck({
     // header had moved on — measured, subject at card 10 and the deck centred
     // on 6.
     if (index === targetRef.current && Math.abs(posRef.current - index) < 0.01) return;
+
+    // THE FIRST PLACEMENT IS NOT A JOURNEY.
+    //
+    // The deck boots on the reference's own card and then glides to whatever
+    // the caller's subject is, so opening the view showed the cards sliding
+    // into position — an animation about nothing, since there was no previous
+    // subject to have come from. Worse for the flight that is supposed to be
+    // happening: the shared-element transition names `.clip.active`, and while
+    // the deck is still travelling that class is on the card it booted with,
+    // so the picture flew to the wrong card or, with no card yet marked, did
+    // not fly at all.
+    //
+    // So the first subject is simply where the deck already is, and every
+    // change AFTER it is followed by eye.
+    if (!placedRef.current) {
+      placedRef.current = true;
+      posRef.current = index;
+      targetRef.current = index;
+      layout();
+      return;
+    }
     goTo(index, false);
-  }, [CLIPS, activeId, goTo]);
+  }, [CLIPS, activeId, goTo, layout]);
 
   /**
    * THE CARD IS FITTED TO THE DECK'S HEIGHT, BY NARROWING IT.
@@ -542,9 +594,23 @@ export function ClipDeck({
         }),
       );
     };
+    // A CANCELLED POINTER ABANDONS THE TRIM, and until now nothing listened for
+    // one at all: the drag simply stayed live with its listeners attached and
+    // the card's mirrored window stuck at wherever the pointer was when the
+    // browser took it away — a scroll it decided to own, a touch leaving the
+    // digitiser, the window losing focus. Measured: after a cancel the card's
+    // big picture kept showing the dragged frame instead of the committed one.
+    const cancel = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      // Back to what the store holds — the gesture did not happen.
+      applyTrims(CLIPS.map((entry) => ({ in: entry.trimIn, out: entry.trimOut })));
+    };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
       // COMMITTED ON RELEASE, not per frame. A trim is one edit however long
       // the drag was, and dispatching every pointer move would fill the undo
       // stack with a hundred steps nobody made.
@@ -553,6 +619,7 @@ export function ClipDeck({
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
   };
 
   return (
@@ -603,6 +670,18 @@ export function ClipDeck({
                 // drag can move an edge without a round trip.
                 const trim = trims[index] ?? { in: clip.trimIn, out: clip.trimOut };
                 const cut = Number((trim.out - trim.in).toFixed(2));
+                // A mirrored trim that differs from the committed one means a
+                // drag on THIS card is in flight — which is exactly when the
+                // big picture should be following it. The out handle never
+                // moves the in point, so it never asks for a frame.
+                const liveUrl =
+                  Math.abs(trim.in - clip.trimIn) > 0.001
+                    ? frameAt?.(clip.id, trim.in)
+                    : undefined;
+                const livePoster =
+                  liveUrl === undefined
+                    ? undefined
+                    : `center/cover no-repeat url("${liveUrl}")`;
                 const left = (trim.in / clip.source) * 100;
                 const width = ((trim.out - trim.in) / clip.source) * 100;
                 return (
@@ -633,7 +712,22 @@ export function ClipDeck({
                     <div className="c-view">
                       <div
                         className="c-frame cine"
-                        style={{ background: clip.poster ?? clip.frames[0] ?? "#0d0d10" }}
+                        style={{
+                          ...(heroName !== undefined && index === active
+                            ? { viewTransitionName: heroName }
+                            : {}),
+                          // THE PICTURE FOLLOWS THE TRIM WHILE IT IS MOVING.
+                          //
+                          // A card's big image is the frame its clip starts on,
+                          // so dragging the in point or sliding the whole
+                          // window changes which frame that is — and watching
+                          // it change is most of how you choose one. Asked for
+                          // only while this card's mirrored trim differs from
+                          // the committed one, which is exactly the span of a
+                          // drag on THIS card: the out handle never moves the
+                          // in point, so it never asks.
+                          background: livePoster ?? clip.poster ?? clip.frames[0] ?? "#0d0d10",
+                        }}
                       />
                     </div>
 

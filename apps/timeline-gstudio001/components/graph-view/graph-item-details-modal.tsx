@@ -630,6 +630,28 @@ function DetailsFilmstripModal({
    *
    * One dispatch per gesture, which is what makes a drag one undo entry.
    */
+  /**
+   * A frame from a clip's source, for the deck to show while a trim moves.
+   *
+   * QUANTISED TO A QUARTER SECOND, the same as the film's skim card and for
+   * the same reason: the URL is a Cloudinary frame grab, so every distinct time
+   * is a distinct fetch, and a handle dragged across a card would ask for
+   * hundreds. Finer than the eye follows mid-drag, and coarse enough that
+   * dragging back over the same stretch is answered from cache.
+   *
+   * Video only. A still is one image and audio has none; asking either for a
+   * moment rewrites a good URL into one naming a time the file does not have.
+   */
+  const frameAt = useCallback(
+    (clipId: string, sourceSeconds: number) => {
+      const found = graph.nodesById.get(parseNodeId(clipId));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      if (media === null || media.mediaKind !== "video") return undefined;
+      return monitorPosterUrl(media.posterSrcs?.[0], Math.round(sourceSeconds * 4) / 4);
+    },
+    [graph],
+  );
+
   const commitTrim = useCallback(
     (clipId: string, next: Readonly<{ in: number; out: number }>) => {
       const found = graph.nodesById.get(parseNodeId(clipId));
@@ -1563,6 +1585,14 @@ function DetailsFilmstripModal({
         // three had, so the clips being read do not shrink because a setting
         // asked for more of them.
         neighbours={half}
+        frameAt={frameAt}
+        // THE THUMBNAIL LANDS HERE. The board card carries this name until the
+        // view mounts; the subject's picture takes it over, and the browser
+        // morphs one into the other. Nothing had worn it since the deck
+        // replaced the panel row — `DetailsPanel` still holds the only other
+        // application and is no longer rendered — so the card was giving the
+        // name up to nobody and the flight had no destination.
+        heroName={HERO}
         clips={deckClips}
         activeId={node.id as string}
         onActivate={(clipId) => landOn(clipId, position)}
@@ -1679,7 +1709,6 @@ export function GraphItemDetailsModal() {
   // on screen when the browser captures "before". The transition callback is
   // what clears it, which is exactly when it should go.
   const [mountedId, setMountedId] = useState<string | null>(null);
-  const mounted = mountedId !== null;
   const node = useCollectionsSelector((s) => {
     // `openId` while opening and open; `mountedId` while closing, when the
     // context has already let go but the pixels are still here.
@@ -1687,44 +1716,54 @@ export function GraphItemDetailsModal() {
     if (id === null) return null;
     return s.graph.nodesById.get(parseNodeId(id)) ?? null;
   });
-  const openIdRef = useRef<string | null>(null);
+  // MOUNTED IN THE SAME COMMIT THE CONTEXT OPENS IN, not one effect later.
+  //
+  // `setOpenId` starts the opening flight, because by the time an effect here
+  // could run the board is already hidden and there is nothing left to fly
+  // FROM — measured, the card carried the hero name and had ZERO WIDTH, so no
+  // `old` snapshot was taken at all and the "morph" was the destination fading
+  // in on its own. The transition's callback flushes the context's state
+  // synchronously, so this view has to appear in THAT render for the "after"
+  // capture to contain it.
+  //
+  // `mountedId` still matters, but only on the way OUT: it is what keeps this
+  // on screen for the render in which the context has already let go, which is
+  // the entire closing animation.
+  const wantedNow =
+    openId !== null && node !== null && (node.kind === "collection" || !!node.src);
+  const mounted = wantedNow || mountedId !== null;
 
   // Opening and closing are driven by the context flag so the toolbar button,
   // Escape and the close button go through one path — and they are now the
   // only two, the scrim having gone with PL15-029. ESCAPE'S OWNER IS THIS
   // VIEW while it is open: it is what fills the content area, so there is
   // nothing else in that space with a claim on the key.
+  // WHAT IS ON SCREEN, recorded during the render that puts it there.
+  //
+  // Adjusted here rather than in an effect for the reason the context adjusts
+  // `urlIdSeen` the same way: an effect that sets state is a second render, and
+  // the lint rejects it outright. NOTHING opens from here any more — the
+  // opening flight belongs to `setOpenId`, which is the only place the board is
+  // still on screen to fly from. This is bookkeeping for the way out.
+  if (wantedNow && node !== null && mountedId !== node.id) {
+    setMountedId(node.id as string);
+  }
+
   useEffect(() => {
-    // A collection has no `src` and needs none — its hero is its contents.
-    const wanted =
-      openId !== null && node !== null && (node.kind === "collection" || !!node.src);
-    if (wanted === mounted) return;
-
-    if (wanted && node) {
-      openIdRef.current = node.id;
-      const card = cardElement(node.id);
-      card?.style.setProperty("view-transition-name", HERO);
-      void withViewTransition(() => {
-        // Hand the name over: the card gives it up in the same frame the
-        // modal takes it, so exactly one element ever carries it.
-        card?.style.removeProperty("view-transition-name");
-        setMountedId(node.id as string);
-      });
-      return;
-    }
-
-    const card = openIdRef.current ? cardElement(openIdRef.current) : null;
+    if (wantedNow || mountedId === null) return;
+    // The card the view is collapsing back into. `mountedId` still holds it:
+    // the context has let go, and clearing this is what finally unmounts.
+    const card = cardElement(mountedId);
     void withViewTransition(() => {
-      // Clearing this is what unmounts the modal, and it happens HERE — inside
-      // the callback, after the browser has captured the frame the modal is
+      // Clearing this is what unmounts the view, and it happens HERE — inside
+      // the callback, after the browser has captured the frame the view is
       // still in. That ordering is the animation.
       setMountedId(null);
       card?.style.setProperty("view-transition-name", HERO);
     }).then(() => {
       card?.style.removeProperty("view-transition-name");
-      openIdRef.current = null;
     });
-  }, [openId, node, mounted]);
+  }, [mountedId, wantedNow]);
 
   if (!mounted || node === null) return null;
   if (node.kind === "collection") {

@@ -495,6 +495,34 @@ export const PLAYBAR_CSS = `.pb{
 }
 .pb .strip.rippling .shot{ transition:none; }
 
+/* ── THE THUMBNAIL THAT FLEW HERE ────────────────────────────────────────
+   The subject card's picture wears the app's own hero name (\`trim-subject\`,
+   set from the modal) — the same one the board card carries until this view
+   mounts — so the browser morphs one into the other instead of the details
+   view simply appearing. The name itself is applied in the deck component,
+   because only one element may hold it and the deck knows which card is the
+   subject.
+
+   LONGER THAN THE 250ms DEFAULT, and eased like the rest of this bar. The
+   picture crosses most of the screen and changes size on the way; at the
+   default it reads as a cut with a smear rather than as the same shot moving.
+   \`contain\` on both ends so neither is stretched while the box morphs between
+   two different aspect boxes. ──────────────────────────────────────────── */
+::view-transition-group(trim-subject){
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(.22,1,.3,1);
+}
+::view-transition-old(trim-subject),
+::view-transition-new(trim-subject){
+  animation-duration: 380ms;
+  object-fit: contain;
+}
+@media (prefers-reduced-motion: reduce){
+  ::view-transition-group(trim-subject),
+  ::view-transition-old(trim-subject),
+  ::view-transition-new(trim-subject){ animation-duration: 1ms; }
+}
+
 /* FRONT-MOST WHILE BEING TRIMMED. Nothing overlaps — the shots after it slide
    live, so the film stays a continuous run throughout the drag — but its
    handles must not pass under the box arriving beside it. */

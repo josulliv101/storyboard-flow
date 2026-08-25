@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { withViewTransition } from "@/lib/view-transition";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
@@ -63,6 +64,27 @@ const CLOSED: ItemDetailsValue = { openId: null, setOpenId: () => {} };
 
 /** The one spelling of the query key, so the reader and the writer agree. */
 export const ITEM_DETAILS_PARAM = "details";
+
+/**
+ * THE CLICKED THUMBNAIL FLIES INTO THE VIEW (PL15-030).
+ *
+ * The flight starts HERE, and it has to. The details view replaced the board
+ * rather than covering it (PL15-029), so by the time the view's own effect can
+ * run the board is hidden — measured, the card still carried the hero name and
+ * had ZERO WIDTH, so no "old" snapshot was ever taken and the morph was the
+ * destination fading in by itself. This is the last moment the picture being
+ * flown from is still on screen.
+ *
+ * `HERO` is the app's existing name, worn by the board card here and taken over
+ * by the subject card's picture inside the details view. Only one element may
+ * hold it, which the handover inside the callback guarantees.
+ */
+const HERO = "trim-subject";
+
+/** The board card for this node, if it is on screen to fly from. */
+function boardCard(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+}
 
 export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode }>) {
   const router = useRouter();
@@ -119,8 +141,36 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
       // `scroll: false` on both: the App Router scrolls to top on a navigation
       // by default, and this one does not move the page — it changes what the
       // content area is showing.
-      if (switching) router.replace(url, { scroll: false });
-      else router.push(url, { scroll: false });
+      const commit = () => {
+        if (switching) router.replace(url, { scroll: false });
+        else router.push(url, { scroll: false });
+      };
+
+      // OPENING FROM THE BOARD IS THE ONLY FLIGHT. Switching between clips
+      // already inside the view has no board card to come from, and closing is
+      // the board returning rather than a picture travelling — the view owns
+      // that one, where it still has itself on screen to fly from.
+      const card =
+        next === null || switching || typeof document === "undefined" ? null : boardCard(next);
+      if (card === null) {
+        setPending(next);
+        commit();
+        return;
+      }
+
+      card.style.setProperty("view-transition-name", HERO);
+      void withViewTransition(() => {
+        // The card gives the name up in the same frame the view takes it, so
+        // exactly one element ever carries it. `withViewTransition` flushes
+        // this synchronously — the browser captures the "after" state as soon
+        // as the callback returns, and a queued update would leave nothing to
+        // fly to.
+        card.style.removeProperty("view-transition-name");
+        setPending(next);
+      });
+      // The URL catches up after, and changes nothing anyone can see: `pending`
+      // is already showing the view it names.
+      commit();
     },
     [router],
   );
