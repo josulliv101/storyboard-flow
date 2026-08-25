@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { AudioLines, Pause, Play, Redo2, Undo2, X } from "lucide-react";
 
 import {
@@ -61,6 +68,7 @@ import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
   VIEW_COUNTS,
   lastViewCount,
+  DETAILS_BASIS_VAR,
   panelWidthsFor,
   rememberViewCount,
   type ViewCount,
@@ -954,97 +962,74 @@ function DetailsFilmstripModal({
     return { clipId: at.clipId, secondsIntoClip: at.clipSeconds };
   })();
 
+  // THE VIEW'S OWN WIDTH, PUBLISHED FOR THE PANEL ARITHMETIC.
+  //
+  // A ResizeObserver rather than a CSS unit, because the sizes it feeds are
+  // applied both to panels and to things INSIDE panels, and every panel is a
+  // container of its own — so `cqw` would silently mean two different boxes
+  // depending on where it landed. A pixel length means one thing everywhere.
+  //
+  // It tracks the rail opening and closing, the window resizing, and the
+  // preview pane taking height, with nothing to keep in sync.
+  const viewRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const element = viewRef.current;
+    if (!element) return;
+    const publish = () => {
+      element.style.setProperty(
+        DETAILS_BASIS_VAR,
+        `${Math.round(element.getBoundingClientRect().width)}px`,
+      );
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const rowTransform =
     `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + var(--drag-px, 0px)))`;
 
-  return createPortal(
-    <div
+  return (
+    <section
+      ref={viewRef}
       data-item-details={node.id}
-      role="dialog"
-      aria-modal="true"
       aria-label={`Details for ${node.name}`}
-      // `justify-center` centres the MIDDLE panel rather than the row: three
-      // panels overflow, so the centre lands in the middle and the other two
-      // are clipped symmetrically. `overflow-hidden` is what makes that a crop
-      // instead of a scrollbar.
-      // THE TOP BAND IS RESERVED, not shared. The header and the bar are
-      // absolutely positioned so the row can be centred and cropped
-      // symmetrically without them affecting its width — which also means
-      // they take no space, and the row would centre straight up underneath
-      // them. This padding is the band they occupy: header (61px) plus the
-      // bar block at top-16 with its own pt-4 (152px to its underside), plus
-      // clearance, plus the reach picker's own row (mt-2 and a ~18px button)
-      // — which is why this is 14rem and not the 11rem it was before that
-      // picker existed. It grew when the bar did, and it has to keep pace: the
-      // symptom of it not doing so is the minimap resting on the top edge of
-      // the middle card, which is a quiet eight pixels rather than an obvious
-      // fault.
+      // A REGION IN THE CONTENT AREA, NOT A DIALOG OVER IT (PL15-029).
       //
-      // MEASURED, each time the bar changes shape. The transport became an
-      // ensemble with a 44px play button, which took the block from 116px to
-      // 142px — it starts at `top-16` plus its own `pt-4`, so it now ends 222px
-      // down and 13rem reserved only 208. Anything added to that block has to
-      // be measured and this raised, or the row below rides up into it on a
-      // short viewport.
+      // This was `createPortal` onto `document.body`, `role="dialog"` and
+      // `aria-modal="true"` over a scrim. It is a PLACE now: the board is
+      // hidden and this stands in its stead, so there is nothing behind it to
+      // be modal about. `aria-modal` on something that covers nothing is a lie
+      // to a screen reader — the same defect `useDialogFocus` was written to
+      // fix, arrived at from the other side.
       //
-      // 14rem → 18.5rem, for the transport's 36px top margin dropping it clear
-      // of the two bars above. This is exactly the failure the note above
-      // predicts, and it was caught the way it was meant to be:
-      // `TheTwoBarsAreAdjacent` measures the gap between this row and the
-      // centre card, and it fell from 22px to 2 — the "quiet eight pixels"
-      // arriving as a red test rather than as a screenshot nobody looked at
-      // twice.
+      // AND THE BAND ARITHMETIC GOES WITH IT, which is most of what this
+      // element used to be. The scrim reserved its own top and bottom edges
+      // with `pt-[14.75rem]` and `pb-[4.875rem]`, because the header and the
+      // bar were absolutely positioned — so the row could be centred and
+      // cropped without them affecting its width — and therefore took no
+      // space. Every change to the bar had to be measured and then paid for
+      // TWICE, because `items-center` shares padding added at the top with the
+      // bottom, and the failure was always the same: `TheTwoBarsAreAdjacent`
+      // reporting the gap to the centre card collapsing. In flow the header
+      // and the bar occupy the space they occupy. There is no number to keep
+      // in step, and nothing to measure when the bar next changes shape.
       //
-      // AND THE COMPENSATION IS TWICE THE GROWTH, which is the part worth
-      // writing down. This box is `items-center`, so padding added at the top
-      // is shared with the bottom when the row is re-centred in what is left —
-      // 20px of padding buys only 10px of downward movement. The first attempt
-      // added 20 for 20 and recovered half the slack (2 → 12, still short of
-      // the 16 floor).
-      //
-      // So the arithmetic is 224 + 2 × (whatever the block grew by): 20px of
-      // transport margin took this to 16.5rem, 36px to 18.5rem (224 + 72 =
-      // 296), and the film strip growing from 36px to 48px takes it to 20rem
-      // (296 + 24 = 320). Anything that makes the bar taller moves this by
-      // twice as much, in the same direction — and the failure is always the
-      // same one, `TheTwoBarsAreAdjacent` reporting the gap to the centre card
-      // collapsing below its floor.
-      // `overflow-clip`, NOT `overflow-hidden`. Both crop, but `hidden` makes
-      // this a SCROLL CONTAINER — and the row is thirteen thousand pixels
-      // wide, so there is a great deal for it to scroll. Landing on a new clip
-      // moves focus to that panel's menu button, the browser scrolls the
-      // container to reveal it, and that scroll lands ON TOP of the transform
-      // the row has already made: measured, 1981px of `scrollLeft` against a
-      // row that had itself moved 1728px, which put the card just chosen
-      // entirely off the left edge. `clip` crops without ever being
-      // scrollable, so the transform stays the only thing that moves the row.
-      // THE BOTTOM BAND IS RESERVED TOO, for the same reason the top one is.
-      //
-      // `pb-6` matched the view-count control's own `bottom-6`, which reserved
-      // the control's OFFSET and not the control — so the centre panel ran
-      // straight through it and 16px past the bottom of the window besides.
-      // 4.875rem is 78px: the control's 24px offset, its own 34px, and 20px of
-      // clearance so the panel stops short of it rather than against it.
-      // 14.75rem, DOWN FROM 21.75. The band was sized to clear the bar with
-      // room to spare and left 62px of air between the controls row and the
-      // card under it — inside the 16..80 the guard allows, but at the loose
-      // end of it, and the guard's own note says the failure nobody reports
-      // is the view sitting lower than it needs to. The design this follows
-      // runs about 27px there. Four rem buys 32px of movement, not 64: this
-      // box is `items-center`, so padding at the top is shared with the
-      // bottom when the row re-centres in what is left. That halving is why
-      // the number looks too large for the space it controls. Three further rem
-      // came off when the transport lost its 36px margin and joined the control
-      // row: a shorter bar leaves more slack, in the same doubled proportion.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[14.75rem] pb-[4.875rem] backdrop-blur-sm"
-      // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
-      // glanced at — trimming, scrubbing and swiping all end with the pointer
-      // somewhere unpredictable, and the panels are cropped by the scrim
-      // rather than surrounded by it, so "outside" is a place the hand lands
-      // by accident. Escape and the close button are the only two ways out,
-      // and both are explicit. The stopPropagation guards below are older
-      // than this and are left alone: they keep presses on the header and the
-      // bar from reaching anything listening further up.
+      // `container-type: inline-size` is what `panelWidthsFor` sizes against.
+      // The row stays content-width so it can centre by overflowing equally
+      // both sides, which means it cannot be the basis for its own children —
+      // see the note there.
+      // `gap-6` IS THE CLEARANCE, and it is a gap rather than free space on
+      // purpose. The row centres itself with `my-auto`, which only separates
+      // anything when there IS free space — in a container that is exactly as
+      // tall as its contents there is none, and the row butts straight up
+      // against the bar. `TheTwoBarsAreAdjacent` caught precisely that, at 0
+      // against its floor of 16. A flex gap applies either way, and the two
+      // compose: the gap is the minimum, `my-auto` spends whatever is left
+      // over. 24px also lands where the design this follows sits, about 27.
+      className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-clip"
+      style={{ containerType: "inline-size" }}
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
@@ -1053,7 +1038,11 @@ function DetailsFilmstripModal({
           absolutely-positioned column so the header and the bar move together
           and the row below is free to be cropped by the scrim. */}
       <div
-        className="pointer-events-none absolute inset-x-0 top-0 z-20"
+        // IN FLOW. It was `absolute inset-x-0 top-0` so the row could centre in
+        // the scrim without the header taking any of it — which is what the
+        // reserved top band was paying for. It takes its own height now, and
+        // `pointer-events-none` goes with the absolute layer that needed it:
+        // nothing here is covering the row any more.
         onPointerDown={(event) => event.stopPropagation()}
       >
         <ItemDetailsHeader
@@ -1067,7 +1056,10 @@ function DetailsFilmstripModal({
       </div>
       {timeline.totalSeconds > 0 && (
         <div
-          className="pointer-events-auto absolute inset-x-0 top-16 z-20 px-6 pt-4"
+          // IN FLOW, for the same reason the header above is — `top-16` was
+          // the header's height restated as a constant, and that is exactly
+          // the kind of number that goes stale silently.
+          className="px-6 pt-4"
           onPointerDown={(event) => event.stopPropagation()}
         >
           {/* THE SAME WIDTH AS THE ROW BELOW IT.
@@ -1276,6 +1268,17 @@ function DetailsFilmstripModal({
         ref={stripRef}
         data-details-strip
         className={[
+          // WHAT THE SCRIM USED TO DO FOR IT (PL15-029).
+          //
+          // The scrim was `flex items-center justify-center` and this row was
+          // its only sizeable child, so it got both for free. In a column the
+          // two come from the item instead: `self-center` is the horizontal
+          // one — the row is far wider than the view, and a flex item wider
+          // than its container centres by overflowing EQUALLY BOTH SIDES,
+          // which is precisely what puts the subject mid-screen — and
+          // `my-auto` is the vertical one, taking the free space left over
+          // after the header and the bar have had theirs.
+          "my-auto self-center",
           // BOTTOM-ALIGNED, so the trim strips share a line.
           //
           // Centred, the taller subject extended equally above and below
@@ -1459,8 +1462,7 @@ function DetailsFilmstripModal({
           );
         })}
       </div>
-    </div>,
-    document.body,
+    </section>
   );
 }
 
@@ -1497,7 +1499,10 @@ export function GraphItemDetailsModal() {
   const openIdRef = useRef<string | null>(null);
 
   // Opening and closing are driven by the context flag so the toolbar button,
-  // Escape, the close button and the scrim all go through one path.
+  // Escape and the close button go through one path — and they are now the
+  // only two, the scrim having gone with PL15-029. ESCAPE'S OWNER IS THIS
+  // VIEW while it is open: it is what fills the content area, so there is
+  // nothing else in that space with a claim on the key.
   useEffect(() => {
     // A collection has no `src` and needs none — its hero is its contents.
     const wanted =
@@ -1551,5 +1556,99 @@ export function GraphItemDetailsModal() {
         setOpenId(id);
       }}
     />
+  );
+}
+
+/**
+ * THE BOARD, which steps aside while details are open (PL15-029).
+ *
+ * Details replace the content area rather than cover it, so something has to
+ * decide which of the two is showing. This is that decision, and it lives in a
+ * component rather than in `graph-board` because the board is what RENDERS
+ * `ItemDetailsProvider` — a `useItemDetails()` call up there reads the closed
+ * fallback outside its own provider, which fails silently as "details never
+ * open" rather than as an error.
+ *
+ * HIDDEN, NOT UNMOUNTED, and that was an explicit choice. Unmounting is cheaper
+ * while details are open and costs the board its scroll position, its selection
+ * and any in-flight drag — all of which the person coming back expects to find
+ * where they left it. Keeping it mounted pays for that with the whole board
+ * sitting behind a view that covers it, which is the cost the grid
+ * virtualization item is already about; that cost is bounded and known, and
+ * losing someone's place is not.
+ *
+ * `display: none` as an inline style, deliberately, and not a `hidden` class:
+ * this element also carries `flex`, and two utilities setting `display` in the
+ * same layer are decided by stylesheet order rather than by the order they are
+ * written here — which is a coin toss that would read as "sometimes the board
+ * does not hide". An inline style has no such argument to lose. It also makes
+ * the subtree non-focusable and non-interactive for free, so no `inert` is
+ * needed alongside it.
+ */
+export function GraphBoardContent({ children }: Readonly<{ children: ReactNode }>) {
+  const { openId } = useItemDetails();
+  const open = openId !== null;
+
+  // WHERE THE BOARD WAS, which `display: none` does not keep for it.
+  //
+  // MEASURED, because the opposite was assumed first: the board scrolls the
+  // DOCUMENT rather than a container of its own, so hiding it collapses the
+  // page from 1087px to 910 and the browser clamps the window scroll to 0.
+  // Coming back put someone who had scrolled to 177 back at the top. Keeping
+  // the board mounted preserves its selection and any in-flight drag, which is
+  // why that was chosen — but the scroll position is the window's, not the
+  // board's, and it was never covered by that choice.
+  //
+  // Recorded on scroll rather than at the moment of opening, because by the
+  // time an effect can see `openId` change the board is already hidden and the
+  // number is already 0. Passive, and only registered while the board is
+  // actually showing: it stores one integer and is not listening at all for
+  // the whole time details are up.
+  const parked = useRef(0);
+  const wasOpen = useRef(false);
+
+  useEffect(() => {
+    if (open) return;
+    const onScroll = () => {
+      parked.current = window.scrollY;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [open]);
+
+  // A LAYOUT effect: the board is back in flow in this same commit, so the
+  // document is tall enough to hold the scroll again. In a passive effect the
+  // browser can paint the top of the board first, which reads as a jump.
+  useLayoutEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      return;
+    }
+    // Only after a real close — on first mount there is nothing to restore,
+    // and scrolling to a parked 0 would fight the browser's own restoration.
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    const to = parked.current;
+    if (to === 0) return;
+    // TWICE, AND THE SECOND ONE IS THE ONE THAT LANDS. Closing by Back is a
+    // popstate, and the browser restores that entry's own scroll offset after
+    // this effect runs — an offset it recorded while the page was still short,
+    // so it is 0 and it overwrites the restore. A frame later the board is
+    // painted, the document is tall again, and nothing else is going to move
+    // it. The immediate call stays for the close-button path, where there is
+    // no popstate to lose to and waiting a frame would show the top of the
+    // board first.
+    window.scrollTo(0, to);
+    const raf = requestAnimationFrame(() => window.scrollTo(0, to));
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
+
+  return (
+    <div
+      className="flex flex-col gap-2"
+      style={open ? { display: "none" } : undefined}
+    >
+      {children}
+    </div>
   );
 }

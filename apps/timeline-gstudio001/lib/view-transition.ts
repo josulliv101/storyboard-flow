@@ -19,8 +19,16 @@ const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+type ViewTransition = {
+  finished: Promise<void>;
+  // Rejects with an AbortError when the transition is SKIPPED — another one
+  // starting, the tab hiding, or the browser deciding it cannot capture. It is
+  // declared here only so it can be silenced; see the note at the call.
+  ready?: Promise<void>;
+};
+
 type ViewTransitionDocument = Document & {
-  startViewTransition?: (callback: () => void) => { finished: Promise<void> };
+  startViewTransition?: (callback: () => void) => ViewTransition;
 };
 
 /**
@@ -43,11 +51,21 @@ export function withViewTransition(mutate: () => void): Promise<void> {
   // captured a frame. Anything waiting for the UI to be live again (the e2e
   // does) watches this attribute instead.
   doc.documentElement.dataset.viewTransition = "running";
-  return doc
-    .startViewTransition(() => {
-      flushSync(mutate);
-    })
-    .finished.catch(() => {
+  const transition = doc.startViewTransition(() => {
+    flushSync(mutate);
+  });
+  // `ready` REJECTS ON A SKIP, and nothing was listening to it — so a skipped
+  // transition surfaced as an unhandled "AbortError: Transition was skipped".
+  // Harmless to the DOM (the callback has already run) but not harmless to a
+  // test runner, which counts an unhandled rejection against whatever test
+  // happened to be in flight: it took out six unrelated stories in one run,
+  // each of which passed on its own.
+  //
+  // Silenced rather than surfaced because a skip is a normal outcome here —
+  // opening a second clip before the first has finished animating skips the
+  // first, and that is the interaction working, not failing.
+  transition.ready?.catch(() => {});
+  return transition.finished.catch(() => {
       // A transition can be abandoned (another one starts, the tab hides).
       // The DOM change has already happened either way.
     })

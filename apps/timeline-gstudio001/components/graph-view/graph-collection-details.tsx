@@ -1,7 +1,6 @@
 "use client";
 
 import { useContext, useEffect } from "react";
-import { createPortal } from "react-dom";
 import { Redo2, Undo2, X } from "lucide-react";
 
 import {
@@ -77,7 +76,12 @@ export function CollectionDetailsBody({
   const seconds = collectionCardSeconds({ vouched, liveSeconds });
   const previews = useCollectionPreviewFrames(node.id as string, hydrated, detail?.previewItems);
 
-  const { dialogProps } = useDialogFocus<HTMLDivElement>();
+  const { dialogProps } = useDialogFocus<HTMLDivElement>({
+    // NOT A DIALOG ANY MORE (PL15-029): this view replaces the content
+    // area rather than covering it, so Tab must be able to leave. Focus
+    // still moves in on open and still returns to the card on close.
+    trapFocus: false,
+  });
 
   const beginRename = rename.begin;
   useEffect(() => {
@@ -100,17 +104,22 @@ export function CollectionDetailsBody({
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [onClose, beginRename]);
 
-  return createPortal(
-    <div
+  return (
+    <section
       data-item-details={node.id}
       data-item-details-kind="collection"
-      role="dialog"
-      aria-modal="true"
       aria-label={`Details for ${displayName}`}
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
-      onPointerDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+      // IN THE CONTENT AREA, NOT OVER IT (PL15-029). A collection reaches this
+      // through the same entry point a clip does, so it had to move with it:
+      // left as a scrim it would have drawn over a hidden board — a dimmed
+      // rectangle with nothing behind it to dim.
+      //
+      // THE PRESS-OUTSIDE-TO-CLOSE GOES WITH THE SCRIM. It was dismissing on a
+      // press that landed on the backdrop; there is no backdrop now, and the
+      // nearest equivalent — a press anywhere in the content area — is not the
+      // same gesture at all. Escape and the close button remain, which is what
+      // the clip view has always had.
+      className="relative flex min-h-0 flex-1 items-center justify-center p-6"
     >
       {/* This dialog was left out when the clip modal gained focus management,
           so it still declared `aria-modal="true"` while doing none of what
@@ -255,7 +264,6 @@ export function CollectionDetailsBody({
           <TagEditor nodeId={node.id} />
         </div>
       </div>
-    </div>,
-    document.body,
+    </section>
   );
 }

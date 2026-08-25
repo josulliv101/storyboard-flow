@@ -1922,7 +1922,11 @@ been doing more of.
 
 ## PL15-029 — The details modal stops being a modal and becomes the content area
 
-- Status: Not started
+- Status: COMPLETE. Built and verified in the app: the view is a `<section>` in
+  the content area, the board is hidden but mounted, `?details=<nodeId>` deep
+  links from a cold load, and Back closes it. Two decisions were the owner’s:
+  routed and deep-linkable, and the board hidden rather than unmounted. See
+  "PL15-029 — what the container change actually cost" at the end of this list.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a clip's details from the board)
 - Area: `components/graph-view/graph-item-details-modal.tsx`,
@@ -2117,3 +2121,74 @@ purpose. Two new families for metadata is a typographic decision and a
 first-paint cost (the rail's own CLS fix in PL15-027 is what a late font does to
 a layout), so it should be an explicit yes or no rather than arriving with the
 component.
+
+## PL15-029 — what the container change actually cost
+
+**THE ARITHMETIC WAS THE FEATURE, AND DELETING IT WAS THE WORK.** The scrim
+reserved its own edges with `pt-[14.75rem]` and `pb-[4.875rem]`, because the
+header and the bar were absolutely positioned so the row could centre without
+them affecting its width — which meant they took no space, and every change to
+the bar had to be measured and then paid for TWICE (`items-center` shares
+padding added at the top with the bottom). In flow they occupy the space they
+occupy. There is no number left to keep in step.
+
+**THE ROW STILL NEEDS WHAT THE SCRIM GAVE IT.** `justify-center` and
+`items-center` came free from the scrim; in a column they are `self-center` — a
+flex item wider than its container centres by overflowing equally both sides,
+which is what puts the subject mid-screen — and `my-auto`. `my-auto` alone was
+not enough: it only separates anything when there IS free space, and
+`TheTwoBarsAreAdjacent` caught the row butting against the bar at 0 against its
+floor of 16. `gap-6` is the minimum; `my-auto` spends whatever is left over.
+
+**THE WIDTH BASIS TOOK THREE GOES, AND THE SECOND ONE LOOKED RIGHT.**
+`panelWidthsFor` was `100vw`, correct while the scrim WAS the viewport.
+
+- `100%` cannot work: the row must stay content-width to centre by
+  overflowing, and a percentage inside an auto-width box has no definite basis.
+- `100cqw` measures correctly for the PANELS and is still wrong. Container
+  units resolve against the nearest ancestor container, names ignored, and
+  every panel declares `@container` for its own internals — so the same
+  expression means "the view" on a panel and "the panel" inside one. The
+  heading deliberately reuses this width so it is sized by its ROLE rather than
+  by the box it sits in, which is what keeps it still while the box animates.
+  `vw` was global and immune; `cqw` made it follow the box, and
+  `TheNameDoesNotReTruncateWhileTheCardResizes` caught it — 173px becoming 68
+  the moment the story shoved the two boxes onto each other's widths.
+- A pixel length published by the view (`--details-basis`, from a
+  ResizeObserver) means the same thing at every depth. Measured in the app with
+  the rail open: viewport 1485, basis 1146, neighbours 284, centre 497 —
+  (1146 - 48 - 32) / 3.75 and then x 1.75 exactly, tracking the rail with
+  nothing to keep in sync.
+
+**A `useState` SETTER IS A CONTRACT, AND ROUTING BROKE IT.** `setOpenId` had
+been a state setter for its whole life, so consumers treat it as stable — one
+does literally: `useEffect(() => setOpenId(id), [id, setOpenId])`. Deriving it
+from `openId`/`pathname`/`searchParams` gave it a new identity whenever the open
+item changed, turning that effect into a loop that reopened the clip you had
+just left. It surfaced as four stories reporting "clicking a neighbour does not
+advance", which is exactly what it looked like from outside. The live values
+come from an effect-synced ref now, and the callback depends only on `router`.
+
+**THE BOARD KEEPS ITS PLACE, AND `display: none` DOES NOT KEEP IT.** Hidden
+rather than unmounted was chosen to preserve scroll, selection and any
+in-flight drag — but the board scrolls the DOCUMENT, so hiding it collapses the
+page from 1087px to 910 and the browser clamps the window scroll to 0. Measured:
+scrolled to 177, came back at 0. The position is recorded on scroll (an effect
+reading it after the fact sees 0, the hide having already happened) and restored
+twice on close — immediately for the close button, and again a frame later,
+because closing by Back is a popstate and the browser restores that entry's own
+offset, recorded while the page was still short, AFTER the effect runs.
+
+**TWO THINGS FOUND ALONG THE WAY THAT WERE NOT THIS ITEM.**
+`withViewTransition` caught `finished` but never `ready`, which rejects with an
+AbortError whenever a transition is SKIPPED — normal here, since opening a
+second clip skips the first's animation. Unhandled, a test runner counts it
+against whatever test happens to be in flight. And `apps/storybook` never
+declared `nextjs.appDirectory`, which the gstudio workspace has always set: the
+first component to read the router took all 53 of this view's stories down at
+once, with nothing about routing in the message.
+
+**Verified in the app, not inferred:** the deep link opens from a cold load, one
+history entry per open, Back closes it and restores the scroll, and the view is
+a `<section>` with the board hidden beside it. 1457 app tests, 807 unit, 334
+story interactions, lint 0 errors.

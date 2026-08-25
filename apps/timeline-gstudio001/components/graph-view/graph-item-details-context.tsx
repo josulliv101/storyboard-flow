@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -86,25 +87,42 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
   }
   const openId = pending === undefined ? urlId : pending;
 
+  // THIS CALLBACK'S IDENTITY MUST NOT CHANGE, and the first version's did.
+  //
+  // `setOpenId` was a `useState` setter for its whole life, so every consumer
+  // is entitled to treat it as stable — and one of them does, literally:
+  // `useEffect(() => setOpenId(id), [id, setOpenId])`. Deriving it from
+  // `openId`/`pathname`/`searchParams` gave it a new identity on every change
+  // of the open item, which turned that effect into a loop that reopened the
+  // clip you had just navigated away from. Four story tests caught it as
+  // "clicking a neighbour does not advance", which is exactly what it looked
+  // like from outside.
+  //
+  // The live values are read from a ref that an effect keeps current. One
+  // render stale in principle, never in practice: effects run long before a
+  // pointer can reach a control, and every caller here is a user gesture.
+  const latest = useRef({ openId, pathname, searchParams });
+  useEffect(() => {
+    latest.current = { openId, pathname, searchParams };
+  });
+
   const setOpenId = useCallback(
     (next: string | null) => {
       setPending(next);
-      const params = new URLSearchParams(searchParams.toString());
+      const { openId: current, pathname: path, searchParams: query } = latest.current;
+      const params = new URLSearchParams(query.toString());
       if (next === null) params.delete(ITEM_DETAILS_PARAM);
       else params.set(ITEM_DETAILS_PARAM, next);
-      const query = params.toString();
-      const url = query ? `${pathname}?${query}` : pathname;
-      // Closed over rather than read from a ref: a ref written during render
-      // is a lint error here, and re-creating this when the open item changes
-      // costs nothing — the context value already changes on exactly that.
-      const switching = next !== null && openId !== null;
+      const search = params.toString();
+      const url = search ? `${path}?${search}` : path;
+      const switching = next !== null && current !== null;
       // `scroll: false` on both: the App Router scrolls to top on a navigation
       // by default, and this one does not move the page — it changes what the
       // content area is showing.
       if (switching) router.replace(url, { scroll: false });
       else router.push(url, { scroll: false });
     },
-    [openId, pathname, router, searchParams],
+    [router],
   );
 
   const value = useMemo(() => ({ openId, setOpenId }), [openId, setOpenId]);

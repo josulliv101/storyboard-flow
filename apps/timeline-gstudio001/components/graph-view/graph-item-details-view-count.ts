@@ -66,6 +66,14 @@ export function rememberViewCount(count: ViewCount): void {
 const CENTRE_TO_NEIGHBOUR = 1.75;
 
 /**
+ * The details view's own width, in pixels, published by the view onto itself.
+ *
+ * Written from a ResizeObserver rather than derived in CSS — see the note in
+ * `panelWidthsFor` for why a container unit cannot do this job.
+ */
+export const DETAILS_BASIS_VAR = "--details-basis";
+
+/**
  * The two widths for a given count: the clip being worked on, and everything
  * else.
  *
@@ -91,9 +99,31 @@ const CENTRE_TO_NEIGHBOUR = 1.75;
 export function panelWidthsFor(
   count: ViewCount,
 ): Readonly<{ centre: string; neighbour: string }> {
-  // 3rem is the modal's own padding (p-6 either side); the gaps are one rem
-  // apiece, and there are `count - 1` of them between `count` panels.
-  const available = `(100vw - 3rem - ${count - 1}rem)`;
+  // AGAINST THE VIEW, NOT THE VIEWPORT (PL15-029). This was `100vw`, which was
+  // exactly right while the view was a fixed scrim: the scrim WAS the viewport.
+  // It is a region inside the content area now, narrower than the window by the
+  // rail (72px or 260px) and by `main`'s own padding, so `100vw` would size
+  // every panel for a box the row does not get.
+  //
+  // A CSS VARIABLE, AND NOT `cqw`, WHICH IS THE PART THAT TOOK A SECOND PASS.
+  // `100cqw` on the view looks right and measures right for the PANELS — but
+  // container units resolve against the nearest ancestor container, names
+  // ignored, and every panel declares `@container` for its own internals. So
+  // the same expression means "the view" when applied to a panel and "the
+  // panel" when applied to anything INSIDE one.
+  //
+  // That difference is not academic: the heading deliberately reuses this
+  // width so it is sized by its ROLE rather than by the box it sits in, which
+  // is what keeps it still while the box animates. `vw` was global and immune;
+  // `cqw` made it follow the box, and
+  // `TheNameDoesNotReTruncateWhileTheCardResizes` caught it — 173px becoming
+  // 68 the moment the story shoved the boxes onto each other's widths.
+  //
+  // The view publishes its own width in pixels instead. A plain length cannot
+  // be recaptured by a nested container, so it means the same thing at every
+  // depth. The `100vw` fallback is the old behaviour exactly, which is what
+  // any surface rendering a panel without the view around it should get.
+  const available = `(var(${DETAILS_BASIS_VAR}, 100vw) - 3rem - ${count - 1}rem)`;
   const share = count - 1 + CENTRE_TO_NEIGHBOUR;
   return {
     neighbour: `min(34rem, ${available} / ${share})`,

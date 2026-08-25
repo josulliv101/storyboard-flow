@@ -281,7 +281,12 @@ export function DetailsPanel({
   // `aria-modal="true"` above is a promise about the rest of the page; this is
   // what keeps it. Focus moves in, Tab cycles here, the board goes inert, and
   // the card this was opened from gets focus back on close.
-  const { dialogProps } = useDialogFocus<HTMLDivElement>();
+  const { dialogProps } = useDialogFocus<HTMLDivElement>({
+    // NOT A DIALOG ANY MORE (PL15-029): this view replaces the content
+    // area rather than covering it, so Tab must be able to leave. Focus
+    // still moves in on open and still returns to the card on close.
+    trapFocus: false,
+  });
 
   // Escape closes and F2 renames. Both listen in CAPTURE, which is what makes
   // the editable guard load-bearing rather than defensive: a capture listener

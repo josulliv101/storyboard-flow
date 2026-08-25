@@ -235,7 +235,17 @@ function graphOfRoot(root: GraphNodeSpec): CollectionsGraph {
 function EndHarness() {
   const store = createGraphDetailsStore({ before: DETAIL, subject: DETAIL, after: DETAIL });
   return (
-    <div className="graph-view-theme min-h-[600px] bg-zinc-950">
+    <div
+      // WIDTH DECLARED, because the view now FILLS ITS CONTAINER rather than
+      // covering the viewport (PL15-029). The old scrim was `fixed inset-0`, so
+      // it spanned the window whatever this wrapper did; the panel arithmetic
+      // reads the container instead, and a harness that does not say how wide it
+      // is gets panels sized for a box nobody can see. Inline rather than a
+      // utility class so it cannot depend on what Tailwind happened to compile
+      // for this workspace.
+      style={{ width: "100vw" }}
+      className="graph-view-theme min-h-[600px] bg-zinc-950"
+    >
       <DndCollections initialGraph={graphOfRoot(SEAM_SCENE)}>
         <GraphDetailsProvider store={store}>
           <ItemDetailsProvider>
@@ -261,7 +271,17 @@ function SeamHarness({ scene = SEAM_SCENE }: { scene?: GraphNodeSpec }) {
     ),
   );
   return (
-    <div className="graph-view-theme min-h-[600px] bg-zinc-950">
+    <div
+      // WIDTH DECLARED, because the view now FILLS ITS CONTAINER rather than
+      // covering the viewport (PL15-029). The old scrim was `fixed inset-0`, so
+      // it spanned the window whatever this wrapper did; the panel arithmetic
+      // reads the container instead, and a harness that does not say how wide it
+      // is gets panels sized for a box nobody can see. Inline rather than a
+      // utility class so it cannot depend on what Tailwind happened to compile
+      // for this workspace.
+      style={{ width: "100vw" }}
+      className="graph-view-theme min-h-[600px] bg-zinc-950"
+    >
       <DndCollections initialGraph={graphOfRoot(scene)}>
         <GraphDetailsProvider store={store}>
           <ItemDetailsProvider>
@@ -294,7 +314,17 @@ function OpenOnMount({ id }: Readonly<{ id: string }>) {
 function Harness({ spec }: Readonly<{ spec: GraphNodeSpec }>) {
   const store = createGraphDetailsStore({ [spec.id]: DETAIL });
   return (
-    <div className="graph-view-theme min-h-[600px] bg-zinc-950">
+    <div
+      // WIDTH DECLARED, because the view now FILLS ITS CONTAINER rather than
+      // covering the viewport (PL15-029). The old scrim was `fixed inset-0`, so
+      // it spanned the window whatever this wrapper did; the panel arithmetic
+      // reads the container instead, and a harness that does not say how wide it
+      // is gets panels sized for a box nobody can see. Inline rather than a
+      // utility class so it cannot depend on what Tailwind happened to compile
+      // for this workspace.
+      style={{ width: "100vw" }}
+      className="graph-view-theme min-h-[600px] bg-zinc-950"
+    >
       <DndCollections initialGraph={graphOf(spec)}>
         <GraphDetailsProvider store={store}>
           <ItemDetailsProvider>
