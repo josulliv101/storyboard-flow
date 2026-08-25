@@ -1,0 +1,578 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  LOOKS,
+  PIXELS_PER_SECOND as PXS,
+  SECTIONS,
+  SEQUENCE_SECONDS as DUR,
+  SHOTS,
+  clamp,
+  timecode,
+} from "./playbar-model";
+import {
+  MOMENTUM_MAX,
+  advanceMomentum,
+  momentumSpent,
+  releaseVelocity,
+  smoothVelocity,
+  willFling,
+} from "./playbar-motion";
+import { PLAYBAR_CSS, PLAYBAR_SCOPE } from "./playbar-styles";
+
+/**
+ * THE REFERENCE DESIGN'S FILM STRIP, ported to React (PL15-030).
+ *
+ * The ruler and its section lanes, the strip of shots, the playhead with its
+ * timecode chip, and the minimap. Panning, scrubbing, flinging, jumping and
+ * playback are all here; the stylesheet is the reference's own, extracted
+ * rather than retyped (see `playbar-styles`).
+ *
+ * SCROLL IS IMPERATIVE, AND THAT IS DELIBERATE. The pan, the fling, the
+ * minimap drag and the playhead's follow all write `viewport.scrollLeft`
+ * directly, and the sticky section labels and the minimap window are written
+ * from a scroll handler rather than from state. Routing sixty scroll positions
+ * a second through React would re-render 17 shots and 121 ticks to move two
+ * boxes — the static parts are memoised precisely so they do not.
+ *
+ * WHAT STATE IS FOR: the clock, whether it is playing, which shot is selected,
+ * and where the hover ghost is. Those change on human timescales.
+ */
+
+/** A press that moves less than this is a tap, not a pan. */
+const TAP_SLOP_PX = 4;
+
+type Pan = {
+  startX: number;
+  startScroll: number;
+  lastX: number;
+  lastAt: number;
+  velocity: number;
+  moved: boolean;
+  shotIndex: number | null;
+};
+
+export function FilmStrip({ className }: Readonly<{ className?: string }>) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const laneRef = useRef<HTMLDivElement | null>(null);
+  const minimapRef = useRef<HTMLDivElement | null>(null);
+  const windowRef = useRef<HTMLDivElement | null>(null);
+
+  const panRef = useRef<Pan | null>(null);
+  const momentumRef = useRef<{ velocity: number; last: number; raf: number } | null>(null);
+  const scrubbingRef = useRef(false);
+  const minimapDragRef = useRef<{ x: number; scroll: number } | null>(null);
+
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [selected, setSelected] = useState(-1);
+  const [ghostX, setGhostX] = useState<number | null>(null);
+  const [hot, setHot] = useState(false);
+
+  /* ── the parts that never change with the clock ──────────────────────── */
+
+  const ticks = useMemo(
+    () =>
+      Array.from({ length: DUR + 1 }, (_, i) => {
+        const kind = i % 10 === 0 ? " t10" : i % 2 === 0 ? " t2" : "";
+        return (
+          <span key={`tick-${i}`}>
+            <div className={`tick${kind}`} style={{ left: i * PXS }} />
+            {i % 2 === 0 && i < DUR ? (
+              <span
+                className={`tlabel${i % 10 === 0 ? " big" : ""}`}
+                style={{ left: i * PXS }}
+              >
+                {i}s
+              </span>
+            ) : null}
+          </span>
+        );
+      }),
+    [],
+  );
+
+  const shotBoxes = useMemo(
+    () =>
+      SHOTS.map((shot) => {
+        const seconds = shot.end - shot.start;
+        return (
+          <div
+            key={shot.index}
+            className="shot"
+            data-i={shot.index}
+            style={{ left: shot.start * PXS + 2, width: seconds * PXS - 4 }}
+          >
+            {shot.frames.map((frame, k) => (
+              <div
+                key={k}
+                className="frame"
+                style={{ width: `${(frame.seconds / seconds) * 100}%`, background: LOOKS[frame.look] }}
+              />
+            ))}
+            <span className="tag">
+              {`SH ${String(shot.index + 1).padStart(2, "0")} · ${seconds.toFixed(1)}s`}
+            </span>
+          </div>
+        );
+      }),
+    [],
+  );
+
+  const scrollToSection = useCallback((startSeconds: number) => {
+    viewportRef.current?.scrollTo({ left: startSeconds * PXS - 24, behavior: "smooth" });
+  }, []);
+
+  /* ── scroll-driven chrome, written directly ─────────────────────────── */
+
+  const syncToScroll = useCallback(() => {
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    const lane = laneRef.current;
+    const win = windowRef.current;
+    if (viewport === null || content === null) return;
+    const scroll = viewport.scrollLeft;
+
+    // Labels stay pinned to the viewport edge while their section is in view.
+    if (lane !== null) {
+      const labels = lane.querySelectorAll<HTMLElement>(".seclabel");
+      labels.forEach((label, i) => {
+        const section = SECTIONS[i];
+        if (section === undefined) return;
+        const min = section.start * PXS + 4;
+        const max = Math.max(min, section.end * PXS - label.offsetWidth - 12);
+        label.style.transform = `translateX(${clamp(scroll + 30, min, max)}px)`;
+      });
+    }
+
+    if (win !== null) {
+      const width = content.offsetWidth;
+      win.style.left = `${(scroll / width) * 100}%`;
+      win.style.width = `${(viewport.clientWidth / width) * 100}%`;
+    }
+  }, []);
+
+  useEffect(() => {
+    syncToScroll();
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    let frame = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(syncToScroll);
+    };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      viewport.removeEventListener("scroll", onScroll);
+    };
+  }, [syncToScroll]);
+
+  /* ── inertia ────────────────────────────────────────────────────────── */
+
+  const cancelMomentum = useCallback(() => {
+    const momentum = momentumRef.current;
+    if (momentum !== null) cancelAnimationFrame(momentum.raf);
+    momentumRef.current = null;
+  }, []);
+
+  const startMomentum = useCallback((velocity: number) => {
+    if (!willFling(velocity)) return;
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (viewport === null || content === null) return;
+
+    const state = { velocity, last: performance.now(), raf: 0 };
+    momentumRef.current = state;
+    const step = (now: number) => {
+      if (momentumRef.current !== state) return;
+      const next = advanceMomentum(state.velocity, now - state.last);
+      state.last = now;
+      viewport.scrollLeft += next.scrollDelta;
+      state.velocity = next.velocity;
+      if (momentumSpent(state.velocity, viewport.scrollLeft, content.offsetWidth - viewport.clientWidth)) {
+        momentumRef.current = null;
+        return;
+      }
+      state.raf = requestAnimationFrame(step);
+    };
+    state.raf = requestAnimationFrame(step);
+  }, []);
+
+  useEffect(() => cancelMomentum, [cancelMomentum]);
+
+  /* ── scrubbing ──────────────────────────────────────────────────────── */
+
+  const seekToClientX = useCallback((clientX: number) => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    const box = viewport.getBoundingClientRect();
+    setTime(clamp((clientX - box.left + viewport.scrollLeft) / PXS, 0, DUR));
+  }, []);
+
+  const edgeScroll = useCallback((clientX: number) => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    const box = viewport.getBoundingClientRect();
+    if (clientX < box.left + 50) viewport.scrollLeft -= (box.left + 50 - clientX) * 0.35;
+    else if (clientX > box.right - 50) viewport.scrollLeft += (clientX - (box.right - 50)) * 0.35;
+  }, []);
+
+  /* ── pointer ────────────────────────────────────────────────────────── */
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    cancelMomentum();
+    // Capture is an ENHANCEMENT, not a requirement: it keeps the drag alive when
+    // the pointer leaves the element. A browser that refuses it (or a
+    // synthesised pointer, which has no capture to take) must still pan, so a
+    // failure here cannot be allowed to abort the gesture.
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // No capture; the window-level listeners still see the drag through.
+    }
+    const target = event.target as HTMLElement;
+    const shot = target.closest<HTMLElement>(".shot");
+
+    if (target.closest(".strip") !== null) {
+      // A drag pans with momentum; a press that does not move is still a tap
+      // that selects and seeks — see `onPointerUp`.
+      panRef.current = {
+        startX: event.clientX,
+        startScroll: viewportRef.current?.scrollLeft ?? 0,
+        lastX: event.clientX,
+        lastAt: performance.now(),
+        velocity: 0,
+        moved: false,
+        shotIndex: shot === null ? null : Number(shot.dataset.i),
+      };
+      stripRef.current?.classList.add("panning");
+      setHot(false);
+      setGhostX(null);
+      return;
+    }
+    scrubbingRef.current = true;
+    setGhostX(null);
+    seekToClientX(event.clientX);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    const viewport = viewportRef.current;
+    if (pan !== null && viewport !== null) {
+      const now = performance.now();
+      const dt = now - pan.lastAt;
+      // Smoothed px/ms, so one jittery sample cannot decide the throw.
+      pan.velocity = smoothVelocity(pan.velocity, event.clientX - pan.lastX, dt);
+      pan.lastX = event.clientX;
+      pan.lastAt = now;
+      viewport.scrollLeft = pan.startScroll - (event.clientX - pan.startX);
+      if (!pan.moved && Math.abs(event.clientX - pan.startX) > TAP_SLOP_PX) pan.moved = true;
+      return;
+    }
+    if (viewport === null) return;
+
+    const box = viewport.getBoundingClientRect();
+    const x = clamp(event.clientX - box.left + viewport.scrollLeft, 0, DUR * PXS);
+    if (scrubbingRef.current) {
+      setHot(true);
+      edgeScroll(event.clientX);
+      seekToClientX(event.clientX);
+      return;
+    }
+    if (momentumRef.current !== null) return; // coasting — keep overlays hidden
+    const target = event.target as HTMLElement;
+    if (target.closest(".lane, .ruler, .ph-chip") === null) {
+      setHot(false);
+      setGhostX(null);
+      return;
+    }
+    setHot(true);
+    setGhostX(x);
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    if (pan !== null) {
+      stripRef.current?.classList.remove("panning");
+      if (!pan.moved) {
+        if (pan.shotIndex !== null) setSelected(pan.shotIndex);
+        seekToClientX(event.clientX);
+      } else {
+        // Held still before release: the hand stopped, so the strip should too.
+        startMomentum(releaseVelocity(pan.velocity, performance.now() - pan.lastAt));
+      }
+      panRef.current = null;
+    }
+    scrubbingRef.current = false;
+  };
+
+  const onPointerLeave = () => {
+    setHot(false);
+    setGhostX(null);
+  };
+
+  /* ── wheel pans horizontally ────────────────────────────────────────── */
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    // Non-passive, because it preventDefaults — React's onWheel is passive and
+    // cannot, so the page would scroll underneath the strip.
+    const onWheel = (event: WheelEvent) => {
+      cancelMomentum();
+      viewport.scrollLeft += event.deltaY + event.deltaX;
+      event.preventDefault();
+    };
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", onWheel);
+  }, [cancelMomentum]);
+
+  /* ── minimap: drag the window to pan, click to jump ─────────────────── */
+
+  const onMinimapDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    cancelMomentum();
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    const track = minimapRef.current;
+    if (viewport === null || content === null || track === null) return;
+    if (event.target !== windowRef.current) {
+      const ratio = (event.clientX - track.getBoundingClientRect().left) / track.clientWidth;
+      viewport.scrollLeft = ratio * content.offsetWidth - viewport.clientWidth / 2;
+    }
+    minimapDragRef.current = { x: event.clientX, scroll: viewport.scrollLeft };
+    track.setPointerCapture(event.pointerId);
+    track.classList.add("dragging");
+  };
+
+  const onMinimapMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = minimapDragRef.current;
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    const track = minimapRef.current;
+    if (drag === null || viewport === null || content === null || track === null) return;
+    viewport.scrollLeft =
+      drag.scroll + (event.clientX - drag.x) * (content.offsetWidth / track.clientWidth);
+  };
+
+  const onMinimapUp = () => {
+    minimapDragRef.current = null;
+    minimapRef.current?.classList.remove("dragging");
+  };
+
+  /* ── playback ───────────────────────────────────────────────────────── */
+
+  useEffect(() => {
+    if (!playing) return;
+    let last = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const next = (now - last) / 1000;
+      last = now;
+      setTime((current) => {
+        const value = current + next;
+        if (value >= DUR) {
+          setPlaying(false);
+          return DUR;
+        }
+        // Follow: keep the playhead in view without re-centring on every frame.
+        const viewport = viewportRef.current;
+        if (viewport !== null) {
+          const width = viewport.clientWidth;
+          const x = value * PXS;
+          if (x > viewport.scrollLeft + width * 0.82) viewport.scrollLeft = x - width * 0.82;
+          else if (x < viewport.scrollLeft + 40) viewport.scrollLeft = Math.max(0, x - 40);
+        }
+        return value;
+      });
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.code === "Space") {
+      event.preventDefault();
+      setPlaying((value) => !value);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setTime((value) => clamp(value - (event.shiftKey ? 5 : 1), 0, DUR));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setTime((value) => clamp(value + (event.shiftKey ? 5 : 1), 0, DUR));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setTime(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setTime(DUR);
+    }
+  };
+
+  const selectedShot = selected < 0 ? null : SHOTS[selected] ?? null;
+
+  return (
+    <div className={[PLAYBAR_SCOPE, className ?? ""].join(" ").trim()}>
+      <style>{PLAYBAR_CSS}</style>
+      <main className="stage">
+        <section className="area">
+          <div className="meta">
+            <div className="meta-l">
+              <span className="dot" />
+              Seq 04 — Night Drive
+              <span className="sep">/</span>
+              <span style={{ color: "#525a66" }}>Act I</span>
+            </div>
+            <div className="meta-r">{`${24} fps · ${SHOTS.length} shots · ${timecode(DUR)}`}</div>
+          </div>
+
+          <section
+            className={`playbar${hot ? " top-hot" : ""}`}
+            aria-label="Storyboard timeline"
+            tabIndex={0}
+            onKeyDown={onKeyDown}
+          >
+            <div className="viewport" ref={viewportRef}>
+              <div
+                className="content"
+                ref={contentRef}
+                style={{ width: DUR * PXS }}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+                onPointerLeave={onPointerLeave}
+              >
+                <div className="lane" ref={laneRef}>
+                  {SECTIONS.map((section) => (
+                    <div
+                      key={section.name}
+                      className="seclabel"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => scrollToSection(section.start)}
+                    >
+                      <LayersIcon />
+                      <span>{section.name}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="ruler">
+                  {SECTIONS.map((section) => (
+                    <div
+                      key={`base-${section.name}`}
+                      className="rbase"
+                      style={{
+                        left: section.start * PXS + 3,
+                        width: (section.end - section.start) * PXS - 6,
+                      }}
+                    />
+                  ))}
+                  {ticks}
+                  {selectedShot === null ? null : (
+                    <div
+                      className="range"
+                      style={{
+                        left: selectedShot.start * PXS + 2,
+                        width: (selectedShot.end - selectedShot.start) * PXS - 4,
+                      }}
+                    />
+                  )}
+                </div>
+
+                {SECTIONS.slice(1).map((section) => (
+                  <div
+                    key={`div-${section.name}`}
+                    className="secdiv"
+                    style={{ left: section.start * PXS }}
+                  />
+                ))}
+
+                <div className="strip" ref={stripRef}>
+                  {shotBoxes}
+                  {selectedShot === null ? null : (
+                    <div
+                      className="underline"
+                      style={{
+                        left: selectedShot.start * PXS + 2,
+                        width: (selectedShot.end - selectedShot.start) * PXS - 4,
+                      }}
+                    />
+                  )}
+                </div>
+
+                <div
+                  className={`ghost${ghostX === null ? "" : " on"}`}
+                  style={{ left: ghostX ?? 0 }}
+                />
+
+                <div className="playhead" style={{ transform: `translateX(${time * PXS}px)` }}>
+                  <div className="ph-chip">{timecode(time)}</div>
+                  <div className="ph-tri" />
+                  <div className="ph-line" />
+                </div>
+              </div>
+            </div>
+
+            <div className="minimap">
+              <div
+                className="mm-track"
+                ref={minimapRef}
+                aria-label="Sequence navigator"
+                onPointerDown={onMinimapDown}
+                onPointerMove={onMinimapMove}
+                onPointerUp={onMinimapUp}
+                onPointerCancel={onMinimapUp}
+              >
+                {SHOTS.map((shot) => (
+                  <div
+                    key={shot.index}
+                    className="mm-shot"
+                    style={{
+                      left: `${(shot.start / DUR) * 100}%`,
+                      width: `calc(${((shot.end - shot.start) / DUR) * 100}% - 2px)`,
+                    }}
+                  />
+                ))}
+                {SECTIONS.slice(1).map((section) => (
+                  <div
+                    key={`notch-${section.name}`}
+                    className="mm-sec"
+                    style={{ left: `${(section.start / DUR) * 100}%` }}
+                  />
+                ))}
+                <div className="mm-window" ref={windowRef} />
+                <div className="mm-ph" style={{ left: `${(time / DUR) * 100}%` }}>
+                  <i />
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function LayersIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m12 2 9 5-9 5-9-5Z" />
+      <path d="m3 12 9 5 9-5" />
+      <path d="m3 17 9 5 9-5" />
+    </svg>
+  );
+}
