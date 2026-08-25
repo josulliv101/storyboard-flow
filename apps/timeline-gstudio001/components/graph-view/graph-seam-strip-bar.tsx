@@ -338,9 +338,39 @@ export function SeamStripBar({
   // and until then the scale is computed from the width. Same "once" guarantee
   // with no second render — a re-measure cannot undo a zoom, because once
   // there IS a zoom the fallback is not consulted.
+  /**
+   * HOW MUCH BIGGER THE FILM IS THAN `sm`, and therefore how much wider a
+   * second of it should be (PL15-024).
+   *
+   * PL15-022 made the film taller and left the time axis alone, so `md` and
+   * `lg` stretched each thumbnail vertically against boxes of unchanged width.
+   * Scaling both axes by the same number makes a bigger film a bigger version
+   * of the same picture — and, because a filmstrip CELL is square, it also
+   * keeps the number of frames a clip is cut into constant, undoing the side
+   * effect PL15-022 had precisely because only one axis moved.
+   */
+  const sizeFactor = laneHeight / SEAM_LANE_HEIGHT_PX;
+
+  /**
+   * `pxPerSecond` IS THE SCALE AT `sm`, not the scale on screen.
+   *
+   * Every writer divides by `sizeFactor` and this one reader multiplies by it,
+   * which is what lets `fit` keep its promise. `fit` means "this collection
+   * spans the track" and computes its answer FROM the measured width — so if
+   * the size factor were applied on top of what it stored, the collection
+   * would stop fitting at `md` and `lg` and a control whose whole promise is
+   * in its name would break. Storing the pre-factor value means the multiply
+   * here lands exactly on the width it measured.
+   *
+   * The DEFAULT is deliberately outside that: with no zoom and no fit, the
+   * scale is a fitted width times the factor, so a bigger film opens with
+   * proportionally wider boxes and runs past the track. That is the trade this
+   * item asks for — the opening scale is a starting point, `fit` is the
+   * promise.
+   */
   const scale =
-    pxPerSecond ??
-    (trackWidth > 0 ? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth) : 9);
+    (pxPerSecond ?? (trackWidth > 0 ? fitPixelsPerSecond(subjectCollectionSeconds, trackWidth) : 9)) *
+    sizeFactor;
   const strip = useMemo(() => buildSeamStrip(clips, scale), [clips, scale]);
   // The subject's own box in strip coordinates — what the active column below
   // is drawn against. `undefined` while the subject is not on the bar at all,
@@ -849,7 +879,11 @@ export function SeamStripBar({
         const to = zoomByWheel(from, event.deltaY);
         if (to === from) return;
         const anchorLocalX = event.clientX - element.getBoundingClientRect().left;
-        setPxPerSecond(to);
+        // `from` and `to` are ON-SCREEN scales — `scaleRef` tracks the value the
+        // boxes are actually drawn at — so the stored value has to come back
+        // down by the size factor, or the next read would apply it twice and a
+        // single notch would zoom by the factor as well (see `scale`).
+        setPxPerSecond(to / sizeFactor);
         // NEITHER FIT IS TRUE ANY MORE. Leaving one lit after a zoom would be
         // the control lying about the scale it names.
         setFitMode(null);
@@ -865,7 +899,7 @@ export function SeamStripBar({
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);
-  }, [cancelHover, setOffset, stopGlide]);
+  }, [cancelHover, setOffset, sizeFactor, stopGlide]);
 
   // ── KEEPING THE PLAYHEAD IN VIEW ─────────────────────────────────────────
   //
@@ -1021,7 +1055,10 @@ export function SeamStripBar({
       const span = mode === "clip" ? subjectCollectionSeconds : totalSeconds;
       if (span <= 0) return;
       const next = fitPixelsPerSecond(span, width);
-      setPxPerSecond(next);
+      // STORED AT `sm`, read back multiplied — see `scale`. Storing the
+      // on-screen value here would make the collection stop fitting the track
+      // at `md` and `lg`.
+      setPxPerSecond(next / sizeFactor);
       setFitMode(mode);
       setFollowSuspended(false);
       // Re-centre with the NEW scale rather than the ref's old one — the ref
@@ -1037,6 +1074,7 @@ export function SeamStripBar({
     [
       centreAtPx,
       centreClipId,
+      sizeFactor,
       clips,
       setOffset,
       subjectCollectionSeconds,

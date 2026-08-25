@@ -1475,8 +1475,11 @@ sibling can read it. Prefer that.
 
 ## PL15-024 — Sizing the film should scale it in both axes
 
-- Status: Not started — mechanism identified, and one real conflict to settle
-  first (below).
+- Status: Complete, built as the FIRST of the three options — `fit` re-fits at
+  the current size, so both promises hold. `pxPerSecond` is now "the scale at
+  `sm`": every writer divides by the size factor and the single reader
+  multiplies by it, which is what keeps `fit` landing on the width it measured.
+  See the end of this item for the assertion that nearly went in wrong.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details, then the gear's `size` group)
 - Area: `components/graph-view/graph-seam-strip-bar.tsx` (`scale`, `fitTo`),
@@ -1630,3 +1633,14 @@ Two lessons, both cheap to have had earlier: look for the signal before
 building one, and be suspicious of adding a state update inside a window that
 something else is animating — which is the same family PL15-020 identifies as
 the cause of its own intermittency.
+
+**THE STORY'S FIRST ASSERTION WAS WRONG, and the right one is more useful.**
+It checked that after `fit clip` the boxes span no wider than the track — which
+failed at 3321px against 1153px and looked like the fix was broken. It was the
+assertion: the bar draws the whole REACH window, which is more clips than the
+collection `fit clip` fits, so the boxes legitimately span wider than the track.
+
+What actually has to hold is INVARIANCE: fitting must land on the same scale
+whatever size the film is drawn at. That is what the story asserts now, and it
+is a direct test of the design — `fit` computes from the measured width, so the
+size factor must not be applied on top of what it stores.
