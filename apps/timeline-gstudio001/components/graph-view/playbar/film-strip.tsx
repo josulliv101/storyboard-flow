@@ -17,6 +17,7 @@ import {
   smoothVelocity,
   willFling,
 } from "./playbar-motion";
+import { PlaybarFrame } from "./playbar-frame";
 import { PLAYBAR_CSS, PLAYBAR_PAGE_CLASS, PLAYBAR_SCOPE } from "./playbar-styles";
 
 /**
@@ -499,7 +500,7 @@ export function FilmStrip({
         .trim()}
     >
       <style>{PLAYBAR_CSS}</style>
-      <Frame standalone={standalone}>
+      <PlaybarFrame standalone={standalone}>
           {standalone ? (
           <div className="meta">
             <div className="meta-l">
@@ -694,7 +695,7 @@ export function FilmStrip({
               </div>
             </div>
           </section>
-      </Frame>
+      </PlaybarFrame>
     </div>
   );
 }
@@ -717,22 +718,3 @@ function LayersIcon() {
   );
 }
 
-/**
- * THE PAGE AROUND THE BAR, or nothing at all.
- *
- * The reference's stage and content area exist because it IS a page. Embedded
- * in the app they would be a second page inside one — padding the app has
- * already applied, and a ground it has already painted. A fragment is the
- * honest answer there.
- */
-function Frame({
-  standalone,
-  children,
-}: Readonly<{ standalone: boolean; children: React.ReactNode }>) {
-  if (!standalone) return <>{children}</>;
-  return (
-    <main className="stage">
-      <section className="area">{children}</section>
-    </main>
-  );
-}

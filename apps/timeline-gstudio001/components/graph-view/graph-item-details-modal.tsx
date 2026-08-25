@@ -1260,6 +1260,7 @@ function DetailsFilmstripModal({
           through the same command path they always did — see `onTrim` below,
           which dispatches the same `update-media` the trim fields did. */}
       <ClipDeck
+        standalone={false}
         clips={deckClips}
         activeId={node.id as string}
         onActivate={(clipId) => landOn(clipId, position)}

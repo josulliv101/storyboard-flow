@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { LOOKS, SECTIONS, SHOTS, clamp } from "./playbar-model";
-import { PLAYBAR_CSS, PLAYBAR_SCOPE } from "./playbar-styles";
+import { PlaybarFrame } from "./playbar-frame";
+import { PLAYBAR_CSS, PLAYBAR_PAGE_CLASS, PLAYBAR_SCOPE } from "./playbar-styles";
 
 /**
  * THE REFERENCE DESIGN'S CLIP DECK, ported to React (PL15-030).
@@ -97,6 +98,8 @@ export type ClipDeckProps = Readonly<{
   onActivate?: (id: string) => void;
   /** An edge was dragged. Absolute source seconds, both of them. */
   onTrim?: (id: string, next: Readonly<{ in: number; out: number }>) => void;
+  /** On its own page, or embedded in one — see `PlaybarFrame`. */
+  standalone?: boolean;
   className?: string;
 }>;
 
@@ -105,6 +108,7 @@ export function ClipDeck({
   activeId,
   onActivate,
   onTrim,
+  standalone = true,
   className,
 }: ClipDeckProps) {
   const CLIPS = useMemo(() => clipsProp ?? REFERENCE_CLIPS, [clipsProp]);
@@ -343,13 +347,21 @@ export function ClipDeck({
   };
 
   return (
-    <div className={[PLAYBAR_SCOPE, className ?? ""].join(" ").trim()}>
+    <div
+      className={[PLAYBAR_SCOPE, standalone ? PLAYBAR_PAGE_CLASS : "", className ?? ""]
+        .join(" ")
+        .trim()}
+    >
       <style>{PLAYBAR_CSS}</style>
-      <main className="stage">
-        <section className="area">
+      <PlaybarFrame standalone={standalone}>
           <section
             className="deck"
             ref={deckRef}
+            // NO MARGIN OF ITS OWN WHEN EMBEDDED. The reference's deck carries
+            // `margin: 20px 0 4px` because it sits under a preview panel on its
+            // own page; here the view's own `gap-6` is the spacing, and the two
+            // together read as a gap nobody chose.
+            style={standalone ? undefined : { marginTop: 0 }}
             aria-label="Clip takes"
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -469,8 +481,7 @@ export function ClipDeck({
               })}
             </div>
           </section>
-        </section>
-      </main>
+      </PlaybarFrame>
     </div>
   );
 }
