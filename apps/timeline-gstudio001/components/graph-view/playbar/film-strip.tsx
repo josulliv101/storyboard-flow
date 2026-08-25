@@ -3,14 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  LOOKS,
-  PIXELS_PER_SECOND as PXS,
-  SECTIONS,
-  SEQUENCE_SECONDS as DUR,
-  SHOTS,
-  clamp,
-  timecode,
-} from "./playbar-model";
+  REFERENCE_SHOTS,
+  placeSections,
+  placeShots,
+  type FilmStripShot,
+} from "./film-strip-data";
+import { PIXELS_PER_SECOND as PXS, clamp, timecode } from "./playbar-model";
 import {
   MOMENTUM_MAX,
   advanceMomentum,
@@ -53,7 +51,34 @@ type Pan = {
   shotIndex: number | null;
 };
 
-export function FilmStrip({ className }: Readonly<{ className?: string }>) {
+export type FilmStripProps = Readonly<{
+  /** The sequence to draw. Defaults to the reference design's own. */
+  shots?: readonly FilmStripShot[];
+  /** Where playback is. CONTROLLED when given — the strip reports scrubs
+   *  through `onScrub` and never moves the clock behind the caller's back. */
+  seconds?: number;
+  playing?: boolean;
+  /** The shot drawn as the subject. */
+  selectedId?: string | null;
+  onScrub?: (seconds: number) => void;
+  onTogglePlay?: () => void;
+  onSelect?: (id: string) => void;
+  className?: string;
+}>;
+
+export function FilmStrip({
+  shots: shotsProp,
+  seconds: secondsProp,
+  playing: playingProp,
+  selectedId,
+  onScrub,
+  onTogglePlay,
+  onSelect,
+  className,
+}: FilmStripProps) {
+  const shots = useMemo(() => placeShots(shotsProp ?? REFERENCE_SHOTS), [shotsProp]);
+  const sections = useMemo(() => placeSections(shots), [shots]);
+  const DUR = shots.length === 0 ? 0 : shots[shots.length - 1]!.end;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
@@ -66,9 +91,42 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
   const scrubbingRef = useRef(false);
   const minimapDragRef = useRef<{ x: number; scroll: number } | null>(null);
 
-  const [time, setTime] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [selected, setSelected] = useState(-1);
+  // CONTROLLED WHEN THE CALLER SAYS SO, and self-driving otherwise — the story
+  // renders the design with no owner, the app owns the clock. `onScrub` is the
+  // only way the clock moves when controlled, so the two can never disagree.
+  const [ownTime, setOwnTime] = useState(0);
+  const [ownPlaying, setOwnPlaying] = useState(false);
+  const [ownSelectedId, setOwnSelectedId] = useState<string | null>(null);
+  const time = secondsProp ?? ownTime;
+  const playing = playingProp ?? ownPlaying;
+  const setTime = useCallback(
+    (next: number | ((current: number) => number)) => {
+      const value =
+        typeof next === "function" ? (next as (current: number) => number)(time) : next;
+      if (secondsProp === undefined) setOwnTime(value);
+      onScrub?.(value);
+    },
+    [onScrub, secondsProp, time],
+  );
+  const setPlaying = useCallback(
+    (next: boolean | ((current: boolean) => boolean)) => {
+      const value =
+        typeof next === "function" ? (next as (current: boolean) => boolean)(playing) : next;
+      if (playingProp === undefined) setOwnPlaying(value);
+      if (value !== playing) onTogglePlay?.();
+    },
+    [onTogglePlay, playing, playingProp],
+  );
+  const activeId = selectedId ?? ownSelectedId;
+  const setSelected = useCallback(
+    (index: number) => {
+      const shot = shots[index];
+      if (shot === undefined) return;
+      if (selectedId === undefined) setOwnSelectedId(shot.id);
+      onSelect?.(shot.id);
+    },
+    [onSelect, selectedId, shots],
+  );
   const [ghostX, setGhostX] = useState<number | null>(null);
   const [hot, setHot] = useState(false);
 
@@ -76,7 +134,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
 
   const ticks = useMemo(
     () =>
-      Array.from({ length: DUR + 1 }, (_, i) => {
+      Array.from({ length: Math.floor(DUR) + 1 }, (_, i) => {
         const kind = i % 10 === 0 ? " t10" : i % 2 === 0 ? " t2" : "";
         return (
           <span key={`tick-${i}`}>
@@ -92,34 +150,32 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
           </span>
         );
       }),
-    [],
+    [DUR],
   );
 
   const shotBoxes = useMemo(
     () =>
-      SHOTS.map((shot) => {
-        const seconds = shot.end - shot.start;
+      shots.map((shot, index) => {
+        const seconds = shot.seconds;
         return (
           <div
-            key={shot.index}
+            key={shot.id}
             className="shot"
-            data-i={shot.index}
+            data-i={index}
             style={{ left: shot.start * PXS + 2, width: seconds * PXS - 4 }}
           >
             {shot.frames.map((frame, k) => (
               <div
                 key={k}
                 className="frame"
-                style={{ width: `${(frame.seconds / seconds) * 100}%`, background: LOOKS[frame.look] }}
+                style={{ width: `${100 / shot.frames.length}%`, background: frame }}
               />
             ))}
-            <span className="tag">
-              {`SH ${String(shot.index + 1).padStart(2, "0")} · ${seconds.toFixed(1)}s`}
-            </span>
+            <span className="tag">{shot.label}</span>
           </div>
         );
       }),
-    [],
+    [shots],
   );
 
   const scrollToSection = useCallback((startSeconds: number) => {
@@ -140,7 +196,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
     if (lane !== null) {
       const labels = lane.querySelectorAll<HTMLElement>(".seclabel");
       labels.forEach((label, i) => {
-        const section = SECTIONS[i];
+        const section = sections[i];
         if (section === undefined) return;
         const min = section.start * PXS + 4;
         const max = Math.max(min, section.end * PXS - label.offsetWidth - 12);
@@ -153,7 +209,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
       win.style.left = `${(scroll / width) * 100}%`;
       win.style.width = `${(viewport.clientWidth / width) * 100}%`;
     }
-  }, []);
+  }, [sections]);
 
   useEffect(() => {
     syncToScroll();
@@ -414,7 +470,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
     }
   };
 
-  const selectedShot = selected < 0 ? null : SHOTS[selected] ?? null;
+  const selectedShot = shots.find((shot) => shot.id === activeId) ?? null;
 
   return (
     <div className={[PLAYBAR_SCOPE, className ?? ""].join(" ").trim()}>
@@ -428,7 +484,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
               <span className="sep">/</span>
               <span style={{ color: "#525a66" }}>Act I</span>
             </div>
-            <div className="meta-r">{`${24} fps · ${SHOTS.length} shots · ${timecode(DUR)}`}</div>
+            <div className="meta-r">{`24 fps · ${shots.length} shots · ${timecode(DUR)}`}</div>
           </div>
 
           <section
@@ -449,7 +505,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
                 onPointerLeave={onPointerLeave}
               >
                 <div className="lane" ref={laneRef}>
-                  {SECTIONS.map((section) => (
+                  {sections.map((section) => (
                     <div
                       key={section.name}
                       className="seclabel"
@@ -463,7 +519,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
                 </div>
 
                 <div className="ruler">
-                  {SECTIONS.map((section) => (
+                  {sections.map((section) => (
                     <div
                       key={`base-${section.name}`}
                       className="rbase"
@@ -485,7 +541,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
                   )}
                 </div>
 
-                {SECTIONS.slice(1).map((section) => (
+                {sections.slice(1).map((section) => (
                   <div
                     key={`div-${section.name}`}
                     className="secdiv"
@@ -529,9 +585,9 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
                 onPointerUp={onMinimapUp}
                 onPointerCancel={onMinimapUp}
               >
-                {SHOTS.map((shot) => (
+                {shots.map((shot) => (
                   <div
-                    key={shot.index}
+                    key={shot.id}
                     className="mm-shot"
                     style={{
                       left: `${(shot.start / DUR) * 100}%`,
@@ -539,7 +595,7 @@ export function FilmStrip({ className }: Readonly<{ className?: string }>) {
                     }}
                   />
                 ))}
-                {SECTIONS.slice(1).map((section) => (
+                {sections.slice(1).map((section) => (
                   <div
                     key={`notch-${section.name}`}
                     className="mm-sec"
