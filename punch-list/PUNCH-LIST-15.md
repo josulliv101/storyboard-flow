@@ -906,11 +906,20 @@ same change to the same two lines and a completely different editing tool.
 
 ## PL15-016 — The strip stutters while it is panned
 
-- Status: Partial — the drag offset is off the React render path (it is a CSS
-  variable written straight to the row, so a pan touches one style property and
-  React is not involved). The structural cause is removed and the reasoning is
-  sound, but THE PROFILE THIS ITEM ASKS FOR HAS NOT BEEN RUN, so it is not
-  established that the stutter is gone. Do not close it on the diff.
+- Status: Complete — CONFIRMED BY THE OWNER in the app, and NEVER PROFILED.
+  Both halves of that are the status.
+
+  The drag offset is off the React render path: the transform reads
+  `var(--drag-px, 0px)` and the move handler writes that property straight to
+  the row, so a pan touches one style property on one node and React is not
+  involved. The structural cause is gone and the owner reports the pan reads
+  fine.
+
+  What was NOT done is the before/after profile this item opens by demanding.
+  So the evidence is a removed cause plus a person using it — which is the
+  evidence PL14-006 says actually counts, and is still not a measurement. If
+  the stutter ever returns, start by taking the profile that was skipped rather
+  than assuming this change was wrong.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a media item's details, then drag the strip sideways)
 - Area: `components/graph-view/graph-item-details-modal.tsx` (the `swipe`
@@ -1275,6 +1284,30 @@ this: `rootTop -119, scrollY 132` at the assert.
 That reframes it as a product question rather than a bug: should a pane the
 user sized shrink because the page scrolled? If not, the ceiling has to come
 from something stable rather than from the live `rootTop`.
+
+**THREE ATTEMPTS, NONE AN IMPROVEMENT — do not repeat these.** The owner's
+answer to the product question is settled: *no, a pane you sized should not
+shrink because the page scrolled.* Implementing that is what keeps failing.
+
+| Attempt | The invariant | The reveal test | Full suite |
+| --- | --- | --- | --- |
+| Match the two ceilings (shipped, #531) | no change (4/6, 5/6, 6/10) | fine | fine |
+| Clamp only when the viewport actually shrank | **8 of 8** | **1 of 5 — broken** | not run |
+| Drop the live `rootTop` from the ceiling | 3 of 5 | 5 of 5 | **175/2 — worse than main** |
+
+Only the first is on `main`. The other two were reverted.
+
+**THE SECOND ONE IS THE LEAD.** `clampToViewport`'s own comment says the
+question it answers is "has the VIEWPORT shrunk under us" — and it is wired to
+a `ResizeObserver` on `<main>`, which fires whenever CONTENT changes. It is
+asking the wrong question, and gating it on a real viewport shrink fixes the
+invariant outright.
+
+It also breaks `the preview is UNCOVERED, and its contents do not grow inside
+the reveal`, which means THE REVEAL HAS A HIDDEN DEPENDENCY ON THAT CLAMP. That
+dependency is the thing to find. Until it is understood, the gate cannot go in
+— and finding it is a smaller, better-defined job than the one this item
+started as.
 
 **Do not "fix" the test.** It is guarding a real invariant — the preview's
 height is the user's and content growth must not steal it — and it was written
