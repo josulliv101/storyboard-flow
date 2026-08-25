@@ -448,15 +448,22 @@ function DetailsFilmstripModal({
   // different stretches of time.
   const barWindow = useMemo(() => barReachWindow(ids, centre, reach), [ids, centre, reach]);
 
+  // THE WHOLE SEQUENCE, not the reach window (PL15-030).
+  //
+  // This was `barWindow.ids` because the bar could only ever show a window, so
+  // the clock only had to cover one. The ported strip pans across every clip,
+  // and a clock that stopped at the window's end would disagree with the thing
+  // drawing it — `TheBarTakesTheKeyboard` caught exactly that, pressing End and
+  // landing at 126 on a strip whose last frame is at 144.
   const collectionSeamClips = useMemo(
     () =>
-      barWindow.ids
+      ids
         .map((id) => {
           const found = graph.nodesById.get(parseNodeId(id));
           return found && found.kind === "media" ? seamClipOf(found as MediaNode) : null;
         })
         .filter((clip): clip is SeamClip => clip !== null),
-    [barWindow, graph],
+    [graph, ids],
   );
 
   // WHERE THE BAR RESTS, as an index into what `buildSeamTimeline` will
@@ -797,15 +804,19 @@ function DetailsFilmstripModal({
       return {
         id,
         label: found?.name ?? id,
-        // A clip with no length still needs a box that can be clicked.
-        seconds: Math.max(media === null ? 0 : mediaDurationSeconds(media), 0.05),
+        seconds: media === null ? 0 : mediaDurationSeconds(media),
         frames:
           poster === undefined
             ? ["#0d0d10"]
             : [`center/cover no-repeat url("${poster}")`],
         sectionName: parent?.name ?? null,
       };
-    });
+    })
+      // ZERO-LENGTH CLIPS COME OUT, because `buildSeamTimeline` drops them and
+      // the two clocks have to agree exactly. A fully-trimmed clip drawn as a
+      // box the timeline does not count would put every second after it in the
+      // wrong place.
+      .filter((shot) => shot.seconds > 0);
   }, [graph, ids]);
 
   // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a

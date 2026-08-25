@@ -31,8 +31,8 @@ export const PLAYBAR_CSS = `.pb{
   --groove:     rgba(255,255,255,.045);
   --slate:      #79828f;   /* quiet labels                */
   --slate-hi:   #aeb7c4;   /* emphasized labels           */
-  --signal:     #3cdbc0;   /* selection teal              */
-  --signal-soft:rgba(60,219,192,.14);
+  --signal:     #38bdf8;   /* selection teal              */
+  --signal-soft:rgba(56, 189, 248,.14);
   --alarm:      #ff5c5c;   /* playhead red (minimap)      */
   --chip:       #f3f6f9;   /* playhead timecode chip      */
 
@@ -55,7 +55,7 @@ export const PLAYBAR_CSS = `.pb{
 .pb.pb-page::before{ /* faint stage light */
   content:""; position:fixed; inset:0; pointer-events:none;
   background:
-    radial-gradient(60% 40% at 50% -5%, rgba(60,219,192,.05), transparent 70%),
+    radial-gradient(60% 40% at 50% -5%, rgba(56, 189, 248,.05), transparent 70%),
     radial-gradient(70% 50% at 50% 115%, rgba(255,140,80,.04), transparent 70%);
 }
 .pb .stage{ width:100%; padding:44px 24px 40px; }
@@ -68,7 +68,7 @@ export const PLAYBAR_CSS = `.pb{
 }
 .pb .meta .dot{
   display:inline-block; width:6px; height:6px; border-radius:50%;
-  background:var(--signal); box-shadow:0 0 8px rgba(60,219,192,.7);
+  background:var(--signal); box-shadow:0 0 8px rgba(56, 189, 248,.7);
   margin-right:10px; vertical-align:1px;
   animation:pulse 2.6s ease-in-out infinite;
 }
@@ -131,8 +131,8 @@ export const PLAYBAR_CSS = `.pb{
 .pb .tlabel.big{ color:var(--slate-hi); font-weight:600; }
 .pb .range{
   position:absolute; bottom:0; height:5px; border-radius:3px;
-  background:linear-gradient(90deg, rgba(60,219,192,.75), var(--signal));
-  box-shadow:0 0 12px rgba(60,219,192,.55), 0 0 2px rgba(60,219,192,.9);
+  background:linear-gradient(90deg, rgba(56, 189, 248,.75), var(--signal));
+  box-shadow:0 0 12px rgba(56, 189, 248,.55), 0 0 2px rgba(56, 189, 248,.9);
   transition:left .28s cubic-bezier(.22,1,.3,1), width .28s cubic-bezier(.22,1,.3,1);
 }
 .pb .strip{ position:relative; height:150px; cursor:grab; }
@@ -161,7 +161,7 @@ export const PLAYBAR_CSS = `.pb{
     inset 0 1px 0 rgba(255,255,255,.08),
     0 0 0 1.5px var(--signal),
     0 0 0 5px var(--signal-soft),
-    0 14px 34px -12px rgba(60,219,192,.35);
+    0 14px 34px -12px rgba(56, 189, 248,.35);
 }
 .pb .frame{ position:relative; height:100%; }
 .pb .frame + .frame{ border-left:1px solid rgba(0,0,0,.7); }
@@ -186,11 +186,11 @@ export const PLAYBAR_CSS = `.pb{
   pointer-events:none; white-space:nowrap;
 }
 .pb .shot:hover .tag,.pb .shot.selected .tag{ opacity:1; transform:translateY(0); }
-.pb .shot.selected .tag{ border-color:rgba(60,219,192,.45); color:#c8fff4; }
+.pb .shot.selected .tag{ border-color:rgba(56, 189, 248,.45); color:#c8fff4; }
 .pb .underline{
   position:absolute; bottom:-9px; height:3px; border-radius:2px;
   background:var(--signal);
-  box-shadow:0 0 10px rgba(60,219,192,.6);
+  box-shadow:0 0 10px rgba(56, 189, 248,.6);
   transition:left .28s cubic-bezier(.22,1,.3,1), width .28s cubic-bezier(.22,1,.3,1);
 }
 .pb .ghost{
@@ -214,7 +214,7 @@ export const PLAYBAR_CSS = `.pb{
   pointer-events:auto; cursor:ew-resize; white-space:nowrap;
   transition:box-shadow .2s ease;
 }
-.pb .is-playing .ph-chip{ box-shadow:0 2px 10px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.25), 0 0 14px rgba(60,219,192,.45); }
+.pb .is-playing .ph-chip{ box-shadow:0 2px 10px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.25), 0 0 14px rgba(56, 189, 248,.45); }
 .pb .ph-tri{
   position:absolute; top:20px; left:0; transform:translateX(-50%);
   width:0; height:0; border:5px solid transparent; border-bottom:none;
@@ -231,7 +231,7 @@ export const PLAYBAR_CSS = `.pb{
 .pb .playbar::before{
   content:""; position:absolute; left:0; right:0; top:0; height:82px;
   border-radius:18px 18px 0 0;
-  background:linear-gradient(180deg, rgba(60,219,192,.055), rgba(60,219,192,0));
+  background:linear-gradient(180deg, rgba(56, 189, 248,.055), rgba(56, 189, 248,0));
   opacity:0; transition:opacity .25s ease; pointer-events:none;
 }
 .pb .playbar.top-hot::before{ opacity:1; }
@@ -248,7 +248,7 @@ export const PLAYBAR_CSS = `.pb{
   transition:background .2s ease, box-shadow .2s ease;
 }
 .pb .mm-shot.inview{ background:#4c5561; }
-.pb .mm-shot.sel{ background:var(--signal); box-shadow:0 0 8px rgba(60,219,192,.55); }
+.pb .mm-shot.sel{ background:var(--signal); box-shadow:0 0 8px rgba(56, 189, 248,.55); }
 .pb .mm-window{
   position:absolute; top:3px; height:22px; border-radius:7px;
   background:rgba(255,255,255,.05);
@@ -289,8 +289,8 @@ export const PLAYBAR_CSS = `.pb{
 }
 .pb .clip.active{
   border-color:rgba(255,255,255,.15);
-  box-shadow:0 44px 96px -38px rgba(0,0,0,.98), 0 0 0 1px rgba(60,219,192,.12),
-             0 0 34px -14px rgba(60,219,192,.35), inset 0 1px 0 rgba(255,255,255,.07);
+  box-shadow:0 44px 96px -38px rgba(0,0,0,.98), 0 0 0 1px rgba(56, 189, 248,.12),
+             0 0 34px -14px rgba(56, 189, 248,.35), inset 0 1px 0 rgba(255,255,255,.07);
 }
 .pb .cine{ position:relative; overflow:hidden; }
 .pb .cine::before{
@@ -320,8 +320,8 @@ export const PLAYBAR_CSS = `.pb{
   display:grid; place-items:center; padding:0; transition:border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 .pb .c-play svg{ width:10px; height:10px; fill:currentColor; }
-.pb .c-play:hover{ border-color:rgba(60,219,192,.5); color:var(--signal); }
-.pb .clip.playing .c-play{ border-color:rgba(60,219,192,.6); color:var(--signal); box-shadow:0 0 12px -4px rgba(60,219,192,.6); }
+.pb .c-play:hover{ border-color:rgba(56, 189, 248,.5); color:var(--signal); }
+.pb .clip.playing .c-play{ border-color:rgba(56, 189, 248,.6); color:var(--signal); box-shadow:0 0 12px -4px rgba(56, 189, 248,.6); }
 .pb .c-cut,.pb .c-srct{ font-size:10px; color:#68717d; letter-spacing:.05em; }
 .pb .c-cut b,.pb .c-srct b{ color:#dfe6ee; font-weight:600; }
 .pb .c-srct{ margin-left:auto; }
@@ -332,7 +332,7 @@ export const PLAYBAR_CSS = `.pb{
 .pb .c-shade.l{ left:0; }
 .pb .c-shade.r{ right:0; }
 .pb .c-playline{ position:absolute; top:0; bottom:0; width:2px; background:var(--signal);
-  box-shadow:0 0 8px rgba(60,219,192,.7); opacity:0; transition:opacity .15s ease; pointer-events:none; }
+  box-shadow:0 0 8px rgba(56, 189, 248,.7); opacity:0; transition:opacity .15s ease; pointer-events:none; }
 .pb .clip.playing .c-playline{ opacity:1; }
 .pb .c-win{
   position:absolute; top:1px; bottom:1px; border-radius:7px;
@@ -352,7 +352,7 @@ export const PLAYBAR_CSS = `.pb{
   font-family:var(--mono); font-size:11px; font-weight:600; color:var(--signal);
   background:#0a0d13; border:1px solid rgba(255,255,255,.1); border-radius:7px; outline:none;
 }
-.pb .c-io input:focus{ border-color:rgba(60,219,192,.55); }
+.pb .c-io input:focus{ border-color:rgba(56, 189, 248,.55); }
 .pb .c-io .arr{ color:#454c56; }
 .pb .c-total{ margin-left:auto; font-size:11px; font-weight:600; color:#dfe6ee; letter-spacing:.02em; }
 .pb .c-tags{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; min-height:24px; }
@@ -363,9 +363,9 @@ export const PLAYBAR_CSS = `.pb{
 .pb .chip .x:hover{ color:#ff8585; }
 .pb .c-add{ width:24px; height:22px; border-radius:7px; border:1px dashed rgba(255,255,255,.22);
   background:none; color:#77808d; font-size:12px; line-height:1; cursor:pointer; }
-.pb .c-add:hover{ border-color:rgba(60,219,192,.55); color:var(--signal); }
+.pb .c-add:hover{ border-color:rgba(56, 189, 248,.55); color:var(--signal); }
 .pb .c-tagin{ width:76px; padding:3px 7px; font-family:var(--mono); font-size:10px; color:#d5dce5;
-  background:#0a0d13; border:1px solid rgba(60,219,192,.4); border-radius:7px; outline:none; }
+  background:#0a0d13; border:1px solid rgba(56, 189, 248,.4); border-radius:7px; outline:none; }
 .pb .c-win:hover{ box-shadow:0 0 0 1px rgba(0,0,0,.65), 0 2px 12px rgba(0,0,0,.5), 0 0 14px rgba(255,255,255,.22); }
 .pb .clip:not(.active) .c-play,.pb .clip:not(.active) .c-menu,.pb .clip:not(.active) input,.pb .clip:not(.active) .c-tags{ pointer-events:none; }
 @media (prefers-reduced-motion: reduce){.pb *,.pb *::before,.pb *::after{ transition:none !important; animation:none !important; }
@@ -392,4 +392,21 @@ export const PLAYBAR_CSS = `.pb{
    edited into the extracted rules, so re-running the generator cannot quietly
    put the teal back. ──────────────────────────────────────────────────── */
 .pb{ --signal: #38bdf8; --signal-soft: rgba(56, 189, 248, .14); }
+
+/* ── THE PANEL'S EDGE IS A RING, NOT A BORDER ────────────────────────────
+   The reference gives \`.playbar\` a 1px border. On a panel this wide that
+   moves every row inside it in by a pixel, and the bar's rows are read against
+   the cards below them — \`TheBarSpansTheFullWidth\` caught the ruler starting
+   at 25 where it must start at 24, twice now, once on our own bar and once
+   here. A ring is drawn rather than laid out, so the alignment survives.
+   The lift and the top highlight are restated because replacing the shadow
+   replaces all of it. ─────────────────────────────────────────────────── */
+.pb .playbar{
+  border: 0;
+  box-shadow:
+    inset 0 0 0 1px var(--stroke),
+    inset 0 1px 0 rgba(255,255,255,.05),
+    0 40px 90px -40px rgba(0,0,0,.9),
+    0 8px 30px -18px rgba(0,0,0,.8);
+}
 `;

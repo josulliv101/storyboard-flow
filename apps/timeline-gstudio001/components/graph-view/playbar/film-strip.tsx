@@ -148,7 +148,7 @@ export function FilmStrip({
         const kind = i % 10 === 0 ? " t10" : i % 2 === 0 ? " t2" : "";
         return (
           <span key={`tick-${i}`}>
-            <div className={`tick${kind}`} style={{ left: i * PXS }} />
+            <div data-seam-tick className={`tick${kind}`} style={{ left: i * PXS }} />
             {i % 2 === 0 && i < DUR ? (
               <span
                 className={`tlabel${i % 10 === 0 ? " big" : ""}`}
@@ -172,11 +172,14 @@ export function FilmStrip({
             key={shot.id}
             className="shot"
             data-i={index}
+            data-seam-segment={shot.id}
+            data-seam-segment-live={shot.id === activeId ? "" : undefined}
             style={{ left: shot.start * PXS + 2, width: seconds * PXS - 4 }}
           >
             {shot.frames.map((frame, k) => (
               <div
                 key={k}
+                data-seam-thumbnail
                 className="frame"
                 style={{ width: `${100 / shot.frames.length}%`, background: frame }}
               />
@@ -465,12 +468,19 @@ export function FilmStrip({
     if (event.code === "Space") {
       event.preventDefault();
       setPlaying((value) => !value);
-    } else if (event.key === "ArrowLeft") {
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      setTime((value) => clamp(value - (event.shiftKey ? 5 : 1), 0, DUR));
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      setTime((value) => clamp(value + (event.shiftKey ? 5 : 1), 0, DUR));
+      const forward = event.key === "ArrowRight";
+      if (event.shiftKey) {
+        // SHIFT STEPS A CLIP, plain arrows move a second. The two ways of
+        // asking for the same step must not drift, so this is the same call
+        // tapping a box makes.
+        const at = shots.findIndex((shot) => shot.id === activeId);
+        const next = at < 0 ? (forward ? 0 : shots.length - 1) : at + (forward ? 1 : -1);
+        if (next >= 0 && next < shots.length) setSelected(next);
+        return;
+      }
+      setTime((value) => clamp(value + (forward ? 1 : -1), 0, DUR));
     } else if (event.key === "Home") {
       event.preventDefault();
       setTime(0);
@@ -503,13 +513,35 @@ export function FilmStrip({
           ) : null}
 
           <section
+            data-seam-bar
             className={`playbar${hot ? " top-hot" : ""}`}
             aria-label="Storyboard timeline"
             tabIndex={0}
             onKeyDown={onKeyDown}
           >
-            <div className="viewport" ref={viewportRef}>
+            <div data-seam-viewport className="viewport" ref={viewportRef}>
               <div
+                // THE SAME HOOKS THE OLD BAR PUBLISHED, kept on purpose.
+                //
+                // `data-seam-*` names the strip's PARTS — the boxes, the
+                // ruler, the playhead, a segment, a thumbnail — and those
+                // concepts survived the swap even though the component drawing
+                // them did not. Renaming them would have churned a hundred
+                // references in the stories to say the same things about the
+                // same parts, and the tests that then broke would be the ones
+                // whose FEATURE is gone, which is exactly the signal worth
+                // keeping clear.
+                //
+                // The scrub surface is also a slider, as it was: the keyboard
+                // stories read `aria-valuenow` to say where the playhead is.
+                data-seam-boxes
+                data-seam-track
+                role="slider"
+                tabIndex={0}
+                aria-label="Playhead"
+                aria-valuemin={0}
+                aria-valuemax={DUR}
+                aria-valuenow={time}
                 className="content"
                 ref={contentRef}
                 style={{ width: DUR * PXS }}
@@ -519,10 +551,11 @@ export function FilmStrip({
                 onPointerCancel={onPointerUp}
                 onPointerLeave={onPointerLeave}
               >
-                <div className="lane" ref={laneRef}>
+                <div data-seam-lane className="lane" ref={laneRef}>
                   {sections.map((section) => (
                     <div
                       key={`label-${section.start}`}
+                      data-seam-tick-name
                       className="seclabel"
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={() => scrollToSection(section.start)}
@@ -533,10 +566,11 @@ export function FilmStrip({
                   ))}
                 </div>
 
-                <div className="ruler">
+                <div data-seam-ruler className="ruler">
                   {sections.map((section) => (
                     <div
                       key={`base-${section.start}`}
+                      data-seam-ruler-block={section.name}
                       className="rbase"
                       style={{
                         left: section.start * PXS + 3,
@@ -547,6 +581,9 @@ export function FilmStrip({
                   {ticks}
                   {selectedShot === null ? null : (
                     <div
+                      // THE ONLY SATURATED THING IN THE BAND, which is what
+                      // makes the subject findable on a scale of two dozen.
+                      data-seam-ruler-block-live={selectedShot.id}
                       className="range"
                       style={{
                         left: selectedShot.start * PXS + 2,
@@ -564,10 +601,11 @@ export function FilmStrip({
                   />
                 ))}
 
-                <div className="strip" ref={stripRef}>
+                <div data-seam-strip className="strip" ref={stripRef}>
                   {shotBoxes}
                   {selectedShot === null ? null : (
                     <div
+                      data-seam-active-mark
                       className="underline"
                       style={{
                         left: selectedShot.start * PXS + 2,
@@ -582,16 +620,32 @@ export function FilmStrip({
                   style={{ left: ghostX ?? 0 }}
                 />
 
-                <div className="playhead" style={{ transform: `translateX(${time * PXS}px)` }}>
-                  <div className="ph-chip">{timecode(time)}</div>
-                  <div className="ph-tri" />
-                  <div className="ph-line" />
-                </div>
+                {/* DRAWN ONLY WHILE PLAYING, which the reference does not do
+                    and this app decided deliberately: the playhead is the only
+                    saturated thing on the bar, and a permanent alarm colour is
+                    one that has stopped meaning anything. It sat there claiming
+                    "playback is here" about a transport stopped for an hour.
+
+                    THE POSITION IS STILL TRACKED — this decides whether it is
+                    drawn, nothing else. Scrubbing still moves the clock and the
+                    panels still follow it. */}
+                {playing ? (
+                  <div
+                    data-seam-playhead
+                    className="playhead"
+                    style={{ transform: `translateX(${time * PXS}px)` }}
+                  >
+                    <div className="ph-chip">{timecode(time)}</div>
+                    <div className="ph-tri" />
+                    <div className="ph-line" />
+                  </div>
+                ) : null}
               </div>
             </div>
 
             <div className="minimap">
               <div
+                data-seam-minimap
                 className="mm-track"
                 ref={minimapRef}
                 aria-label="Sequence navigator"
@@ -603,8 +657,24 @@ export function FilmStrip({
                 {shots.map((shot) => (
                   <div
                     key={shot.id}
+                    // THE SUBJECT IS MARKED ON THE MAP TOO, which the reference
+                    // does not do and this app decided it should: the two
+                    // strips answer different questions — which shot, and where
+                    // in the project that shot is — and the subject is the fact
+                    // they share. Marked on only one of them, the map shows a
+                    // window a dozen clips wide and leaves you to work out
+                    // which is yours.
+                    //
+                    // WHITE AND AT FULL STRENGTH, not an edge: a segment here
+                    // can be a pixel wide, and a border would eat into a width
+                    // that means duration.
+                    data-seam-mini-segment={shot.id}
+                    data-seam-mini-segment-live={shot.id === activeId ? "" : undefined}
                     className="mm-shot"
                     style={{
+                      ...(shot.id === activeId
+                        ? { background: "#ffffff", opacity: 1 }
+                        : {}),
                       left: `${(shot.start / DUR) * 100}%`,
                       width: `calc(${((shot.end - shot.start) / DUR) * 100}% - 2px)`,
                     }}
@@ -617,7 +687,7 @@ export function FilmStrip({
                     style={{ left: `${(section.start / DUR) * 100}%` }}
                   />
                 ))}
-                <div className="mm-window" ref={windowRef} />
+                <div data-seam-mini-window className="mm-window" ref={windowRef} />
                 <div className="mm-ph" style={{ left: `${(time / DUR) * 100}%` }}>
                   <i />
                 </div>

@@ -74,8 +74,28 @@ function walk(css) {
   return out;
 }
 
+/**
+ * THE ACCENT IS OURS, AND THE REFERENCE HARDCODES ITS OWN 27 TIMES.
+ *
+ * Redefining `--signal` covers only the rules that read it. The rest spell the
+ * teal out — `rgba(60,219,192,.55)` in the active range's gradient and its
+ * glow, in the playhead chip's shadow, in a card's active ring — so a variable
+ * override left the design half-changed and, worse, half-changed in exactly the
+ * places that mark the SUBJECT.
+ *
+ * Substituted at extraction rather than patched afterwards: the alpha values
+ * differ every time and hand-editing 27 of them is how one gets missed.
+ * PL15-026 runs the subject's blue from the film to the minimap off one
+ * exported constant, and this is that colour — rgb(56,189,248).
+ */
+function ourAccent(css) {
+  return css
+    .replace(/60,\s*219,\s*192/g, "56, 189, 248")
+    .replace(/#3cdbc0/gi, "#38bdf8");
+}
+
 const css =
-  walk(style) +
+  ourAccent(walk(style)) +
   `
 /* ── Deviations from the reference, and why ──────────────────────────────
    1. \`grid-template-columns: minmax(0, 1fr)\`. The reference centres its stage
@@ -98,6 +118,23 @@ ${SCOPE}${PAGE}{ grid-template-columns: minmax(0, 1fr); min-height: 100%; }
    edited into the extracted rules, so re-running the generator cannot quietly
    put the teal back. ──────────────────────────────────────────────────── */
 ${SCOPE}{ --signal: #38bdf8; --signal-soft: rgba(56, 189, 248, .14); }
+
+/* ── THE PANEL'S EDGE IS A RING, NOT A BORDER ────────────────────────────
+   The reference gives \`.playbar\` a 1px border. On a panel this wide that
+   moves every row inside it in by a pixel, and the bar's rows are read against
+   the cards below them — \`TheBarSpansTheFullWidth\` caught the ruler starting
+   at 25 where it must start at 24, twice now, once on our own bar and once
+   here. A ring is drawn rather than laid out, so the alignment survives.
+   The lift and the top highlight are restated because replacing the shadow
+   replaces all of it. ─────────────────────────────────────────────────── */
+${SCOPE} .playbar{
+  border: 0;
+  box-shadow:
+    inset 0 0 0 1px var(--stroke),
+    inset 0 1px 0 rgba(255,255,255,.05),
+    0 40px 90px -40px rgba(0,0,0,.9),
+    0 8px 30px -18px rgba(0,0,0,.8);
+}
 `;
 
 const file = `/**
