@@ -1796,7 +1796,15 @@ export function GraphItemDetailsModal() {
   // focus is on a handle, after a swipe it is nowhere. Fields are excluded:
   // Escape in a text field means "abandon this edit", and the field is
   // entitled to keep it.
-  useEffect(() => {
+  //
+  // A LAYOUT EFFECT, so the view owns the key from the frame it appears in.
+  // A passive effect runs after paint, and the view appears mid-transition —
+  // the browser is holding a snapshot over the page for ~380ms, which is
+  // exactly long enough for a hand (or a test) to reach Escape before the
+  // listener is attached. Measured: the e2e case passed alone and failed under
+  // a loaded six-worker run, which is the shape of a race rather than a bug in
+  // what it asserts.
+  useLayoutEffect(() => {
     if (!wantedNow) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
