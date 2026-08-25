@@ -951,10 +951,15 @@ export const OnlyTheSubjectPanelIsMarked: Story = {
     );
     expect(borderAlpha(centre)).toBeGreaterThan(borderAlpha(neighbour));
 
-    // ...and a lighter surface under it.
-    expect(getComputedStyle(centre).backgroundColor).not.toBe(
-      getComputedStyle(neighbour).backgroundColor,
-    );
+    // ...and a lighter surface under it. READ FROM WHICHEVER PROPERTY CARRIES
+    // THE PAINT: the card is a gradient now (PL15-030), so `backgroundColor` is
+    // transparent on both and comparing it says the two surfaces match when
+    // they plainly do not.
+    const surface = (element: HTMLElement) => {
+      const style = getComputedStyle(element);
+      return style.backgroundImage === "none" ? style.backgroundColor : style.backgroundImage;
+    };
+    expect(surface(centre)).not.toBe(surface(neighbour));
 
     // The white ring and the sky-blue one that used to follow the playhead are
     // both gone: the shadow lifts the row off the board and says nothing about

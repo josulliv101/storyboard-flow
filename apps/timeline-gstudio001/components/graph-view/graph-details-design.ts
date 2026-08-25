@@ -20,14 +20,42 @@
 /** The page a card sits on. */
 export const SURFACE_PAGE = "bg-zinc-950";
 
-/** A card. Opaque rather than a white wash, because these sit over the board
- *  and a translucent card would let the board's own cards read through the
- *  frame you are trying to judge. */
-export const SURFACE_CARD = "bg-[#0d0d10]";
+/**
+ * A card.
+ *
+ * OPAQUE, rather than a white wash: these sit over the board, and a translucent
+ * card would let the board's own cards read through the frame you are trying to
+ * judge.
+ *
+ * LIT FROM ABOVE (PL15-030), like the bar. The reference design gives a clip
+ * card a top-to-bottom gradient rather than a flat fill, and it is the same
+ * trick the bar's panel uses — the card reads as a surface catching light
+ * instead of a rectangle of a slightly different grey.
+ */
+export const SURFACE_CARD = "bg-[linear-gradient(180deg,#12151c,#0c0f14)]";
 
 /** The SAME card, in focus. Two clicks of lightness — enough that the eye
  *  reads the centre as nearer without it becoming a different component. */
-export const SURFACE_CARD_FOCUS = "bg-[#141418]";
+export const SURFACE_CARD_FOCUS = "bg-[linear-gradient(180deg,#141821,#0c0f14)]";
+
+/**
+ * WHAT LIFTS A CARD OFF THE PAGE, and marks the one in focus (PL15-030).
+ *
+ * A deep, wide shadow and a single lit pixel along the top edge — the same
+ * pairing the bar's panel uses, so the two read as parts of one instrument
+ * rather than two components that happen to be dark.
+ *
+ * AND IT IS THE SAME ON EVERY PANEL, which is a decision this repo already
+ * made and which the reference contradicts. The reference rings its active
+ * card in the accent; here the white ring and the sky-blue one that used to
+ * follow the playhead were both removed deliberately — the shadow lifts the
+ * row off the board and says nothing about which panel you are in. Focus
+ * falloff is carried by the SURFACE and the BORDER moving together, and
+ * `OnlyTheSubjectPanelIsMarked` asserts the shadow is identical either side and
+ * carries no accent at all. It caught this being reintroduced.
+ */
+export const CARD_LIFT =
+  "shadow-[0_34px_80px_-36px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.05)]";
 
 /** A well cut INTO a card: the transport bar, and the tray a control group
  *  sits in. Darker than the card, so it reads as recessed rather than as a
@@ -37,12 +65,11 @@ export const SURFACE_WELL = "bg-[#08080a]";
 /**
  * THE BAR'S OWN SURFACE — the one lit thing in the view (PL15-030).
  *
- * Every other surface here is flat, and deliberately: a card is a card and a
- * well is a well, and lighting them would make depth a matter of degree
- * instead of a matter of which of the three you are. The bar is the exception
- * because it is not on the page in the same way — it is the instrument the
- * whole view is arranged around, and the reference design gives it a top-lit
- * panel to say so.
+ * The cards are lit now too (see `SURFACE_CARD`), so this is no longer the
+ * only gradient in the view — but it is the deepest. The bar is the instrument
+ * the whole view is arranged around, and the reference gives it a stronger
+ * top-lit panel than the cards that sit below it, which is what keeps the two
+ * reading as an instrument and its contents rather than as two rows of card.
  *
  * A GRADIENT PLUS AN INSET HIGHLIGHT, and the highlight is the half that does
  * the work. `inset 0 1px 0 rgba(255,255,255,.05)` is a single lit pixel along
@@ -126,8 +153,10 @@ export const TITLE_SIDE = "text-[13px] font-semibold text-zinc-400";
 
 /* ── RADII ─────────────────────────────────────────────────────────────── */
 
-/** A card. */
-export const RADIUS_CARD = "rounded-xl";
+/** A card. 16px, up from 12 (PL15-030): the reference's clip card is rounder
+ *  than its wells, and at this size a tighter corner reads as a tile rather
+ *  than as something with a picture mounted in it. */
+export const RADIUS_CARD = "rounded-2xl";
 /** A well, and a control group's tray. */
 export const RADIUS_WELL = "rounded-lg";
 /** Anything inside a well: a segment, a field, a chip. */

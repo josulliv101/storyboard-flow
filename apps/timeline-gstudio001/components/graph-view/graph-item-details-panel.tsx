@@ -14,6 +14,7 @@ import {
 
 import { DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
 import {
+  CARD_LIFT,
   HAIRLINE,
   HAIRLINE_STRONG,
   RADIUS_CARD,
@@ -479,6 +480,9 @@ export function DetailsPanel({
           // this replaces, which was the loudest mark in the view and was
           // spent on the one fact the layout already tells you.
           centre ? SURFACE_CARD_FOCUS : SURFACE_CARD,
+          // THE SAME LIFT ON EVERY PANEL (PL15-030). It says the row is above
+          // the board, not which card you are in — see the note on the token.
+          CARD_LIFT,
           // THE CHROME, on the step's curve but half its clock. A ring and a
           // shadow do not travel, so matching the step's duration would leave
           // a border still resolving after the panel it borders had arrived —

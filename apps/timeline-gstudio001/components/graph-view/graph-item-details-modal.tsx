@@ -103,6 +103,11 @@ import {
   type BarReach,
 } from "./graph-item-details-bar-reach";
 
+/** The row's edges fade rather than cutting a card in half — see the note on
+ *  the view's own element. */
+const DECK_EDGE_FADE =
+  "linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)";
+
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
 // The board had too much on it: a strip, a tree, a preview, a ruler, a rail,
@@ -1083,8 +1088,23 @@ function DetailsFilmstripModal({
       // against its floor of 16. A flex gap applies either way, and the two
       // compose: the gap is the minimum, `my-auto` spends whatever is left
       // over. 24px also lands where the design this follows sits, about 27.
+      // THE ROW FADES AT ITS EDGES RATHER THAN BEING CUT (PL15-030).
+      //
+      // `overflow-clip` alone ends a card mid-picture at the boundary, which
+      // reads as a rendering fault rather than as "there is more this way". The
+      // reference masks its deck to transparent over the outer 5%, so the cards
+      // either side leave the row instead of being sliced by it — and the crop
+      // stops competing with the subject for the eye.
+      //
+      // On the VIEW, not the row: the row is transformed, and a mask on a
+      // moving element travels with it, so the fade would slide off the edge it
+      // is meant to be softening.
+      style={{
+        containerType: "inline-size",
+        maskImage: DECK_EDGE_FADE,
+        WebkitMaskImage: DECK_EDGE_FADE,
+      }}
       className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-clip"
-      style={{ containerType: "inline-size" }}
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
