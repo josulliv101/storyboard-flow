@@ -142,6 +142,29 @@ export function ClipDeck({
   const [trims, setTrims] = useState<readonly Trim[]>(() =>
     CLIPS.map((clip) => ({ in: clip.trimIn, out: clip.trimOut })),
   );
+  // MIRRORED IN A REF so the release handler can read the edge the drag landed
+  // on WITHOUT reaching for it through a state updater. Doing that ran the
+  // commit inside React's render pass — the dispatch notified the store, the
+  // store re-rendered SelectionSummary, and React reported the obvious: a
+  // component updated while a different one was rendering. The subtler half is
+  // that StrictMode invokes an updater twice, so one trim drag could commit
+  // TWICE and leave two entries on the undo stack for one edit nobody made
+  // twice. The ref is written wherever the state is, and read by the commit.
+  const trimsRef = useRef<readonly Trim[]>(trims);
+  // MIRRORED FROM AN EFFECT, not from render. `applyTrims` writes the ref
+  // directly because it is only ever called from a pointer handler, where that
+  // is allowed; the re-seed below runs DURING render, where writing a ref is
+  // not — React Compiler rejects it outright ("Cannot access refs during
+  // render"), and it is the same class of mistake as the trim commit that was
+  // dispatching mid-render. So the re-seed sets state alone and this carries it
+  // across.
+  useEffect(() => {
+    trimsRef.current = trims;
+  }, [trims]);
+  const applyTrims = (next: readonly Trim[]) => {
+    trimsRef.current = next;
+    setTrims(next);
+  };
   const [clipsSeen, setClipsSeen] = useState(CLIPS);
   if (clipsSeen !== CLIPS) {
     setClipsSeen(CLIPS);
@@ -310,23 +333,45 @@ export function ClipDeck({
 
   /* ── trim ───────────────────────────────────────────────────────────── */
 
-  const dragTrim = (index: number, edge: "in" | "out") => (event: React.PointerEvent) => {
+  /**
+   * THE WINDOW SLIDES, IT DOES NOT ONLY RESIZE.
+   *
+   * The reference reads its mode off the target — `c-h` left, `c-h` right, and
+   * otherwise `"m"`, the window body sliding both edges at once. This port had
+   * only the two handles, so the largest surface on a card did nothing at all
+   * while advertising `cursor: grab` and even `:active{cursor:grabbing}`.
+   * Measured across a card, the window band was the one place a press moved
+   * nothing — which is most of what "grab does not work reliably" was.
+   */
+  const dragTrim =
+    (index: number, mode: "in" | "out" | "move") => (event: React.PointerEvent) => {
     event.stopPropagation();
     event.preventDefault();
     const strip = (event.currentTarget as HTMLElement).closest<HTMLElement>(".c-strip");
     const clip = CLIPS[index];
     if (strip == null || clip === undefined) return;
     const box = strip.getBoundingClientRect();
+    // WHERE IN THE WINDOW IT WAS GRABBED, and how long the window is, both read
+    // once at press. A slide has to keep its length and stay under the pointer;
+    // recomputing either mid-drag makes the window creep away from the hand.
+    const startTrim = trimsRef.current[index] ?? { in: clip.trimIn, out: clip.trimOut };
+    const grabbedAt = ((event.clientX - box.left) / box.width) * clip.source;
+    const grabOffset = grabbedAt - startTrim.in;
+    const windowLength = startTrim.out - startTrim.in;
+
     const move = (moveEvent: PointerEvent) => {
       const ratio = clamp((moveEvent.clientX - box.left) / box.width, 0, 1);
       const at = Number((ratio * clip.source).toFixed(2));
-      setTrims((current) =>
-        current.map((trim, i) => {
+      applyTrims(
+        trimsRef.current.map((trim, i) => {
           if (i !== index) return trim;
           // A window cannot cross itself; a tenth of a second is the floor.
-          return edge === "in"
-            ? { ...trim, in: Math.min(at, trim.out - 0.1) }
-            : { ...trim, out: Math.max(at, trim.in + 0.1) };
+          if (mode === "in") return { ...trim, in: Math.min(at, trim.out - 0.1) };
+          if (mode === "out") return { ...trim, out: Math.max(at, trim.in + 0.1) };
+          // Sliding clamps the WHOLE window inside the source, so it stops at
+          // either end with its length intact rather than being squashed.
+          const nextIn = clamp(at - grabOffset, 0, Math.max(0, clip.source - windowLength));
+          return { ...trim, in: nextIn, out: nextIn + windowLength };
         }),
       );
     };
@@ -336,11 +381,8 @@ export function ClipDeck({
       // COMMITTED ON RELEASE, not per frame. A trim is one edit however long
       // the drag was, and dispatching every pointer move would fill the undo
       // stack with a hundred steps nobody made.
-      setTrims((current) => {
-        const trim = current[index];
-        if (trim !== undefined) onTrim?.(clip.id, trim);
-        return current;
-      });
+      const trim = trimsRef.current[index];
+      if (trim !== undefined) onTrim?.(clip.id, trim);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -445,7 +487,11 @@ export function ClipDeck({
                         className="c-shade r"
                         style={{ left: `${left + width}%`, right: 0, width: "auto" }}
                       />
-                      <div className="c-win" style={{ left: `${left}%`, width: `${width}%` }}>
+                      <div
+                        className="c-win"
+                        style={{ left: `${left}%`, width: `${width}%` }}
+                        onPointerDown={dragTrim(index, "move")}
+                      >
                         <i className="c-h l" onPointerDown={dragTrim(index, "in")} />
                         <i className="c-h r" onPointerDown={dragTrim(index, "out")} />
                       </div>

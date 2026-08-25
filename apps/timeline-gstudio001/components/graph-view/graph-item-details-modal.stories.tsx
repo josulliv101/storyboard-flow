@@ -1760,19 +1760,24 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     nudgePlayhead(4);
     await waitFor(() => expect(at()).toBeGreaterThan(3));
 
-    // ── THE PLAYHEAD IS DRAWN ONLY WHILE SOMETHING RUNS ──────────────────
+    // ── THE PLAYHEAD IS ALWAYS DRAWN; THE BAR SAYS WHETHER IT IS RUNNING ──
     //
-    // The clock holds a position from the moment anything touches it, so the
-    // red line used to sit on the bar permanently — claiming "playback is
-    // here" about a transport stopped an hour ago. It is the only saturated
-    // thing up there, and a permanent alarm colour is one that has stopped
-    // meaning anything.
+    // This used to assert the opposite. The playhead was hidden while stopped,
+    // reasoning that it is the only saturated thing on the bar and a permanent
+    // alarm colour stops meaning anything. That held for the CHIP — which is
+    // `--chip` — and not for the playhead as a whole: the line is plain white,
+    // and it answers "where am I in the sequence", which a stopped transport
+    // still has an answer to. Hiding it removed the reader's place marker for
+    // the majority of the time the view is open.
     //
-    // Asserted HERE, after a nudge has moved the clock well off zero: the
-    // point is that a known position is deliberately not drawn, which a check
-    // taken before anything touched the clock could pass for the wrong reason.
-    expect(document.querySelector("[data-seam-playhead]")).toBeNull();
-    expect(document.querySelector("[data-seam-playhead-head]")).toBeNull();
+    // The saturation concern is kept, using the reference's own mechanism
+    // rather than a bespoke one: `is-playing` on the bar glows the chip while
+    // the transport runs. So the marker stays put and the STATE is what moves.
+    //
+    // Asserted HERE, after a nudge has moved the clock well off zero, so that
+    // "drawn at a known position" is what passes rather than a lucky zero.
+    expect(document.querySelector("[data-seam-playhead]")).not.toBeNull();
+    expect(document.querySelector(".pb .playbar.is-playing")).toBeNull();
 
     // The RIGHT-hand panel: "After". Its stretch of the bar starts at 7s —
     // "Before" whole (3s), then "Subject" whole (4s).
@@ -1819,12 +1824,15 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     // the moment they describe, which failed the pause check two lines down on
     // a state that had moved on. The whole story is one running clock, so
     // anything inserted into it has to cost nothing.
-    // DRAWN WHILE PLAYING, which is the whole claim and is unchanged. Its
-    // PARTS are not: the ported strip's playhead is a line with a timecode chip
-    // that spans the film rather than a head sitting in the scale, so the two
-    // assertions about `-head` and about living inside `[data-seam-ruler]` are
-    // gone with the bar that drew it that way (PL15-030).
+    // STILL DRAWN — it never stopped being — and now the BAR is marked as
+    // running, which is the part that actually tracks the transport. Its PARTS
+    // changed with the port too: the ported strip's playhead is a line with a
+    // timecode chip that spans the film rather than a head sitting in the
+    // scale, so the assertions about `-head` and about living inside
+    // `[data-seam-ruler]` are gone with the bar that drew it that way
+    // (PL15-030).
     expect(document.querySelector("[data-seam-playhead]")).not.toBeNull();
+    expect(document.querySelector(".pb .playbar.is-playing")).not.toBeNull();
 
     // PRESSED AGAIN, IT PAUSES — and does not rewind. Pausing is the same
     // contract as the bar's button, so the two controls cannot disagree.
@@ -1835,13 +1843,12 @@ export const PlayingFromANeighbourRunsItOnTheMonitor: Story = {
     expect(at()).toBeGreaterThanOrEqual(6);
     expect(playOf(panels()[2]!).getAttribute("aria-label")).toMatch(/^Play /);
 
-    // AND THE PLAYHEAD GOES WITH THE PLAYBACK, not with the position. The
-    // clock is still at six seconds — the line above asserts it — and the red
-    // line is gone anyway, which is the point: it reports that something is
-    // RUNNING, and a permanent alarm colour on a stopped transport is one that
-    // has stopped meaning anything.
-    expect(document.querySelector("[data-seam-playhead]")).toBeNull();
-    expect(document.querySelector("[data-seam-playhead-head]")).toBeNull();
+    // AND THE PLAYHEAD STAYS, while the RUNNING mark goes. The clock is still
+    // at six seconds — the line above asserts it — and the marker is still
+    // there saying so, which is exactly what a stopped transport should leave
+    // a reader with. What is gone is the claim that something is playing.
+    expect(document.querySelector("[data-seam-playhead]")).not.toBeNull();
+    expect(document.querySelector(".pb .playbar.is-playing")).toBeNull();
   },
 };
 

@@ -20,6 +20,15 @@ import {
 import { PlaybarFrame } from "./playbar-frame";
 import { PLAYBAR_CSS, PLAYBAR_PAGE_CLASS, PLAYBAR_SCOPE } from "./playbar-styles";
 
+/** Read at the moment of the move rather than at mount, because the setting can
+ *  change under a long-lived view and a cached answer would outlive it. */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 /**
  * THE REFERENCE DESIGN'S FILM STRIP, ported to React (PL15-030).
  *
@@ -171,7 +180,7 @@ export function FilmStrip({
         return (
           <div
             key={shot.id}
-            className="shot"
+            className={shot.id === activeId ? "shot selected" : "shot"}
             data-i={index}
             data-seam-segment={shot.id}
             data-seam-segment-live={shot.id === activeId ? "" : undefined}
@@ -189,12 +198,118 @@ export function FilmStrip({
           </div>
         );
       }),
-    [shots],
+    // `activeId` BELONGS IN HERE. The boxes were memoised on `shots` alone
+    // while reading `activeId` inside, so the array was reused across a
+    // selection change and every box kept the mark it had when the memo last
+    // ran. `data-seam-segment-live` was already going stale that way; the
+    // `selected` class would have joined it.
+    [shots, activeId],
   );
 
   const scrollToSection = useCallback((startSeconds: number) => {
     viewportRef.current?.scrollTo({ left: startSeconds * PXS - 24, behavior: "smooth" });
   }, []);
+
+  /**
+   * THE SELECTED SHOT IS BROUGHT INTO VIEW.
+   *
+   * Opening a clip's details used to leave the strip at scrollLeft 0 whichever
+   * clip was opened — measured, clip 1 of 13 and clip 11 of 13 both showed the
+   * head of the sequence, so the one shot the whole view is about was often
+   * off-screen entirely.
+   *
+   * JUMPS the first time and glides after. On open there is nothing to follow,
+   * so an animation would only be a scroll the reader did not ask for; once the
+   * strip is on screen, a change of subject should be traceable by eye.
+   *
+   * THE HAND ALWAYS WINS: a pan or a coast in progress is left alone rather
+   * than yanked back, which is what made this worth a guard rather than a
+   * `scrollIntoView`.
+   */
+  const centredForRef = useRef<{ id: string; at: number } | null>(null);
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (viewport === null || content === null) return;
+    if (activeId === null || activeId === undefined) return;
+
+    const bring = () => {
+      // THE HAND ALWAYS WINS: a pan or a coast in progress is left alone.
+      if (panRef.current !== null || momentumRef.current !== null) return;
+
+      // FOUND BY COMPARING ATTRIBUTES, not by building a selector. A node id is
+      // any string, so interpolating one into `querySelector` is a parse away
+      // from throwing on the first clip whose id contains a delimiter.
+      const box = Array.from(
+        content.querySelectorAll<HTMLElement>("[data-seam-segment]"),
+      ).find((candidate) => candidate.getAttribute("data-seam-segment") === activeId);
+      if (box === undefined) return;
+
+      const furthest = viewport.scrollWidth - viewport.clientWidth;
+      // Not laid out yet — leave the marker unset so a later pass still does it.
+      if (furthest <= 0) return;
+
+      // MEASURED OFF THE DOM RATHER THAN COMPUTED FROM THE DATA.
+      //
+      // Deriving the centre from `shot.start`/`shot.end` measured wrong: it put
+      // the subject 368px off centre while the arithmetic said it was exact,
+      // because the placement the effect read and the placement on screen were
+      // a beat apart while durations were still arriving. The box knows where
+      // it is; asking it removes the whole class of disagreement.
+      //
+      // Scroll-invariant on purpose — the scrollLeft added back cancels the one
+      // in the rect — so the guard below compares like with like.
+      const rect = box.getBoundingClientRect();
+      const view = viewport.getBoundingClientRect();
+      const centre = rect.x - view.x + viewport.scrollLeft + rect.width / 2;
+
+      const previous = centredForRef.current;
+      if (previous !== null && previous.id === activeId && Math.abs(previous.at - centre) < 1) {
+        return;
+      }
+      const first = previous === null;
+      centredForRef.current = { id: activeId, at: centre };
+      viewport.scrollTo({
+        left: clamp(centre - viewport.clientWidth / 2, 0, furthest),
+        // A re-place is a correction, not a journey: animating each settling
+        // pass would read as the bar sliding around on its own. Only a genuine
+        // change of subject is worth following by eye.
+        behavior:
+          first || prefersReducedMotion() || previous?.id === activeId ? "auto" : "smooth",
+      });
+    };
+
+    bring();
+
+    // THE SETTLING IS THE POINT, AND IT IS A MOVE, NOT A RESIZE.
+    //
+    // Clip durations arrive after first paint, so the strip re-places its boxes
+    // under a centring that has already run — measured, the subject sat 368px
+    // off on load while a selection made later landed exactly. A
+    // `ResizeObserver` on the content could not see it: the content's width is
+    // the sequence's whole clock and never changes, only the boxes INSIDE it
+    // move, and they move by inline `left`. So watch for that directly.
+    //
+    // Cheap at rest and safe during playback: the playhead's own transform is
+    // in this subtree and mutates every frame while running, but `bring()`
+    // recomputes the same centre and returns at the guard.
+    const moved = new MutationObserver(bring);
+    if (stripRef.current !== null) {
+      moved.observe(stripRef.current, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style"],
+      });
+    }
+    // A narrower viewport re-centres too — the target is the middle of whatever
+    // width there is now, not the width there was when the view opened.
+    const resized = new ResizeObserver(bring);
+    resized.observe(viewport);
+    return () => {
+      moved.disconnect();
+      resized.disconnect();
+    };
+  }, [activeId, shots]);
 
   /* ── scroll-driven chrome, written directly ─────────────────────────── */
 
@@ -515,7 +630,7 @@ export function FilmStrip({
 
           <section
             data-seam-bar
-            className={`playbar${hot ? " top-hot" : ""}`}
+            className={`playbar${hot ? " top-hot" : ""}${playing ? " is-playing" : ""}`}
             aria-label="Storyboard timeline"
             tabIndex={0}
             onKeyDown={onKeyDown}
@@ -621,26 +736,31 @@ export function FilmStrip({
                   style={{ left: ghostX ?? 0 }}
                 />
 
-                {/* DRAWN ONLY WHILE PLAYING, which the reference does not do
-                    and this app decided deliberately: the playhead is the only
-                    saturated thing on the bar, and a permanent alarm colour is
-                    one that has stopped meaning anything. It sat there claiming
-                    "playback is here" about a transport stopped for an hour.
+                {/* ALWAYS DRAWN, as the reference draws it.
 
-                    THE POSITION IS STILL TRACKED — this decides whether it is
-                    drawn, nothing else. Scrubbing still moves the clock and the
-                    panels still follow it. */}
-                {playing ? (
-                  <div
-                    data-seam-playhead
-                    className="playhead"
-                    style={{ transform: `translateX(${time * PXS}px)` }}
-                  >
-                    <div className="ph-chip">{timecode(time)}</div>
-                    <div className="ph-tri" />
-                    <div className="ph-line" />
-                  </div>
-                ) : null}
+                    This was hidden while stopped on the reasoning that the
+                    playhead is the only saturated thing on the bar and a
+                    permanent alarm colour stops meaning anything. That was
+                    right about the CHIP, which is `--chip`, and wrong about the
+                    playhead as a whole: the line is plain white, and it is the
+                    part that answers "where am I in the sequence" — a question
+                    a stopped transport still has an answer to. Hiding it took
+                    the reader's place marker away whenever they were not
+                    playing, which is most of the time.
+
+                    The saturation concern keeps the reference's own answer
+                    instead of a bespoke one: `is-playing` on the bar glows the
+                    chip while the transport runs, so playing and stopped stay
+                    distinguishable without the marker going away. */}
+                <div
+                  data-seam-playhead
+                  className="playhead"
+                  style={{ transform: `translateX(${time * PXS}px)` }}
+                >
+                  <div className="ph-chip">{timecode(time)}</div>
+                  <div className="ph-tri" />
+                  <div className="ph-line" />
+                </div>
               </div>
             </div>
 

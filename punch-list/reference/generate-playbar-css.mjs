@@ -110,6 +110,41 @@ const css =
       one. ─────────────────────────────────────────────────────────────── */
 ${SCOPE}${PAGE}{ grid-template-columns: minmax(0, 1fr); min-height: 100%; }
 
+/* ── DRAGGING MUST NOT SELECT TEXT ───────────────────────────────────────
+   The reference puts \`user-select: none\` on \`body\`, so scoping sent it to the
+   PAGE class — and embedded in the app, where that class is absent, it never
+   applied. A drag across a card's title or a shot's tag then starts a native
+   text selection that fights the pan, which is exactly what "grab and pan does
+   not work reliably" feels like: it depends entirely on what is under the
+   pointer when you press.
+
+   Not a page behaviour at all, on reflection. It belongs to the components,
+   which is where it goes now.
+
+   \`touch-action: none\` on the deck for the same class of reason: the strip's
+   scroller already declares it, the deck never did, so a touch drag there is a
+   page scroll the browser can take away mid-gesture. ────────────────────── */
+${SCOPE}{ -webkit-user-select: none; user-select: none; }
+${SCOPE} .deck{ touch-action: none; }
+
+/* ── THE PAN SURFACE MUST SAY "GRAB" ─────────────────────────────────────
+   The reference contradicts itself here. \`.strip\` sets \`cursor: grab\`, but
+   \`.shot\` sits on top of it setting \`cursor: pointer\` — while
+   \`.strip.panning .shot\` sets \`grabbing\`. So the shot boxes read "click me"
+   at rest and "grabbing" once you are already dragging.
+
+   Measured across the bar, that inverts the whole instrument: the band that
+   PANS advertised \`pointer\`, and the ruler and label lane, which SEEK,
+   advertised \`ew-resize\` — the drag-me cursor. Someone reading the cursors
+   and acting on them gets the other behaviour every time, which is what
+   "grab and panning does not work reliably" turned out to be.
+
+   \`grab\` at rest agrees with the \`grabbing\` the reference already sets, so
+   this makes the rule consistent with its own intent rather than inventing
+   one. The ruler keeps \`ew-resize\`: it really is the scrub surface, and
+   under the settled contract it is now the ONLY one. ─────────────────── */
+${SCOPE} .strip .shot{ cursor: grab; }
+
 /* ── THE ACCENT IS OURS, NOT THE REFERENCE'S ─────────────────────────────
    \`--signal\` is the reference's selection teal (#3cdbc0). Ours is sky blue and
    it is load-bearing: PL15-026 runs the subject's blue from the film through to
