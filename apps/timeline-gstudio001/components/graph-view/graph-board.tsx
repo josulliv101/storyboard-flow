@@ -127,7 +127,7 @@ import { GraphRenderFormat } from "./graph-render-format";
 import { GraphRenderStatus } from "./graph-render-status";
 import { GraphProjectMenu } from "./graph-project-menu";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
-import { GraphItemDetailsModal } from "./graph-item-details-modal";
+import { GraphBoardContent, GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -2323,7 +2323,7 @@ export function GraphBoard({
             (inside the divider box) against 10 + 8 below.
             The divider owns the clearance on BOTH of its sides now, which is
             the only way the two can be equal by construction. */}
-        <div className="flex flex-col gap-2">
+        <GraphBoardContent>
           {/* THE BOARD CONTROLS ROW: what is in front of you, and the controls
               that qualify it. Under the divider, directly above the surface it
               describes.
@@ -2934,7 +2934,7 @@ export function GraphBoard({
               breadcrumb row now (see BreadcrumbDropZones in the header above),
               not a portal into the sidebar. */}
           {devPanelsOn && <SyncPanel entries={syncEntries} />}
-        </div>
+        </GraphBoardContent>
       </PreviewShell>
       </FlatItemsProvider>
       </TagFilterProvider>

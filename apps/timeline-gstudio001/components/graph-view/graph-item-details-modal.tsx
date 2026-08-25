@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { AudioLines, Pause, Play, Redo2, Undo2, X } from "lucide-react";
 
 import {
@@ -42,7 +49,16 @@ import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
 import type { SeamBarClip } from "./graph-seam-bar-layout";
-import { SeamStripBar } from "./graph-seam-strip-bar";
+import { CLIP_DECK_STRIP_CELLS, ClipDeck } from "./playbar/clip-deck";
+import { monitorPosterUrl, videoFrameUrls } from "@/lib/video-frame-url";
+
+import { FilmStrip, type FilmStripSkimPreview } from "./playbar/film-strip";
+import {
+  usePublishTrimPreview,
+  useTrimPreview,
+  type TrimPreviewFrame,
+} from "./graph-trim-preview";
+import { type FilmStripShot } from "./playbar/film-strip-data";
 import {
   buildSeamTimeline,
   seamAt,
@@ -55,12 +71,13 @@ import {
 import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
 import { DetailsPanel } from "./graph-item-details-panel";
 import { ItemDetailsHeader } from "./graph-item-details-header";
-import { HERO, PANEL_GAP, cardElement } from "./graph-item-details-shared";
+import { HERO, HERO_ATTRIBUTE, PANEL_GAP, cardElement } from "./graph-item-details-shared";
 import { useScopedHistory } from "./graph-item-details-history";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
   VIEW_COUNTS,
   lastViewCount,
+  DETAILS_BASIS_VAR,
   panelWidthsFor,
   rememberViewCount,
   type ViewCount,
@@ -93,6 +110,67 @@ import {
   rememberBarReach,
   type BarReach,
 } from "./graph-item-details-bar-reach";
+
+/** The row's edges fade rather than cutting a card in half — see the note on
+ *  the view's own element. */
+/** Breathing room below the view, so the deck's cards do not sit on the edge. */
+/**
+ * How far either side of the subject a card gets a real strip of frames.
+ *
+ * Every cell is a Cloudinary frame grab — one request each — and the deck holds
+ * every clip in the collection, so sampling all of them would be sixteen
+ * requests times sixty-odd clips for a view that draws five cards. PL15-028 is
+ * open on exactly that kind of spike. Cards outside this radius get the single
+ * frame they had before; they are past the fade and nobody is reading them.
+ */
+const DECK_STRIP_RADIUS = 3;
+
+const DETAILS_BOTTOM_GAP_PX = 12;
+/**
+ * A floor on the bound height, so a freak measurement cannot collapse the view
+ * to nothing. Not a "give up" threshold: the view ALWAYS bounds itself to the
+ * window, and when the window cannot hold everything the deck is what gets
+ * cropped, with the scroll inside this view.
+ *
+ * Letting it fall back to normal flow was tried and is worse. With the preview
+ * pane open the ancestors constrain the column anyway, so "flowing" produced a
+ * view that scrolled internally AND had thrown its concessions away — a strip
+ * back at its full 150 and cards at their 300 floor, which is the space being
+ * spent in exactly the wrong order.
+ */
+const DETAILS_MIN_FIT_PX = 360;
+
+/* ── CONCEDE ONLY WHEN CONCEDING WINS ────────────────────────────────────
+   Something has to give in a window that cannot hold everything, and the
+   order is: the column's SPACING first, because it costs no content; then the
+   STRIP, because a shot box still reads as a shot box shorter. The deck is
+   told nothing — it fits its own cards to the height it ends up with.
+
+   BUT ONLY IF THE SHORTFALL IS COVERABLE. These two together can find 70px.
+   Past that the column cannot be made to fit however much is given up, and
+   spending the strip's height on a view that still scrolls buys a shorter
+   film and nothing else — the same trade the deck's cards were making when
+   they shrank to their floor AND stayed cut off. Measured with the pane open
+   at a 910-tall window, the shortfall is 159: far out of reach, so nothing
+   concedes and the strip stays at its full 150.
+
+   The shortfall is MEASURED off the live column rather than derived from a
+   comfort constant. The old `889` was a number fitted to one layout, and the
+   bar's rows have already changed twice under it. ────────────────────────── */
+const STRIP_FULL_HEIGHT_PX = 150;
+// 104 rather than 120 because 120 left a 1503x800 window 15px short — close
+// enough that the last of it should come from the strip, which is next in the
+// order anyway, rather than from shaving unrelated constants until it fits. A
+// shot box is still legibly a shot box here; below about 100 it stops being.
+const STRIP_FLOOR_HEIGHT_PX = 104;
+/** The column's own spacing concedes before either component does — it is the
+ *  only give that costs no content at all. `gap-6` restated here because it is
+ *  now written from JS and two sources for one number is how they drift. */
+const DETAILS_GAP_PX = 24;
+const DETAILS_GAP_FLOOR_PX = 12;
+
+const DECK_EDGE_FADE =
+  "linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -202,6 +280,9 @@ function DetailsFilmstripModal({
   onOpenNeighbour: (id: string) => void;
 }>) {
   const graph = useCollectionsSelector((state) => state.graph);
+  // The one mutation the deck makes — a trim — goes through the same command
+  // path the trim fields used, so it is undoable like every other edit here.
+  const store = useCollectionsStore();
 
   // EVERY CLIP GETS A POSITION IN THE ROW. Only three can be seen, but the row
   // is one element translated by the subject's index — so advancing moves the
@@ -439,15 +520,22 @@ function DetailsFilmstripModal({
   // different stretches of time.
   const barWindow = useMemo(() => barReachWindow(ids, centre, reach), [ids, centre, reach]);
 
+  // THE WHOLE SEQUENCE, not the reach window (PL15-030).
+  //
+  // This was `barWindow.ids` because the bar could only ever show a window, so
+  // the clock only had to cover one. The ported strip pans across every clip,
+  // and a clock that stopped at the window's end would disagree with the thing
+  // drawing it — `TheBarTakesTheKeyboard` caught exactly that, pressing End and
+  // landing at 126 on a strip whose last frame is at 144.
   const collectionSeamClips = useMemo(
     () =>
-      barWindow.ids
+      ids
         .map((id) => {
           const found = graph.nodesById.get(parseNodeId(id));
           return found && found.kind === "media" ? seamClipOf(found as MediaNode) : null;
         })
         .filter((clip): clip is SeamClip => clip !== null),
-    [barWindow, graph],
+    [graph, ids],
   );
 
   // WHERE THE BAR RESTS, as an index into what `buildSeamTimeline` will
@@ -515,6 +603,145 @@ function DetailsFilmstripModal({
   // Until then every panel rests on its own frame, which is what makes opening
   // the view show the cut rather than a playback state nobody asked for.
   const position = scrubbed ? seamAt(timeline, shownSeconds) : null;
+
+  /**
+   * THE SCRUB PREVIEW, AND WHO SHOWS IT.
+   *
+   * Moving the playhead used to change the clock and nothing you could see:
+   * the old bar answered this with a hover card and the swap to the film strip
+   * left the question unanswered (PL15-030).
+   *
+   * The rule is not new. `usePublishTrimPreview` publishes the frame into the
+   * preview pane when the pane is OPEN and reports whether it took it; the
+   * caller draws its own card only when it did not. Pane open: the big picture
+   * changes, which is the whole reason it is open. Pane closed: a card above
+   * the playhead. Exactly one of the two, which is what that seam exists for —
+   * it was built for trim drags and this is the same question asked by a
+   * different gesture.
+   */
+  /**
+   * WHAT A TRIM IS, defined once for both surfaces that can make one.
+   *
+   * The deck's handles and the film's out handle report the same shape — a
+   * window in SOURCE seconds — and go through the same command. Two copies of
+   * this would be two chances to disagree about which end `trimOutSeconds`
+   * counts from, and the store holds it as a TAIL length while both surfaces
+   * think in out points.
+   *
+   * One dispatch per gesture, which is what makes a drag one undo entry.
+   */
+  /**
+   * A frame from a clip's source, for the deck to show while a trim moves.
+   *
+   * QUANTISED TO A QUARTER SECOND, the same as the film's skim card and for
+   * the same reason: the URL is a Cloudinary frame grab, so every distinct time
+   * is a distinct fetch, and a handle dragged across a card would ask for
+   * hundreds. Finer than the eye follows mid-drag, and coarse enough that
+   * dragging back over the same stretch is answered from cache.
+   *
+   * Video only. A still is one image and audio has none; asking either for a
+   * moment rewrites a good URL into one naming a time the file does not have.
+   */
+  const frameAt = useCallback(
+    (clipId: string, sourceSeconds: number) => {
+      const found = graph.nodesById.get(parseNodeId(clipId));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      if (media === null || media.mediaKind !== "video") return undefined;
+      return monitorPosterUrl(media.posterSrcs?.[0], Math.round(sourceSeconds * 4) / 4);
+    },
+    [graph],
+  );
+
+  const commitTrim = useCallback(
+    (clipId: string, next: Readonly<{ in: number; out: number }>) => {
+      const found = graph.nodesById.get(parseNodeId(clipId));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      // ONLY A CLIP WITH A TIMELINE CAN BE TRIMMED. `update-media` accepts a
+      // window for audio and video and for nothing else — a still has no
+      // duration to cut into, which is the same reason the bar draws it as one
+      // frame rather than a filmstrip, and why the strip gives it no handle.
+      const kind = media?.mediaKind;
+      if (media === null || (kind !== "audio" && kind !== "video")) return;
+      const full = hasSourceWindow(media) ? media.fullDurationSeconds : mediaDurationSeconds(media);
+      store.dispatch({
+        type: "update-media",
+        nodeId: media.id,
+        update: {
+          mediaKind: kind,
+          trimInSeconds: Math.max(0, next.in),
+          // BACK TO A TAIL LENGTH, which is how the store holds it.
+          trimOutSeconds: Math.max(0, full - next.out),
+        },
+      });
+    },
+    [graph, store],
+  );
+
+  const [skimSeconds, setSkimSeconds] = useState<number | null>(null);
+  // A TRIM IN PROGRESS NAMES ITS OWN FRAME, and takes precedence over the
+  // scrub's. Both raise the same preview; they differ in how the frame is
+  // found. A scrub knows a place on the sequence and reads across to a clip; a
+  // trim knows the clip already and is asking for a source time the sequence
+  // does not have a place for yet — the whole point of dragging the edge is
+  // that the timing is about to change.
+  const [trimSkim, setTrimSkim] = useState<Readonly<{
+    clipId: string;
+    sourceSeconds: number;
+  }> | null>(null);
+
+  const skimAt = skimSeconds === null ? null : seamAt(timeline, skimSeconds);
+  const skimClipId = trimSkim?.clipId ?? skimAt?.clipId ?? null;
+  const skimNode = (() => {
+    if (skimClipId === null) return null;
+    const found = graph.nodesById.get(parseNodeId(skimClipId));
+    return found && found.kind === "media" ? (found as MediaNode) : null;
+  })();
+  const skimSourceTime =
+    skimNode === null
+      ? null
+      : trimSkim !== null
+        ? trimSkim.sourceSeconds
+        : skimAt === null
+          ? null
+          : (hasSourceWindow(skimNode) ? skimNode.trimInSeconds : 0) + skimAt.clipSeconds;
+  // NARROWED FIRST. `MediaNode` is a union and only the video member carries
+  // frame grabs; reaching for them on the union is what `seamClipOf` above is
+  // careful about too.
+  const skimPosterBase =
+    skimNode !== null && skimNode.mediaKind === "video" ? skimNode.posterSrcs?.[0] : undefined;
+  const skimSrc = skimNode?.src;
+
+  const skimFrame = useMemo<TrimPreviewFrame | null>(() => {
+    if (skimSrc === undefined || skimSourceTime === null) return null;
+    return skimPosterBase === undefined
+      ? { src: skimSrc, sourceTime: skimSourceTime }
+      : { src: skimSrc, poster: skimPosterBase, sourceTime: skimSourceTime };
+  }, [skimSrc, skimPosterBase, skimSourceTime]);
+  const skimTaken = usePublishTrimPreview(skimFrame);
+
+  const skimPreview = useMemo<FilmStripSkimPreview | null>(() => {
+    if (skimTaken || skimNode === null || skimSourceTime === null) return null;
+    // QUANTISED TO A QUARTER SECOND, because the URL is a Cloudinary frame grab
+    // and every distinct time is a distinct fetch — a pointer sweeping the bar
+    // would ask for hundreds. Finer than the eye tracks mid-sweep, and coarse
+    // enough that a second pass over the same stretch comes from cache. The
+    // pane's copy above is NOT quantised: it seeks an element it already holds.
+    const poster =
+      skimNode.mediaKind === "audio"
+        ? undefined
+        : skimPosterBase === undefined
+          ? skimNode.src
+          : monitorPosterUrl(skimPosterBase, Math.round(skimSourceTime * 4) / 4);
+    const total = mediaDurationSeconds(skimNode);
+    return {
+      ...(poster === undefined ? {} : { posterSrc: poster }),
+      name: skimNode.name,
+      // HOW FAR INTO THE CLIP, which for a trim is the source time itself:
+      // the window is being redrawn, so "into the clip" is what is being
+      // chosen rather than something to measure against.
+      meta: `${(trimSkim === null ? (skimAt?.clipSeconds ?? 0) : skimSourceTime).toFixed(2)}s / ${total.toFixed(2)}s`,
+    };
+  }, [skimTaken, skimNode, skimAt, skimSourceTime, skimPosterBase, trimSkim]);
   // ANY clip the bar covers, not just the three it used to. With nine panels
   // the playhead can be inside a clip four along, and the monitor still has to
   // be able to paint it.
@@ -750,11 +977,134 @@ function DetailsFilmstripModal({
           ? {
               posterSrcs: media.posterSrcs,
               trimInSeconds: seamClipOf(media)?.trimInSeconds ?? 0,
+              // For handing a skimmed frame to the preview pane (PL15-030).
+              // Carried on the same branch as the posters because it answers
+              // the same question for the same clips: a still has no timeline
+              // to skim along.
+              ...(media.src === undefined ? {} : { src: media.src }),
             }
           : {}),
       };
     });
   }, [barWindow, graph]);
+
+  /**
+   * THE SAME CLIPS, SHAPED FOR THE PORTED STRIP (PL15-030).
+   *
+   * BUILT FROM EVERY CLIP, not from the reach window, and that is the point of
+   * the swap rather than an oversight. The old bar paged a window because it
+   * could not move — reach was how you saw more of the sequence. The new strip
+   * PANS, with inertia, across the whole thing, so the window has nothing left
+   * to do and its clock is the timeline's by construction.
+   *
+   * A POSTER IS A BACKGROUND, which is the seam that let this be swapped in
+   * rather than rewritten: the strip asks for CSS backgrounds and does not care
+   * whether they are the reference's gradients or our stills.
+   */
+  const stripShots = useMemo<readonly FilmStripShot[]>(() => {
+    return ids.map((id) => {
+      const found = graph.nodesById.get(parseNodeId(id));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      const parentId = graph.parentById.get(parseNodeId(id)) ?? null;
+      const parent = parentId === null ? undefined : graph.nodesById.get(parentId);
+      // THROUGH THE SAME ACCESSOR THE BAR ALREADY USES, rather than reaching
+      // into the node: it is the one place that knows a video's poster from a
+      // still's own image, and that audio has neither and should get no
+      // thumbnail rather than a broken one.
+      const poster = seamClipOf(media)?.posterSrc;
+      // TRIMMABLE ONLY WHERE A WINDOW MEANS ANYTHING. `update-media` accepts one
+      // for audio and video and for nothing else, so a still is handed no source
+      // length and the strip draws it no handle — the refusal is expressed once,
+      // here, rather than as a control that turns out to be inert.
+      const seam = seamClipOf(media);
+      const windowed =
+        media !== null && (media.mediaKind === "audio" || media.mediaKind === "video")
+          ? {
+              sourceSeconds: seam?.fullSeconds ?? mediaDurationSeconds(media),
+              trimInSeconds: seam?.trimInSeconds ?? 0,
+            }
+          : {};
+      // THE FRAME THE CLIP STARTS ON, which is the same picture the card's big
+      // image shows — one shot, one representative frame, wherever you are
+      // looking at it. It was the source's opening frame, so a clip trimmed
+      // eight seconds in advertised itself with a moment it does not contain,
+      // and trimming it changed nothing about how it looked.
+      const grabs = media !== null && media.mediaKind === "video" ? media.posterSrcs : undefined;
+      const at =
+        grabs === undefined
+          ? poster
+          : (monitorPosterUrl(grabs[0], seam?.trimInSeconds ?? 0) ?? poster);
+      return {
+        id,
+        ...windowed,
+        label: found?.name ?? id,
+        seconds: media === null ? 0 : mediaDurationSeconds(media),
+        frames: at === undefined ? ["#0d0d10"] : [`center/cover no-repeat url("${at}")`],
+        sectionName: parent?.name ?? null,
+      };
+    })
+      // ZERO-LENGTH CLIPS COME OUT, because `buildSeamTimeline` drops them and
+      // the two clocks have to agree exactly. A fully-trimmed clip drawn as a
+      // box the timeline does not count would put every second after it in the
+      // wrong place.
+      .filter((shot) => shot.seconds > 0);
+  }, [graph, ids]);
+
+  /**
+   * THE SAME CLIPS, SHAPED FOR THE PORTED DECK (PL15-030).
+   *
+   * `trimOut` is an ABSOLUTE point in the source, which is not how the store
+   * holds it — `update-media` takes `trimOutSeconds` as a TAIL length, seconds
+   * cut from the end. Converting here rather than in the deck keeps the deck
+   * ignorant of our storage and keeps the conversion in one place, next to the
+   * dispatch that undoes it.
+   */
+  const deckClips = useMemo(() => {
+    return ids.flatMap((id, index) => {
+      const found = graph.nodesById.get(parseNodeId(id));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      if (media === null) return [];
+      const seam = seamClipOf(media);
+      const full = seam?.fullSeconds ?? mediaDurationSeconds(media);
+      const trimIn = seam?.trimInSeconds ?? 0;
+      const poster = seam?.posterSrc;
+      // Frame grabs are a video's business; a still is one picture and audio is
+      // none, and asking either for a moment rewrites a good URL into one that
+      // names a time the file does not have.
+      const grabs = media.mediaKind === "video" ? media.posterSrcs : undefined;
+      const background = (url: string | undefined) =>
+        url === undefined ? "#0d0d10" : `center/cover no-repeat url("${url}")`;
+
+      // ACROSS THE SOURCE, because the strip these fill is a picture of the
+      // source with the window drawn over it — so the cells outside the window
+      // are the material being trimmed away, and they have to be the frames
+      // that are actually there.
+      const near = Math.abs(index - centre) <= DECK_STRIP_RADIUS;
+      const cells =
+        grabs === undefined || !near
+          ? [background(poster)]
+          : videoFrameUrls(grabs, CLIP_DECK_STRIP_CELLS, {
+              trimInSeconds: 0,
+              effectiveSeconds: full,
+            }).map(background);
+
+      return [
+        {
+          id,
+          name: found?.name ?? id,
+          source: full,
+          trimIn,
+          trimOut: trimIn + mediaDurationSeconds(media),
+          frames: cells.length > 0 ? cells : [background(poster)],
+          // THE FRAME THE CLIP ACTUALLY STARTS ON, not the source's first.
+          poster: background(
+            grabs === undefined ? poster : (monitorPosterUrl(grabs[0], trimIn) ?? poster),
+          ),
+          tags: [] as readonly string[],
+        },
+      ];
+    });
+  }, [graph, ids, centre]);
 
   // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a
   // released scrub differ only in how the clip was chosen; what happens next
@@ -954,97 +1304,227 @@ function DetailsFilmstripModal({
     return { clipId: at.clipId, secondsIntoClip: at.clipSeconds };
   })();
 
+  // THE VIEW'S OWN WIDTH, PUBLISHED FOR THE PANEL ARITHMETIC.
+  //
+  // A ResizeObserver rather than a CSS unit, because the sizes it feeds are
+  // applied both to panels and to things INSIDE panels, and every panel is a
+  // container of its own — so `cqw` would silently mean two different boxes
+  // depending on where it landed. A pixel length means one thing everywhere.
+  //
+  // It tracks the rail opening and closing, the window resizing, and the
+  // preview pane taking height, with nothing to keep in sync.
+  const viewRef = useRef<HTMLElement | null>(null);
+  /** How much height the column has already given up, so the shortfall can be
+   *  measured without clearing the concessions to find it. */
+  const concededRef = useRef(0);
+  const [fitting, setFitting] = useState(false);
+  const { previewOpen } = useTrimPreview();
+  useLayoutEffect(() => {
+    const element = viewRef.current;
+    if (!element) return;
+    const publish = () => {
+      element.style.setProperty(
+        DETAILS_BASIS_VAR,
+        `${Math.round(element.getBoundingClientRect().width)}px`,
+      );
+
+      // ── ONLY WHEN THE PREVIEW PANE IS UP ────────────────────────────────
+      //
+      // With the pane down there is nothing above competing for the height, so
+      // the view is ordinary content: the bar, then the deck below it, and the
+      // page scrolls if that runs past the fold. Fitting it to the window in
+      // that case bought nothing and cost the design its own sizes — a strip
+      // shortened and cards narrowed to avoid a scrollbar nobody minded.
+      //
+      // With the pane up the height is genuinely contested, and THAT is when
+      // both have to give so the two of them stay readable together.
+      if (!previewOpen) {
+        element.style.removeProperty("height");
+        element.style.removeProperty("gap");
+        element.style.removeProperty("--strip-h");
+        concededRef.current = 0;
+        setFitting(false);
+        return;
+      }
+
+      // AND THE VIEW ENDS WHERE THE WINDOW DOES.
+      //
+      // Nothing above this bounded it: `main` is `flex-1` inside a `min-h-screen`
+      // shell, so the column simply grew and the PAGE scrolled — measured, 982px
+      // of document in a 910px window, with the bottom of the deck's cards below
+      // the fold. An instrument you have to scroll to see the bottom of is not
+      // one you can read at a glance, which is the point of this view.
+      //
+      // Bounded HERE rather than by giving the shell `h-screen`: the board and
+      // the grid share that shell and both legitimately scroll the page.
+      //
+      // `top` is read in DOCUMENT space, because the fix removes the very page
+      // scroll a viewport-relative reading would depend on — measure it in
+      // viewport space and the answer changes as it works.
+      const top = element.getBoundingClientRect().top + window.scrollY;
+      const fit = Math.max(
+        DETAILS_MIN_FIT_PX,
+        Math.round(window.innerHeight - top - DETAILS_BOTTOM_GAP_PX),
+      );
+
+      // Written only when it changes: this runs from a ResizeObserver watching
+      // the same element, and an unconditional write is a loop.
+      if (element.style.height !== `${fit}px`) element.style.height = `${fit}px`;
+
+      // ── THE CONCESSION LADDER, IF IT CAN REACH ───────────────────────
+      //
+      // EVERY INPUT HERE IS INDEPENDENT OF THE OUTPUT, and that is the whole
+      // design of it. The first version measured `scrollHeight` — a RESULT of
+      // the concessions — and fed it back in, so the view conceded, the deck
+      // resized, the deck's observer refitted, the view's observer fired again,
+      // and the two drove each other in a circle. That is what the nonstop
+      // flickering of the deck was.
+      //
+      // These four cannot move in response to what is decided below: the
+      // header's height, the bar's height with its film at full size, the
+      // deck's own stated requirement, and the height on offer. So the answer
+      // is the same every time it is asked, and asking again changes nothing.
+      const headerHeight = (element.firstElementChild as HTMLElement | null)?.offsetHeight ?? 0;
+      const bar = element.querySelector<HTMLElement>(".playbar");
+      const strip = element.querySelector<HTMLElement>(".strip");
+      const deck = element.querySelector<HTMLElement>(".deck");
+      const barAtFullFilm =
+        bar === null
+          ? 0
+          : bar.offsetHeight + (STRIP_FULL_HEIGHT_PX - (strip?.offsetHeight ?? STRIP_FULL_HEIGHT_PX));
+      const deckNeed =
+        deck === null
+          ? 0
+          : Number.parseInt(getComputedStyle(deck).getPropertyValue("--deck-need"), 10) || 0;
+
+      const needed = headerHeight + 2 * DETAILS_GAP_PX + barAtFullFilm + deckNeed;
+      const room = 2 * (DETAILS_GAP_PX - DETAILS_GAP_FLOOR_PX) + (STRIP_FULL_HEIGHT_PX - STRIP_FLOOR_HEIGHT_PX);
+
+      // OUT OF REACH: concede NOTHING. Spending the film's height on a column
+      // that still will not fit buys a shorter strip and nothing else — the
+      // same bad trade the cards were making when they shrank to their floor
+      // and stayed cut off. The remainder scrolls instead.
+      const owedTotal = needed <= fit ? 0 : needed - fit > room ? 0 : needed - fit;
+      if (owedTotal !== concededRef.current) {
+        concededRef.current = owedTotal;
+        if (owedTotal === 0) {
+          element.style.removeProperty("gap");
+          element.style.removeProperty("--strip-h");
+        } else {
+          let owed = owedTotal;
+          const take = (available: number) => {
+            const taken = Math.min(owed, Math.max(0, available));
+            owed -= taken;
+            return taken;
+          };
+          // Two gaps in the column, so a pixel off the gap is two off the total.
+          const fromGaps = take(2 * (DETAILS_GAP_PX - DETAILS_GAP_FLOOR_PX));
+          element.style.gap = `${DETAILS_GAP_PX - fromGaps / 2}px`;
+          const fromStrip = take(STRIP_FULL_HEIGHT_PX - STRIP_FLOOR_HEIGHT_PX);
+          element.style.setProperty("--strip-h", `${STRIP_FULL_HEIGHT_PX - fromStrip}px`);
+        }
+      }
+
+      // The deck only narrows its cards when the column is actually being made
+      // to fit; otherwise it keeps the design's width and the view scrolls.
+      setFitting(needed - fit <= room);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(element);
+    // AND EVERY ANCESTOR, because what this must react to is the view being
+    // PUSHED DOWN, and that changes nothing about the view's own size. Once the
+    // height here is explicit the element stops resizing at all, so an observer
+    // watching only itself goes deaf exactly when it matters: measured, opening
+    // the preview pane moved the top to 413 while the height stayed 828, and
+    // the deck sat 331px below the window with no callback fired.
+    //
+    // The whole chain rather than the parent, because the pane that grew is not
+    // a sibling of this view — watching one level up was tried and stayed deaf.
+    // Picking the "right" ancestor would be a guess about a layout above this
+    // component's business, and a wrong guess fails silently.
+    for (let up = element.parentElement; up !== null; up = up.parentElement) {
+      observer.observe(up);
+    }
+    window.addEventListener("resize", publish);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", publish);
+    };
+  }, [previewOpen]);
+
   const rowTransform =
     `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + var(--drag-px, 0px)))`;
 
-  return createPortal(
-    <div
+  return (
+    <section
+      ref={viewRef}
       data-item-details={node.id}
-      role="dialog"
-      aria-modal="true"
       aria-label={`Details for ${node.name}`}
-      // `justify-center` centres the MIDDLE panel rather than the row: three
-      // panels overflow, so the centre lands in the middle and the other two
-      // are clipped symmetrically. `overflow-hidden` is what makes that a crop
-      // instead of a scrollbar.
-      // THE TOP BAND IS RESERVED, not shared. The header and the bar are
-      // absolutely positioned so the row can be centred and cropped
-      // symmetrically without them affecting its width — which also means
-      // they take no space, and the row would centre straight up underneath
-      // them. This padding is the band they occupy: header (61px) plus the
-      // bar block at top-16 with its own pt-4 (152px to its underside), plus
-      // clearance, plus the reach picker's own row (mt-2 and a ~18px button)
-      // — which is why this is 14rem and not the 11rem it was before that
-      // picker existed. It grew when the bar did, and it has to keep pace: the
-      // symptom of it not doing so is the minimap resting on the top edge of
-      // the middle card, which is a quiet eight pixels rather than an obvious
-      // fault.
+      // A REGION IN THE CONTENT AREA, NOT A DIALOG OVER IT (PL15-029).
       //
-      // MEASURED, each time the bar changes shape. The transport became an
-      // ensemble with a 44px play button, which took the block from 116px to
-      // 142px — it starts at `top-16` plus its own `pt-4`, so it now ends 222px
-      // down and 13rem reserved only 208. Anything added to that block has to
-      // be measured and this raised, or the row below rides up into it on a
-      // short viewport.
+      // This was `createPortal` onto `document.body`, `role="dialog"` and
+      // `aria-modal="true"` over a scrim. It is a PLACE now: the board is
+      // hidden and this stands in its stead, so there is nothing behind it to
+      // be modal about. `aria-modal` on something that covers nothing is a lie
+      // to a screen reader — the same defect `useDialogFocus` was written to
+      // fix, arrived at from the other side.
       //
-      // 14rem → 18.5rem, for the transport's 36px top margin dropping it clear
-      // of the two bars above. This is exactly the failure the note above
-      // predicts, and it was caught the way it was meant to be:
-      // `TheTwoBarsAreAdjacent` measures the gap between this row and the
-      // centre card, and it fell from 22px to 2 — the "quiet eight pixels"
-      // arriving as a red test rather than as a screenshot nobody looked at
-      // twice.
+      // AND THE BAND ARITHMETIC GOES WITH IT, which is most of what this
+      // element used to be. The scrim reserved its own top and bottom edges
+      // with `pt-[14.75rem]` and `pb-[4.875rem]`, because the header and the
+      // bar were absolutely positioned — so the row could be centred and
+      // cropped without them affecting its width — and therefore took no
+      // space. Every change to the bar had to be measured and then paid for
+      // TWICE, because `items-center` shares padding added at the top with the
+      // bottom, and the failure was always the same: `TheTwoBarsAreAdjacent`
+      // reporting the gap to the centre card collapsing. In flow the header
+      // and the bar occupy the space they occupy. There is no number to keep
+      // in step, and nothing to measure when the bar next changes shape.
       //
-      // AND THE COMPENSATION IS TWICE THE GROWTH, which is the part worth
-      // writing down. This box is `items-center`, so padding added at the top
-      // is shared with the bottom when the row is re-centred in what is left —
-      // 20px of padding buys only 10px of downward movement. The first attempt
-      // added 20 for 20 and recovered half the slack (2 → 12, still short of
-      // the 16 floor).
+      // `container-type: inline-size` is what `panelWidthsFor` sizes against.
+      // The row stays content-width so it can centre by overflowing equally
+      // both sides, which means it cannot be the basis for its own children —
+      // see the note there.
+      // `gap-6` IS THE CLEARANCE, and it is a gap rather than free space on
+      // purpose. The row centres itself with `my-auto`, which only separates
+      // anything when there IS free space — in a container that is exactly as
+      // tall as its contents there is none, and the row butts straight up
+      // against the bar. `TheTwoBarsAreAdjacent` caught precisely that, at 0
+      // against its floor of 16. A flex gap applies either way, and the two
+      // compose: the gap is the minimum, `my-auto` spends whatever is left
+      // over. 24px also lands where the design this follows sits, about 27.
+      // THE ROW FADES AT ITS EDGES RATHER THAN BEING CUT (PL15-030).
       //
-      // So the arithmetic is 224 + 2 × (whatever the block grew by): 20px of
-      // transport margin took this to 16.5rem, 36px to 18.5rem (224 + 72 =
-      // 296), and the film strip growing from 36px to 48px takes it to 20rem
-      // (296 + 24 = 320). Anything that makes the bar taller moves this by
-      // twice as much, in the same direction — and the failure is always the
-      // same one, `TheTwoBarsAreAdjacent` reporting the gap to the centre card
-      // collapsing below its floor.
-      // `overflow-clip`, NOT `overflow-hidden`. Both crop, but `hidden` makes
-      // this a SCROLL CONTAINER — and the row is thirteen thousand pixels
-      // wide, so there is a great deal for it to scroll. Landing on a new clip
-      // moves focus to that panel's menu button, the browser scrolls the
-      // container to reveal it, and that scroll lands ON TOP of the transform
-      // the row has already made: measured, 1981px of `scrollLeft` against a
-      // row that had itself moved 1728px, which put the card just chosen
-      // entirely off the left edge. `clip` crops without ever being
-      // scrollable, so the transform stays the only thing that moves the row.
-      // THE BOTTOM BAND IS RESERVED TOO, for the same reason the top one is.
+      // `overflow-clip` alone ends a card mid-picture at the boundary, which
+      // reads as a rendering fault rather than as "there is more this way". The
+      // reference masks its deck to transparent over the outer 5%, so the cards
+      // either side leave the row instead of being sliced by it — and the crop
+      // stops competing with the subject for the eye.
       //
-      // `pb-6` matched the view-count control's own `bottom-6`, which reserved
-      // the control's OFFSET and not the control — so the centre panel ran
-      // straight through it and 16px past the bottom of the window besides.
-      // 4.875rem is 78px: the control's 24px offset, its own 34px, and 20px of
-      // clearance so the panel stops short of it rather than against it.
-      // 14.75rem, DOWN FROM 21.75. The band was sized to clear the bar with
-      // room to spare and left 62px of air between the controls row and the
-      // card under it — inside the 16..80 the guard allows, but at the loose
-      // end of it, and the guard's own note says the failure nobody reports
-      // is the view sitting lower than it needs to. The design this follows
-      // runs about 27px there. Four rem buys 32px of movement, not 64: this
-      // box is `items-center`, so padding at the top is shared with the
-      // bottom when the row re-centres in what is left. That halving is why
-      // the number looks too large for the space it controls. Three further rem
-      // came off when the transport lost its 36px margin and joined the control
-      // row: a shorter bar leaves more slack, in the same doubled proportion.
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-clip bg-black/80 px-6 pt-[14.75rem] pb-[4.875rem] backdrop-blur-sm"
-      // THE SCRIM DOES NOT DISMISS. Deliberate: this view is worked in, not
-      // glanced at — trimming, scrubbing and swiping all end with the pointer
-      // somewhere unpredictable, and the panels are cropped by the scrim
-      // rather than surrounded by it, so "outside" is a place the hand lands
-      // by accident. Escape and the close button are the only two ways out,
-      // and both are explicit. The stopPropagation guards below are older
-      // than this and are left alone: they keep presses on the header and the
-      // bar from reaching anything listening further up.
+      // On the VIEW, not the row: the row is transformed, and a mask on a
+      // moving element travels with it, so the fade would slide off the edge it
+      // is meant to be softening.
+      style={{
+        containerType: "inline-size",
+        maskImage: DECK_EDGE_FADE,
+        WebkitMaskImage: DECK_EDGE_FADE,
+        // SCROLLS ONLY WHEN IT IS BOUNDED.
+        //
+        // `auto` makes this a scroll container, and a scroll container inside
+        // ancestors that allow shrinking takes the scroll off the PAGE and puts
+        // it in here — measured, 222px of internal scroll with the pane down
+        // where the page had simply been longer. With the pane down the view
+        // should be ordinary content, so it clips like it always did and grows;
+        // with the pane up it is a fixed box and needs somewhere for the
+        // remainder to go.
+        overflowY: previewOpen ? "auto" : "clip",
+      }}
+      // `overflow-x: clip` still, for the row's scrim — but the Y axis is
+      // `auto`: the height above is a CEILING, and on a window too short for
+      // even the smallest deck the scroll belongs INSIDE this view rather than
+      // on the page, where it would carry the header and the bar away with it.
+      className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-x-clip"
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
@@ -1053,7 +1533,11 @@ function DetailsFilmstripModal({
           absolutely-positioned column so the header and the bar move together
           and the row below is free to be cropped by the scrim. */}
       <div
-        className="pointer-events-none absolute inset-x-0 top-0 z-20"
+        // IN FLOW. It was `absolute inset-x-0 top-0` so the row could centre in
+        // the scrim without the header taking any of it — which is what the
+        // reserved top band was paying for. It takes its own height now, and
+        // `pointer-events-none` goes with the absolute layer that needed it:
+        // nothing here is covering the row any more.
         onPointerDown={(event) => event.stopPropagation()}
       >
         <ItemDetailsHeader
@@ -1065,184 +1549,55 @@ function DetailsFilmstripModal({
           onClose={onClose}
         />
       </div>
-      {timeline.totalSeconds > 0 && (
-        <div
-          className="pointer-events-auto absolute inset-x-0 top-16 z-20 px-6 pt-4"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          {/* THE SAME WIDTH AS THE ROW BELOW IT.
+      {/* THE DECK ABOVE, THE FILM BELOW.
+          Swapped from the reference's order, which puts its strip under the
+          player and the cards under that. Here the strip is the whole
+          sequence and the deck is the clip being worked on, so the film reads
+          as the ground the work sits on rather than a header above it — and
+          the skim card, which hangs above the playhead, now floats over the
+          cards instead of over the page furniture. */}
+      {/* THE PORTED CLIP DECK, IN PLACE OF THE PANEL ROW (PL15-030).
+          The reference's deck: same-width cards with the ones beside the
+          subject scaled, dimmed and desaturated, swipeable with a fling.
 
-              This was capped at `7xl` on the reasoning that the bar is a
-              map and gets more useful the more of the project it can show,
-              so it should be WIDER than the panels — which was true while
-              the panels were capped too.
-
-              They are not any more, and the cap inverted the intent it was
-              written for: measured at 1920 the cards ran 1872px and the bar
-              1280, so the cards overhung the thing they belong to by 296px
-              on each side. A ruler that does not reach as far as the row it
-              measures reads as a floating island rather than as the top of
-              one panel. Sharing the edge costs the bar nothing — it only
-              ever gets wider. */}
-          <div className="mx-auto w-full">
-            <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
-            <SeamStripBar
-              clips={barClips}
-              panelClipIds={panelClipIds}
-              // WHETHER THE BAR HAS ACTUALLY RUN OUT, which is a different
-              // question from whether it has run out of boxes. At a reach of
-              // ten the window is cropped at both ends nearly everywhere in a
-              // long project, and the last box on screen is simply the last
-              // one the reach allowed. These are true only when the window has
-              // reached the real ends.
-              // THE VIEW'S OWN SETTINGS, handed to the bar to place. They
-              // used to be a row of their own beneath it; they are read
-              // against the bar directly above them, so they belong in the
-              // bar's own controls row alongside the transport and the clock.
-              settingsLeft={
-                <>
-                  {/* THREE SEGMENTS, TWO SETTINGS. Whether the boxes draw
-                      frames and which kind are separate answers, but as
-                      controls they are one question — a picture of what the
-                      bar is made of — and OFF · COVER · STRIP says it in the
-                      shape every other group in this row now uses.
-
-                      OFF DOES NOT WIPE THE STYLE. It sets `shown` and leaves
-                      `style` alone, so coming back lands on the kind you were
-                      using: switching frames off and on stays a comparison you
-                      can make twice rather than a choice you re-enter. That is
-                      the whole reason the two are stored apart even though
-                      they are pressed together. */}
-                  {/* HOW TALL THE FILM IS. In the gear with the other
-                      settings rather than in the row, because it is a posture
-                      you set and then work — the same test that put frames,
-                      card and fit there (PL15-006).
-
-                      A CELL IS SQUARE, so this also changes how many frames a
-                      clip is cut into: a taller film is a coarser filmstrip as
-                      well as a bigger one. That is the actual trade and it is
-                      why three sizes are offered rather than a slider — the
-                      in-between values buy nothing and cost a decision. */}
-                  <SegmentedControl
-                    label="size"
-                    ariaLabel="How tall the film is drawn"
-                    groupAttribute="data-details-bar-size"
-                    segments={LANE_SIZES.map((option) => ({
-                      value: option,
-                      label: option.toUpperCase(),
-                      title:
-                        option === "sm"
-                          ? "A compact film"
-                          : option === "md"
-                            ? "Tall enough to recognise a shot"
-                            : "Tall enough to judge a frame",
-                      active: option === laneSize,
-                    }))}
-                    onSelect={chooseLaneSize}
-                  />
-
-                  <SegmentedControl
-                    label="frames"
-                    ariaLabel="What the bar's boxes draw"
-                    groupAttribute="data-details-bar-frames"
-                    segments={(["off", ...PLAYBAR_THUMBNAIL_STYLES] as const).map((option) => ({
-                      value: option,
-                      // `STRIP`, not `FILMSTRIP`: these sit beside a reach
-                      // picker of two- and three-character tokens, and one
-                      // nine-character label would set the row's rhythm for
-                      // the sake of a word the title already says in full.
-                      label: option === "filmstrip" ? "STRIP" : option.toUpperCase(),
-                      title:
-                        option === "off"
-                          ? "Plain boxes"
-                          : option === "cover"
-                            ? "One frame filling each box"
-                            : "A strip of frames across each clip",
-                      active:
-                        option === "off" ? !frames.shown : frames.shown && frames.style === option,
-                    }))}
-                    onSelect={(option) =>
-                      chooseFrames(
-                        option === "off" ? { ...frames, shown: false } : { shown: true, style: option },
-                      )
-                    }
-                  />
-
-                  {/* WHERE THE HOVER CARD SITS — its own group, next to
-                      `frames` rather than inside it. They sit together because
-                      they are the same kind of question (what this bar does
-                      while you read it), but "what the boxes draw" and "where
-                      the preview sits" are two settings, and folding the
-                      second into the first gave that group five buttons under
-                      an aria-label describing three of them. */}
-                  <span aria-hidden="true" className="mx-1 h-3 w-px bg-white/10" />
-                  <SegmentedControl
-                    label="card"
-                    ariaLabel="Where the hover preview sits"
-                    groupAttribute="data-details-bar-card"
-                    segments={PREVIEW_ANCHORS.map((option) => ({
-                      value: option,
-                      label: option === "follow" ? "FOLLOW" : "PIN",
-                      title:
-                        option === "follow"
-                          ? "The preview follows the pointer"
-                          : "The preview stays under the middle of the bar",
-                      active: option === previewAnchor,
-                    }))}
-                    onSelect={choosePreviewAnchor}
-                  />
-                </>
-              }
-              laneHeight={laneHeightFor(laneSize)}
-              settingsRight={
-                <SegmentedControl
-                  label="reach"
-                  ariaLabel="Clips either side on the bar"
-                  groupAttribute="data-details-bar-reach"
-                  segments={BAR_REACHES.map((option) => ({
-                    value: option,
-                    label: barReachLabel(option),
-                    title:
-                      option === "all"
-                        ? "Reach the whole sequence"
-                        : "Reach " + option + " clips either side",
-                    active: option === reach,
-                  }))}
-                  onSelect={chooseReach}
-                />
-              }
-              previewAnchor={previewAnchor}
-              atStart={barWindow.ids[0] === ids[0]}
-              atEnd={barWindow.ids[barWindow.ids.length - 1] === ids[ids.length - 1]}
-              centreClipId={node.id as string}
-              colourOf={clipColourOf}
-              playheadAt={playheadAt}
-              playing={playing}
-              onTogglePlay={() => setPlaying((was) => !was)}
-              // The same step the swipe and the neighbour-click make, so all
-              // three land in one place and cannot drift apart.
-              onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
-              onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
-              onPreviewingChange={setPreviewing}
-              // The clock spans every clip, so a point on the rail IS a point
-              // on the clock and needs no conversion.
-              //
-              // THE CARDS FOLLOW THE SCRUBBER WHEN IT IS LET GO — however it
-              // was let go. A click and a two-pixel drag are the same gesture
-              // as far as the hand is concerned, so they land the same way:
-              // both re-centre the row, and both bring the frame with them.
-              // Splitting them would mean a few pixels of travel decided
-              // whether you kept your place in the shot.
-              onCommitClip={(clipId) => landOn(clipId, position)}
-              onScrubSeconds={(seconds) => {
-                setPlaying(false);
-                setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
-              }}
-            />
-            </PlaybarThumbnailsProvider>
-          </div>
-        </div>
-      )}
+          WHAT THIS COSTS, said plainly because it is not nothing. The panel it
+          replaces carried an inline rename, the disable toggle, the layer-frame
+          picker and the real tag editor; the reference's card has none of them,
+          so they are not on screen here. The trim and the selection DO go
+          through the same command path they always did — see `onTrim` below,
+          which dispatches the same `update-media` the trim fields did. */}
+      <ClipDeck
+        standalone={false}
+        // TAKES WHAT THE BAR LEAVES — but only when the pane is up and the
+        // height is actually contested. `min-h-0` because a flex item's default
+        // `min-height: auto` refuses to shrink below its content, which is the
+        // refusal that would otherwise put the cards below the fold.
+        //
+        // With the pane down this is deliberately NOT a flex item: left as one
+        // it shrank instead of letting the column grow, so the page stopped
+        // scrolling and the section clipped 222px of deck instead.
+        className={fitting ? "min-h-0 flex-1" : undefined}
+        fitToHeight={fitting}
+        // THE `3 · 5` CONTROL, WIRED BACK UP. It sized the old panel row and
+        // has had nothing to act on since the deck replaced it — a setting
+        // still on screen, still remembered, and inert. Five ADDS a card each
+        // side at the same pitch rather than fitting five into the width the
+        // three had, so the clips being read do not shrink because a setting
+        // asked for more of them.
+        neighbours={half}
+        frameAt={frameAt}
+        // THE THUMBNAIL LANDS HERE. The board card carries this name until the
+        // view mounts; the subject's picture takes it over, and the browser
+        // morphs one into the other. Nothing had worn it since the deck
+        // replaced the panel row — `DetailsPanel` still holds the only other
+        // application and is no longer rendered — so the card was giving the
+        // name up to nobody and the flight had no destination.
+        heroName={HERO}
+        clips={deckClips}
+        activeId={node.id as string}
+        onActivate={(clipId) => landOn(clipId, position)}
+        onTrim={commitTrim}
+      />
 
       {/* HOW MANY CLIPS TO SHOW, bottom right and out of the way.
           Deliberately down here rather than up with the transport: that bar is
@@ -1272,195 +1627,63 @@ function DetailsFilmstripModal({
 
       {/* The STRIP: one row, translated. Centred by the scrim, then offset by
           the subject's index so the clip being worked on lands mid-screen. */}
-      <div
-        ref={stripRef}
-        data-details-strip
-        className={[
-          // BOTTOM-ALIGNED, so the trim strips share a line.
-          //
-          // Centred, the taller subject extended equally above and below
-          // its neighbours — measured at 1920: 76px each way — and every
-          // row BELOW the picture inherited that offset. The transport
-          // well, the filmstrip, the in/out fields and the tags each sat
-          // 76px lower on the centre than on the clips either side of it.
-          //
-          // That is the wrong thing to centre. The pictures are different
-          // sizes on purpose — the subject's is bigger because it is the
-          // one being judged — but the CONTROLS under them are identical
-          // in size and function, and comparing a trim against its
-          // neighbours' is most of what this view is for. Reading three
-          // filmstrips on three different lines makes that a hunt.
-          //
-          // Hanging the cards from a common bottom lands them all on one
-          // line for free: everything from the strip down is the same
-          // height in every card (126px from strip-top to card-bottom,
-          // measured), so a shared bottom IS a shared strip line.
-          //
-          // This is a deliberate departure from the design it follows,
-          // which top-aligns the three and lets the strips fall where the
-          // picture heights leave them.
-          "flex items-end",
-          // The row cannot dip while the two cards swap heights — see
-          // DETAILS_ROW_FLOOR_CLASS.
-          DETAILS_ROW_FLOOR_CLASS,
-          // NO TRANSITION WHILE A FINGER IS ON IT. A drag has to track the
-          // hand exactly; easing it would put the film a fixed distance
-          // behind wherever the pointer actually is, which reads as lag
-          // rather than as smoothing. It comes back for the release, so
-          // landing on the next clip is animated and letting go short of the
-          // threshold springs back.
-          //
-          // A BAR LANDING has no transition at all, which the layout effect
-          // above does to the node rather than from here.
-          !dragging
-            ? "transition-[transform,opacity] motion-reduce:transition-none"
-            : "",
-          // BACK, WHILE THE PREVIEW IS UP.
-          //
-          // The hover card is now a picture big enough to judge a frame in,
-          // and it is drawn OVER this row rather than in a gap above it. Three
-          // bright panels behind it compete with the one thing being looked
-          // at — and the card is answering a question about a clip that is
-          // usually not one of the three, so the panels are not even context
-          // for it.
-          //
-          // Pulled back rather than hidden: they are still where you are
-          // working, and the point of the hover is to check something WITHOUT
-          // leaving that. The row comes straight back when the pointer does.
-          previewing ? "opacity-40" : "",
-        ].join(" ")}
-        style={{
-          gap: PANEL_GAP,
-          transform: rowTransform,
-          // THE STEP'S OWN TIMING, shared with the panel widths and the film
-          // strip — see . One press, one motion.
-          // PHASE TWO. The row does not begin travelling until the cards have
-          // finished resizing — see `detailsSlideTransition`. Opacity is not
-          // part of the choreography (it is the hover-preview fade), so it
-          // keeps the plain step timing and starts immediately.
-          transition: dragging ? undefined : detailsStepTransition("transform, opacity"),
-        }}
-      >
-        {ids.map((id, index) => {
-          // Nothing travels across the row any more, so the resting window is
-          // the whole window: a landing cuts, and the panels it cuts to are
-          // the ones already inside it.
-          const mounted = Math.abs(index - centre) <= MOUNTED_RADIUS;
-          const panel = mounted ? graph.nodesById.get(parseNodeId(id)) : null;
-          const media =
-            panel && panel.kind === "media" && (panel as MediaNode).src
-              ? (panel as MediaNode)
-              : null;
-          if (media === null) {
-            // A placeholder holds the position — and only the position.
-            return (
-              <div key={id} aria-hidden="true" style={{ width: panelWidth }} className="shrink-0" />
-            );
-          }
-          // THIS CLIP'S OWN STRETCH OF THE BAR, which is what "play this one"
-          // resolves to: `span.from` IS its first frame in clock time. Null for
-          // the pair mounted just past the visible edge — they hold geometry so
-          // the slide has something to move, and the clock has never heard of
-          // them.
-          //
-          // For the two HALF-VISIBLE edge panels `from` is the head of their
-          // lead-in rather than the head of the clip: the bar simply does not
-          // contain the earlier part of them. Which is the honest answer —
-          // playing from the start of the bar's copy of a clip is the most the
-          // clock can offer, and it is also what the panel is showing.
-          const span = seamSpanFor(timeline, id);
-          const playingHere = playing && position?.clipId === id;
-          return (
-            <DetailsPanel
-              key={id}
-              node={media}
-              centre={index === centre}
-              swapping={swapping}
-              clipLabel={`clip ${index + 1}`}
-              playingHere={playingHere}
-              onPlayFromStart={
-                span === null
-                  ? null
-                  : () => {
-                      // A second press on the one that is running is a pause,
-                      // and it leaves the playhead where it stopped — the same
-                      // contract as the bar's button, so the two controls never
-                      // disagree about what pausing means.
-                      if (playingHere) {
-                        setPlaying(false);
-                        return;
-                      }
-                      setBarSeconds(span.from);
-                      setPlaying(true);
-                    }
-              }
-              monitor={
-                index === centre && monitorNode && position
-                  ? { node: monitorNode, seconds: position.clipSeconds }
-                  : // THE PANEL UNDER THE PLAYHEAD KEEPS ITSELF AT THE
-                    // PLAYHEAD, even while it is a neighbour.
-                    //
-                    // This is what makes letting go seamless. Without it, a
-                    // clip is resting on its own first frame right up until
-                    // the moment it becomes the centre, and only then starts
-                    // seeking — so the release reads as: the right frame (in
-                    // the outgoing centre, which was monitoring it), a cut,
-                    // the FIRST frame, and a skip back to the right one. The
-                    // poster fix cannot help here, because this element
-                    // already has a decoded frame; it is simply the wrong one.
-                    //
-                    // Seeking it early means the panel is already showing the
-                    // landed frame before it is asked to be the subject, and
-                    // the cut has nothing left to change.
-                    //
-                    // ONE EXTRA ELEMENT SEEKING, not nine: exactly one panel
-                    // is under the playhead at a time, and it is the one whose
-                    // frame is about to be wanted. The scrub proxy covers it
-                    // for the same reason it covers the centre.
-                    position !== null && position.clipId === id
-                    ? { node: media, seconds: position.clipSeconds }
-                    : null
-              }
-              // Only the monitor makes sound: it is the panel showing what the
-              // clock says is on screen, so it is the only one whose audio
-              // could be in sync with anything.
-              playing={index === centre && playing}
-              live={position?.clipId === id}
-              swipe={swipe}
-              // MOUNTED, BUT NOT ON SCREEN.
-              //
-              // The spare pair beyond the visible window exists so an arriving
-              // panel is already built (see `MOUNTED_RADIUS`) — it was never
-              // meant to be SEEN. It used to be off the edge by accident:
-              // panels were wide enough that two of them overflowed the
-              // viewport entirely. Now three fit it exactly, so the spares sit
-              // in the scrim's own 24px padding and show as a sliver down each
-              // side — which reads as a fourth and fifth card the count says
-              // are not there.
-              //
-              // Hidden rather than unmounted, and hidden rather than
-              // zero-width: the row's centring assumes every non-centre panel
-              // is one neighbour wide, so collapsing these would shift every
-              // panel between them and the middle.
-              spare={isSpare(index)}
-              // Held still while the row moves — see the filmstrip's own note.
-              stepping={leavingCentre !== null}
-              width={index === centre ? panelWidths.centre : panelWidths.neighbour}
-              // Engaged, and not the one being watched. Uses the same gate as
-              // the playhead lines and the ring, so the whole view agrees on
-              // when the clock is running.
-              dimmed={scrubbed && index !== centre}
-              playhead={
-                scrubbed ? seamStripProgress(timeline, seamClipOf(media)!, shownSeconds) : null
-              }
-              onClose={onClose}
-              onAdvance={onOpenNeighbour}
+      {timeline.totalSeconds > 0 && (
+        <div
+          // IN FLOW, for the same reason the header above is — `top-16` was
+          // the header's height restated as a constant, and that is exactly
+          // the kind of number that goes stale silently.
+          className="px-6 pt-4"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          {/* THE SAME WIDTH AS THE ROW BELOW IT.
+
+              This was capped at `7xl` on the reasoning that the bar is a
+              map and gets more useful the more of the project it can show,
+              so it should be WIDER than the panels — which was true while
+              the panels were capped too.
+
+              They are not any more, and the cap inverted the intent it was
+              written for: measured at 1920 the cards ran 1872px and the bar
+              1280, so the cards overhung the thing they belong to by 296px
+              on each side. A ruler that does not reach as far as the row it
+              measures reads as a floating island rather than as the top of
+              one panel. Sharing the edge costs the bar nothing — it only
+              ever gets wider. */}
+          <div className="mx-auto w-full">
+            <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
+            {/* THE PORTED STRIP, IN PLACE OF THE WHOLE BAR (PL15-030).
+                The reference's film strip replaces the ruler, the boxes, the
+                playhead and the minimap — and the controls row goes with them,
+                which was an explicit call rather than a casualty: the clock, the
+                five transport buttons, the reach picker and the settings gear all
+                lived inside `SeamStripBar`.
+
+                REACH HAD NOTHING LEFT TO DO. It existed because the old bar could
+                not move, so seeing more of the sequence meant paging a window.
+                This strip PANS, with inertia, across every clip at once — so its
+                clock is the timeline's by construction. */}
+            <FilmStrip
+              standalone={false}
+              shots={stripShots}
+              seconds={shownSeconds}
+              playing={playing}
+              selectedId={node.id as string}
+              onScrub={(seconds) => {
+                setPlaying(false);
+                setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
+              }}
+              onSkim={setSkimSeconds}
+              onTrimSkim={setTrimSkim}
+              skimPreview={skimPreview}
+              onTrim={commitTrim}
+              onTogglePlay={() => setPlaying((was) => !was)}
+              onSelect={(clipId) => landOn(clipId, position)}
             />
-          );
-        })}
-      </div>
-    </div>,
-    document.body,
+            </PlaybarThumbnailsProvider>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1486,7 +1709,6 @@ export function GraphItemDetailsModal() {
   // on screen when the browser captures "before". The transition callback is
   // what clears it, which is exactly when it should go.
   const [mountedId, setMountedId] = useState<string | null>(null);
-  const mounted = mountedId !== null;
   const node = useCollectionsSelector((s) => {
     // `openId` while opening and open; `mountedId` while closing, when the
     // context has already let go but the pixels are still here.
@@ -1494,41 +1716,121 @@ export function GraphItemDetailsModal() {
     if (id === null) return null;
     return s.graph.nodesById.get(parseNodeId(id)) ?? null;
   });
-  const openIdRef = useRef<string | null>(null);
+  // MOUNTED IN THE SAME COMMIT THE CONTEXT OPENS IN, not one effect later.
+  //
+  // `setOpenId` starts the opening flight, because by the time an effect here
+  // could run the board is already hidden and there is nothing left to fly
+  // FROM — measured, the card carried the hero name and had ZERO WIDTH, so no
+  // `old` snapshot was taken at all and the "morph" was the destination fading
+  // in on its own. The transition's callback flushes the context's state
+  // synchronously, so this view has to appear in THAT render for the "after"
+  // capture to contain it.
+  //
+  // `mountedId` still matters, but only on the way OUT: it is what keeps this
+  // on screen for the render in which the context has already let go, which is
+  // the entire closing animation.
+  const wantedNow =
+    openId !== null && node !== null && (node.kind === "collection" || !!node.src);
+  const mounted = wantedNow || mountedId !== null;
 
   // Opening and closing are driven by the context flag so the toolbar button,
-  // Escape, the close button and the scrim all go through one path.
+  // Escape and the close button go through one path — and they are now the
+  // only two, the scrim having gone with PL15-029. ESCAPE'S OWNER IS THIS
+  // VIEW while it is open: it is what fills the content area, so there is
+  // nothing else in that space with a claim on the key.
+  // WHAT IS ON SCREEN, recorded during the render that puts it there.
+  //
+  // Adjusted here rather than in an effect for the reason the context adjusts
+  // `urlIdSeen` the same way: an effect that sets state is a second render, and
+  // the lint rejects it outright. NOTHING opens from here any more — the
+  // opening flight belongs to `setOpenId`, which is the only place the board is
+  // still on screen to fly from. This is bookkeeping for the way out.
+  if (wantedNow && node !== null && mountedId !== node.id) {
+    setMountedId(node.id as string);
+  }
+
   useEffect(() => {
-    // A collection has no `src` and needs none — its hero is its contents.
-    const wanted =
-      openId !== null && node !== null && (node.kind === "collection" || !!node.src);
-    if (wanted === mounted) return;
-
-    if (wanted && node) {
-      openIdRef.current = node.id;
-      const card = cardElement(node.id);
-      card?.style.setProperty("view-transition-name", HERO);
-      void withViewTransition(() => {
-        // Hand the name over: the card gives it up in the same frame the
-        // modal takes it, so exactly one element ever carries it.
-        card?.style.removeProperty("view-transition-name");
-        setMountedId(node.id as string);
-      });
-      return;
-    }
-
-    const card = openIdRef.current ? cardElement(openIdRef.current) : null;
+    if (wantedNow || mountedId === null) return;
+    // THE CARD IS LOOKED UP INSIDE THE CALLBACK, AND HAS TO BE.
+    //
+    // This read used to sit out here, and at this moment the board DOES NOT
+    // EXIST: the details view is still the content area, so there is no card
+    // to collapse back into and `cardElement` returned null every time. The
+    // name was then handed to nothing, the browser had an old state and no new
+    // one to morph toward, and closing was a fade — the exact mirror of the
+    // opening bug, where the SOURCE had gone by capture time instead of the
+    // destination never arriving.
+    //
+    // `setMountedId(null)` is what puts the board back, and `withViewTransition`
+    // flushes it synchronously, so one line later the card is in the DOM. The
+    // holder carries it out to the cleanup, which cannot re-query it — by then
+    // it may have moved again.
+    const holder: { card: HTMLElement | null } = { card: null };
     void withViewTransition(() => {
-      // Clearing this is what unmounts the modal, and it happens HERE — inside
-      // the callback, after the browser has captured the frame the modal is
+      // Clearing this is what unmounts the view, and it happens HERE — inside
+      // the callback, after the browser has captured the frame the view is
       // still in. That ordering is the animation.
       setMountedId(null);
-      card?.style.setProperty("view-transition-name", HERO);
+      holder.card = cardElement(mountedId);
+      // AN ATTRIBUTE, for the same reason the opening flight uses one: React
+      // is rendering this card now, and it rewrites the `style` attribute it
+      // manages on any re-render that lands before the browser captures. It
+      // does not touch an attribute it was never given. The name itself comes
+      // from the `[data-details-hero]` rule in `globals.css`.
+      holder.card?.setAttribute(HERO_ATTRIBUTE, "");
     }).then(() => {
-      card?.style.removeProperty("view-transition-name");
-      openIdRef.current = null;
+      holder.card?.removeAttribute(HERO_ATTRIBUTE);
     });
-  }, [openId, node, mounted]);
+  }, [mountedId, wantedNow]);
+
+  // ESCAPE CLOSES — AND IT NEEDED AN OWNER TO.
+  //
+  // The comment above has claimed this for two revisions and nothing has
+  // listened for the key since the port: the handler went with the scrim it
+  // used to live on, and because the story that covers it also asserts the
+  // scrim does NOT close, the failure read as "the scrim dismissed" rather
+  // than "nothing closes at all".
+  //
+  // On the DOCUMENT, because the thing that must answer the key is the view
+  // rather than whatever inside it happens to have focus — after a trim the
+  // focus is on a handle, after a swipe it is nowhere. Fields are excluded:
+  // Escape in a text field means "abandon this edit", and the field is
+  // entitled to keep it.
+  //
+  // A LAYOUT EFFECT, so the view owns the key from the frame it appears in.
+  // A passive effect runs after paint, and the view appears mid-transition —
+  // the browser is holding a snapshot over the page for ~380ms, which is
+  // exactly long enough for a hand (or a test) to reach Escape before the
+  // listener is attached. Measured: the e2e case passed alone and failed under
+  // a loaded six-worker run, which is the shape of a race rather than a bug in
+  // what it asserts.
+  useLayoutEffect(() => {
+    if (!wantedNow) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName ?? "";
+      if (target?.isContentEditable === true) return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      event.preventDefault();
+      setOpenId(null);
+    };
+    // ON THE CAPTURE PHASE, AND WITHOUT A `defaultPrevented` GUARD.
+    //
+    // Both were wrong, and together they made Escape work from one route and
+    // not the other. Opening by CLICKING A CARD leaves focus on that card, and
+    // a card is a dnd-kit draggable whose keyboard sensor takes Escape to mean
+    // "cancel the drag" and calls `preventDefault` on it. Bubbling in behind
+    // that, this handler saw a defaulted-prevented event and stood down — so
+    // Escape closed the view when it had been opened through the helper (focus
+    // elsewhere) and did nothing when opened by hand, which is every real use.
+    //
+    // Capturing is safe here rather than merely convenient: the board is GONE
+    // while this view is up, so there is no drag in flight for the sensor's
+    // reading of the key to be about.
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [wantedNow, setOpenId]);
 
   if (!mounted || node === null) return null;
   if (node.kind === "collection") {
@@ -1551,5 +1853,99 @@ export function GraphItemDetailsModal() {
         setOpenId(id);
       }}
     />
+  );
+}
+
+/**
+ * THE BOARD, which steps aside while details are open (PL15-029).
+ *
+ * Details replace the content area rather than cover it, so something has to
+ * decide which of the two is showing. This is that decision, and it lives in a
+ * component rather than in `graph-board` because the board is what RENDERS
+ * `ItemDetailsProvider` — a `useItemDetails()` call up there reads the closed
+ * fallback outside its own provider, which fails silently as "details never
+ * open" rather than as an error.
+ *
+ * HIDDEN, NOT UNMOUNTED, and that was an explicit choice. Unmounting is cheaper
+ * while details are open and costs the board its scroll position, its selection
+ * and any in-flight drag — all of which the person coming back expects to find
+ * where they left it. Keeping it mounted pays for that with the whole board
+ * sitting behind a view that covers it, which is the cost the grid
+ * virtualization item is already about; that cost is bounded and known, and
+ * losing someone's place is not.
+ *
+ * `display: none` as an inline style, deliberately, and not a `hidden` class:
+ * this element also carries `flex`, and two utilities setting `display` in the
+ * same layer are decided by stylesheet order rather than by the order they are
+ * written here — which is a coin toss that would read as "sometimes the board
+ * does not hide". An inline style has no such argument to lose. It also makes
+ * the subtree non-focusable and non-interactive for free, so no `inert` is
+ * needed alongside it.
+ */
+export function GraphBoardContent({ children }: Readonly<{ children: ReactNode }>) {
+  const { openId } = useItemDetails();
+  const open = openId !== null;
+
+  // WHERE THE BOARD WAS, which `display: none` does not keep for it.
+  //
+  // MEASURED, because the opposite was assumed first: the board scrolls the
+  // DOCUMENT rather than a container of its own, so hiding it collapses the
+  // page from 1087px to 910 and the browser clamps the window scroll to 0.
+  // Coming back put someone who had scrolled to 177 back at the top. Keeping
+  // the board mounted preserves its selection and any in-flight drag, which is
+  // why that was chosen — but the scroll position is the window's, not the
+  // board's, and it was never covered by that choice.
+  //
+  // Recorded on scroll rather than at the moment of opening, because by the
+  // time an effect can see `openId` change the board is already hidden and the
+  // number is already 0. Passive, and only registered while the board is
+  // actually showing: it stores one integer and is not listening at all for
+  // the whole time details are up.
+  const parked = useRef(0);
+  const wasOpen = useRef(false);
+
+  useEffect(() => {
+    if (open) return;
+    const onScroll = () => {
+      parked.current = window.scrollY;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [open]);
+
+  // A LAYOUT effect: the board is back in flow in this same commit, so the
+  // document is tall enough to hold the scroll again. In a passive effect the
+  // browser can paint the top of the board first, which reads as a jump.
+  useLayoutEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      return;
+    }
+    // Only after a real close — on first mount there is nothing to restore,
+    // and scrolling to a parked 0 would fight the browser's own restoration.
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    const to = parked.current;
+    if (to === 0) return;
+    // TWICE, AND THE SECOND ONE IS THE ONE THAT LANDS. Closing by Back is a
+    // popstate, and the browser restores that entry's own scroll offset after
+    // this effect runs — an offset it recorded while the page was still short,
+    // so it is 0 and it overwrites the restore. A frame later the board is
+    // painted, the document is tall again, and nothing else is going to move
+    // it. The immediate call stays for the close-button path, where there is
+    // no popstate to lose to and waiting a frame would show the top of the
+    // board first.
+    window.scrollTo(0, to);
+    const raf = requestAnimationFrame(() => window.scrollTo(0, to));
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
+
+  return (
+    <div
+      className="flex flex-col gap-2"
+      style={open ? { display: "none" } : undefined}
+    >
+      {children}
+    </div>
   );
 }

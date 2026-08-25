@@ -1179,7 +1179,13 @@ production, and nobody notices until someone watches carefully.
 
 ## PL15-020 — A preview-height invariant regressed somewhere in this list
 
-- Status: OPEN — reproduced, NOT attributed, and INTERMITTENT. Raised by me,
+- Status: COMPLETE. The second contributor was the FIRST fix’s own leftover:
+  a `dividerRef` guard in `initialSurfaceHeight` that nothing below it used
+  any more. Measured at N=30, default workers, failures counted by kind:
+  the height assertion went 10 of 30 to 0 of 30. The residual 1-2 of 30 is a
+  DIFFERENT assertion — the divider’s hover colour — filed as PL15-031. See
+  "PL15-020 — the second contributor" at the end of this list.
+- Was: OPEN — reproduced, NOT attributed, and INTERMITTENT. Raised by me,
   against my own work. Rate measured at the end of the list: 4 of 6 passing in
   isolation, and a full suite run that came back entirely green — so a green
   run is NOT evidence this is fixed. `origin/main` passed it 6 of 6.
@@ -1922,7 +1928,11 @@ been doing more of.
 
 ## PL15-029 — The details modal stops being a modal and becomes the content area
 
-- Status: Not started
+- Status: COMPLETE. Built and verified in the app: the view is a `<section>` in
+  the content area, the board is hidden but mounted, `?details=<nodeId>` deep
+  links from a cold load, and Back closes it. Two decisions were the owner’s:
+  routed and deep-linkable, and the board hidden rather than unmounted. See
+  "PL15-029 — what the container change actually cost" at the end of this list.
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
   (open a clip's details from the board)
 - Area: `components/graph-view/graph-item-details-modal.tsx`,
@@ -2005,9 +2015,12 @@ Acceptance criteria:
 
 ## PL15-030 — The reference design for the details view
 
-- Status: Not started, but SPECIFIED — the owner supplied the source, and three
-  open questions in the first draft of this item are now decided (see "The three
-  calls" below). What is left is a build, not a design.
+- Status: MOSTLY COMPLETE. Built and verified in the app: the five-control
+  transport reaching both ends, skimming feeding the one shared preview with
+  the playhead untouched, and the visual pass (the bar’s lit panel, the
+  quiet-label treatment). ONE PIECE DELIBERATELY NOT BUILT — the preview’s
+  340ms dismiss animation, which collides with PL15-020 and should wait for
+  it. See "PL15-030 — what the reference actually asked for" at the end.
 - Reference: `punch-list/reference/storyboard-playbar.html`, vendored into the
   repo because that is the readable one and a Downloads folder is not a spec.
   Also supplied: `storyboard-react-demo.html`, the same design as a Tailwind v4
@@ -2127,3 +2140,247 @@ Acceptance criteria:
 **Nothing is open on this item.** The reference as vendored still links the two
 Google families in its `<head>`; that is the file as supplied and it is left
 alone, but it is the REFERENCE, not the target.
+
+## PL15-029 — what the container change actually cost
+
+**THE ARITHMETIC WAS THE FEATURE, AND DELETING IT WAS THE WORK.** The scrim
+reserved its own edges with `pt-[14.75rem]` and `pb-[4.875rem]`, because the
+header and the bar were absolutely positioned so the row could centre without
+them affecting its width — which meant they took no space, and every change to
+the bar had to be measured and then paid for TWICE (`items-center` shares
+padding added at the top with the bottom). In flow they occupy the space they
+occupy. There is no number left to keep in step.
+
+**THE ROW STILL NEEDS WHAT THE SCRIM GAVE IT.** `justify-center` and
+`items-center` came free from the scrim; in a column they are `self-center` — a
+flex item wider than its container centres by overflowing equally both sides,
+which is what puts the subject mid-screen — and `my-auto`. `my-auto` alone was
+not enough: it only separates anything when there IS free space, and
+`TheTwoBarsAreAdjacent` caught the row butting against the bar at 0 against its
+floor of 16. `gap-6` is the minimum; `my-auto` spends whatever is left over.
+
+**THE WIDTH BASIS TOOK THREE GOES, AND THE SECOND ONE LOOKED RIGHT.**
+`panelWidthsFor` was `100vw`, correct while the scrim WAS the viewport.
+
+- `100%` cannot work: the row must stay content-width to centre by
+  overflowing, and a percentage inside an auto-width box has no definite basis.
+- `100cqw` measures correctly for the PANELS and is still wrong. Container
+  units resolve against the nearest ancestor container, names ignored, and
+  every panel declares `@container` for its own internals — so the same
+  expression means "the view" on a panel and "the panel" inside one. The
+  heading deliberately reuses this width so it is sized by its ROLE rather than
+  by the box it sits in, which is what keeps it still while the box animates.
+  `vw` was global and immune; `cqw` made it follow the box, and
+  `TheNameDoesNotReTruncateWhileTheCardResizes` caught it — 173px becoming 68
+  the moment the story shoved the two boxes onto each other's widths.
+- A pixel length published by the view (`--details-basis`, from a
+  ResizeObserver) means the same thing at every depth. Measured in the app with
+  the rail open: viewport 1485, basis 1146, neighbours 284, centre 497 —
+  (1146 - 48 - 32) / 3.75 and then x 1.75 exactly, tracking the rail with
+  nothing to keep in sync.
+
+**A `useState` SETTER IS A CONTRACT, AND ROUTING BROKE IT.** `setOpenId` had
+been a state setter for its whole life, so consumers treat it as stable — one
+does literally: `useEffect(() => setOpenId(id), [id, setOpenId])`. Deriving it
+from `openId`/`pathname`/`searchParams` gave it a new identity whenever the open
+item changed, turning that effect into a loop that reopened the clip you had
+just left. It surfaced as four stories reporting "clicking a neighbour does not
+advance", which is exactly what it looked like from outside. The live values
+come from an effect-synced ref now, and the callback depends only on `router`.
+
+**THE BOARD KEEPS ITS PLACE, AND `display: none` DOES NOT KEEP IT.** Hidden
+rather than unmounted was chosen to preserve scroll, selection and any
+in-flight drag — but the board scrolls the DOCUMENT, so hiding it collapses the
+page from 1087px to 910 and the browser clamps the window scroll to 0. Measured:
+scrolled to 177, came back at 0. The position is recorded on scroll (an effect
+reading it after the fact sees 0, the hide having already happened) and restored
+twice on close — immediately for the close button, and again a frame later,
+because closing by Back is a popstate and the browser restores that entry's own
+offset, recorded while the page was still short, AFTER the effect runs.
+
+**TWO THINGS FOUND ALONG THE WAY THAT WERE NOT THIS ITEM.**
+`withViewTransition` caught `finished` but never `ready`, which rejects with an
+AbortError whenever a transition is SKIPPED — normal here, since opening a
+second clip skips the first's animation. Unhandled, a test runner counts it
+against whatever test happens to be in flight. And `apps/storybook` never
+declared `nextjs.appDirectory`, which the gstudio workspace has always set: the
+first component to read the router took all 53 of this view's stories down at
+once, with nothing about routing in the message.
+
+**Verified in the app, not inferred:** the deep link opens from a cold load, one
+history entry per open, Back closes it and restores the scroll, and the view is
+a `<section>` with the board hidden beside it. 1457 app tests, 807 unit, 334
+story interactions, lint 0 errors.
+
+## PL15-030 — what the reference actually asked for
+
+**THE TWO DESIGN SYSTEMS WERE ALREADY THE SAME SYSTEM.** The view has its own
+token file (`graph-details-design.ts`), and set beside the reference's `:root`
+block most of it matches outright:
+
+| reference | ours | |
+| --- | --- | --- |
+| `--stroke: rgba(255,255,255,.07)` | `HAIRLINE border-white/[0.07]` | identical |
+| `--r-card: 12px` | `RADIUS_CARD rounded-xl` | identical |
+| `--alarm` = the playhead, and only that | "RED — the playhead. Never anything else" | identical rule |
+| `--panel-lo: #0b0d12` | `SURFACE_CARD #0d0d10` | within a shade |
+| `--signal: #3cdbc0` | BLUE = a value you can edit | ours, by decision |
+
+So the visual pass was never a restyle. Two things were genuinely missing, and
+both are small:
+
+- **The bar had no surface at all.** `data-seam-bar` was
+  `flex w-full flex-col gap-2` — ruler, film and minimap sitting straight on the
+  page, so the one instrument the view is arranged around was the only thing in
+  it without edges. It gets the reference's lit panel: a `180deg` gradient
+  through `#14181f → #0e1117 55% → #0b0d12`, an inset ring, and the lift.
+  `inset 0 1px 0 rgba(255,255,255,.05)` is the half that does the work —
+  without that single lit pixel along the top the gradient reads as a slightly
+  different grey rather than as a surface catching light.
+- **The quiet labels were too dark and untracked.** `zinc-600` (`#52525b`)
+  against the reference's `#79828f`, with no tracking and no case change — dark
+  enough that a label beside a value read as disabled rather than as quiet.
+
+**THE TREATMENT IS WHAT CARRIES THE LOOK, WHICH IS EXACTLY WHY NO FONTS WERE
+NEEDED.** With Martian Mono and Spline Sans Mono ruled out, tracking does the
+work a display face would have done: at 10px, letters set close read as a word
+and letters set apart read as a LABEL, whatever family draws them. `0.14em`
+rather than the reference's `0.22em`, because tracking adds width per character
+and ours sit in control rows that are already full — the reference can afford
+more of it because its labels live in a strip with nothing beside them.
+
+**THE EDGE IS A RING, NOT A BORDER, AND A STORY IS WHY.** The first version
+used `border` + `HAIRLINE`, which is what every other surface here does. On a
+panel this wide it moves everything inside in by a pixel:
+`TheBarSpansTheFullWidth` caught the ruler starting at 25 where it must start
+at 24, and its rule — "nothing else may narrow them" — is exactly right,
+because the bar's rows and the cards below are read against each other. An
+inset ring is drawn rather than laid out, so the alignment survives.
+
+**THE TRANSPORT WAS HALF THERE.** Previous and next already stepped one CLIP
+and already went dim at the ends, which is the reference's behaviour; only the
+outer pair was missing. `jumpToEdge` is shared with `Home`/`End` so the key and
+the button cannot drift, and it clears `followSuspended` — time and scroll move
+together, which is the reference's own reason for setting both in one go.
+
+The two pairs move DIFFERENT things, and the story says so because the
+reference does not distinguish them: there, stepping the deck and moving the
+player are one act. Here the jumps move time along the whole sequence and the
+steps move which clip is the subject, so arriving at the last second says
+nothing about whether there is a next clip. The first version of that story
+asserted otherwise and failed.
+
+**SKIMMING REUSED A SEAM RATHER THAN INVENTING ONE.** `frameOverride` already
+hands the pane a frame to draw while `currentTime` is untouched — which IS the
+reference's rule that the fill tracks playback and never the skim. And
+`usePublishTrimPreview` already returns whether the pane took it, so the hover
+card is not replaced: it becomes the pane-closed fallback, which is that seam's
+own existing rule rather than a new one.
+
+**TWO INSTRUMENTS WERE WRONG BEFORE ONE WAS RIGHT.** The pane draws
+`frameOverride` to its own CANVAS from a cached element, so the visible
+`<video>.currentTime` never moves and measuring it proves nothing — it read as
+"the skim does not work" twice. The observable contract is the card: pane OPEN,
+hovering the ruler leaves the ghost up and shows no card; pane CLOSED, the same
+hover shows the card. Both measured, with the clock reading 0:10.2 throughout
+either way.
+
+**STILL OPEN ON THIS ITEM: the dismiss animation.** The reference opens and
+closes its preview over 340ms with a `prefers-reduced-motion` path, renders the
+frame BEFORE animating open so it is not one frame stale, and scrolls the
+window to top because the preview and the playbar share the viewport. Our pane
+is already dismissible — `previewOn`, with the pane's own close button going
+through the same event so there is one owner — but it appears and disappears
+without any of that. It is not built here because the pane's height is
+USER-OWNED and its mount-time sizing is the subject of PL15-020, which is open
+with a second contributor still unfound: animating a height that a known
+intermittent bug already mis-sets is how you get a third contributor. Worth
+doing after PL15-020 closes, not before.
+
+## PL15-020 — the second contributor, and it was a leftover
+
+**FOUND, AND IT WAS THE FIRST FIX'S OWN RESIDUE.** `initialSurfaceHeight` opened
+with a guard:
+
+```
+const divider = dividerRef.current;
+if (!divider) return false;
+```
+
+and then never touched `divider` again. It was needed while the ceiling was
+`available - divider.offsetHeight`, which is exactly what the FIRST half of this
+item removed — "omitting the argument is the fix" — but the guard it existed for
+stayed behind.
+
+So the sizing still bailed whenever the mount layout effect ran before the
+divider had attached, and on those passes the pane rendered at
+`DEFAULT_SURFACE_HEIGHT` and PUBLISHED it: `aria-valuenow` says 380. Latching on
+success made the retry work, which is why the rate improved — but a retry is a
+correction, and anything reading the height in that window reads one the pane is
+about to change. The test captures `initial` as soon as the value is above zero,
+so it was reading 380 and comparing it against the corrected 207.
+
+**MEASURED, SAME N AND SAME WORKER COUNT, WHICH THIS ITEM ALREADY KNEW TO HOLD
+CONSTANT.** N=30 at the default worker count, `--retries=0`, `test-results`
+cleared between runs so the failure kinds could be counted rather than guessed:
+
+| | height failures | hover failures | passed |
+| --- | ---: | ---: | ---: |
+| guard present | **10 / 30** | 2 / 30 | 18 / 30 |
+| guard removed | **0 / 30** | 1 / 30 | 29 / 30 |
+
+The height assertion has not failed once since. The whole `graph-view` project
+runs 162 passed, 4 skipped, 0 failed.
+
+**THE FAILURE KIND IS THE FINDING, NOT THE COUNT.** Reading only "9 of 10" and
+"26 of 30" would have said "better, still broken" and sent the next person back
+to the sizing code. The four remaining failures were a DIFFERENT assertion — the
+divider's hover colour, `not.toBe` rather than `toBe` — which the height failure
+had been masking by aborting the test first. Counting kinds took one command and
+turned an ambiguous rate into a closed item plus a new one.
+
+**A WARNING FOR THE NEXT MEASUREMENT.** `test-results/` accumulates across runs,
+so a `find` over it mixes this run's failures with the last one's. The first
+attribution I made from it was wrong in exactly that way — it showed the fixed
+run's leftovers beside the baseline's. Clear the directory before each run.
+
+## PL15-031 — the divider's hover colour does not always take
+
+- Status: OPEN, measured but not diagnosed. 1-2 in 30 at the default worker
+  count; unchanged by PL15-020's fix, and present before it.
+- Area: `apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts`
+  (`preview height is the user's…`), `packages/ui/timeline/viewport`
+- Screenshot: Not captured
+
+The test hovers the divider and waits for its band to change colour:
+
+```
+await divider.hover({ position: { x: 60, y: 10 } });
+await expect.poll(dividerLineColor).not.toBe(restLineColor);
+```
+
+Occasionally the colour never changes and the poll times out after 5s, reporting
+`Expected: not "oklch(0.274 0.006 286.033)"` — the resting colour.
+
+**IT WAS HIDING BEHIND PL15-020.** The hover assertion comes BEFORE the height
+one, so a run that failed the hover never reached the height — and a run that
+failed the height had passed the hover. Only once the height stopped failing did
+this become the visible remainder, at 1 in 30 rather than the 10 in 30 it sat
+behind.
+
+What is NOT yet known: whether the pointer fails to land, whether the colour
+change is real but slower than the poll under parallel load, or whether
+something intermittently covers the divider at x=60. The band is painted from
+`currentColor` through a gradient, and the test already had to be corrected once
+for reading `backgroundColor` on a gradient-backed element — so the read itself
+is worth re-checking before the cause is assumed.
+
+Acceptance criteria:
+
+- The cause is named, not the rate improved. A number that moves without an
+  explanation is the thing this list keeps catching.
+- The fix is measured the way PL15-020 was: N=30, worker count held constant,
+  `test-results` cleared between runs, and failures counted BY KIND.
+- If it turns out to be the test rather than the component, the assertion is
+  corrected rather than loosened — a poll that passes because it waits longer is
+  a poll that has stopped asserting.

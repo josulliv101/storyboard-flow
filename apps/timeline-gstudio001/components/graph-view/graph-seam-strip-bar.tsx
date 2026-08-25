@@ -1,7 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Pause, Play, Settings2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Pause,
+  Play,
+  Settings2,
+  SkipBack,
+  SkipForward,
+} from "lucide-react";
+import {
+  usePublishTrimPreview,
+  type TrimPreviewFrame,
+} from "./graph-trim-preview";
 
 import {
   BAR_COLLECTION_COLOURS_ENABLED,
@@ -22,7 +34,13 @@ import {
   SeamLane,
   type SeamHover,
 } from "./graph-seam-lane";
-import { HAIRLINE, SURFACE_WELL } from "./graph-details-design";
+import {
+  BAR_LIFT,
+  HAIRLINE,
+  RADIUS_BAR,
+  SURFACE_BAR,
+  SURFACE_WELL,
+} from "./graph-details-design";
 import { SegmentedControl } from "./graph-details-segmented";
 import {
   DropdownMenu,
@@ -670,6 +688,16 @@ export function SeamStripBar({
                   clip.posterSrcs[0],
                   Math.round(((clip.trimInSeconds ?? 0) + at.secondsIntoClip) * 4) / 4,
                 ) ?? clip.posterSrc,
+              // THE SAME MOMENT, ADDRESSED FOR THE PANE (PL15-030). Not
+              // quantised, unlike the poster above: that number is quantised
+              // because every distinct time is a distinct Cloudinary FETCH,
+              // and the pane is seeking an element it already holds.
+              ...(clip.src === undefined
+                ? {}
+                : {
+                    src: clip.src,
+                    sourceTime: (clip.trimInSeconds ?? 0) + at.secondsIntoClip,
+                  }),
             }),
       };
       // Already up: follow immediately. The dwell is a question about
@@ -1027,11 +1055,44 @@ export function SeamStripBar({
     bringSpanIntoView(panelSpan.from, panelSpan.to);
   }, [bringSpanIntoView, panelCount, panelSpan]);
 
+  /**
+   * SKIMMING FEEDS THE ONE SHARED PREVIEW (PL15-030).
+   *
+   * The reference design's rule is that there is a single preview and whatever
+   * you are looking at feeds it — take, then skim, then the sequence. Takes are
+   * out, so it is skim over sequence, and this is the skim half.
+   *
+   * IT REUSES THE TRIM SEAM RATHER THAN INVENTING ONE, and that seam already
+   * carries the constraint this needs: `frameOverride` hands the pane a frame
+   * to DRAW while `currentTime` is untouched. So the picture follows the
+   * pointer and the playhead and the scrub fill stay exactly where playback
+   * left them — which is the reference's own rule, that the fill tracks
+   * playback and never the skim. Skimming reads as looking rather than as
+   * seeking, and that difference is the whole point of it.
+   *
+   * `usePublishTrimPreview` returns whether the pane TOOK the frame, and the
+   * card draws only when it did not — so exactly one of the two is ever
+   * showing, which is the rule that seam was built around. Pane open: the big
+   * picture. Pane closed: the hover card, exactly as before.
+   */
+  const skimFrame = useMemo<TrimPreviewFrame | null>(() => {
+    if (hover?.src === undefined || hover.sourceTime === undefined) return null;
+    return hover.posterSrc === undefined
+      ? { src: hover.src, sourceTime: hover.sourceTime }
+      : { src: hover.src, poster: hover.posterSrc, sourceTime: hover.sourceTime };
+  }, [hover]);
+  const skimTaken = usePublishTrimPreview(skimFrame);
+
   // DERIVED, NOT ANNOUNCED AT EACH SITE. `hover` is cleared from four places —
   // pointer down, pointer leave, a wheel, and a position that resolves to no
   // clip — and a missed one would leave the panels dimmed with no card up to
   // explain why. Watching the value catches all of them.
-  const previewing = hover !== null;
+  //
+  // NOT WHILE THE PANE HAS IT. The panels are pulled back because the card is
+  // drawn OVER them; with the frame in the pane there is nothing over the row
+  // to make room for, and dimming it would be answering a question nobody
+  // asked.
+  const previewing = hover !== null && !skimTaken;
   useEffect(() => {
     onPreviewingChange?.(previewing);
   }, [previewing, onPreviewingChange]);
@@ -1098,6 +1159,24 @@ export function SeamStripBar({
   const windowFromSeconds = scale <= 0 ? 0 : -offset / scale;
   const windowToSeconds = scale <= 0 ? 0 : (-offset + trackWidth) / scale;
 
+  /**
+   * Jump to an EDGE of the sequence, and bring the bar with it (PL15-030).
+   *
+   * `setFollowSuspended(false)` is what makes the bar travel: suspended, the
+   * window stays where it was dragged and the playhead walks off it. Following
+   * again means time and scroll move together, which is what stops the
+   * playhead landing somewhere nobody can see — the reference design does the
+   * same thing by setting the time and the scroll offset in one go.
+   *
+   * SHARED WITH `Home`/`End`, which have always done this. The keys were the
+   * only way to reach either end; the buttons below are the same call, so the
+   * two cannot drift apart.
+   */
+  const jumpToEdge = (edge: "start" | "end") => {
+    setFollowSuspended(false);
+    onScrubSeconds(edge === "start" ? 0 : totalSeconds);
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const seekBy = (delta: number) => {
       event.preventDefault();
@@ -1118,14 +1197,38 @@ export function SeamStripBar({
         onStepForward?.();
       } else seekBy(1);
     } else if (event.key === "Home") {
-      seekBy(-Infinity);
+      event.preventDefault();
+      jumpToEdge("start");
     } else if (event.key === "End") {
-      seekBy(Infinity);
+      event.preventDefault();
+      jumpToEdge("end");
     }
   };
 
   return (
-    <div data-seam-bar className="flex w-full flex-col gap-2">
+    <div
+      data-seam-bar
+      // A PANEL, NOT A TRANSPARENT STACK (PL15-030). The bar had no
+      // surface of its own: ruler, film and minimap sat straight on the
+      // page, so the one instrument the view is arranged around was the
+      // only thing in it without edges. Giving it the lit panel the
+      // reference uses is what makes it read as a device rather than as
+      // three rows that happen to be adjacent.
+      //
+      // NO BORDER — the edge is an inset ring inside `BAR_LIFT`. A 1px border
+      // would move every row inside the panel in by a pixel, and the bar's
+      // rows are read against the cards below them; `TheBarSpansTheFullWidth`
+      // exists to catch exactly that.
+      //
+      // The vertical padding is the panel's, not the rows' — 14 above and 12
+      // below, matching the reference.
+      className={[
+        "flex w-full flex-col gap-2 pt-[14px] pb-3",
+        SURFACE_BAR,
+        RADIUS_BAR,
+        BAR_LIFT,
+      ].join(" ")}
+    >
       <div
         ref={trackRef}
         data-seam-track
@@ -1241,7 +1344,7 @@ export function SeamStripBar({
           atEnd={atEnd}
           offset={offset}
           ghostX={hover === null ? null : hover.x}
-          hover={panning ? null : hover}
+          hover={panning || skimTaken ? null : hover}
           previewAnchor={previewAnchor}
           handlers={{
             onPointerDown,
@@ -1403,6 +1506,32 @@ export function SeamStripBar({
           // design it came from.
           className={["flex items-center gap-1 rounded-full border p-[3px]", HAIRLINE, SURFACE_WELL].join(" ")}
         >
+          {/* THE EDGES, BRACKETING THE STEPS (PL15-030). Five controls in the
+              order the reference design uses: start, previous, play, next,
+              end — the outer pair jumping the whole sequence, the inner pair
+              stepping one clip.
+
+              NOT DISABLED AT THE ENDS, unlike the step buttons beside them.
+              Stepping past the last clip has nowhere to go, so that control
+              goes dim; jumping to the end while already at the end is simply
+              a no-op that costs nothing, and dimming it would put two
+              different kinds of disabled in one pill. Quieter than the steps
+              (`zinc-400` against `zinc-300`) because they are the outer ring
+              of the group and reached for less.
+
+              SAME CALL AS `Home` AND `End`, which have always done this — see
+              `jumpToEdge`. */}
+          <button
+            type="button"
+            data-seam-jump="start"
+            onClick={() => jumpToEdge("start")}
+            aria-label="Jump to start"
+            title="Jump to start (Home)"
+            className="grid h-7 w-7 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+          >
+            <SkipBack aria-hidden="true" className="h-3.5 w-3.5 fill-current" />
+          </button>
+
           {/* STEP ONE CLIP, either way, bracketing the thing they move.
               Disabled rather than hidden at the ends: a control that vanishes
               takes its own position with it and shifts the bar sideways. */}
@@ -1459,7 +1588,19 @@ export function SeamStripBar({
           >
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </button>
+
+          <button
+            type="button"
+            data-seam-jump="end"
+            onClick={() => jumpToEdge("end")}
+            aria-label="Jump to end"
+            title="Jump to end (End)"
+            className="grid h-7 w-7 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+          >
+            <SkipForward aria-hidden="true" className="h-3.5 w-3.5 fill-current" />
+          </button>
         </div>
+
 
         <div className="flex min-w-0 items-center justify-end gap-3">
 

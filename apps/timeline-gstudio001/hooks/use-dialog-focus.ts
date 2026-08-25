@@ -27,6 +27,18 @@ import { useCallback, useEffect, useRef } from "react";
  * Everything outside the dialog is also made `inert`, which is the DOM's own
  * version of the same claim: it removes the background from the tab order and
  * the accessibility tree together, so the two cannot disagree.
+ *
+ * `trapFocus: false` KEEPS 1 AND 3 AND DROPS 2 (PL15-029). The details views
+ * are not dialogs any more — they replace the content area rather than cover
+ * it — and trapping Tab inside something that is not modal is the same defect
+ * this hook was written to fix, arrived at from the other side: the reader is
+ * told nothing is hidden, and then cannot leave. The inert marking goes with
+ * it, for the same reason.
+ *
+ * Moving focus IN and RESTORING it are not modal behaviours, though, and they
+ * are the two worth keeping. Restoring in particular: focus goes back to the
+ * card the view was opened from, which is what stops the board's roving focus
+ * resetting to the top every time someone looks at a clip.
  */
 
 /** Focusable candidates, in DOM order. `:not([inert] *)` keeps the background
@@ -52,7 +64,10 @@ function focusableWithin(root: HTMLElement): HTMLElement[] {
   );
 }
 
-export function useDialogFocus<T extends HTMLElement>() {
+export function useDialogFocus<T extends HTMLElement>(
+  options?: Readonly<{ trapFocus?: boolean }>,
+) {
+  const trapFocus = options?.trapFocus ?? true;
   const panelRef = useRef<T | null>(null);
 
   useEffect(() => {
@@ -64,10 +79,12 @@ export function useDialogFocus<T extends HTMLElement>() {
     // Everything that is not this dialog's own portal root. `inert` covers the
     // tab order AND the accessibility tree, so it is the one attribute that
     // makes aria-modal's claim actually hold.
-    const backdrop = Array.from(document.body.children).filter(
-      (element): element is HTMLElement =>
-        element instanceof HTMLElement && !element.contains(panel),
-    );
+    const backdrop = trapFocus
+      ? Array.from(document.body.children).filter(
+          (element): element is HTMLElement =>
+            element instanceof HTMLElement && !element.contains(panel),
+        )
+      : [];
     const previouslyInert = backdrop.map((element) => element.hasAttribute("inert"));
     for (const element of backdrop) element.setAttribute("inert", "");
 
@@ -96,9 +113,9 @@ export function useDialogFocus<T extends HTMLElement>() {
       }
     };
 
-    document.addEventListener("keydown", onKeyDown, true);
+    if (trapFocus) document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
+      if (trapFocus) document.removeEventListener("keydown", onKeyDown, true);
       backdrop.forEach((element, index) => {
         if (!previouslyInert[index]) element.removeAttribute("inert");
       });
@@ -107,7 +124,7 @@ export function useDialogFocus<T extends HTMLElement>() {
       // check rather than trust.
       if (restoreTo?.isConnected) restoreTo.focus();
     };
-  }, []);
+  }, [trapFocus]);
 
   /** Spread onto the dialog's own element. `tabIndex={-1}` is what lets the
    *  panel hold focus when it contains no focusable control. */

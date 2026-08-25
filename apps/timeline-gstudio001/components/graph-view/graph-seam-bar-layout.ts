@@ -33,6 +33,16 @@ export type SeamBarClip = Readonly<{
    *  inside the part of the clip that actually plays. */
   trimInSeconds?: number;
   /**
+   * The media SOURCE, for handing a skimmed frame to the preview pane
+   * (PL15-030).
+   *
+   * A src rather than an id, matching `TrimPreviewFrame`: the pane plays either
+   * the focused level's projection (node ids) or the compiled manifest
+   * (path-qualified ids), so an id matches in one model and misses in the
+   * other. A src is the same string in both.
+   */
+  src?: string;
+  /**
    * Skipped at play time.
    *
    * The flag has existed on the node all along; the bar simply never heard

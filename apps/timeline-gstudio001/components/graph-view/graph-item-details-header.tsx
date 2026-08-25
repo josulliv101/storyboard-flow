@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Redo2, Undo2, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { useScopedHistory } from "./graph-item-details-history";
 
@@ -126,32 +126,13 @@ export function ItemDetailsHeader({
         {/* The controls keep their own tighter rhythm; the notice sits apart
             from them so it reads as a report rather than another button. */}
         <div className="flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          data-item-details-undo
-          disabled={!history.undoableHere}
-          onClick={history.undo}
-          aria-label="Undo the last change"
-          title="Undo the last change to this item"
-          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
-        >
-          <Undo2 aria-hidden="true" className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          data-item-details-redo
-          disabled={!history.redoableHere}
-          onClick={history.redo}
-          aria-label="Redo the last change"
-          title="Redo the last change to this item"
-          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
-        >
-          <Redo2 aria-hidden="true" className="h-4 w-4" />
-        </button>
-        {/* A rule between the edits and the exit: undo and redo change the
-            clip, close changes nothing, and grouping them without a divider
-            invites the wrong one. */}
-        <span aria-hidden="true" className="mx-1 h-5 w-px bg-white/15" />
+        {/* UNDO AND REDO ARE NOT HERE ANY MORE (PL15-030). The board's own
+            pair sits at the right of the breadcrumb row, one row above this
+            one, and two pairs a few pixels apart is the same fault this
+            header was created to fix — it took three history pairs off the
+            cards precisely because only one of them was ever the one you
+            wanted. The divider went with them: with nothing to separate
+            close from, a rule beside it is a rule about nothing. */}
         <button
           type="button"
           onClick={onClose}

@@ -1,6 +1,18 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { withViewTransition } from "@/lib/view-transition";
+import { HERO as SHARED_HERO, HERO_ATTRIBUTE } from "./graph-item-details-shared";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
 
@@ -18,9 +30,29 @@ import {
  * and a card can be pressed without being the selection — so the open item is
  * named here rather than inferred. `null` is closed.
  *
- * Session-scoped on purpose (state, not storage): the view costs a video
- * element and a filmstrip, and having it survive a reload would mean paying
- * that on every page load for something the user opened once, days ago.
+ * IN THE URL, as `?details=<nodeId>` (PL15-029). It used to be session state,
+ * and the reason it was is worth keeping even though the decision reversed:
+ * the view costs a video element and a filmstrip, and surviving a reload means
+ * paying that on a load where nobody asked for it.
+ *
+ * What changed is what the view IS. A modal is a state — something the board is
+ * wearing. A view that replaces the content area is a PLACE, and a place that
+ * cannot be linked to or backed out of is a broken one. Once details stopped
+ * being an overlay, keeping the open item out of the URL stopped being thrift
+ * and started being a missing feature.
+ *
+ * THE URL IS THE SOURCE OF TRUTH, with an optimistic value in front of it —
+ * the same shape the graph's focus path uses, and for the same measured
+ * reason: `router.push` does not commit until the App Router has answered the
+ * RSC request for the segment, so publishing the id locally is what makes
+ * opening feel immediate. The two agree by construction because the pending
+ * value IS what was pushed, and it is dropped the moment a real URL change
+ * arrives — a push landing, Back/Forward, or a deep link.
+ *
+ * OPEN AND CLOSE PUSH; SWITCHING CLIPS REPLACES. Opening is going somewhere, so
+ * Back should leave — but swiping through eight clips should not leave eight
+ * entries to walk back out through. Replace on a switch means Back always
+ * returns to the board, from whichever clip you ended on.
  */
 type ItemDetailsValue = Readonly<{
   openId: string | null;
@@ -31,9 +63,161 @@ const ItemDetailsContext = createContext<ItemDetailsValue | null>(null);
 
 const CLOSED: ItemDetailsValue = { openId: null, setOpenId: () => {} };
 
+/** The one spelling of the query key, so the reader and the writer agree. */
+export const ITEM_DETAILS_PARAM = "details";
+
+/**
+ * THE CLICKED THUMBNAIL FLIES INTO THE VIEW (PL15-030).
+ *
+ * The flight starts HERE, and it has to. The details view replaced the board
+ * rather than covering it (PL15-029), so by the time the view's own effect can
+ * run the board is hidden — measured, the card still carried the hero name and
+ * had ZERO WIDTH, so no "old" snapshot was ever taken and the morph was the
+ * destination fading in by itself. This is the last moment the picture being
+ * flown from is still on screen.
+ *
+ * `HERO` is the app's existing name, worn by the board card here and taken over
+ * by the subject card's picture inside the details view. Only one element may
+ * hold it, which the handover inside the callback guarantees.
+ */
+const HERO = SHARED_HERO;
+
+/** The board card for this node, if it is on screen to fly from. */
+function boardCard(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+}
+
 export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  const value = useMemo(() => ({ openId, setOpenId }), [openId]);
+  const router = useRouter();
+  const pathname = usePathname();
+  // The graph tree mounts client-only (`ssr: false` in client-graph-view), so
+  // this has no prerender or Suspense implications — the same note the surface
+  // and dev params carry.
+  const searchParams = useSearchParams();
+  const urlId = searchParams.get(ITEM_DETAILS_PARAM);
+
+  // `undefined` means "nothing optimistic in flight"; `null` is the real value
+  // "closed", which is why this is not just `string | null`.
+  const [pending, setPending] = useState<string | null | undefined>(undefined);
+  // Dropped DURING the render that sees a new URL rather than in an effect —
+  // the documented adjust-state-on-change pattern used by the focus path, and
+  // set-state-in-an-effect is a lint error here for exactly the extra render
+  // it would cause.
+  const [urlIdSeen, setUrlIdSeen] = useState(urlId);
+  if (urlId !== urlIdSeen) {
+    setUrlIdSeen(urlId);
+    setPending(undefined);
+  }
+  const openId = pending === undefined ? urlId : pending;
+
+  // THIS CALLBACK'S IDENTITY MUST NOT CHANGE, and the first version's did.
+  //
+  // `setOpenId` was a `useState` setter for its whole life, so every consumer
+  // is entitled to treat it as stable — and one of them does, literally:
+  // `useEffect(() => setOpenId(id), [id, setOpenId])`. Deriving it from
+  // `openId`/`pathname`/`searchParams` gave it a new identity on every change
+  // of the open item, which turned that effect into a loop that reopened the
+  // clip you had just navigated away from. Four story tests caught it as
+  // "clicking a neighbour does not advance", which is exactly what it looked
+  // like from outside.
+  //
+  // The live values are read from a ref that an effect keeps current. One
+  // render stale in principle, never in practice: effects run long before a
+  // pointer can reach a control, and every caller here is a user gesture.
+  const latest = useRef({ openId, pathname, searchParams });
+  useEffect(() => {
+    latest.current = { openId, pathname, searchParams };
+  });
+
+  const setOpenId = useCallback(
+    (next: string | null) => {
+      // NOTHING PUBLISHES THE NEW ITEM UNTIL THE PATH IS CHOSEN, and an earlier
+      // version published here. `setPending` swaps the board for the details
+      // view, so calling it at the top unmounted the card the flight is
+      // supposed to start from — measured, the source still carried the hero
+      // name at the moment `startViewTransition` was called and had collapsed
+      // to 0x0 one frame later, when the browser actually captures. Both
+      // branches below set it at the point where it is safe to.
+      const { openId: current, pathname: path, searchParams: query } = latest.current;
+      const params = new URLSearchParams(query.toString());
+      if (next === null) params.delete(ITEM_DETAILS_PARAM);
+      else params.set(ITEM_DETAILS_PARAM, next);
+      const search = params.toString();
+      const url = search ? `${path}?${search}` : path;
+      const switching = next !== null && current !== null;
+      // `scroll: false` on both: the App Router scrolls to top on a navigation
+      // by default, and this one does not move the page — it changes what the
+      // content area is showing.
+      const commit = () => {
+        if (switching) router.replace(url, { scroll: false });
+        else router.push(url, { scroll: false });
+      };
+
+      // OPENING FROM THE BOARD IS THE ONLY FLIGHT. Switching between clips
+      // already inside the view has no board card to come from, and closing is
+      // the board returning rather than a picture travelling — the view owns
+      // that one, where it still has itself on screen to fly from.
+      const card =
+        next === null || switching || typeof document === "undefined" ? null : boardCard(next);
+      if (card === null) {
+        setPending(next);
+        commit();
+        return;
+      }
+
+      // AN ATTRIBUTE, NOT AN INLINE STYLE, and the difference is what makes
+      // this survive a real click.
+      //
+      // React manages the `style` attribute of elements it renders, so any
+      // re-render between here and the browser's capture rewrites it and drops
+      // an imperative `view-transition-name`. Dispatching the open event
+      // directly has nothing else in the task and never showed it; a genuine
+      // click does — selection, dnd-kit state, focus — and the source was gone
+      // by capture time, leaving a morph with nowhere to come from.
+      //
+      // React does not reconcile attributes it was never given, so this one is
+      // still there when the browser looks. The name itself is applied from a
+      // rule in `globals.css`.
+      card.setAttribute(HERO_ATTRIBUTE, "");
+      void withViewTransition(
+        () => {
+          // The card gives the name up in the same frame the view takes it, so
+          // exactly one element ever carries it. `withViewTransition` flushes
+          // this synchronously — the browser captures the "after" state as soon
+          // as the callback returns, and a queued update would leave nothing to
+          // fly to.
+          card.removeAttribute(HERO_ATTRIBUTE);
+          setPending(next);
+          // AND THE URL MOVES IN HERE, which is the whole fix.
+          //
+          // `startViewTransition` does NOT capture the old state when it is
+          // called — it captures at the next rendering opportunity. Committing
+          // the route immediately after the call therefore landed a React
+          // render BEFORE that capture: the board card re-rendered, React
+          // rewrote the style attribute it manages, and the name was gone by
+          // the time the browser looked. Chrome then had a destination and no
+          // source, and authored the group with both keyframes at the
+          // destination — measured on a visible page with `ready` resolving,
+          // 440px @ 560,163.5 at BOTH ends. A morph with nowhere to come from
+          // renders as a fade in place, which is exactly "it does not slide
+          // into position".
+          //
+          // In here the capture has already happened, so a render cannot take
+          // the source away.
+          commit();
+        },
+        // RUNS EVEN UNDER REDUCED MOTION, asked for by name. The helper skips
+        // entirely by default and that is right for things that slide about;
+        // this is one picture becoming the same picture somewhere else, and it
+        // is the only thing connecting the card you clicked to the view that
+        // replaced it. Without it, opening a clip is a hard cut.
+        { ignoreReducedMotion: true },
+      );
+    },
+    [router],
+  );
+
+  const value = useMemo(() => ({ openId, setOpenId }), [openId, setOpenId]);
   return (
     <ItemDetailsContext.Provider value={value}>
       <ItemDetailsActionListener onOpen={setOpenId} />
