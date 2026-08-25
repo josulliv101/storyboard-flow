@@ -758,6 +758,11 @@ function DetailsFilmstripModal({
           ? {
               posterSrcs: media.posterSrcs,
               trimInSeconds: seamClipOf(media)?.trimInSeconds ?? 0,
+              // For handing a skimmed frame to the preview pane (PL15-030).
+              // Carried on the same branch as the posters because it answers
+              // the same question for the same clips: a still has no timeline
+              // to skim along.
+              ...(media.src === undefined ? {} : { src: media.src }),
             }
           : {}),
       };

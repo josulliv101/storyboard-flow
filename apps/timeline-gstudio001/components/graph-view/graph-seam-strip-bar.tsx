@@ -10,6 +10,10 @@ import {
   SkipBack,
   SkipForward,
 } from "lucide-react";
+import {
+  usePublishTrimPreview,
+  type TrimPreviewFrame,
+} from "./graph-trim-preview";
 
 import {
   BAR_COLLECTION_COLOURS_ENABLED,
@@ -678,6 +682,16 @@ export function SeamStripBar({
                   clip.posterSrcs[0],
                   Math.round(((clip.trimInSeconds ?? 0) + at.secondsIntoClip) * 4) / 4,
                 ) ?? clip.posterSrc,
+              // THE SAME MOMENT, ADDRESSED FOR THE PANE (PL15-030). Not
+              // quantised, unlike the poster above: that number is quantised
+              // because every distinct time is a distinct Cloudinary FETCH,
+              // and the pane is seeking an element it already holds.
+              ...(clip.src === undefined
+                ? {}
+                : {
+                    src: clip.src,
+                    sourceTime: (clip.trimInSeconds ?? 0) + at.secondsIntoClip,
+                  }),
             }),
       };
       // Already up: follow immediately. The dwell is a question about
@@ -1035,11 +1049,44 @@ export function SeamStripBar({
     bringSpanIntoView(panelSpan.from, panelSpan.to);
   }, [bringSpanIntoView, panelCount, panelSpan]);
 
+  /**
+   * SKIMMING FEEDS THE ONE SHARED PREVIEW (PL15-030).
+   *
+   * The reference design's rule is that there is a single preview and whatever
+   * you are looking at feeds it — take, then skim, then the sequence. Takes are
+   * out, so it is skim over sequence, and this is the skim half.
+   *
+   * IT REUSES THE TRIM SEAM RATHER THAN INVENTING ONE, and that seam already
+   * carries the constraint this needs: `frameOverride` hands the pane a frame
+   * to DRAW while `currentTime` is untouched. So the picture follows the
+   * pointer and the playhead and the scrub fill stay exactly where playback
+   * left them — which is the reference's own rule, that the fill tracks
+   * playback and never the skim. Skimming reads as looking rather than as
+   * seeking, and that difference is the whole point of it.
+   *
+   * `usePublishTrimPreview` returns whether the pane TOOK the frame, and the
+   * card draws only when it did not — so exactly one of the two is ever
+   * showing, which is the rule that seam was built around. Pane open: the big
+   * picture. Pane closed: the hover card, exactly as before.
+   */
+  const skimFrame = useMemo<TrimPreviewFrame | null>(() => {
+    if (hover?.src === undefined || hover.sourceTime === undefined) return null;
+    return hover.posterSrc === undefined
+      ? { src: hover.src, sourceTime: hover.sourceTime }
+      : { src: hover.src, poster: hover.posterSrc, sourceTime: hover.sourceTime };
+  }, [hover]);
+  const skimTaken = usePublishTrimPreview(skimFrame);
+
   // DERIVED, NOT ANNOUNCED AT EACH SITE. `hover` is cleared from four places —
   // pointer down, pointer leave, a wheel, and a position that resolves to no
   // clip — and a missed one would leave the panels dimmed with no card up to
   // explain why. Watching the value catches all of them.
-  const previewing = hover !== null;
+  //
+  // NOT WHILE THE PANE HAS IT. The panels are pulled back because the card is
+  // drawn OVER them; with the frame in the pane there is nothing over the row
+  // to make room for, and dimming it would be answering a question nobody
+  // asked.
+  const previewing = hover !== null && !skimTaken;
   useEffect(() => {
     onPreviewingChange?.(previewing);
   }, [previewing, onPreviewingChange]);
@@ -1269,7 +1316,7 @@ export function SeamStripBar({
           atEnd={atEnd}
           offset={offset}
           ghostX={hover === null ? null : hover.x}
-          hover={panning ? null : hover}
+          hover={panning || skimTaken ? null : hover}
           previewAnchor={previewAnchor}
           handlers={{
             onPointerDown,

@@ -452,6 +452,19 @@ export type SeamHover = Readonly<{
   name: string;
   meta: string;
   posterSrc?: string;
+  /**
+   * THE SAME FRAME, ADDRESSED FOR THE PANE (PL15-030).
+   *
+   * `posterSrc` is a Cloudinary frame grab — a picture the card can draw by
+   * itself. These two are the same moment expressed as "which source, and how
+   * far into it", which is what the preview pane needs to draw it from the
+   * element it already has cached. Both are carried because the card is still
+   * what shows when the pane is closed.
+   *
+   * Video only, like `posterSrcs`: a still has no timeline to sample.
+   */
+  src?: string;
+  sourceTime?: number;
 }>;
 
 /**
