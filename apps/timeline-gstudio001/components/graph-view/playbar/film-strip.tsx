@@ -17,7 +17,7 @@ import {
   smoothVelocity,
   willFling,
 } from "./playbar-motion";
-import { PLAYBAR_CSS, PLAYBAR_SCOPE } from "./playbar-styles";
+import { PLAYBAR_CSS, PLAYBAR_PAGE_CLASS, PLAYBAR_SCOPE } from "./playbar-styles";
 
 /**
  * THE REFERENCE DESIGN'S FILM STRIP, ported to React (PL15-030).
@@ -63,6 +63,15 @@ export type FilmStripProps = Readonly<{
   onScrub?: (seconds: number) => void;
   onTogglePlay?: () => void;
   onSelect?: (id: string) => void;
+  /**
+   * ON ITS OWN PAGE, or embedded in one.
+   *
+   * Standalone (the default) brings the reference's stage: the ink background,
+   * the centring, the meta line above the bar. Embedded brings none of it —
+   * the app has its own header and its own ground, and a component that
+   * repainted them would be claiming a page it does not own.
+   */
+  standalone?: boolean;
   className?: string;
 }>;
 
@@ -74,6 +83,7 @@ export function FilmStrip({
   onScrub,
   onTogglePlay,
   onSelect,
+  standalone = true,
   className,
 }: FilmStripProps) {
   const shots = useMemo(() => placeShots(shotsProp ?? REFERENCE_SHOTS), [shotsProp]);
@@ -473,10 +483,14 @@ export function FilmStrip({
   const selectedShot = shots.find((shot) => shot.id === activeId) ?? null;
 
   return (
-    <div className={[PLAYBAR_SCOPE, className ?? ""].join(" ").trim()}>
+    <div
+      className={[PLAYBAR_SCOPE, standalone ? PLAYBAR_PAGE_CLASS : "", className ?? ""]
+        .join(" ")
+        .trim()}
+    >
       <style>{PLAYBAR_CSS}</style>
-      <main className="stage">
-        <section className="area">
+      <Frame standalone={standalone}>
+          {standalone ? (
           <div className="meta">
             <div className="meta-l">
               <span className="dot" />
@@ -486,6 +500,7 @@ export function FilmStrip({
             </div>
             <div className="meta-r">{`24 fps · ${shots.length} shots · ${timecode(DUR)}`}</div>
           </div>
+          ) : null}
 
           <section
             className={`playbar${hot ? " top-hot" : ""}`}
@@ -507,7 +522,7 @@ export function FilmStrip({
                 <div className="lane" ref={laneRef}>
                   {sections.map((section) => (
                     <div
-                      key={section.name}
+                      key={`label-${section.start}`}
                       className="seclabel"
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={() => scrollToSection(section.start)}
@@ -521,7 +536,7 @@ export function FilmStrip({
                 <div className="ruler">
                   {sections.map((section) => (
                     <div
-                      key={`base-${section.name}`}
+                      key={`base-${section.start}`}
                       className="rbase"
                       style={{
                         left: section.start * PXS + 3,
@@ -543,7 +558,7 @@ export function FilmStrip({
 
                 {sections.slice(1).map((section) => (
                   <div
-                    key={`div-${section.name}`}
+                    key={`div-${section.start}`}
                     className="secdiv"
                     style={{ left: section.start * PXS }}
                   />
@@ -597,7 +612,7 @@ export function FilmStrip({
                 ))}
                 {sections.slice(1).map((section) => (
                   <div
-                    key={`notch-${section.name}`}
+                    key={`notch-${section.start}`}
                     className="mm-sec"
                     style={{ left: `${(section.start / DUR) * 100}%` }}
                   />
@@ -609,8 +624,7 @@ export function FilmStrip({
               </div>
             </div>
           </section>
-        </section>
-      </main>
+      </Frame>
     </div>
   );
 }
@@ -630,5 +644,25 @@ function LayersIcon() {
       <path d="m3 12 9 5 9-5" />
       <path d="m3 17 9 5 9-5" />
     </svg>
+  );
+}
+
+/**
+ * THE PAGE AROUND THE BAR, or nothing at all.
+ *
+ * The reference's stage and content area exist because it IS a page. Embedded
+ * in the app they would be a second page inside one — padding the app has
+ * already applied, and a ground it has already painted. A fragment is the
+ * honest answer there.
+ */
+function Frame({
+  standalone,
+  children,
+}: Readonly<{ standalone: boolean; children: React.ReactNode }>) {
+  if (!standalone) return <>{children}</>;
+  return (
+    <main className="stage">
+      <section className="area">{children}</section>
+    </main>
   );
 }

@@ -49,7 +49,8 @@ import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
 import type { SeamBarClip } from "./graph-seam-bar-layout";
-import { SeamStripBar } from "./graph-seam-strip-bar";
+import { FilmStrip } from "./playbar/film-strip";
+import { type FilmStripShot } from "./playbar/film-strip-data";
 import {
   buildSeamTimeline,
   seamAt,
@@ -769,6 +770,44 @@ function DetailsFilmstripModal({
     });
   }, [barWindow, graph]);
 
+  /**
+   * THE SAME CLIPS, SHAPED FOR THE PORTED STRIP (PL15-030).
+   *
+   * BUILT FROM EVERY CLIP, not from the reach window, and that is the point of
+   * the swap rather than an oversight. The old bar paged a window because it
+   * could not move — reach was how you saw more of the sequence. The new strip
+   * PANS, with inertia, across the whole thing, so the window has nothing left
+   * to do and its clock is the timeline's by construction.
+   *
+   * A POSTER IS A BACKGROUND, which is the seam that let this be swapped in
+   * rather than rewritten: the strip asks for CSS backgrounds and does not care
+   * whether they are the reference's gradients or our stills.
+   */
+  const stripShots = useMemo<readonly FilmStripShot[]>(() => {
+    return ids.map((id) => {
+      const found = graph.nodesById.get(parseNodeId(id));
+      const media = found && found.kind === "media" ? (found as MediaNode) : null;
+      const parentId = graph.parentById.get(parseNodeId(id)) ?? null;
+      const parent = parentId === null ? undefined : graph.nodesById.get(parentId);
+      // THROUGH THE SAME ACCESSOR THE BAR ALREADY USES, rather than reaching
+      // into the node: it is the one place that knows a video's poster from a
+      // still's own image, and that audio has neither and should get no
+      // thumbnail rather than a broken one.
+      const poster = seamClipOf(media)?.posterSrc;
+      return {
+        id,
+        label: found?.name ?? id,
+        // A clip with no length still needs a box that can be clicked.
+        seconds: Math.max(media === null ? 0 : mediaDurationSeconds(media), 0.05),
+        frames:
+          poster === undefined
+            ? ["#0d0d10"]
+            : [`center/cover no-repeat url("${poster}")`],
+        sectionName: parent?.name ?? null,
+      };
+    });
+  }, [graph, ids]);
+
   // ONE WAY TO LAND, whichever gesture asked for it. A click on a box and a
   // released scrub differ only in how the clip was chosen; what happens next
   // — carry the clock, cut rather than travel, fade the panels either side —
@@ -1083,158 +1122,29 @@ function DetailsFilmstripModal({
               ever gets wider. */}
           <div className="mx-auto w-full">
             <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
-            <SeamStripBar
-              clips={barClips}
-              panelClipIds={panelClipIds}
-              // WHETHER THE BAR HAS ACTUALLY RUN OUT, which is a different
-              // question from whether it has run out of boxes. At a reach of
-              // ten the window is cropped at both ends nearly everywhere in a
-              // long project, and the last box on screen is simply the last
-              // one the reach allowed. These are true only when the window has
-              // reached the real ends.
-              // THE VIEW'S OWN SETTINGS, handed to the bar to place. They
-              // used to be a row of their own beneath it; they are read
-              // against the bar directly above them, so they belong in the
-              // bar's own controls row alongside the transport and the clock.
-              settingsLeft={
-                <>
-                  {/* THREE SEGMENTS, TWO SETTINGS. Whether the boxes draw
-                      frames and which kind are separate answers, but as
-                      controls they are one question — a picture of what the
-                      bar is made of — and OFF · COVER · STRIP says it in the
-                      shape every other group in this row now uses.
+            {/* THE PORTED STRIP, IN PLACE OF THE WHOLE BAR (PL15-030).
+                The reference's film strip replaces the ruler, the boxes, the
+                playhead and the minimap — and the controls row goes with them,
+                which was an explicit call rather than a casualty: the clock, the
+                five transport buttons, the reach picker and the settings gear all
+                lived inside `SeamStripBar`.
 
-                      OFF DOES NOT WIPE THE STYLE. It sets `shown` and leaves
-                      `style` alone, so coming back lands on the kind you were
-                      using: switching frames off and on stays a comparison you
-                      can make twice rather than a choice you re-enter. That is
-                      the whole reason the two are stored apart even though
-                      they are pressed together. */}
-                  {/* HOW TALL THE FILM IS. In the gear with the other
-                      settings rather than in the row, because it is a posture
-                      you set and then work — the same test that put frames,
-                      card and fit there (PL15-006).
-
-                      A CELL IS SQUARE, so this also changes how many frames a
-                      clip is cut into: a taller film is a coarser filmstrip as
-                      well as a bigger one. That is the actual trade and it is
-                      why three sizes are offered rather than a slider — the
-                      in-between values buy nothing and cost a decision. */}
-                  <SegmentedControl
-                    label="size"
-                    ariaLabel="How tall the film is drawn"
-                    groupAttribute="data-details-bar-size"
-                    segments={LANE_SIZES.map((option) => ({
-                      value: option,
-                      label: option.toUpperCase(),
-                      title:
-                        option === "sm"
-                          ? "A compact film"
-                          : option === "md"
-                            ? "Tall enough to recognise a shot"
-                            : "Tall enough to judge a frame",
-                      active: option === laneSize,
-                    }))}
-                    onSelect={chooseLaneSize}
-                  />
-
-                  <SegmentedControl
-                    label="frames"
-                    ariaLabel="What the bar's boxes draw"
-                    groupAttribute="data-details-bar-frames"
-                    segments={(["off", ...PLAYBAR_THUMBNAIL_STYLES] as const).map((option) => ({
-                      value: option,
-                      // `STRIP`, not `FILMSTRIP`: these sit beside a reach
-                      // picker of two- and three-character tokens, and one
-                      // nine-character label would set the row's rhythm for
-                      // the sake of a word the title already says in full.
-                      label: option === "filmstrip" ? "STRIP" : option.toUpperCase(),
-                      title:
-                        option === "off"
-                          ? "Plain boxes"
-                          : option === "cover"
-                            ? "One frame filling each box"
-                            : "A strip of frames across each clip",
-                      active:
-                        option === "off" ? !frames.shown : frames.shown && frames.style === option,
-                    }))}
-                    onSelect={(option) =>
-                      chooseFrames(
-                        option === "off" ? { ...frames, shown: false } : { shown: true, style: option },
-                      )
-                    }
-                  />
-
-                  {/* WHERE THE HOVER CARD SITS — its own group, next to
-                      `frames` rather than inside it. They sit together because
-                      they are the same kind of question (what this bar does
-                      while you read it), but "what the boxes draw" and "where
-                      the preview sits" are two settings, and folding the
-                      second into the first gave that group five buttons under
-                      an aria-label describing three of them. */}
-                  <span aria-hidden="true" className="mx-1 h-3 w-px bg-white/10" />
-                  <SegmentedControl
-                    label="card"
-                    ariaLabel="Where the hover preview sits"
-                    groupAttribute="data-details-bar-card"
-                    segments={PREVIEW_ANCHORS.map((option) => ({
-                      value: option,
-                      label: option === "follow" ? "FOLLOW" : "PIN",
-                      title:
-                        option === "follow"
-                          ? "The preview follows the pointer"
-                          : "The preview stays under the middle of the bar",
-                      active: option === previewAnchor,
-                    }))}
-                    onSelect={choosePreviewAnchor}
-                  />
-                </>
-              }
-              laneHeight={laneHeightFor(laneSize)}
-              settingsRight={
-                <SegmentedControl
-                  label="reach"
-                  ariaLabel="Clips either side on the bar"
-                  groupAttribute="data-details-bar-reach"
-                  segments={BAR_REACHES.map((option) => ({
-                    value: option,
-                    label: barReachLabel(option),
-                    title:
-                      option === "all"
-                        ? "Reach the whole sequence"
-                        : "Reach " + option + " clips either side",
-                    active: option === reach,
-                  }))}
-                  onSelect={chooseReach}
-                />
-              }
-              previewAnchor={previewAnchor}
-              atStart={barWindow.ids[0] === ids[0]}
-              atEnd={barWindow.ids[barWindow.ids.length - 1] === ids[ids.length - 1]}
-              centreClipId={node.id as string}
-              colourOf={clipColourOf}
-              playheadAt={playheadAt}
+                REACH HAD NOTHING LEFT TO DO. It existed because the old bar could
+                not move, so seeing more of the sequence meant paging a window.
+                This strip PANS, with inertia, across every clip at once — so its
+                clock is the timeline's by construction. */}
+            <FilmStrip
+              standalone={false}
+              shots={stripShots}
+              seconds={shownSeconds}
               playing={playing}
-              onTogglePlay={() => setPlaying((was) => !was)}
-              // The same step the swipe and the neighbour-click make, so all
-              // three land in one place and cannot drift apart.
-              onStepBack={hasPrevious ? () => onOpenNeighbour(ids[centre - 1]!) : null}
-              onStepForward={hasNext ? () => onOpenNeighbour(ids[centre + 1]!) : null}
-              onPreviewingChange={setPreviewing}
-              // The clock spans every clip, so a point on the rail IS a point
-              // on the clock and needs no conversion.
-              //
-              // THE CARDS FOLLOW THE SCRUBBER WHEN IT IS LET GO — however it
-              // was let go. A click and a two-pixel drag are the same gesture
-              // as far as the hand is concerned, so they land the same way:
-              // both re-centre the row, and both bring the frame with them.
-              // Splitting them would mean a few pixels of travel decided
-              // whether you kept your place in the shot.
-              onCommitClip={(clipId) => landOn(clipId, position)}
-              onScrubSeconds={(seconds) => {
+              selectedId={node.id as string}
+              onScrub={(seconds) => {
                 setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
+              onTogglePlay={() => setPlaying((was) => !was)}
+              onSelect={(clipId) => landOn(clipId, position)}
             />
             </PlaybarThumbnailsProvider>
           </div>

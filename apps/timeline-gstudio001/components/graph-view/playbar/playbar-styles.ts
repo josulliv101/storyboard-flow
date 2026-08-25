@@ -19,6 +19,10 @@
  */
 export const PLAYBAR_SCOPE = "pb";
 
+/** Added ONLY by the standalone story: the page paint, centring and height
+ *  that a component embedded in the app must not bring with it. */
+export const PLAYBAR_PAGE_CLASS = "pb-page";
+
 export const PLAYBAR_CSS = `.pb{
   --ink:        #08090d;   /* stage background            */
   --panel-hi:   #14181f;   /* bar surface, top            */
@@ -39,8 +43,8 @@ export const PLAYBAR_CSS = `.pb{
   --pxs: 44px;             /* pixels per second (mirrored in JS) */
 }
 .pb *{ box-sizing:border-box; margin:0; padding:0; }
-.pb{ height:100%; }
-.pb{
+.pb.pb-page{ height:100%; }
+.pb.pb-page{
   background:var(--ink);
   color:var(--slate);
   font-family:var(--mono);
@@ -48,7 +52,7 @@ export const PLAYBAR_CSS = `.pb{
   overflow-x:hidden;
   -webkit-user-select:none; user-select:none;
 }
-.pb::before{ /* faint stage light */
+.pb.pb-page::before{ /* faint stage light */
   content:""; position:fixed; inset:0; pointer-events:none;
   background:
     radial-gradient(60% 40% at 50% -5%, rgba(60,219,192,.05), transparent 70%),
@@ -378,5 +382,14 @@ export const PLAYBAR_CSS = `.pb{
    2. A viewport minimum, because \`html,body{height:100%}\` became
       \`.pb{height:100%}\` and a percentage height needs a parent that has
       one. ─────────────────────────────────────────────────────────────── */
-.pb{ grid-template-columns: minmax(0, 1fr); min-height: 100%; }
+.pb.pb-page{ grid-template-columns: minmax(0, 1fr); min-height: 100%; }
+
+/* ── THE ACCENT IS OURS, NOT THE REFERENCE'S ─────────────────────────────
+   \`--signal\` is the reference's selection teal (#3cdbc0). Ours is sky blue and
+   it is load-bearing: PL15-026 runs the subject's blue from the film through to
+   the minimap off ONE exported constant, and adopting a second accent would
+   mean two colours claiming "this is the subject". Redefined here rather than
+   edited into the extracted rules, so re-running the generator cannot quietly
+   put the teal back. ──────────────────────────────────────────────────── */
+.pb{ --signal: #38bdf8; --signal-soft: rgba(56, 189, 248, .14); }
 `;

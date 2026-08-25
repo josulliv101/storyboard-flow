@@ -6,6 +6,7 @@ import fs from "node:fs";
 const SRC = "punch-list/reference/storyboard-playbar.html";
 const OUT = "apps/timeline-gstudio001/components/graph-view/playbar/playbar-styles.ts";
 const SCOPE = ".pb";
+const PAGE = ".pb-page";
 
 // Rules belonging to parts that were removed: the preview player, the coach
 // mark, the keyboard hints, and the content-area header.
@@ -51,8 +52,16 @@ function walk(css) {
       if (selectors.length > 0) {
         const scoped = selectors
           .map((sel) => {
-            if (sel === ":root" || sel === "html" || sel === "body") return SCOPE;
-            if (/^body(::?[a-z-]+)/.test(sel)) return SCOPE + sel.slice(4);
+            // TOKENS AND THE RESET APPLY WHEREVER THE COMPONENT DOES; the
+            // PAGE's own paint does not. `:root` carries the custom properties
+            // everything reads, so it lands on the scope itself — but `body`
+            // paints a background, centres its child and sets a min-height,
+            // and a component dropped into the app must bring none of that
+            // with it. Those go behind a second class the standalone story
+            // adds and the embedded use does not.
+            if (sel === ":root") return SCOPE;
+            if (sel === "html" || sel === "body") return SCOPE + PAGE;
+            if (/^body(::?[a-z-]+)/.test(sel)) return SCOPE + PAGE + sel.slice(4);
             if (sel === "*") return SCOPE + " *";
             return SCOPE + " " + sel;
           })
@@ -79,7 +88,16 @@ const css =
    2. A viewport minimum, because \`html,body{height:100%}\` became
       \`${SCOPE}{height:100%}\` and a percentage height needs a parent that has
       one. ─────────────────────────────────────────────────────────────── */
-${SCOPE}{ grid-template-columns: minmax(0, 1fr); min-height: 100%; }
+${SCOPE}${PAGE}{ grid-template-columns: minmax(0, 1fr); min-height: 100%; }
+
+/* ── THE ACCENT IS OURS, NOT THE REFERENCE'S ─────────────────────────────
+   \`--signal\` is the reference's selection teal (#3cdbc0). Ours is sky blue and
+   it is load-bearing: PL15-026 runs the subject's blue from the film through to
+   the minimap off ONE exported constant, and adopting a second accent would
+   mean two colours claiming "this is the subject". Redefined here rather than
+   edited into the extracted rules, so re-running the generator cannot quietly
+   put the teal back. ──────────────────────────────────────────────────── */
+${SCOPE}{ --signal: #38bdf8; --signal-soft: rgba(56, 189, 248, .14); }
 `;
 
 const file = `/**
@@ -102,6 +120,10 @@ const file = `/**
  * header are dropped: those parts are not being ported.
  */
 export const PLAYBAR_SCOPE = "pb";
+
+/** Added ONLY by the standalone story: the page paint, centring and height
+ *  that a component embedded in the app must not bring with it. */
+export const PLAYBAR_PAGE_CLASS = "pb-page";
 
 export const PLAYBAR_CSS = \`${css.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${")}\`;
 `;
