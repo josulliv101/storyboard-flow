@@ -626,6 +626,38 @@ type GetCollectionClipFramePreview = (
  * synthesizes per leaf and would clamp against the wrong range. The element's
  * own duration is the real bound and `syncActiveVideo` already clamps to it.
  */
+/**
+ * How near a seek has to land before it counts as arrived. A video's
+ * `currentTime` reads back as the seek TARGET while it is still decoding, so
+ * this is comparing intent, not pictures.
+ */
+export const OVERRIDE_SEEK_EPSILON_SECONDS = 0.03;
+
+/**
+ * ONE FRAME OF THE OVERRIDE SEEK LOOP: whether to ask for a new seek, and
+ * whether to paint.
+ *
+ * Extracted because the bug it now pins was invisible in prose. Both of the
+ * branches that do NOT paint the final frame used to return early without
+ * drawing, so the canvas repainted only as fast as the full-size element could
+ * complete seeks — measured during a scrub, 7.7 paints a second against a
+ * playhead moving 13 times a second. The proxy was already chasing the target
+ * and `drawActiveFrame` already prefers it mid-seek; nothing asked it to paint.
+ *
+ * `draw` is therefore true in EVERY case, which is the whole invariant and the
+ * one a future early return would break.
+ */
+export function overrideSeekStep(
+  video: Readonly<{ seeking: boolean; currentTime: number }>,
+  target: number,
+): Readonly<{ issueSeek: boolean; draw: boolean }> {
+  if (video.seeking) return { issueSeek: false, draw: true };
+  if (Math.abs(video.currentTime - target) > OVERRIDE_SEEK_EPSILON_SECONDS) {
+    return { issueSeek: true, draw: true };
+  }
+  return { issueSeek: false, draw: true };
+}
+
 export function resolveOverrideMedia(
   clips: readonly TimelineClip[],
   override: Readonly<{ src: string; poster?: string; sourceTime: number }>,
@@ -1843,22 +1875,24 @@ export function WorkbenchDisplaySurface({
         }
       }
 
-      if (video.seeking) return;
-
-      // `currentTime` reads back as the seek TARGET mid-seek, so this does not
-      // re-issue while the browser is still decoding.
-      if (Math.abs(video.currentTime - target) > 0.03) {
+      // PAINT ON EVERY FRAME, NOT ONLY WHEN THE REAL SEEK LANDS — see
+      // `overrideSeekStep`, which is where that invariant is written down and
+      // tested. The wait now shows its work: a soft frame on time rather than a
+      // sharp one several frames late, with the full-size element repainting
+      // over it the moment it arrives.
+      const step = overrideSeekStep(video, target);
+      if (step.issueSeek) {
         pictureSeekInFlightRef.current.set(media.key, true);
         try {
           video.currentTime = target;
         } catch {
           // Metadata raced away; the next frame retries.
         }
-        return;
+      } else if (!video.seeking) {
+        // Landed: the real frame is the one to show again.
+        pictureSeekInFlightRef.current.set(media.key, false);
       }
-      // Landed: the real frame is the one to show again.
-      pictureSeekInFlightRef.current.set(media.key, false);
-      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) drawActiveFrame();
+      if (step.draw) drawActiveFrame();
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);

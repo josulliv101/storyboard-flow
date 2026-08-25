@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { TimelineClip } from "../types";
-import { resolveOverrideMedia } from "./workbench-display-surface";
+import {
+  OVERRIDE_SEEK_EPSILON_SECONDS,
+  overrideSeekStep,
+  resolveOverrideMedia,
+} from "./workbench-display-surface";
 
 // PL14-006. `frameOverride` asks the pane to draw a specific SOURCE frame, and
 // the only interesting question is how that request finds its media.
@@ -87,5 +91,60 @@ describe("resolveOverrideMedia", () => {
     const image = { ...videoClip("img"), kind: "image" } as TimelineClip;
     const media = resolveOverrideMedia([image, videoClip("vid")], request);
     expect(media.key).toBe(`vid:video:${VIDEO_SRC}`);
+  });
+});
+
+/**
+ * PL15-030. The override's seek loop runs once per animation frame and decides
+ * two things: ask the element for a new frame, and paint.
+ *
+ * It shipped painting ONLY when the full-size element had finished seeking, so
+ * the picture changed at the rate seeks completed rather than the rate the hand
+ * moved — measured in the app, 7.7 paints a second against a playhead moving 13
+ * times a second, reported as scrubbing feeling laggy with the preview open.
+ * The scrub proxy was already chasing the target and the draw already prefers
+ * it mid-seek; nothing was asking it to paint. Measured after: 41.1 a second.
+ */
+describe("overrideSeekStep", () => {
+  it("PAINTS WHILE THE ELEMENT IS STILL SEEKING, and does not pile on a second seek", () => {
+    // The long-seek case, and the one the lag was made of: a cold seek can take
+    // the better part of a second, and every frame of it used to draw nothing.
+    expect(overrideSeekStep({ seeking: true, currentTime: 0.5 }, 9)).toEqual({
+      issueSeek: false,
+      draw: true,
+    });
+  });
+
+  it("asks for the frame AND paints when the element is idle and out of position", () => {
+    expect(overrideSeekStep({ seeking: false, currentTime: 0.5 }, 9)).toEqual({
+      issueSeek: true,
+      draw: true,
+    });
+  });
+
+  it("paints without re-asking once it has arrived", () => {
+    expect(overrideSeekStep({ seeking: false, currentTime: 9 }, 9)).toEqual({
+      issueSeek: false,
+      draw: true,
+    });
+  });
+
+  it("treats a hair off as arrived, because `currentTime` reads back as the target", () => {
+    const closeEnough = 9 + OVERRIDE_SEEK_EPSILON_SECONDS / 2;
+    expect(overrideSeekStep({ seeking: false, currentTime: closeEnough }, 9).issueSeek).toBe(false);
+    const tooFar = 9 + OVERRIDE_SEEK_EPSILON_SECONDS * 2;
+    expect(overrideSeekStep({ seeking: false, currentTime: tooFar }, 9).issueSeek).toBe(true);
+  });
+
+  it("DRAWS IN EVERY CASE — the invariant an early return would break", () => {
+    const cases = [
+      { seeking: true, currentTime: 0 },
+      { seeking: true, currentTime: 9 },
+      { seeking: false, currentTime: 0 },
+      { seeking: false, currentTime: 9 },
+    ];
+    for (const video of cases) {
+      expect(overrideSeekStep(video, 9).draw).toBe(true);
+    }
   });
 });
