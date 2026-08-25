@@ -688,6 +688,24 @@ export function ClipDeck({
                   <div
                     key={clip.id}
                     className={`clip${index === active ? " active" : ""}`}
+                    // THE ROLE THIS CARD PLAYS, named the way the panel row it
+                    // replaced named it. A card here IS the centre panel or a
+                    // neighbour — the deck changed how they are drawn, not what
+                    // they are — and everything that reasons about the view in
+                    // those terms should keep working rather than learn a
+                    // second vocabulary for the same three things.
+                    //
+                    // ONLY THE CARDS ACTUALLY DRAWN. The deck holds every clip
+                    // in the collection and shows `neighbours` either side, so
+                    // marking them all would report sixty panels for a view
+                    // with three.
+                    data-item-details-panel={
+                      Math.abs(index - active) <= neighbours
+                        ? index === active
+                          ? "centre"
+                          : "neighbour"
+                        : undefined
+                    }
                     data-i={index}
                     ref={(node) => {
                       cardRefs.current[index] = node;
