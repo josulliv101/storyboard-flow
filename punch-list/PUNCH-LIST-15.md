@@ -2093,6 +2093,18 @@ have** — so the value here is the geometry and the gestures, not new concepts:
   minimap off one exported constant, and that constant remains the single source
   — the reference's teal is read as "there is one accent and it is used
   consistently", which we already do, in our colour.
+- **NO NEW FONTS.** Martian Mono and Spline Sans Mono are not adopted; the
+  existing stack carries this. **It costs almost nothing, because the reference's
+  own token already falls back to the system stack** —
+  `--mono: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+  monospace`. Drop the named family and the MONO TEXTURE survives on
+  `ui-monospace`, with no download and nothing to arrive late.
+  `--wide` is `"Martian Mono", var(--mono)`, so it collapses into `--mono` and
+  the reference's two type roles become one. Nothing is lost by that: the
+  separation it draws between section labels and numbers is already carried by
+  uppercase, `.18em`-`.22em` tracking, 8.5-10.5px and weight 600 — the
+  TREATMENT is doing the work, not the family. Keep the treatment, drop the
+  faces.
 
 Acceptance criteria:
 
@@ -2106,14 +2118,12 @@ Acceptance criteria:
 - Transport is start / prev / play / next / end, prev/next step CLIPS and
   disable at the ends, and start/end move time and scroll together.
 - The accent comes from the existing exported constant. No teal is introduced.
+- No web font is added. Metadata rides the existing stack, and the uppercase,
+  wide-tracked, small-and-muted TREATMENT is what carries the reference's look.
 - Stories cover it per the repo rule: selected state, missing poster, short and
   long clips, a many-clip timeline — plus the reduced-motion dismiss path, which
   is the branch a story is the only cheap way to see.
 
-**One thing still to settle:** the reference loads **Martian Mono** and **Spline
-Sans Mono** from Google Fonts and uses them for every label. Our root layout says
-Grandstander is the only custom font and everything else rides `font-sans` — on
-purpose. Two new families for metadata is a typographic decision and a
-first-paint cost (the rail's own CLS fix in PL15-027 is what a late font does to
-a layout), so it should be an explicit yes or no rather than arriving with the
-component.
+**Nothing is open on this item.** The reference as vendored still links the two
+Google families in its `<head>`; that is the file as supplied and it is left
+alone, but it is the REFERENCE, not the target.
