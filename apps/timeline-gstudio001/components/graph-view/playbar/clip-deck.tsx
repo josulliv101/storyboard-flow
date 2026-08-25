@@ -39,20 +39,9 @@ const TAP_SLOP_PX = 4;
 /** How far a fling is projected, in ms of travel at release velocity. */
 const FLING_PROJECTION_MS = 160;
 
-type Clip = Readonly<{
-  index: number;
-  name: string;
-  /** The full source length, and the trimmed range inside it. */
-  source: number;
-  trimIn: number;
-  trimOut: number;
-  looks: readonly string[];
-  tags: readonly string[];
-}>;
-
 /** Deterministic, exactly as the reference builds them — a story fixture must
  *  not wander between runs. */
-const CLIPS: readonly Clip[] = SHOTS.map((shot) => {
+const REFERENCE_CLIPS: readonly ClipDeckClip[] = SHOTS.map((shot) => {
   const i = shot.index;
   const duration = shot.end - shot.start;
   const head = Number((0.4 + ((i * 37) % 23) / 10).toFixed(2));
@@ -60,12 +49,12 @@ const CLIPS: readonly Clip[] = SHOTS.map((shot) => {
   const section = SECTIONS.find((s) => i >= s.first && i <= s.last)?.name ?? "";
   const model = MODELS[i % MODELS.length]!;
   return {
-    index: i,
+    id: String(i),
     name: `SH ${String(i + 1).padStart(2, "0")} — ${section} take (${model}, seed ${100 + ((i * 97) % 880)})`,
     source: Number((head + duration + tail).toFixed(2)),
     trimIn: head,
     trimOut: Number((head + duration).toFixed(2)),
-    looks: shot.frames.map((frame) => frame.look),
+    frames: shot.frames.map((frame) => LOOKS[frame.look] ?? ""),
     tags: [
       section.toLowerCase().replace(/\s+/g, "-"),
       `SH${String(i + 1).padStart(2, "0")}`,
@@ -76,7 +65,49 @@ const CLIPS: readonly Clip[] = SHOTS.map((shot) => {
 
 type Trim = Readonly<{ in: number; out: number }>;
 
-export function ClipDeck({ className }: Readonly<{ className?: string }>) {
+/**
+ * WHAT THE DECK NEEDS TO DRAW A CLIP (PL15-030).
+ *
+ * Deliberately small, and deliberately not the app's node type. A card shows a
+ * name, a picture, a source length and the window inside it, and reports back
+ * when either edge moves — everything else the graph knows is the caller's
+ * business.
+ *
+ * A FRAME IS A CSS BACKGROUND, the same seam the film strip uses: the reference's
+ * procedural gradients and our real posters are the same kind of value here.
+ */
+export type ClipDeckClip = Readonly<{
+  id: string;
+  name: string;
+  /** The whole source, in seconds. */
+  source: number;
+  /** The window inside it — `out` is an absolute point, not a tail length. */
+  trimIn: number;
+  trimOut: number;
+  frames: readonly string[];
+  tags: readonly string[];
+}>;
+
+export type ClipDeckProps = Readonly<{
+  /** The clips to show. Defaults to the reference design's own. */
+  clips?: readonly ClipDeckClip[];
+  /** The subject. CONTROLLED when given: the deck reports a change through
+   *  `onActivate` and never moves the selection behind the caller's back. */
+  activeId?: string | null;
+  onActivate?: (id: string) => void;
+  /** An edge was dragged. Absolute source seconds, both of them. */
+  onTrim?: (id: string, next: Readonly<{ in: number; out: number }>) => void;
+  className?: string;
+}>;
+
+export function ClipDeck({
+  clips: clipsProp,
+  activeId,
+  onActivate,
+  onTrim,
+  className,
+}: ClipDeckProps) {
+  const CLIPS = useMemo(() => clipsProp ?? REFERENCE_CLIPS, [clipsProp]);
   const deckRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const posRef = useRef(6); // boots on the shot the reference selects
@@ -93,10 +124,25 @@ export function ClipDeck({ className }: Readonly<{ className?: string }>) {
   } | null>(null);
   const spacingRef = useRef(480);
 
-  const [active, setActive] = useState(6);
+  const [ownActive, setOwnActive] = useState(6);
+  const active =
+    activeId === undefined || activeId === null
+      ? ownActive
+      : Math.max(0, CLIPS.findIndex((clip) => clip.id === activeId));
+  const setActive = (index: number) => {
+    if (activeId === undefined) setOwnActive(index);
+  };
+  // THE CLIPS' OWN TRIMS, mirrored so a drag can move an edge every frame
+  // without a round trip. Re-seeded when the clips change, because a store that
+  // has committed the drag is the authority and this copy is not.
   const [trims, setTrims] = useState<readonly Trim[]>(() =>
     CLIPS.map((clip) => ({ in: clip.trimIn, out: clip.trimOut })),
   );
+  const [clipsSeen, setClipsSeen] = useState(CLIPS);
+  if (clipsSeen !== CLIPS) {
+    setClipsSeen(CLIPS);
+    setTrims(CLIPS.map((clip) => ({ in: clip.trimIn, out: clip.trimOut })));
+  }
 
   const reduced = useMemo(
     () =>
@@ -150,12 +196,39 @@ export function ClipDeck({ className }: Readonly<{ className?: string }>) {
   }, [layout, reduced]);
 
   const goTo = useCallback(
-    (index: number) => {
-      targetRef.current = clamp(Math.round(index), 0, CLIPS.length - 1);
+    (index: number, report = true) => {
+      const next = clamp(Math.round(index), 0, CLIPS.length - 1);
+      targetRef.current = next;
+      // REPORTED ONLY WHEN A PERSON ASKED. The deck also glides to follow a
+      // selection made elsewhere — the film strip, a keyboard step — and
+      // reporting that back would be answering a question with its own echo.
+      if (report) {
+        const clip = CLIPS[next];
+        if (clip !== undefined) onActivate?.(clip.id);
+      }
       if (dragRef.current === null) animate();
     },
-    [animate],
+    [CLIPS, animate, onActivate],
   );
+
+  // THE DECK FOLLOWS THE SUBJECT when the caller owns it. Without this the
+  // cards keep whatever clip they booted on while the rest of the view has
+  // moved — the header said "clip 11 of 13" over a deck centred on clip 7.
+  useEffect(() => {
+    if (activeId === undefined || activeId === null) return;
+    const index = CLIPS.findIndex((clip) => clip.id === activeId);
+    if (index < 0) return;
+    // COMPARED AGAINST WHERE THE CARDS ACTUALLY ARE, not just against the
+    // target. Bailing on the target alone loses the glide entirely under
+    // StrictMode's double-invoke: this effect sets the target and starts the
+    // animation, the layout effect below cancels the frame in its cleanup, and
+    // then this runs again and returns early because the target it set is
+    // already correct. The deck sat on whatever clip it booted with while the
+    // header had moved on — measured, subject at card 10 and the deck centred
+    // on 6.
+    if (index === targetRef.current && Math.abs(posRef.current - index) < 0.01) return;
+    goTo(index, false);
+  }, [CLIPS, activeId, goTo]);
 
   useEffect(() => {
     layout();
@@ -256,6 +329,14 @@ export function ClipDeck({ className }: Readonly<{ className?: string }>) {
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      // COMMITTED ON RELEASE, not per frame. A trim is one edit however long
+      // the drag was, and dispatching every pointer move would fill the undo
+      // stack with a hundred steps nobody made.
+      setTrims((current) => {
+        const trim = current[index];
+        if (trim !== undefined) onTrim?.(clip.id, trim);
+        return current;
+      });
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -277,13 +358,20 @@ export function ClipDeck({ className }: Readonly<{ className?: string }>) {
           >
             <div className="deck-track">
               {CLIPS.map((clip, index) => {
-                const trim = trims[index]!;
+                // FALLING BACK TO THE CLIP'S OWN WINDOW, which is not
+                // defensive padding. Re-seeding `trims` during render makes
+                // React run this component again — but the render already in
+                // flight carries on with the OLD array, so on the pass where
+                // the clip list changes length there is no entry here yet.
+                // The clip knows its own trim; the mirror only exists so a
+                // drag can move an edge without a round trip.
+                const trim = trims[index] ?? { in: clip.trimIn, out: clip.trimOut };
                 const cut = Number((trim.out - trim.in).toFixed(2));
                 const left = (trim.in / clip.source) * 100;
                 const width = ((trim.out - trim.in) / clip.source) * 100;
                 return (
                   <div
-                    key={clip.index}
+                    key={clip.id}
                     className={`clip${index === active ? " active" : ""}`}
                     data-i={index}
                     ref={(node) => {
@@ -309,7 +397,7 @@ export function ClipDeck({ className }: Readonly<{ className?: string }>) {
                     <div className="c-view">
                       <div
                         className="c-frame cine"
-                        style={{ background: LOOKS[clip.looks[0] ?? ""] }}
+                        style={{ background: clip.frames[0] ?? "#0d0d10" }}
                       />
                     </div>
 
@@ -334,9 +422,9 @@ export function ClipDeck({ className }: Readonly<{ className?: string }>) {
                           className="c-cell"
                           style={{
                             background:
-                              LOOKS[
-                                clip.looks[Math.floor((cell / CELLS) * clip.looks.length)] ?? ""
-                              ],
+                              clip.frames[
+                                Math.floor((cell / CELLS) * clip.frames.length)
+                              ] ?? "#0d0d10",
                           }}
                         />
                       ))}
