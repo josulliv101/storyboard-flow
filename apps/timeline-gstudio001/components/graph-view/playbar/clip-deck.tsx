@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { LOOKS, SECTIONS, SHOTS, clamp } from "./playbar-model";
 import { PlaybarFrame } from "./playbar-frame";
@@ -58,6 +65,16 @@ const GLIDE_RATE = 0.16;
 const GLIDE_SETTLED = 0.002;
 /** A press that moves less than this is a tap, not a swipe. */
 const TAP_SLOP_PX = 4;
+/**
+ * HOW MANY CARDS PAST THE DRAWN ONES STAY MOUNTED.
+ *
+ * `layout()` fully draws out to `neighbours + 1` and paints nothing beyond it,
+ * so two more each side is one card of slack past the last one anybody can
+ * see. The slack matters because `pos` is fractional mid-glide: a card at
+ * `neighbours + 2` can be within the drawn radius while the row is between two
+ * seats, and a card that is not mounted then is a hole in the row.
+ */
+const WINDOW_MARGIN = 2;
 /** How far a fling is projected, in ms of travel at release velocity. */
 const FLING_PROJECTION_MS = 160;
 
@@ -231,6 +248,29 @@ export function ClipDeck({
   const setActive = (index: number) => {
     if (activeId === undefined) setOwnActive(index);
   };
+  /**
+   * WHICH CARDS ARE BUILT AT ALL.
+   *
+   * The deck used to mount the WHOLE collection to show three of it. Measured
+   * on a 58-clip collection, opening the details view built 2,436 elements for
+   * the deck out of 3,532 for the entire view — 69% of it cards nobody can
+   * see — and it happened inside the opening transition's callback, which runs
+   * synchronously because the browser captures the "after" state the moment
+   * that callback returns. So the whole collection sat on the critical path
+   * between the click and the animation starting: 382ms of a 420ms wait.
+   *
+   * SPANNING BOTH ENDS OF A GLIDE. `nearIndex` is where the cards ARE,
+   * `active` is where they are GOING, and while the caller owns `activeId`
+   * those disagree for the length of the journey. The union keeps the cards
+   * being left behind mounted until the row has actually left them, and gets
+   * the cards being arrived at built before it reaches them. On the open the
+   * two are equal — the first placement is a jump rather than a glide — which
+   * is exactly the case this is for.
+   */
+  const [nearIndex, setNearIndex] = useState(active);
+  const windowRadius = neighbours + WINDOW_MARGIN;
+  const windowFrom = Math.max(0, Math.min(nearIndex, active) - windowRadius);
+  const windowTo = Math.min(CLIPS.length - 1, Math.max(nearIndex, active) + windowRadius);
   // THE CLIPS' OWN TRIMS, mirrored so a drag can move an edge every frame
   // without a round trip. Re-seeded when the clips change, because a store that
   // has committed the drag is the authority and this copy is not.
@@ -277,7 +317,11 @@ export function ClipDeck({
 
   const layout = useCallback(() => {
     const cards = cardRefs.current;
-    const first = cards[0];
+    // THE FIRST MOUNTED CARD, not card zero. Only a window around the subject
+    // is mounted now, so index 0 is usually not in the DOM at all and reading
+    // it bailed out of the whole layout — every card left at its default
+    // styles, which is dead centre and fully painted.
+    const first = cards.find((card) => card != null);
     if (first == null) return;
     const width = first.offsetWidth || 480;
     spacingRef.current = width * 0.93 + CARD_GAP_PX;
@@ -308,6 +352,14 @@ export function ClipDeck({
       card.style.pointerEvents = distance > neighbours + 0.6 ? "none" : "";
       card.classList.toggle("active", i === near);
     });
+    // WHERE THE ROW ACTUALLY IS, published so the window can follow it.
+    //
+    // `active` is where the row is GOING. When the caller owns `activeId` the
+    // two part company for the whole length of a glide — `active` arrives the
+    // instant the caller changes it and `pos` eases after it — so a window
+    // built from `active` alone would unmount the cards still on screen. This
+    // is rounded, so it changes once per card crossed rather than per frame.
+    setNearIndex(near);
     return near;
   }, [neighbours]);
 
@@ -476,9 +528,14 @@ export function ClipDeck({
    * Keyed on the clips rather than folded into the mount effect below, which
    * must NOT re-run: its cleanup cancels the glide.
    */
-  useEffect(() => {
+  // BEFORE PAINT, not after it. A card that mounts without `layout()` having
+  // run keeps its default styles — no transform, so dead centre, and opacity
+  // 1, so fully painted — and with a window the mounted set changes as the row
+  // moves, so that would be a card flashing over the middle of the deck on
+  // every step rather than only at boot.
+  useLayoutEffect(() => {
     layout();
-  }, [CLIPS, layout]);
+  }, [CLIPS, windowFrom, windowTo, layout]);
 
   useEffect(() => {
     layout();
@@ -694,7 +751,14 @@ export function ClipDeck({
             onPointerCancel={onPointerUp}
           >
             <div className="deck-track">
-              {CLIPS.map((clip, index) => {
+              {CLIPS.slice(windowFrom, windowTo + 1).map((clip, offset) => {
+                // THE CLIP'S OWN INDEX, not its place in the window. Every
+                // other part of this component addresses a card by where it
+                // sits in the COLLECTION — `layout()` derives a seat from
+                // `i - pos`, `trims` runs parallel to `CLIPS`, `goTo` takes an
+                // index and `cardRefs` is keyed by one — so the window changes
+                // what gets BUILT and nothing else.
+                const index = windowFrom + offset;
                 // FALLING BACK TO THE CLIP'S OWN WINDOW, which is not
                 // defensive padding. Re-seeding `trims` during render makes
                 // React run this component again — but the render already in
