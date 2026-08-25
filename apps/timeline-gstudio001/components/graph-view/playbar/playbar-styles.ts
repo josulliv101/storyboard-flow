@@ -419,6 +419,15 @@ export const PLAYBAR_CSS = `.pb{
    under the settled contract it is now the ONLY one. ─────────────────── */
 .pb .strip .shot{ cursor: grab; }
 
+/* ── THE PLAYHEAD CHIP CARRIES THE MONITOR ───────────────────────────────
+   The chip is the moment the preview pane is showing, so it wears the pane's
+   own glyph — the same one the Preview toggle uses, not a second icon meaning
+   the same thing. \`currentColor\` so it is the chip's ink and cannot drift
+   from the numerals beside it; a hair below the cap height so it reads as a
+   mark on the chip rather than a button in it. ─────────────────────────── */
+.pb .ph-chip{ display:inline-flex; align-items:center; gap:4px; }
+.pb .ph-tv{ width:9px; height:9px; flex:none; opacity:.8; }
+
 /* ── THE CARD IS SIZED BY WIDTH, SO WIDTH IS THE HEIGHT DIAL ─────────────
    The reference gives \`.clip\` \`width: clamp(300px, 30vw, 440px)\` and makes
    the picture \`aspect-ratio: 2 / 1\`, so a card's height is a fixed stack of
@@ -463,9 +472,12 @@ export const PLAYBAR_CSS = `.pb{
    A card under the pointer during the gesture it exists to serve is no card
    at all. ──────────────────────────────────────────────────────────────── */
 .pb .skim{
-  position:absolute; top:0; left:0; /* both set from JS, measured off the film */
+  position:fixed; top:0; left:0; /* both set from JS, in viewport pixels */
   transform:translateX(-50%);
-  width:216px; padding:8px 8px 7px;
+  /* 184 rather than 216: the card has to clear the bar's top without leaving
+     the window, and at a 910-tall window that leaves ~150px of room. A 16/9
+     picture at this width is 94, which totals ~147. */
+  width:184px; padding:8px 8px 7px;
   display:flex; flex-direction:column; gap:5px;
   background:rgba(12,15,20,.97);
   border:1px solid rgba(255,255,255,.14);

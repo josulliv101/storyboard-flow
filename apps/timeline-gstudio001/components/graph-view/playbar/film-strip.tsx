@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { TvMinimal } from "lucide-react";
 
 import {
   REFERENCE_SHOTS,
@@ -49,8 +51,10 @@ function prefersReducedMotion(): boolean {
  */
 
 /** A press that moves less than this is a tap, not a pan. */
-/** Breathing room between the film's lower edge and the skim card. */
-const SKIM_GAP_PX = 8;
+/** Breathing room between the playhead's top and the skim card below it. */
+const SKIM_GAP_PX = 10;
+/** How close the card may come to the window's edges before it is held back. */
+const SKIM_EDGE_PX = 8;
 
 const TAP_SLOP_PX = 4;
 
@@ -359,35 +363,35 @@ export function FilmStrip({
     const card = skimRef.current;
     const viewport = viewportRef.current;
     if (card === null || viewport === null) return;
-    // UNDER THE FILM, MEASURED OFF IT.
+    // ABOVE THE PLAYHEAD, IN VIEWPORT COORDINATES.
     //
-    // "Above the playhead" was the ask and does not fit: the bar's top sits
-    // ~92px below the view's, the card is ~173 tall, and the view clips — so
-    // above the bar is simply off-screen. Above the film INSIDE the bar is the
-    // ruler and the label lane, which is both the surface being dragged and,
-    // as the old bar put it, the scale that makes the box widths mean anything
-    // — covering it answers "which shot" while hiding "how long".
+    // FIXED AND PORTALLED, because the details view clips: sitting inside it,
+    // a card tall enough to be worth reading had its top cut off, which is the
+    // "truncated off the top" fault. Nothing inside a clipping box can hang
+    // above that box, so it stops being inside one.
     //
-    // So it hangs under the film, over the minimap, which is where the bar
-    // this replaced ended up for the same reasons. Read DURING the gesture,
-    // clear of the hand, and close to the box it describes.
-    //
-    // Measured from the strip rather than summed from the bar's paddings: the
-    // film's height is now a variable that concedes on short windows, and a
-    // restated constant would be wrong on exactly those.
-    const strip = stripRef.current;
-    const anchor = card.offsetParent;
-    if (strip !== null && anchor instanceof HTMLElement) {
-      card.style.top = `${
-        strip.getBoundingClientRect().bottom - anchor.getBoundingClientRect().top + SKIM_GAP_PX
-      }px`;
-    }
+    // Never off the top of the WINDOW either. The bar is ~162px down at a
+    // 910-tall window and the card is ~147, which fits — but a shorter window
+    // or a taller header would not, so the top is clamped rather than trusted.
+    // Clamping costs a few pixels of overlap with the bar in the worst case;
+    // being unreadable costs the whole feature.
+    const content = contentRef.current;
+    const box = viewport.getBoundingClientRect();
+    const height = card.offsetHeight;
+    const above = (content ?? viewport).getBoundingClientRect().top - SKIM_GAP_PX - height;
+    card.style.top = `${Math.max(SKIM_EDGE_PX, above)}px`;
+
     const half = card.offsetWidth / 2;
-    const x = timeRef.current * PXS - viewport.scrollLeft;
-    // KEPT INSIDE THE BAR. Near either end the playhead runs out of room and a
-    // card centred on it would hang off the side — which is worst at exactly
-    // the moment the picture is the whole point.
-    card.style.left = `${clamp(x, half, Math.max(half, viewport.clientWidth - half))}px`;
+    // The playhead's own place on screen: content pixels, less the scroll, plus
+    // where the film's window starts.
+    const x = box.left + (timeRef.current * PXS - viewport.scrollLeft);
+    // KEPT ON SCREEN. Near either end a card centred on the playhead would hang
+    // off the side — worst exactly where the picture is the whole point.
+    card.style.left = `${clamp(
+      x,
+      half + SKIM_EDGE_PX,
+      Math.max(half + SKIM_EDGE_PX, window.innerWidth - half - SKIM_EDGE_PX),
+    )}px`;
   }, []);
 
   useEffect(() => {
@@ -735,28 +739,38 @@ export function FilmStrip({
             tabIndex={0}
             onKeyDown={onKeyDown}
           >
-            {/* THE SKIM CARD, OUTSIDE THE VIEWPORT ON PURPOSE.
-                `.viewport` is `overflow-x: auto`, and a box that scrolls on one
-                axis clips the other — a card placed inside it would be cut off
-                the moment it rose above the film. So it hangs off the bar
-                itself and is positioned in SCREEN pixels rather than content
-                ones, which is why `syncToScroll` moves it: the strip travelling
-                under a still pointer has to carry the card with it. */}
-            {skimPreview == null ? null : (
-              <div ref={skimRef} className="skim" aria-hidden="true">
-                <div className="skim-shot">
-                  {skimPreview.posterSrc === undefined ? null : (
-                    // `contain` on a dark ground rather than `cover`: a preview
-                    // that crops is answering the question with part of the
-                    // answer missing. The box is a fixed shape so the card
-                    // cannot resize under a pointer once it is up.
-                    <img src={skimPreview.posterSrc} alt="" draggable={false} />
-                  )}
-                </div>
-                <span className="skim-name">{skimPreview.name}</span>
-                <span className="skim-meta">{skimPreview.meta}</span>
-              </div>
-            )}
+            {/* THE SKIM CARD, PORTALLED OUT OF THE VIEW ENTIRELY.
+                Two boxes clip it otherwise: `.viewport` scrolls on one axis so
+                it clips the other, and the details view clips its own overflow.
+                A card that hangs ABOVE the bar cannot live inside either, so it
+                goes to the body and is positioned in viewport pixels — which is
+                why `syncToScroll` moves it, the strip travelling under a still
+                pointer having to carry the card with it.
+
+                Wrapped in the scope class because the stylesheet is scoped:
+                out here there is no `.pb` ancestor, so `.pb .skim` would not
+                match and the design tokens would not inherit. `display:
+                contents` so the wrapper itself lays nothing out. */}
+            {skimPreview == null || typeof document === "undefined"
+              ? null
+              : createPortal(
+                  <div className={PLAYBAR_SCOPE} style={{ display: "contents" }}>
+                    <div ref={skimRef} className="skim" aria-hidden="true">
+                      <div className="skim-shot">
+                        {skimPreview.posterSrc === undefined ? null : (
+                          // `contain` on a dark ground rather than `cover`: a
+                          // preview that crops answers the question with part of
+                          // the answer missing. The box is a fixed shape so the
+                          // card cannot resize under a pointer once it is up.
+                          <img src={skimPreview.posterSrc} alt="" draggable={false} />
+                        )}
+                      </div>
+                      <span className="skim-name">{skimPreview.name}</span>
+                      <span className="skim-meta">{skimPreview.meta}</span>
+                    </div>
+                  </div>,
+                  document.body,
+                )}
             <div data-seam-viewport className="viewport" ref={viewportRef}>
               <div
                 // THE SAME HOOKS THE OLD BAR PUBLISHED, kept on purpose.
@@ -817,18 +831,13 @@ export function FilmStrip({
                     />
                   ))}
                   {ticks}
-                  {selectedShot === null ? null : (
-                    <div
-                      // THE ONLY SATURATED THING IN THE BAND, which is what
-                      // makes the subject findable on a scale of two dozen.
-                      data-seam-ruler-block-live={selectedShot.id}
-                      className="range"
-                      style={{
-                        left: selectedShot.start * PXS + 2,
-                        width: (selectedShot.end - selectedShot.start) * PXS - 4,
-                      }}
-                    />
-                  )}
+                  {/* NO SECOND MARK IN THE RULER.
+                      The reference marks the subject twice — a 5px gradient
+                      range under the ruler AND the underline beneath the film —
+                      and two rules a few pixels apart say one thing twice while
+                      reading as a band of their own. The underline is the one
+                      that stays: it sits against the boxes, so it points at the
+                      shot rather than at the scale above it. */}
                 </div>
 
                 {sections.slice(1).map((section) => (
@@ -843,7 +852,10 @@ export function FilmStrip({
                   {shotBoxes}
                   {selectedShot === null ? null : (
                     <div
-                      data-seam-active-mark
+                      // NAMES THE CLIP IT BELONGS TO, as the lane's mark does,
+                      // so "the active one" cannot drift to a neighbour without
+                      // a test noticing.
+                      data-seam-active-mark={selectedShot.id}
                       className="underline"
                       style={{
                         left: selectedShot.start * PXS + 2,
@@ -879,7 +891,17 @@ export function FilmStrip({
                   className="playhead"
                   style={{ transform: `translateX(${time * PXS}px)` }}
                 >
-                  <div className="ph-chip">{timecode(time)}</div>
+                  <div className="ph-chip">
+                    {/* THE SAME MONITOR AS THE PREVIEW TOGGLE, deliberately the
+                        same glyph rather than a second one that means the same
+                        thing: the chip is the clock the pane is showing, so it
+                        wears the pane's own mark. Sized and coloured to the
+                        chip — it inherits `currentColor`, which is the chip's
+                        dark ink on its light ground, so it cannot drift from
+                        the text beside it. */}
+                    <TvMinimal className="ph-tv" aria-hidden="true" />
+                    {timecode(time)}
+                  </div>
                   <div className="ph-tri" />
                   <div className="ph-line" />
                 </div>

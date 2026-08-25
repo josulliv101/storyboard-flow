@@ -2009,33 +2009,41 @@ export const TheRulerNamesTheCollections: Story = {
       expect(gap).toBeGreaterThan(1);
     }
 
-    // ── AND ONE MARK IS THE ACTIVE CLIP ──────────────────────────────────
+    // ── AND THE ACTIVE CLIP IS MARKED ONCE ───────────────────────────────
     //
-    // The only saturated thing in the band, which is what makes it findable on
-    // a scale of two dozen blocks.
-    const live = document.querySelectorAll<HTMLElement>("[data-seam-ruler-block-live]");
+    // ONCE, not twice. The reference marks the subject in two places — a 5px
+    // gradient range under the ruler and an underline beneath the film — and
+    // the two sat a few pixels apart saying the same thing, reading as a band
+    // of their own rather than as a mark. The underline is the one that stays:
+    // it lies against the boxes, so it points at the SHOT rather than at the
+    // scale above it.
+    //
+    // Asserted as the ruler's mark being ABSENT, because a mark quietly
+    // reintroduced there is exactly what this is protecting against.
+    expect(document.querySelectorAll("[data-seam-ruler-block-live]").length).toBe(0);
+
+    const live = document.querySelectorAll<HTMLElement>("[data-seam-active-mark]");
     expect(live.length).toBe(1);
     // The mark NAMES the clip it belongs to, so "the active one" cannot drift
     // to a neighbour without this failing.
-    expect(live[0]!.getAttribute("data-seam-ruler-block-live")).toBe(
+    expect(live[0]!.getAttribute("data-seam-active-mark")).toBe(
       centreBox().getAttribute("data-seam-segment"),
     );
-    const plain = blocks.find(
-      (block) => !block.hasAttribute("data-seam-ruler-block-live"),
-    )!;
-    // WHICHEVER PROPERTY CARRIES THE PAINT. The mark is a gradient now, so its
-    // `backgroundColor` is transparent and the colour lives in
-    // `backgroundImage` — reading only the former reported "no hue" about the
-    // one saturated thing on the bar.
+    // WHICHEVER PROPERTY CARRIES THE PAINT — a mark drawn as a gradient has a
+    // transparent `backgroundColor` and its colour in `backgroundImage`, and
+    // reading only the former once reported "no hue" about the one saturated
+    // thing on the bar.
     const ink = (element: HTMLElement) => {
       const style = getComputedStyle(element);
       return style.backgroundImage === "none" ? style.backgroundColor : style.backgroundImage;
     };
     const activeInk = ink(live[0]!);
-    expect(activeInk).not.toBe(ink(plain));
     // A HUE, not a brighter grey: the channels have to disagree.
     const [red, green, blue] = activeInk.match(/[\d.]+/g)!.slice(0, 3).map(Number);
     expect(Math.max(red!, green!, blue!) - Math.min(red!, green!, blue!)).toBeGreaterThan(40);
+    // And it is not the same ink as the band it sits under, which is what makes
+    // it findable on a scale of two dozen blocks.
+    expect(activeInk).not.toBe(ink(blocks[0]!));
 
     // ── ONE TONE FOR THE RUN ─────────────────────────────────────────────
     //

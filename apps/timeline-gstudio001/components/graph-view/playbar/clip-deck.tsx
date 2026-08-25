@@ -121,6 +121,16 @@ export type ClipDeckProps = Readonly<{
    * pane is up.
    */
   fitToHeight?: boolean;
+  /**
+   * HOW MANY CARDS EACH SIDE OF THE SUBJECT ARE DRAWN.
+   *
+   * 1 is the reference's deck — the subject and its two neighbours. 2 shows
+   * five, and it ADDS rather than rearranges: the three in the middle keep the
+   * width, spacing, scale and dimming they already had, and the extra pair sits
+   * beyond them at the same pitch. They run off the edges on a narrow view,
+   * which is the accepted cost of not shrinking the three anyone is reading.
+   */
+  neighbours?: number;
   className?: string;
 }>;
 
@@ -131,6 +141,7 @@ export function ClipDeck({
   onTrim,
   standalone = true,
   fitToHeight = false,
+  neighbours = 1,
   className,
 }: ClipDeckProps) {
   const CLIPS = useMemo(() => clipsProp ?? REFERENCE_CLIPS, [clipsProp]);
@@ -215,16 +226,28 @@ export function ClipDeck({
       if (card == null) return;
       const offset = i - pos;
       const distance = Math.abs(offset);
+      // CAPPED AT ONE, so a card further out is dimmed and scaled exactly like
+      // the immediate neighbour rather than fading away by rank. That is what
+      // makes five an ADDITION: the three in the middle are untouched by the
+      // setting, and the extra pair joins them at the same size.
       const k = Math.min(distance, 1);
       card.style.transform = `translate(calc(-50% + ${offset * spacingRef.current}px), -50%) scale(${1 - k * 0.14})`;
-      card.style.opacity = String(distance > 2 ? 0 : (1 - k * 0.16) * clamp(2 - distance, 0, 1));
+      // `shown` is how far out a card is still fully drawn; one further out is
+      // the fade, and past that nothing. At `neighbours = 1` this is the
+      // reference's own `2 - distance`, unchanged.
+      const shown = neighbours + 1;
+      card.style.opacity = String(
+        distance > shown ? 0 : (1 - k * 0.16) * clamp(shown - distance, 0, 1),
+      );
       card.style.filter = `brightness(${1 - k * 0.22}) saturate(${1 - k * 0.08})`;
       card.style.zIndex = String(30 - Math.round(distance * 6));
-      card.style.pointerEvents = distance > 1.6 ? "none" : "";
+      // A card you can see is a card you can hit. The 0.6 is the reference's
+      // own margin past the last fully-drawn card.
+      card.style.pointerEvents = distance > neighbours + 0.6 ? "none" : "";
       card.classList.toggle("active", i === near);
     });
     return near;
-  }, []);
+  }, [neighbours]);
 
   const animate = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -320,6 +343,25 @@ export function ClipDeck({
       const sideways = card.offsetWidth - pictureWidth;
 
       const widest = (available - CARD_BREATHING_PX - fixed) * aspect + sideways;
+
+      // NARROW ONLY IF NARROWING ACTUALLY FITS.
+      //
+      // Below the floor the card cannot be made short enough however thin it
+      // gets — a card is a fixed stack of rows plus a picture, so there is a
+      // height it cannot go under. Clamping to the floor anyway produced the
+      // worst of both: cards shrunk to 300 AND still cut off, which reads as
+      // the deck having been broken rather than fitted. Measured at a 910-tall
+      // window with the pane open, the deck had 127px for a card that cannot be
+      // shorter than 374.
+      //
+      // So when a fit is out of reach, the design's own size is the better
+      // answer and the remainder scrolls. Conceding is for when conceding wins.
+      if (widest < CARD_MIN_WIDTH_PX) {
+        if (deck.style.getPropertyValue("--clip-w") === "") return;
+        deck.style.removeProperty("--clip-w");
+        layout();
+        return;
+      }
       const next = Math.round(clamp(widest, CARD_MIN_WIDTH_PX, CARD_MAX_WIDTH_PX));
       if (deck.style.getPropertyValue("--clip-w") === `${next}px`) return;
       deck.style.setProperty("--clip-w", `${next}px`);
@@ -330,6 +372,24 @@ export function ClipDeck({
     observer.observe(deck);
     return () => observer.disconnect();
   }, [layout, standalone, fitToHeight, CLIPS]);
+
+  /**
+   * RE-PLACE THE CARDS WHENEVER THERE ARE DIFFERENT ONES.
+   *
+   * `layout()` writes every card's transform, opacity and z-index directly, and
+   * it only ever ran on mount. A card that mounted LATER — which is every card
+   * past the first handful, because the clip list arrives in pieces — was never
+   * touched, so it kept its default styles: no transform, so stacked dead
+   * centre, and opacity 1, so fully painted. Measured, 43 of 56 cards piled on
+   * the middle of the deck, invisible only because the laid-out card sits above
+   * them on z-index.
+   *
+   * Keyed on the clips rather than folded into the mount effect below, which
+   * must NOT re-run: its cleanup cancels the glide.
+   */
+  useEffect(() => {
+    layout();
+  }, [CLIPS, layout]);
 
   useEffect(() => {
     layout();

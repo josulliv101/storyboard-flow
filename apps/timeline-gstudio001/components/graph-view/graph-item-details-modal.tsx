@@ -1485,6 +1485,13 @@ function DetailsFilmstripModal({
         // scrolling and the section clipped 222px of deck instead.
         className={previewOpen ? "min-h-0 flex-1" : undefined}
         fitToHeight={previewOpen}
+        // THE `3 · 5` CONTROL, WIRED BACK UP. It sized the old panel row and
+        // has had nothing to act on since the deck replaced it — a setting
+        // still on screen, still remembered, and inert. Five ADDS a card each
+        // side at the same pitch rather than fitting five into the width the
+        // three had, so the clips being read do not shrink because a setting
+        // asked for more of them.
+        neighbours={half}
         clips={deckClips}
         activeId={node.id as string}
         onActivate={(clipId) => landOn(clipId, position)}
