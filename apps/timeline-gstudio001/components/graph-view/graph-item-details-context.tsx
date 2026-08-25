@@ -161,13 +161,30 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
       card.style.setProperty("view-transition-name", HERO);
       void withViewTransition(
         () => {
-        // The card gives the name up in the same frame the view takes it, so
-        // exactly one element ever carries it. `withViewTransition` flushes
-        // this synchronously — the browser captures the "after" state as soon
-        // as the callback returns, and a queued update would leave nothing to
-        // fly to.
+          // The card gives the name up in the same frame the view takes it, so
+          // exactly one element ever carries it. `withViewTransition` flushes
+          // this synchronously — the browser captures the "after" state as soon
+          // as the callback returns, and a queued update would leave nothing to
+          // fly to.
           card.style.removeProperty("view-transition-name");
           setPending(next);
+          // AND THE URL MOVES IN HERE, which is the whole fix.
+          //
+          // `startViewTransition` does NOT capture the old state when it is
+          // called — it captures at the next rendering opportunity. Committing
+          // the route immediately after the call therefore landed a React
+          // render BEFORE that capture: the board card re-rendered, React
+          // rewrote the style attribute it manages, and the name was gone by
+          // the time the browser looked. Chrome then had a destination and no
+          // source, and authored the group with both keyframes at the
+          // destination — measured on a visible page with `ready` resolving,
+          // 440px @ 560,163.5 at BOTH ends. A morph with nowhere to come from
+          // renders as a fade in place, which is exactly "it does not slide
+          // into position".
+          //
+          // In here the capture has already happened, so a render cannot take
+          // the source away.
+          commit();
         },
         // RUNS EVEN UNDER REDUCED MOTION, asked for by name. The helper skips
         // entirely by default and that is right for things that slide about;
@@ -176,9 +193,6 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
         // replaced it. Without it, opening a clip is a hard cut.
         { ignoreReducedMotion: true },
       );
-      // The URL catches up after, and changes nothing anyone can see: `pending`
-      // is already showing the view it names.
-      commit();
     },
     [router],
   );
