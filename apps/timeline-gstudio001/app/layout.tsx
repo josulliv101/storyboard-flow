@@ -93,7 +93,35 @@ export default async function RootLayout({children}: {children: React.ReactNode}
         <AuthProvider initialUser={user}>
           <AuthGate>
             <div className="relative flex min-h-screen overflow-x-clip bg-zinc-950 font-sans text-white">
-              <Suspense fallback={null}>
+              {/* THE FALLBACK RESERVES THE RAIL'S WIDTH, and that is the whole
+                  point of it not being `null`.
+
+                  The rail is server-rendered, but inside a Suspense boundary,
+                  so the shell flushes with the boundary still pending and the
+                  rail's markup arrives later in the same response. With a
+                  `null` fallback it occupied NO width in that window, so
+                  `main` — its `flex-1` sibling — laid out across the whole row
+                  and was shoved 260px sideways when the boundary resolved.
+                  Measured: `main` x:0 w:1385 -> x:260 w:1125, a single layout
+                  shift of 0.1837, which was the entire CLS of this page.
+
+                  It only shows when a paint lands between those two moments,
+                  which is why it read as intermittent — and why making the
+                  page paint SOONER (PL15-027) is what surfaced it.
+
+                  `--sw-rail-width` is the right number to reserve because the
+                  server already publishes it on `<html>` from the cookie, so
+                  it is correct for both rail states before anything paints —
+                  the same reason that variable exists at all (#471). */}
+              <Suspense
+                fallback={
+                  <div
+                    aria-hidden
+                    className="shrink-0"
+                    style={{ width: `var(${RAIL_WIDTH_VAR})` }}
+                  />
+                }
+              >
                 <TimelineSidebar initialRailExpanded={railExpanded} />
               </Suspense>
               {/* Scroll anchoring is disabled page-wide (see globals.css):

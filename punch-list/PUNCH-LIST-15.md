@@ -1750,7 +1750,11 @@ against a 1,671 ms baseline — noise, not harm. A browser cannot prioritise a
 request it does not know exists. The two checks Chrome makes are not
 independent: the hint only means something once the resource is discoverable.
 
-**THE CLS IS UNRESOLVED AND THE BRANCH SHOULD NOT SHIP UNTIL IT IS.** CLS went
+**THE CLS IS RESOLVED — see PL15-027, the CLS, found and fixed, below.** It
+was the root layout's `null` Suspense fallback, which predates this branch; the
+notes here are kept as the state of the search at the time.
+
+**(AS IT STOOD) THE CLS IS UNRESOLVED AND THE BRANCH SHOULD NOT SHIP UNTIL IT IS.** CLS went
 0.00 to 0.18, above the 0.1 "good" threshold, and CLS is one of the four inputs
 to the Real Experience Score — so this currently trades one Core Web Vital for
 another.
@@ -1769,3 +1773,149 @@ Those two facts do not sit together yet, and until they do the cause is not
 known. The next step is to reconcile them — an observer that survives the
 trace's own reload — rather than to guess at a culprit. `AuthGate` wrapping the
 page in `RootLayout` is the obvious suspect and is only a suspect.
+
+## PL15-027 — the CLS, found and fixed
+
+**THE TWO INSTRUMENTS NEVER DISAGREED. ONE OF THEM WAS NEVER RUNNING.** The
+contradiction that blocked this item — a trace reporting 0.1837 and a
+`layout-shift` observer reporting zero — was an artifact of how the observer was
+installed. CDP's `initScript` is consumed by the navigation that installs it, so
+it does not re-run on a reload; every traced measurement reloads the page, and
+the observer was therefore absent from precisely the load being measured. Proved
+directly: a trace started with `reload: false` plus a navigation that carries the
+observer put both instruments on ONE load, and they agreed exactly — 0.00 and
+0.00.
+
+The instrument that does survive a reload is one injected SERVER-SIDE. A thin
+proxy in front of `next start` that inlines the observer into every HTML response
+measures every load, traced or not — that is what turned this from intermittent
+to 13 of 13.
+
+**THE SHIFT, MEASURED.** `main` moves `x:0 w:1385` to `x:260 w:1125`. One shift,
+0.1837, the whole CLS of the page. 260px is `RAIL_OPEN_WIDTH_PX` exactly.
+
+**THE CAUSE IS THE SUSPENSE FALLBACK IN THE ROOT LAYOUT, AND IT PREDATES THIS
+BRANCH.** The rail is server-rendered, but inside `Suspense` with a `null`
+fallback. The shell flushes with the boundary still pending — the initial HTML
+literally reads `<!--$?--><template id="B:0"></template>` followed by `<main>` —
+and the rail's markup arrives at 46% of the same response, inside
+`<div hidden id="S:0">`, to be swapped in by script. While pending, a `null`
+fallback reserves NO width, so `main` — its `flex-1` sibling — lays out across the
+whole row and is shoved when the boundary resolves.
+
+`origin/main` carries that same `null` fallback verbatim, and `app/layout.tsx`
+was last touched before this branch. **So PL15-027 did not introduce this shift.
+It made the page paint early enough to SHOW it** — the shift only scores when a
+paint lands between the shell and the boundary resolving, and a 1,671ms LCP left
+no such window. Speeding up first paint is what turned a latent bug into a
+measured one, which is the honest version of "CLS regressed".
+
+**THE FIX** reserves the rail's width in the fallback, from the variable the
+server already publishes on the `html` element from the cookie — the same
+variable, and the same reasoning, as #471. It is correct for both rail states
+before anything paints, which no hardcoded number would be.
+
+**MEASURED, before and after, same build pipeline, 4x CPU / Slow 4G, signed in:**
+
+| | before | after |
+| --- | ---: | ---: |
+| loads shifting (injected observer) | 13 of 13 | 0 of 12 |
+| worst CLS | 0.1837 | **0.0002** |
+| `main` shoves | 13 | **0** |
+| CLS (DevTools trace, raw server) | 0.18 | **0.00, 2 of 2** |
+| LCP (raw server, warm) | 710 / 756 / 761 / 789 ms | 664 / 672 / 676 ms |
+
+The only residual shift is a `span` whose truncated label fills in — 0.0002,
+three orders of magnitude under the 0.1 threshold.
+
+**LCP IS NOT PAID FOR IT, AND THE FIRST READING SAID IT WAS.** The first two
+post-fix traces came back 1,159 and 1,085ms and looked like a regression. They
+were a cold `next start`: render delay 546ms against about 100ms warm. Three warm
+samples land at 664-676ms. Reporting the cold pair would have been wrong in the
+same way that dropping `fetchPriority` on its null result would have been.
+
+**A GUARD SHIPS WITH IT.** `app/root-layout-rail-reservation.test.ts` reads the
+layout as source and fails if the fallback is `null`, does not reserve
+`RAIL_WIDTH_VAR`, or is not `shrink-0`. Checked against `origin/main`: all three
+assertions fail there and pass here, so it catches the real defect rather than
+restating the fix. It needs to exist precisely because a future `null` fallback
+reads as tidier rather than as a regression, and because nothing about the defect
+is visible until the page is fast.
+
+## PL15-028 — Cloudinary usage jumped; find out what changed
+
+- Status: OPEN — first pass done from the five exported CSVs below. The
+  mechanism is NARROWED but the attribution is CORRELATION, not proof: nothing
+  here separates localhost and e2e traffic from real visitors, and that is the
+  one split that decides whether this matters at all.
+- Area: Cloudinary account usage (delivery, not storage); `app/page.tsx`,
+  `app/projects-client.tsx` (poster delivery), `tests/e2e/`
+- Screenshot: Not captured
+
+Usage rose sharply over 21-23 August. The question is what changed.
+
+**IT IS NOT UPLOADS.** Storage moved 795.5 to 903.1 MB across the week, +13.5%,
+and +104 MB of that is video. A steady climb, no step. Whatever happened is on
+the DELIVERY side.
+
+**THE NUMBERS** (assumed MB — the export carries no unit header, and the totals
+are the right order of magnitude for this account; worth confirming before
+quoting them anywhere). 24 August is a partial day.
+
+| date | image impressions | image MB | video MB | total MB | delivered video s | transformed video s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 18 Aug | 66 | 6.7 | 0.6 | 7.3 | 0 | — |
+| 19 Aug | 133 | 3.2 | 1.5 | 4.6 | 0 | — |
+| 20 Aug | 1,427 | 14.9 | 192.1 | 206.9 | 0 | — |
+| 21 Aug | 967 | 36.6 | 113.5 | 150.0 | 864 | 260 |
+| 22 Aug | 11,202 | 18.9 | 562.4 | 581.3 | 1,150 | 388 |
+| 23 Aug | 13,907 | 161.2 | 236.6 | 397.8 | 616 | 20 |
+| 24 Aug | 777 | 1.4 | 18.2 | 19.6 | 10 | 0 |
+
+**THERE ARE TWO SPIKES, NOT ONE, AND THEY HAVE DIFFERENT SHAPES.**
+
+- **Video bandwidth, 20-23 Aug** — 192, 113, 562, 237 MB against under 1.5 MB on
+  the 18th and 19th. **20 August is the anomaly that matters:** 192 MB of video
+  bandwidth with ZERO delivered video seconds. Delivered-seconds counts
+  streamed or derived delivery, so bandwidth without it is originals being
+  fetched whole. The transformed-seconds column says the same thing from the
+  other side — 260, 388, 20, 0, which is almost nothing served through a derived
+  rendition. Per-second rates agree: 22 August is 562 MB over 1,150s, about
+  3.9 Mbps for something labelled 480p, which is not a 480p rendition.
+- **Image impressions, 22-23 Aug** — 11,202 and 13,907, against 66-133/day on the
+  18th and 19th. A hundredfold. At about 11.9 KB per impression on the 23rd these
+  are thumbnails, so the cost is in the COUNT, not the size.
+
+**WHAT CHANGED IN THAT WINDOW, and this is the correlation to test rather than
+believe.** 22-24 August is this punch list's heaviest run of work, and two things
+in it move image impressions specifically:
+
+- **The e2e suite and the PL15-020 investigation.** PL15-020 alone ran the full
+  176-test suite repeatedly, plus N=10 comparisons twice over, on the 23rd and
+  24th. Every app load renders project cards with real posters. 13,907
+  impressions is not a human browsing a three-project account.
+- **PL15-027 made the projects list server-rendered.** Posters are in the initial
+  HTML now, so the preload scanner fetches them on EVERY load — before it, a load
+  that never executed React never fetched them at all. That structurally raises
+  impressions per page view. It landed on the 24th-25th, so it does NOT explain
+  the 22-23 spike; it is what to watch in the NEXT export.
+
+Acceptance criteria:
+
+- The spike is attributed to a NAMED source, with the report that proves it —
+  Cloudinary's breakdown by referrer or user-agent, or by `public_id`. "Probably
+  the e2e suite" is where this analysis stops, not where it should end.
+- Localhost and CI traffic are separated from real visitors. If it is our own
+  test runs, the finding is about test hygiene; if it is not, it is about
+  delivery.
+- The video question is answered separately from the image one: whether
+  originals are being delivered where a derived rendition should be. 20 August —
+  192 MB with zero delivered seconds — is the case to explain first.
+- Whether anything should CHANGE is decided last and explicitly. Cloudinary
+  public delivery was a deliberate call and is not a finding; a fetch or
+  transform default is a different question from access.
+
+**Worth settling while in there:** whether e2e runs should point at fixture
+posters rather than at Cloudinary at all. Test runs that bill a delivery account
+scale with how often the suite runs, which is exactly the thing this list has
+been doing more of.
