@@ -3183,6 +3183,17 @@ test.describe("graph view E2E", () => {
     const playhead = page.locator("[data-graph-grid-playhead]");
     await expect(playhead).toBeVisible();
 
+    // HALF-STRENGTH LINE, FULL-STRENGTH HEAD (PL16-007). The line crosses the
+    // CARDS — it runs down the artwork being judged — while the head sits on
+    // chrome above the grid. The pair is asserted together because that is the
+    // whole point: fading both would lose the thing you aim at, and fading
+    // neither is what the line looked like before.
+    expect(await playhead.evaluate((el) => getComputedStyle(el).opacity)).toBe("0.5");
+    const gridThumb = page.locator("[data-rail-thumb]").first();
+    if ((await gridThumb.count()) > 0) {
+      expect(await gridThumb.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
+    }
+
     const grid = page.locator("[data-virtual-grid]");
     // Fewer than 4 columns guarantees a second row for the 4 project clips.
     const cols = Number(await grid.getAttribute("data-grid-columns"));
