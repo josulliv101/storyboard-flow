@@ -2615,8 +2615,9 @@ Acceptance criteria:
 
 ## PL15-036 — The page scrollbar appears at the wrong size, then corrects
 
-- Status: OPEN — root cause found and measured, NOT fixed. Needs a decision;
-  see the two options.
+- Status: OPEN, and now HANDED TO #285. Root cause found and measured; the CSS
+  route is closed by the owner's decision below, and what is left is the grid's
+  scroll model rather than anything in this file.
 - Area: `[data-virtual-grid]` (the sizer spacer), `app/globals.css`
 - Screenshot: Not captured
 
@@ -2660,18 +2661,40 @@ every column in the app sideways by 15px. `html` already sets
 it is NOT taking effect: measured with the view open, `stable` alone gives 1100,
 `overflow-y: auto` gives 1100, and only `overflow-y: scroll` gives 1085.
 
-Two ways forward, and they want a decision rather than a guess:
+**THE OWNER HAS RULED OUT THE ONE-LINER.** `html { overflow-y: scroll }` would
+hold the width steady and make the existing `scrollbar-gutter` note true, at the
+cost of a scrollbar track that is always there. Asked directly, the answer was
+"I don't want a permanent scrollbar". That closes the CSS route — the gutter
+cannot be reserved without the page being a scroll container, which is the same
+thing as the bar always existing.
 
-- **`html { overflow-y: scroll }`.** One line. The bar is always present, so it
-  never appears or disappears, the 15px shift goes away, and the existing
-  `scrollbar-gutter` note starts being true. Cost: a visible, always-there
-  scrollbar track on views that do not scroll — including the details view,
-  which was designed not to have one.
-- **Fix #285.** Constrain the grid so its spacer cannot reach the document.
-  Removes the wrong-size thumb at the source and needs no CSS at all. Bigger,
-  and already deprioritised.
+So both halves of this now point at the same place, and it is not CSS:
 
-Acceptance criteria:
+- **The wrong-size thumb** is the grid's spacer reaching the document, which it
+  only can because the grid is not height-constrained.
+- **The 15px shift** is the page having a scrollbar on the board and none on the
+  details view, which it only can because the BOARD scrolls the page at all.
+
+**GIVE THE GRID ITS OWN SCROLL CONTAINER and both go away**, along with rather
+more than that. If the board scrolled a bounded container instead of the
+document, the page would never have a scrollbar to gain or lose, so there is no
+shift and no thumb to size wrongly; and the whole parking-and-restoring
+apparatus in `GraphBoardContent` — the listener, the module-level offset,
+PL15-035's careful placement of the restore inside the transition callback,
+PL15-033's race — exists ONLY because the offset being carried belongs to the
+window rather than to the board. A container keeps its own `scrollTop` across a
+sibling being hidden, with nothing to clamp it and nothing to restore.
+
+That is issue #285 ("Grid mode mounts every card — VirtualGrid windows against
+a container that never scrolls"), which is already open and already
+deprioritised. This entry is the second reason to do it.
+
+NOT ATTEMPTED HERE. It moves the scroll model of the main surface, and the two
+things it would fix are a 60ms thumb and a 15px shift — worth doing with #285,
+not worth doing on the way past.
+
+Acceptance criteria (unchanged, and now owned by #285):
 
 - The first thumb anyone sees after a close is the settled one.
 - Nothing moves sideways when the details view opens or closes.
+- Neither is bought with a scrollbar that is always on screen.
