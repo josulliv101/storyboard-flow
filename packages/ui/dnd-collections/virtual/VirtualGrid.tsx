@@ -176,6 +176,27 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       const compute = () => {
         // The spacer's clientWidth already excludes container padding.
         const width = contentRef.current?.clientWidth ?? el.clientWidth;
+        // A HIDDEN BOX MEASURES ZERO, AND ZERO IS NOT A LAYOUT.
+        //
+        // Every descendant of a `display: none` subtree has a client width of
+        // 0, and a ResizeObserver reports that as a resize. Through the
+        // arithmetic below 0 floors to ONE COLUMN, so a grid that is merely out
+        // of sight re-lays itself as a single tall stack of every row.
+        //
+        // Not hypothetical, and not invisible. The app hides the board with
+        // `display: none` while the details view is up — deliberately, so
+        // selection and in-flight drags survive — so every close came back
+        // through the one-column layout. Measured on the way out, with four
+        // cards: the spacer went to 944 (4 rows x 236) against a settled 472,
+        // the document to 1565 against a settled 615, and the browser drew a
+        // scrollbar thumb for a page two and a half times the real height
+        // before correcting it.
+        //
+        // Keeping the last real measurement is right rather than merely
+        // convenient: a box with no layout has no width to report, so there is
+        // nothing here to learn. The next non-zero measurement is the answer
+        // and it arrives in the frame the box comes back.
+        if (width <= 0) return;
         setMeasuredWidth(width);
         if (columns === undefined) {
           setMeasuredColumns(Math.max(1, Math.floor((width + gap) / (cellWidth + gap))));

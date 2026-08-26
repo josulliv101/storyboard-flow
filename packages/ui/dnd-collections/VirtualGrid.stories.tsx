@@ -151,6 +151,64 @@ export const FillsFullWidth: Story = {
  * waited to catch the flash would be a race; this one fails the moment someone
  * tidies the class list back to a single overflow rule.
  */
+/**
+ * A GRID THAT IS HIDDEN KEEPS THE LAYOUT IT HAD.
+ *
+ * `display: none` gives every descendant a client width of 0, and a
+ * ResizeObserver reports that as a resize. Fed through the responsive column
+ * arithmetic, 0 floors to ONE COLUMN — so a grid that is merely out of sight
+ * re-lays itself as a single tall stack of every row, and the page it sits in
+ * grows to match until it is shown and measured again.
+ *
+ * The app hides its board exactly this way while the details view is up (it
+ * keeps the board mounted so selection and in-flight drags survive), so this
+ * ran on every close. Measured there with four cards: the spacer went to 944
+ * (4 rows) against a settled 472, the document to 1565 against a settled 615,
+ * and the browser drew a scrollbar thumb for a page two and a half times the
+ * real height before correcting it (#541).
+ *
+ * TWO FRAMES BEFORE ASSERTING, and that is the whole test. ResizeObserver
+ * delivers before paint but not synchronously, so an assertion made in the same
+ * tick as the hide would pass without the observer ever having run — vacuously,
+ * and just as green with the guard removed. Waiting is what makes this a test.
+ */
+export const HiddenGridKeepsItsColumns: Story = {
+  render: () => (
+    <DndCollections initialGraph={gridGraph()}>
+      <div className="w-[601px]" data-testid="hideable">
+        <VirtualGrid collectionId={parseNodeId("grid")} cellWidth={160} gap={8} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+    const container = canvasElement.querySelector<HTMLElement>('[data-testid="hideable"]')!;
+    const grid = container.querySelector<HTMLElement>("[data-virtual-grid]")!;
+    const spacer = grid.querySelector<HTMLElement>(":scope > div")!;
+
+    const columns = grid.dataset.gridColumns;
+    const spacerHeight = Math.round(spacer.getBoundingClientRect().height);
+    // The fixture is 1000 items at 160px in a 601px box, so this is several
+    // columns — a grid that was ALREADY one column could not show the defect.
+    expect(Number(columns)).toBeGreaterThan(1);
+
+    const settle = () =>
+      new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    container.style.display = "none";
+    await settle();
+    // Still what it was. Without the zero-width guard this is "1".
+    expect(grid.dataset.gridColumns).toBe(columns);
+
+    container.style.display = "";
+    await settle();
+    expect(grid.dataset.gridColumns).toBe(columns);
+    // And the row count it implies never moved either, which is the number the
+    // page height is actually made of.
+    expect(Math.round(spacer.getBoundingClientRect().height)).toBe(spacerHeight);
+  },
+};
+
 export const GridNeverScrollsHorizontally: Story = {
   render: () => (
     <DndCollections initialGraph={gridGraph()}>
