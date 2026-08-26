@@ -2698,3 +2698,111 @@ Acceptance criteria (unchanged, and now owned by #285):
 - The first thumb anyone sees after a close is the settled one.
 - Nothing moves sideways when the details view opens or closes.
 - Neither is bought with a scrollbar that is always on screen.
+
+## PL15-037 — PL15-033's remainder, reproduced and closed
+
+- Status: Complete. The failure was forced, watched to fail 3 of 3, then fixed.
+- Area: `components/graph-view/graph-item-details-shared.ts` (the parking lot
+  moves here and gains a second slot),
+  `components/graph-view/graph-item-details-context.tsx` (the gesture's own
+  reading), `components/graph-view/graph-item-details-modal.tsx`
+- Screenshot: Not captured
+
+PL15-033 was withdrawn but left one real thing behind, seen once and not
+reproducible: `GraphBoardContent` parks `window.scrollY` on every scroll while
+the board is showing, and hiding the board is the SAME COMMIT that collapses the
+document and makes the browser clamp the offset to 0. A clamp emits a scroll
+event. React's passive cleanup runs after paint. Nothing orders those two, so if
+the event beats the teardown the listener parks the clamped 0, the restore
+declines (`to === 0`), and the grid comes back at the top.
+
+**REPRODUCED BY FORCING THE ORDERING**, which is what the entry asked for before
+anything was changed. The open and the clamp go in one task:
+
+```
+window.dispatchEvent(new CustomEvent("graph-view:open-item-details", { detail: "alpha" }));
+window.scrollTo(0, 0);
+```
+
+That is not a synthetic interleaving — it is the one that was observed, delivered
+on purpose instead of waited for. 3 runs of 3 came back with the board at 0
+against a parked 200.
+
+**THE FIX IS A SECOND READING THAT CANNOT BE WRONG.** `setOpenId` takes
+`window.scrollY` synchronously at the gesture, before React has rendered
+anything and therefore before anything can have hidden the board or clamped the
+page. `restoreBoardScroll` prefers it and consumes it; the listener's value stays
+as the fallback for the ways in that are not a gesture — a deep link,
+Back/Forward — where there was no board on screen to read and 0 is the right
+answer anyway.
+
+TWO SLOTS RATHER THAN A LOCK, deliberately. A lock has to be released, and the
+release is another ordering question between two components' effects — the same
+class of bug one layer down. A value that simply outranks the other has no
+release and no ordering.
+
+The parking lot moves from the modal file to `graph-item-details-shared.ts`,
+which is where the two ends of this already meet: the context writes the gesture
+reading, `GraphBoardContent` writes the listener's, and the closing transition
+spends whichever wins.
+
+Acceptance criteria:
+
+- Covered by `a scroll landing as the view opens does not eat the board's
+  offset`, which fails 3 of 3 without the gesture reading.
+- The existing restore behaviour is unchanged for a plain scroll-open-close, and
+  PL15-035's placement of the restore inside the transition callback is
+  untouched.
+
+## PL15-038 — #285 sized: capping the grid's height breaks exactly one thing
+
+- Status: OPEN, SPIKED not shipped. Needs one design decision from the owner
+  before it can be built; see the end.
+- Area: `components/graph-view/graph-board.tsx` (`GRID_UNCAPPED_HEIGHT`),
+  `components/graph-view/graph-seek-rails.tsx`
+- Screenshot: Not captured
+
+PL15-036 handed the wrong-size scrollbar and the 15px sideways shift to issue
+#285, on the reasoning that both exist only because the BOARD scrolls the page.
+This is what it would actually take.
+
+**THE GRID ALREADY SUPPORTS IT.** `VirtualGrid`'s `height` prop is documented as
+"MAXIMUM scroll viewport height: the grid is content-height while its rows fit,
+and scrolls only past this cap". The board passes
+`GRID_UNCAPPED_HEIGHT = 100_000`, so the cap is never reached, the grid is always
+content-height, and the virtualizer's viewport is 100000px — which is also why
+every card mounts, the headline complaint in #285. One prop.
+
+**THE BLAST RADIUS WAS MEASURED, NOT ESTIMATED.** With `height={520}` hard-coded
+and nothing else touched, the e2e is 171 passed / 1 failed. The one failure is
+`grid mode with preview: seek rail scrubs (pointer + keyboard); cards keep
+select, drill and hold-drag`, and it is deterministic rather than the flake that
+test is already known for (#453): 3 of 3 with the cap, 3 of 3 clean without it.
+
+**AND THE FAILURE IS THE PREDICTABLE ONE.** `GraphSeekRails` is a SIBLING of the
+grid, `absolute inset-0` over the surface shell, and it measures row positions
+from `rootRect`/`gridRect` under a ResizeObserver. A ResizeObserver does not fire
+on scroll, so the moment the grid scrolls inside itself the rails stop agreeing
+with the rows they are supposed to sit above.
+
+That is a known shape here rather than new ground: the STRIP's rail already
+solves exactly this problem — its own note describes being "a SIBLING of the
+strip, so it queries across for the scroller", viewport-fixed with scroll-synced
+content. The grid's rail needs the same treatment.
+
+**THE DECISION IT NEEDS, and it is a visible one.** Capping the grid means the
+page stops scrolling on the board, so the graph header and toolbar stay put
+while only the cards move. That is a different feel from today, where the whole
+page scrolls and the header leaves. It is arguably the better instrument — the
+controls stay where your hand is — but it is a change to the main surface and
+not one to make on the way past a scrollbar complaint.
+
+If it is wanted, the work is: a measured height for the grid (the same
+`innerHeight - top - gap` arithmetic PL15-032 built for the details view), the
+grid rail re-anchored the way the strip's already is, and a check that the
+board's drag auto-scroll follows the container rather than the window.
+
+What it buys, all of it measured elsewhere in this list: real virtualization
+(#285's own point), no wrong-size thumb, no 15px shift, and the whole
+parking-and-restoring apparatus (PL15-035, PL15-037) becomes unnecessary,
+because a container keeps its own `scrollTop` with nothing to clamp it.
