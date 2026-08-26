@@ -40,3 +40,29 @@ export const MAX_MAGNIFICATION = 2.2;
 export function cardElement(id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
 }
+
+/**
+ * THE PICTURE INSIDE A BOARD CARD — what actually flies (PL15-034).
+ *
+ * The name used to go on the whole card, and the flight was measured doing
+ * this: a 298x220 grid card tweening into a 326x363 deck card, a 65% vertical
+ * stretch, while the browser cross-faded a grid card's contents (one picture,
+ * one caption row) against a deck card's (header, title, picture, scrub bar,
+ * in/out row, tags). Nothing inside either box corresponded to anything in the
+ * other, so the middle of the flight was two unrelated layouts on top of each
+ * other — the ghosting in the recording.
+ *
+ * The pictures, measured at the same moment, are 286x154 and 296x148. Morphing
+ * THOSE is a +3.5% / -3.9% box change: a translation with a cross-fade between
+ * two renderings of the same frame, which is the "one picture moving" the
+ * flight is supposed to say.
+ *
+ * `[data-clip-artwork]` is already the board's own name for that box — the grid
+ * play buttons measure it to find where the picture ends inside a cell — and
+ * both card kinds carry it. Falls back to the card so a kind that grows without
+ * one still flies rather than cutting.
+ */
+export function heroElement(id: string): HTMLElement | null {
+  const card = cardElement(id);
+  return card?.querySelector<HTMLElement>("[data-clip-artwork]") ?? card;
+}

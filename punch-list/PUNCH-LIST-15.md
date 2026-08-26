@@ -2384,3 +2384,317 @@ Acceptance criteria:
 - If it turns out to be the test rather than the component, the assertion is
   corrected rather than loosened — a poll that passes because it waits longer is
   a poll that has stopped asserting.
+
+## PL15-032 — The details view fits the window, and the cards get the space back
+
+- Status: Complete, shipped in #538. Written up here after the fact — the list
+  stopped at 031 while the work carried on, which is the gap this entry closes.
+- Area: `components/graph-view/graph-item-details-modal.tsx` (the fit ceiling),
+  `components/graph-view/playbar/clip-deck.tsx` (card padding, row margins)
+- Screenshot: Not captured
+
+Three changes to the three-item view, measured on a real click in the signed-in
+app at an 889px window.
+
+**The view forced a page scrollbar.** It started at y=70, stood 884 tall, and
+the document came to 954 — 65px past the fold. The ceiling that subtracts what
+sits above the view was gated to the preview-open path, so with the pane down
+nothing bounded it. Ungated: document 954 -> 889, page overflow 65 -> 0, view
+884 -> 807, deck 480 -> 420, film strip 150 -> 133. `overflowY` went from `clip`
+to `auto` with it, because `clip` against a ceiling cuts the bottom off the
+cards rather than letting you reach them.
+
+**This reversed an earlier decision on purpose:** the gate was deliberate, on
+the reasoning that fitting the view "cost the design its own sizes ... to avoid
+a scrollbar nobody minded". The scrollbar is minded. The cost is accepted —
+with the pane down the deck concedes rather than overflowing, so cards are
+narrower than the reference's own size at rest.
+
+**Vertical spacing, 24px from the card's own rows** (padding 12 -> 9, title
+margin 7/10 -> 5/7, bar 9/8 -> 6/6, in/out 9 -> 6, tags 10/24min -> 7/22min) and
+24px from the view column's gap (`gap-6` -> `gap-3`). Both feed `fit()`, which
+turns deck height into card WIDTH, so the space returns as a bigger picture.
+
+`Swiping The Picture Advances The Strip` went red and was right to: the deck
+adds `velocity * 160ms` of coast in PIXELS while the landing is measured in
+CARDS, so narrower cards make an identical flick throw further. The gesture is
+slower now (8x40ms rather than 6x25ms); `FLING_PROJECTION_MS` is left alone.
+
+**AND IT COST THE BOARD ITS SCROLL POSITION — see PL15-033.** Fitting the view
+to the window is exactly what collapses the document's scroll range to zero, and
+nothing was holding the offset the board had been left at.
+
+## PL15-033 — WITHDRAWN: "opening the details view destroys the board's scroll position"
+
+- Status: WITHDRAWN. The bug as written does not exist — the board already
+  carries its scroll across, and has since the note in `GraphBoardContent` that
+  says so. The real defect the report was pointing at is PL15-035.
+- Area: none. Nothing shipped for this.
+
+This entry claimed the details view collapses the document, the browser clamps
+the page scroll to 0, and nothing restores it. The first two are true. The third
+is not: `GraphBoardContent` parks `window.scrollY` on every scroll while the
+board is showing and restores it in a layout effect after a close, and its own
+comment describes the exact bug ("coming back put someone who had scrolled to
+177 back at the top") that this entry re-reported as new.
+
+**HOW THE WRONG DIAGNOSIS SURVIVED A MEASUREMENT.** The baseline was measured
+and it did show `scrollY` at 0 after a close. It was a fluke, and the honest
+reading is that ONE run is not a baseline. Re-measured on `main` afterwards,
+the scroll came back at 291 as designed.
+
+**THERE IS SOMETHING REAL UNDERNEATH, SEEN ONCE AND NOT REPRODUCED.** The park
+listener is registered only while the board is showing, and it is torn down in
+the same commit that hides the board — the same commit whose layout change makes
+the browser clamp the scroll and emit a scroll event. If that event is delivered
+before the teardown, `parked` records the clamped 0 and the restore then declines
+to run (`if (to === 0) return`). That is the shape of what was measured once, it
+would present exactly as "the grid went back to the top", and it is a genuine
+race in code that predates this list.
+
+NOT FIXED HERE, deliberately: a guard is obvious (ignore a scroll while the
+details view is up) but nothing reproduces the failure, so there is nothing to
+prove the guard fixes. It is written down instead.
+
+Acceptance criteria, if it is ever picked up:
+
+- A reproduction first — the failure observed on demand, not once in a session.
+- Then the guard, with the reproduction going green because of it.
+
+## PL15-034 — The flight morphs the whole card; it should morph the picture
+
+- Status: Complete. The note that had blocked this was checked and is FALSE —
+  see below.
+- URL: same as PL15-033
+- Area: `components/graph-view/playbar/clip-deck.tsx` (the deck's `c-frame`),
+  `components/graph-view/graph-item-details-shared.ts` (`heroElement`),
+  `apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts`
+- Screenshot: Not captured — a recording of the slowed-down transition is what
+  this was reported from.
+
+Asked for as "instead of sliding the entire item, let's just slide the image and
+have it turn into the new item's image", after slowing the animation down enough
+to watch it.
+
+**WHY IT LOOKED WRONG, IN NUMBERS.** `trim-subject` was worn by the whole board
+card at one end and the whole deck card at the other. The group's own keyframes,
+read off `getAnimations()` at `ready`:
+
+    0%    (743.5, 367)    297.66 x 220
+    100%  (415.5, -10.5)  325.50 x 363
+
+A 65% vertical stretch, while the browser cross-faded a grid card's contents
+(one picture, one caption row) against a deck card's (header, title, picture,
+scrub bar, in/out row, tag row). Nothing in either box corresponds to anything
+in the other, so the middle of the flight is two unrelated layouts on top of
+each other. That is the ghosting in the recording, and it is not a duration
+problem — slowing it down only made it easier to see.
+
+The PICTURES, measured at the same moment, are 286x154 on the board and 296x148
+in the deck. Morphing those is +3.5% in width and -3.9% in height: a translation
+with a cross-fade between two renderings of the same frame.
+
+**THE NOTE THAT SAID THIS COULD NOT BE DONE IS WRONG.** Three places said, in
+the same words, that a `view-transition-name` on a DESCENDANT of a transformed
+and filtered subtree "is captured relative to that subtree", and that the
+browser "held the group at the destination for the whole flight". An isolated
+probe disproved it: a named 200x120 box, replaced inside a
+`translate(-50%,-50%) scale(1)` + `brightness(1) saturate(1)` wrapper — the
+deck's own active-card styles, written by `layout()` — by a named 420x200 box,
+produced
+
+    0%    matrix(1,0,0,1,  40,    40)   200x120
+    100%  matrix(1,0,0,1, 479.5, 206)   420x200
+
+It travels. What was really happening in the case that produced that note is the
+bug the two long comments in `graph-item-details-context` describe: the SOURCE
+losing its name to a re-render before the browser captured, which authors a
+group with both keyframes at the destination and reads exactly like "held at the
+destination, cross-fading in place". The note recorded the symptom of a
+different bug as a rule about nesting, and then that rule blocked the fix.
+
+**WHAT MOVED.** The board side names `[data-clip-artwork]` — already the board's
+own name for that box, measured by the grid play buttons to find where a picture
+ends inside a cell, and carried by both card kinds. The deck side names
+`.c-frame[data-item-details-frame]` on the active card instead of the card. The
+collection details view already named its frame, so the two paths now agree
+rather than one naming a picture and the other a card.
+
+Everything else is untouched: the attribute mechanism, the handover inside the
+callback, and the ordering that makes `flushSync` load-bearing.
+
+Verified in the app, with the one-element invariant holding throughout:
+
+    grid, nothing open        0 elements named
+    at the open call          BOARD-ARTWORK  286x154   (the source)
+    inside the open callback  DECK-PICTURE   296x148   (the destination)
+    while open                1 element
+    at the close call         DECK-PICTURE
+    inside the close callback BOARD-ARTWORK
+    back on the grid          0 elements named
+
+And on the collection path, which goes through the same code: BOARD-ARTWORK
+284x152 -> DETAILS-FRAME 734x203.
+
+Acceptance criteria:
+
+- Exactly one element carries `trim-subject` at any moment, and none at rest.
+- Both ends of the flight are pictures, on the clip path and the collection one.
+- The e2e's hero-holder assertion says the picture, and says why the old claim
+  about transformed subtrees was withdrawn.
+
+## PL15-035 — Closing: the picture flies in from off screen, above the viewport
+
+- Status: Complete, with a regression test that was checked to fail without the
+  fix.
+- URL: scroll the grid, open a clip, close it
+- Area: `components/graph-view/graph-item-details-modal.tsx`
+  (`parkedBoardScroll`, `restoreParkedBoardScroll`, `GraphBoardContent`),
+  `tests/e2e/graph-view.spec.ts`
+- Screenshot: Not captured — reported from a slowed-down recording.
+
+Reported as "it looks like the image slides from off screen above the viewport
+when it transitions back". It does, and it did before PL15-034 as well — the
+picture morph only made it legible. On `main`, at the moment the closing
+transition starts, the deck card sits at y=-301.
+
+**THE ORDER OF TWO THINGS, AND THAT IS ALL.** `GraphBoardContent` restores the
+board's parked scroll in a layout effect on the render `openId` goes null. That
+render is one BEFORE the closing transition, and in it the details view is still
+mounted and still in normal flow. Restoring 291px of page scroll therefore
+scrolls the VIEW up by 291px — measured at y=-242, above the viewport — and
+`startViewTransition` captures the old state at the next rendering opportunity
+rather than when it is called, so that displaced position is what the browser
+captured. A morph whose old box is above the viewport is a picture flying in
+from off screen.
+
+**THE FIX IS TO SPEND IT LATER, NOT TO MOVE THE BOARD.** `parkedBoardScroll`
+moves to module scope so the closing transition can reach it, and
+`restoreParkedBoardScroll()` is called inside the transition's callback. By then
+the old capture is taken, so moving the page cannot reach back and displace what
+the morph is flying from; and it is before the new capture, so the card is
+already where it belongs when that is taken. The layout effect keeps only the
+case the transition cannot reach — an `openId` that never mounted a view, which
+hides the board and reveals it with no transition in between — guarded on the
+view being absent so the two can never both fire.
+
+    at the transition call   scrollY 0    view top   70   (was: 200 and -130)
+    settled                  scrollY back to where the board was left
+
+**TWO APPROACHES WERE TRIED AND ONE WAS WRONG, which is worth recording because
+it looked better on paper.** The first attempt kept the board HIDDEN until the
+view actually unmounted — a `detailsOnScreen` flag published through
+`useSyncExternalStore` and cleared inside the same `flushSync` — so the two were
+never in flow together. It fixes the capture and it also removes the stacked
+document (PL15-036). It is also unshippable: the board is virtualized, and a
+board that is `display: none` renders NO CARDS, so the morph had no destination
+to fly to. The e2e caught it immediately and deterministically —
+`heroHolderAtReady` came back `null`, 3 runs of 3 — and the browser had said the
+same thing an hour earlier with `boardCards=0` at transition time, which was
+read as "good, the board is still hidden" instead of "there is nothing to fly
+to".
+
+**AND A LINE WAS DELETED BY ACCIDENT ON THE WAY.** Backing that attempt out took
+`if (wantedNow && node !== null && mountedId !== node.id) setMountedId(...)` with
+it — the assignment that arms the whole closing path. With `mountedId` never set,
+the close effect returns early and no transition runs at all, which presents as
+"open an item then close it and there is no slide, but open, advance to the next
+one, then close and there is". That is what the owner reported while it was
+broken, and the e2e's failure mode changed from an assertion to a timeout at
+exactly that commit.
+
+Acceptance criteria:
+
+- At the moment the closing transition starts, the page scroll has NOT been
+  restored yet and the details view is at a non-negative top.
+- The board still comes back to the offset it was left at.
+- Covered by `closing a SCROLLED board flies from where the view actually is`,
+  which asserts its own preconditions (the board scrolls; the view leaves no
+  scroll range) so it cannot pass vacuously, and which was run against the old
+  ordering to confirm it fails there: `scrollAtCall` 200 instead of 0.
+
+## PL15-036 — The page scrollbar appears at the wrong size, then corrects
+
+- Status: OPEN, and now HANDED TO #285. Root cause found and measured; the CSS
+  route is closed by the owner's decision below, and what is left is the grid's
+  scroll model rather than anything in this file.
+- Area: `[data-virtual-grid]` (the sizer spacer), `app/globals.css`
+- Screenshot: Not captured
+
+Reported alongside PL15-035: "the scrollbar, at first shows but is wrong size
+then corrects itself to right size — can that be fixed, or the scrollbar hidden
+until final size reached".
+
+**IT IS THE GRID'S VIRTUALIZATION SPACER, and it is issue #285 wearing a
+different hat.** Part of the blip is the board and the details view briefly
+being in flow together — PL15-035 records why that is not worth removing (the
+board renders no cards while hidden, so the morph loses its destination). The
+rest, and the part that would remain either way, is this, for about four
+frames:
+
+    document 560 -> 1795 -> 851
+    the tall element: div[data-virtual-grid] h=1652, ONE child, h=1652, 0 kids
+    cards rendered at that moment: 0
+
+The grid remounts, lays out its full-height spacer, and windows a frame or two
+later. The spacer's height reaches the document because the grid is not height-
+constrained — which is exactly what #285 is about ("VirtualGrid windows against
+a container that never scrolls"). The browser draws a thumb for a 1795px page
+and then corrects it to an 851px one.
+
+**HIDING IT WAS TRIED AND IS WORSE.** `scrollbar-width: none` while
+`data-view-transition="running"` does hide the wrong thumb, and the whole blip
+does fall inside that window (checked). But the bar has real width on Windows,
+so hiding it widens the viewport — and the morph then lands at the wrong place
+and pops when the bar returns:
+
+    mid-flight   card x=759 w=291   clientWidth 1100
+    settled      card x=749 w=286   clientWidth 1085
+
+A 10px sideways pop at the end of every close, traded for 60ms of wrong thumb.
+Reverted.
+
+**AND THERE IS A SECOND, OLDER SHIFT IN THE SAME PLACE.** `clientWidth` is 1085
+on the board and 1100 with the details view open, so every open and close moves
+every column in the app sideways by 15px. `html` already sets
+`scrollbar-gutter: stable` with a long note about preventing exactly this, and
+it is NOT taking effect: measured with the view open, `stable` alone gives 1100,
+`overflow-y: auto` gives 1100, and only `overflow-y: scroll` gives 1085.
+
+**THE OWNER HAS RULED OUT THE ONE-LINER.** `html { overflow-y: scroll }` would
+hold the width steady and make the existing `scrollbar-gutter` note true, at the
+cost of a scrollbar track that is always there. Asked directly, the answer was
+"I don't want a permanent scrollbar". That closes the CSS route — the gutter
+cannot be reserved without the page being a scroll container, which is the same
+thing as the bar always existing.
+
+So both halves of this now point at the same place, and it is not CSS:
+
+- **The wrong-size thumb** is the grid's spacer reaching the document, which it
+  only can because the grid is not height-constrained.
+- **The 15px shift** is the page having a scrollbar on the board and none on the
+  details view, which it only can because the BOARD scrolls the page at all.
+
+**GIVE THE GRID ITS OWN SCROLL CONTAINER and both go away**, along with rather
+more than that. If the board scrolled a bounded container instead of the
+document, the page would never have a scrollbar to gain or lose, so there is no
+shift and no thumb to size wrongly; and the whole parking-and-restoring
+apparatus in `GraphBoardContent` — the listener, the module-level offset,
+PL15-035's careful placement of the restore inside the transition callback,
+PL15-033's race — exists ONLY because the offset being carried belongs to the
+window rather than to the board. A container keeps its own `scrollTop` across a
+sibling being hidden, with nothing to clamp it and nothing to restore.
+
+That is issue #285 ("Grid mode mounts every card — VirtualGrid windows against
+a container that never scrolls"), which is already open and already
+deprioritised. This entry is the second reason to do it.
+
+NOT ATTEMPTED HERE. It moves the scroll model of the main surface, and the two
+things it would fix are a 60ms thumb and a 15px shift — worth doing with #285,
+not worth doing on the way past.
+
+Acceptance criteria (unchanged, and now owned by #285):
+
+- The first thumb anyone sees after a close is the settled one.
+- Nothing moves sideways when the details view opens or closes.
+- Neither is bought with a scrollbar that is always on screen.

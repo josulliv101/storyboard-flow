@@ -191,14 +191,16 @@ export type ClipDeckProps = Readonly<{
   /**
    * A `view-transition-name` for the SUBJECT card's picture.
    *
-   * The board card the user clicked wears this name until the details view
-   * mounts, and then this picture wears it — so the browser morphs the
-   * thumbnail into the card rather than the view simply appearing. The name is
-   * the caller's to choose because the card and the board have to agree on it,
-   * and neither of them is this component.
+   * The picture inside the board card the user clicked wears this name until
+   * the details view mounts, and then the active card's own picture wears it —
+   * so what the browser morphs is one thumbnail into another, rather than a
+   * grid card into a deck card (PL15-034). The name is the caller's to choose
+   * because the board and this component have to agree on it, and neither of
+   * them owns the other.
    *
-   * ONE ELEMENT AT A TIME, which is why it goes on the active card alone: two
-   * elements holding one name makes the browser skip the morph entirely.
+   * ONE ELEMENT AT A TIME, which is why it goes on the active card's picture
+   * alone: two elements holding one name makes the browser skip the morph
+   * entirely.
    */
   heroName?: string;
   className?: string;
@@ -860,24 +862,17 @@ export function ClipDeck({
                     data-item-details-edge={
                       liveTrim?.index === index ? liveTrim.edge : undefined
                     }
-                    // THE NAME GOES ON THE CARD, NOT ON THE PICTURE INSIDE IT.
+                    // NO `view-transition-name` HERE — it is on the picture,
+                    // `c-frame` below (PL15-034).
                     //
-                    // Every card carries a transform and a filter, written by
-                    // `layout()` on every frame. A `view-transition-name` on a
-                    // DESCENDANT of a transformed, filtered subtree is captured
-                    // relative to that subtree — measured, the browser had both
-                    // boxes (a 320x220 board card and a 410x205 picture) and
-                    // still held the group at the destination for the whole
-                    // flight, cross-fading in place instead of travelling.
-                    //
-                    // The card is the transformed element itself rather than
-                    // something inside one, so its own transform is part of the
-                    // geometry the browser captures.
-                    style={
-                      heroName !== undefined && index === active
-                        ? { viewTransitionName: heroName }
-                        : undefined
-                    }
+                    // It was on this card, on the stated rule that a name
+                    // inside a transformed and filtered subtree cannot be
+                    // captured properly. THAT RULE IS FALSE and was probed
+                    // before this moved: inside the deck's own active-card
+                    // styles a named box still produced a group that travels,
+                    // source box to destination box. The case that produced the
+                    // rule was the SOURCE losing its name to a re-render before
+                    // capture — see PL15-034 for both measurements.
                     ref={(node) => {
                       cardRefs.current[index] = node;
                     }}
@@ -912,6 +907,22 @@ export function ClipDeck({
                         // vocabulary for the same two things.
                         data-item-details-frame=""
                         style={{
+                          // WHAT THE BOARD'S PICTURE FLIES INTO (PL15-034).
+                          //
+                          // On the ACTIVE card only: two elements holding one
+                          // name makes the browser skip the morph outright.
+                          //
+                          // Measured against the board card it comes from, at
+                          // the same window: the pictures are 286x154 there and
+                          // 296x148 here, so the flight is a translation with a
+                          // 3.5% nudge in width. Naming the CARDS instead made
+                          // it a 298x220 -> 326x363 box — a 65% vertical
+                          // stretch with a grid card's contents cross-fading
+                          // against a deck card's, which is what "not seamless"
+                          // was.
+                          ...(heroName !== undefined && index === active
+                            ? { viewTransitionName: heroName }
+                            : {}),
                           // THE PICTURE FOLLOWS THE TRIM WHILE IT IS MOVING.
                           //
                           // A card's big image is the frame its clip starts on,
