@@ -110,6 +110,7 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { compileClientPlaybackManifest } from "@/lib/client-playback-manifest";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 import { useItemDetails } from "./graph-item-details-context";
+import { useDetailsPreviewMode } from "./details-preview-mode";
 import { sharedWaveformCache, type WaveformCache } from "@/lib/waveform-cache";
 
 import {
@@ -1161,7 +1162,16 @@ export function PreviewShell({
    * child, and knowing where you are is exactly as useful inside a clip.
    */
   const { openId: detailsOpenId } = useItemDetails();
-  const enabled = enabledProp && detailsOpenId === null;
+  const detailsPreviewMode = useDetailsPreviewMode();
+  // `cover` keeps the pane mounted and lets the view paint over it; `standdown`
+  // takes it away for the duration. See `details-preview-mode` for the trade.
+  const enabled =
+    enabledProp && (detailsPreviewMode === "cover" || detailsOpenId === null);
+  // AND IN BOTH MODES THE PANE STOPS TAKING THE SCRUB FRAME while the view is
+  // up. A covered pane would be showing it to nobody, and its saying it had
+  // taken it is what stops the deck showing one. Held constant on purpose: it
+  // is what makes the two modes comparable.
+  const previewOwnsTrimFrame = enabledProp && detailsOpenId === null;
 
   const graph = useCollectionsSelector((snapshot) => snapshot.graph);
   const detailsStore = useGraphDetailsStore();
@@ -1295,7 +1305,7 @@ export function PreviewShell({
         <PreviewCardSpansContext.Provider value={cardSpans}>
           {/* The board renders here, so every trim handle is inside this
               provider and can publish the frame it wants shown. */}
-          <TrimPreviewProvider previewOpen={enabled} store={trimStore}>
+          <TrimPreviewProvider previewOpen={previewOwnsTrimFrame} store={trimStore}>
             {children}
           </TrimPreviewProvider>
         </PreviewCardSpansContext.Provider>
