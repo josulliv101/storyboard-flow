@@ -5288,6 +5288,112 @@ test.describe("graph view E2E", () => {
       .toBe(0);
   });
 
+  test("closing a SCROLLED board flies from where the view actually is", async ({ page }) => {
+    // PL15-035. Reported as "the image slides from off screen above the
+    // viewport when it transitions back".
+    //
+    // The board scrolls the DOCUMENT and the details view is sized to fit the
+    // window, so while it is open the page has no scroll range and the offset
+    // is clamped. Restoring it is `GraphBoardContent`'s job — and it used to do
+    // it one render BEFORE the closing transition, while the details view was
+    // still in normal flow. Scrolling the page down therefore scrolled the VIEW
+    // up, out of the viewport, and `startViewTransition` captures the old state
+    // at the next rendering opportunity rather than when it is called — so that
+    // displaced position is what the morph flew from.
+    //
+    // ASSERTED ON THE OLD BOX, not on pixels: the failure is entirely "where
+    // was the thing when the browser looked", and it was measured at -242
+    // against a viewport that starts at 0.
+    await installGraphApi(page);
+    // THE GRID, and a narrow window. The strip is one horizontal line and never
+    // grows the page, so it cannot produce the state this is about; the fixture
+    // is four clips, so the columns have to be narrow enough to stack them.
+    // Tall enough that the details view still FITS (`DETAILS_MIN_FIT_PX` is
+    // 360) — that is what takes the page's scroll range to zero, which is the
+    // condition being tested.
+    await page.setViewportSize({ width: 640, height: 470 });
+    await page.goto(`${GRAPH_URL}?surface=grid`);
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toHaveCount(1);
+    // View transitions are SKIPPED outright in a hidden document, so a run
+    // where this is not "visible" proves nothing in either direction.
+    expect(await page.evaluate(() => document.visibilityState)).toBe("visible");
+
+    // A board that does not scroll cannot show this bug, so the precondition is
+    // asserted rather than assumed — otherwise this passes for the wrong reason
+    // the day the fixture or the card size changes.
+    const maxScroll = await page.evaluate(
+      () => document.documentElement.scrollHeight - window.innerHeight,
+    );
+    expect(maxScroll).toBeGreaterThan(40);
+
+    const parked = Math.min(maxScroll, 200);
+    await page.evaluate((to) => window.scrollTo(0, to), parked);
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(parked);
+
+    // OPENED THROUGH THE APP'S OWN EVENT rather than the `openItemDetails`
+    // helper, and the difference matters here: that helper clicks the card, and
+    // Playwright scrolls an element into view before clicking it. The scroll
+    // offset is the variable under test, so the open must not move it.
+    await page.evaluate(() =>
+      window.dispatchEvent(
+        new CustomEvent("graph-view:open-item-details", { detail: "alpha" }),
+      ),
+    );
+    await expect(page.locator("[data-item-details]")).toHaveCount(1);
+    await settleViewTransition(page);
+
+    // THE CONDITION THE BUG NEEDS: with the view open the page has no range
+    // left, which is what makes the browser clamp the offset in the first
+    // place. If this is not 0 the viewport is wrong for this test and
+    // everything below would be measuring something else.
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollHeight - window.innerHeight,
+      ),
+    ).toBe(0);
+
+    await page.evaluate(() => {
+      const probe: { viewTopAtCall: number | null; scrollAtCall: number | null } = {
+        viewTopAtCall: null,
+        scrollAtCall: null,
+      };
+      (window as unknown as { __closeGeometry: typeof probe }).__closeGeometry = probe;
+      const doc = document as Document & {
+        startViewTransition: (cb: () => void) => unknown;
+      };
+      const original = doc.startViewTransition.bind(doc);
+      doc.startViewTransition = (callback: () => void) => {
+        const view = document.querySelector("[data-item-details]");
+        probe.viewTopAtCall = view ? Math.round(view.getBoundingClientRect().top) : null;
+        probe.scrollAtCall = Math.round(window.scrollY);
+        return original(callback);
+      };
+    });
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+
+    const geometry = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __closeGeometry: { viewTopAtCall: number | null; scrollAtCall: number | null };
+          }
+        ).__closeGeometry,
+    );
+    // THE RESTORE HAS NOT RUN YET when the browser is about to capture. This is
+    // the invariant the fix is; everything else follows from it.
+    expect(geometry.scrollAtCall).toBe(0);
+    // So the view was still on screen to be flown from — not scrolled off the
+    // top by a restore that ran a render too early.
+    expect(geometry.viewTopAtCall).not.toBeNull();
+    expect(geometry.viewTopAtCall as number).toBeGreaterThanOrEqual(0);
+
+    // And the board still comes back where it was left, which is what the
+    // restore is there to do in the first place.
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(parked);
+  });
+
   // PARKED: the deck draws its trim strip on a STILL.
   //
   // A still has a duration but no SOURCE to window, so a map of the source is a

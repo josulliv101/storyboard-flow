@@ -2424,71 +2424,42 @@ slower now (8x40ms rather than 6x25ms); `FLING_PROJECTION_MS` is left alone.
 to the window is exactly what collapses the document's scroll range to zero, and
 nothing was holding the offset the board had been left at.
 
-## PL15-033 — Opening the details view destroys the board's scroll position
+## PL15-033 — WITHDRAWN: "opening the details view destroys the board's scroll position"
 
-- Status: Complete. Measured before and after, in the signed-in app.
-- URL: http://localhost:3000/timeline/.../graph/.../... — scroll the grid, open
-  a clip, close it
-- Area: `components/graph-view/graph-item-details-shared.ts`
-  (`rememberBoardScroll`, `restoreBoardScroll`),
-  `components/graph-view/graph-item-details-context.tsx` (the way in),
-  `components/graph-view/graph-item-details-modal.tsx` (the way out)
-- Screenshot: Not captured
+- Status: WITHDRAWN. The bug as written does not exist — the board already
+  carries its scroll across, and has since the note in `GraphBoardContent` that
+  says so. The real defect the report was pointing at is PL15-035.
+- Area: none. Nothing shipped for this.
 
-Reported as "on a grid that is scrolled, the scroll jumps when the transition
-goes back to the grid view". It does, and the jump is the SYMPTOM — the position
-is destroyed on the way IN, silently, because the board is not on screen to show
-it.
+This entry claimed the details view collapses the document, the browser clamps
+the page scroll to 0, and nothing restores it. The first two are true. The third
+is not: `GraphBoardContent` parks `window.scrollY` on every scroll while the
+board is showing and restores it in a layout effect after a close, and its own
+comment describes the exact bug ("coming back put someone who had scrolled to
+177 back at the top") that this entry re-reported as new.
 
-**THE MECHANISM, MEASURED.** The board grid scrolls the DOCUMENT: `main` is
-`flex-1` inside a `min-h-screen` shell, and PL15-032's own note says the board
-and the grid both legitimately scroll the page. PL15-032 then made the details
-view size itself to exactly `innerHeight - top - gap`, so while it is open the
-document IS the window and there is no scroll range left. A browser does not
-remember an offset it can no longer honour; it clamps.
+**HOW THE WRONG DIAGNOSIS SURVIVED A MEASUREMENT.** The baseline was measured
+and it did show `scrollY` at 0 after a close. It was a fluke, and the honest
+reading is that ONE run is not a baseline. Re-measured on `main` afterwards,
+the scroll came back at 291 as designed.
 
-At a 560px window with 291px of grid scroll:
+**THERE IS SOMETHING REAL UNDERNEATH, SEEN ONCE AND NOT REPRODUCED.** The park
+listener is registered only while the board is showing, and it is torn down in
+the same commit that hides the board — the same commit whose layout change makes
+the browser clamp the scroll and emit a scroll event. If that event is delivered
+before the teardown, `parked` records the clamped 0 and the restore then declines
+to run (`if (to === 0) return`). That is the shape of what was measured once, it
+would present exactly as "the grid went back to the top", and it is a genuine
+race in code that predates this list.
 
-    grid at bottom      scrollY 291   docH 851   max 291
-    details open        scrollY   0   docH 560   max   0     <- clamped
-    after close (was)   scrollY   0   docH 851   max 291     <- the jump
+NOT FIXED HERE, deliberately: a guard is obvious (ignore a scroll while the
+details view is up) but nothing reproduces the failure, so there is nothing to
+prove the guard fixes. It is written down instead.
 
-It cost the closing flight as well, which is the second half of the report. The
-card clicked at y=76 landed at y=367 — 291px down, exactly the lost scroll — so
-the picture flew home to a place the card was not.
+Acceptance criteria, if it is ever picked up:
 
-**THE FIX IS TO CARRY THE OFFSET, not to stop the view fitting.** Fitting is
-PL15-032 and it was asked for. `rememberBoardScroll()` runs on every open FROM
-THE BOARD — card or no card, because the clamp does not care whether there was
-something to fly from — and `restoreBoardScroll()` runs INSIDE the closing
-transition's callback. Its position inside that callback is the whole of it:
-`setMountedId(null)` has already put the board back, so the page has its height
-again and the offset is honourable; and the browser has not yet captured the
-"after" frame, so the card is already where it belongs when it does.
-
-Module state rather than React state, deliberately: the two ends live in two
-files and the value has to survive the unmount between them, which is the one
-thing component state cannot do. Consumed on read, so a deep link into the view
-restores nothing rather than a stale offset from an earlier visit.
-
-    grid at bottom      scrollY 291   docH  851
-    details open        scrollY   0   docH  560
-    close +100ms        scrollY 291   docH 1795
-    close +1800ms       scrollY 291   docH  851
-    board card          back at y=76, where it was clicked
-
-Acceptance criteria:
-
-- Scrolling the grid, opening a clip and closing it returns the grid to the
-  same offset, and the closing morph lands on the card that was clicked.
-- A deep link straight to `?details=...` restores nothing.
-- Opening from the toolbar with no card on screen still restores on close.
-
-**Left standing, and it is not new.** For about a second after closing, the
-document measures 1795 rather than its settled 851 — the board mounts at full
-height before the fit runs. It was in the baseline measurement too and it costs
-nothing now (291 is reachable in both), but it is a real transient and the next
-person measuring the document during a close should expect it.
+- A reproduction first — the failure observed on demand, not once in a session.
+- Then the guard, with the reproduction going green because of it.
 
 ## PL15-034 — The flight morphs the whole card; it should morph the picture
 
@@ -2571,3 +2542,136 @@ Acceptance criteria:
 - Both ends of the flight are pictures, on the clip path and the collection one.
 - The e2e's hero-holder assertion says the picture, and says why the old claim
   about transformed subtrees was withdrawn.
+
+## PL15-035 — Closing: the picture flies in from off screen, above the viewport
+
+- Status: Complete, with a regression test that was checked to fail without the
+  fix.
+- URL: scroll the grid, open a clip, close it
+- Area: `components/graph-view/graph-item-details-modal.tsx`
+  (`parkedBoardScroll`, `restoreParkedBoardScroll`, `GraphBoardContent`),
+  `tests/e2e/graph-view.spec.ts`
+- Screenshot: Not captured — reported from a slowed-down recording.
+
+Reported as "it looks like the image slides from off screen above the viewport
+when it transitions back". It does, and it did before PL15-034 as well — the
+picture morph only made it legible. On `main`, at the moment the closing
+transition starts, the deck card sits at y=-301.
+
+**THE ORDER OF TWO THINGS, AND THAT IS ALL.** `GraphBoardContent` restores the
+board's parked scroll in a layout effect on the render `openId` goes null. That
+render is one BEFORE the closing transition, and in it the details view is still
+mounted and still in normal flow. Restoring 291px of page scroll therefore
+scrolls the VIEW up by 291px — measured at y=-242, above the viewport — and
+`startViewTransition` captures the old state at the next rendering opportunity
+rather than when it is called, so that displaced position is what the browser
+captured. A morph whose old box is above the viewport is a picture flying in
+from off screen.
+
+**THE FIX IS TO SPEND IT LATER, NOT TO MOVE THE BOARD.** `parkedBoardScroll`
+moves to module scope so the closing transition can reach it, and
+`restoreParkedBoardScroll()` is called inside the transition's callback. By then
+the old capture is taken, so moving the page cannot reach back and displace what
+the morph is flying from; and it is before the new capture, so the card is
+already where it belongs when that is taken. The layout effect keeps only the
+case the transition cannot reach — an `openId` that never mounted a view, which
+hides the board and reveals it with no transition in between — guarded on the
+view being absent so the two can never both fire.
+
+    at the transition call   scrollY 0    view top   70   (was: 200 and -130)
+    settled                  scrollY back to where the board was left
+
+**TWO APPROACHES WERE TRIED AND ONE WAS WRONG, which is worth recording because
+it looked better on paper.** The first attempt kept the board HIDDEN until the
+view actually unmounted — a `detailsOnScreen` flag published through
+`useSyncExternalStore` and cleared inside the same `flushSync` — so the two were
+never in flow together. It fixes the capture and it also removes the stacked
+document (PL15-036). It is also unshippable: the board is virtualized, and a
+board that is `display: none` renders NO CARDS, so the morph had no destination
+to fly to. The e2e caught it immediately and deterministically —
+`heroHolderAtReady` came back `null`, 3 runs of 3 — and the browser had said the
+same thing an hour earlier with `boardCards=0` at transition time, which was
+read as "good, the board is still hidden" instead of "there is nothing to fly
+to".
+
+**AND A LINE WAS DELETED BY ACCIDENT ON THE WAY.** Backing that attempt out took
+`if (wantedNow && node !== null && mountedId !== node.id) setMountedId(...)` with
+it — the assignment that arms the whole closing path. With `mountedId` never set,
+the close effect returns early and no transition runs at all, which presents as
+"open an item then close it and there is no slide, but open, advance to the next
+one, then close and there is". That is what the owner reported while it was
+broken, and the e2e's failure mode changed from an assertion to a timeout at
+exactly that commit.
+
+Acceptance criteria:
+
+- At the moment the closing transition starts, the page scroll has NOT been
+  restored yet and the details view is at a non-negative top.
+- The board still comes back to the offset it was left at.
+- Covered by `closing a SCROLLED board flies from where the view actually is`,
+  which asserts its own preconditions (the board scrolls; the view leaves no
+  scroll range) so it cannot pass vacuously, and which was run against the old
+  ordering to confirm it fails there: `scrollAtCall` 200 instead of 0.
+
+## PL15-036 — The page scrollbar appears at the wrong size, then corrects
+
+- Status: OPEN — root cause found and measured, NOT fixed. Needs a decision;
+  see the two options.
+- Area: `[data-virtual-grid]` (the sizer spacer), `app/globals.css`
+- Screenshot: Not captured
+
+Reported alongside PL15-035: "the scrollbar, at first shows but is wrong size
+then corrects itself to right size — can that be fixed, or the scrollbar hidden
+until final size reached".
+
+**IT IS THE GRID'S VIRTUALIZATION SPACER, and it is issue #285 wearing a
+different hat.** Part of the blip is the board and the details view briefly
+being in flow together — PL15-035 records why that is not worth removing (the
+board renders no cards while hidden, so the morph loses its destination). The
+rest, and the part that would remain either way, is this, for about four
+frames:
+
+    document 560 -> 1795 -> 851
+    the tall element: div[data-virtual-grid] h=1652, ONE child, h=1652, 0 kids
+    cards rendered at that moment: 0
+
+The grid remounts, lays out its full-height spacer, and windows a frame or two
+later. The spacer's height reaches the document because the grid is not height-
+constrained — which is exactly what #285 is about ("VirtualGrid windows against
+a container that never scrolls"). The browser draws a thumb for a 1795px page
+and then corrects it to an 851px one.
+
+**HIDING IT WAS TRIED AND IS WORSE.** `scrollbar-width: none` while
+`data-view-transition="running"` does hide the wrong thumb, and the whole blip
+does fall inside that window (checked). But the bar has real width on Windows,
+so hiding it widens the viewport — and the morph then lands at the wrong place
+and pops when the bar returns:
+
+    mid-flight   card x=759 w=291   clientWidth 1100
+    settled      card x=749 w=286   clientWidth 1085
+
+A 10px sideways pop at the end of every close, traded for 60ms of wrong thumb.
+Reverted.
+
+**AND THERE IS A SECOND, OLDER SHIFT IN THE SAME PLACE.** `clientWidth` is 1085
+on the board and 1100 with the details view open, so every open and close moves
+every column in the app sideways by 15px. `html` already sets
+`scrollbar-gutter: stable` with a long note about preventing exactly this, and
+it is NOT taking effect: measured with the view open, `stable` alone gives 1100,
+`overflow-y: auto` gives 1100, and only `overflow-y: scroll` gives 1085.
+
+Two ways forward, and they want a decision rather than a guess:
+
+- **`html { overflow-y: scroll }`.** One line. The bar is always present, so it
+  never appears or disappears, the 15px shift goes away, and the existing
+  `scrollbar-gutter` note starts being true. Cost: a visible, always-there
+  scrollbar track on views that do not scroll — including the details view,
+  which was designed not to have one.
+- **Fix #285.** Constrain the grid so its spacer cannot reach the document.
+  Removes the wrong-size thumb at the source and needs no CSS at all. Bigger,
+  and already deprioritised.
+
+Acceptance criteria:
+
+- The first thumb anyone sees after a close is the settled one.
+- Nothing moves sideways when the details view opens or closes.

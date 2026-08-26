@@ -71,13 +71,7 @@ import {
 import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
 import { DetailsPanel } from "./graph-item-details-panel";
 import { ItemDetailsHeader } from "./graph-item-details-header";
-import {
-  HERO,
-  HERO_ATTRIBUTE,
-  PANEL_GAP,
-  heroElement,
-  restoreBoardScroll,
-} from "./graph-item-details-shared";
+import { HERO, HERO_ATTRIBUTE, PANEL_GAP, heroElement } from "./graph-item-details-shared";
 import { useScopedHistory } from "./graph-item-details-history";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
@@ -1805,20 +1799,23 @@ export function GraphItemDetailsModal() {
       // the callback, after the browser has captured the frame the view is
       // still in. That ordering is the animation.
       setMountedId(null);
-      // AND THE GRID GOES BACK TO WHERE IT WAS, before anything is measured.
+      // AND THE BOARD'S SCROLL IS RESTORED HERE, not in a layout effect one
+      // render earlier (PL15-035).
       //
-      // Opening the view collapsed the document to exactly the window, and the
-      // browser clamped the page scroll to 0 on the way in — so without this
-      // the board returns at the top no matter where it was left, and the
-      // picture flies home to a card that has moved by however much scroll was
-      // lost. Measured: 291px, which is the whole of it at a 560px window.
+      // It used to run the moment `openId` went null, which is one render
+      // BEFORE this callback — and in that render the details view is still in
+      // normal flow. Dragging the page down 291px therefore dragged the view
+      // 291px UP, to y=-242, above the viewport. `startViewTransition` captures
+      // the old state at the next rendering opportunity rather than when it is
+      // called, so THAT displaced position is what the browser captured, and a
+      // morph whose old box is above the viewport is a picture flying in from
+      // off screen.
       //
-      // HERE rather than after the transition, and the order inside this
-      // callback is the point: `setMountedId(null)` has already put the board
-      // back, so the page has its height again and the offset is honourable;
-      // the browser has not yet captured the "after" frame, so the card is
-      // already at its restored position when it does.
-      restoreBoardScroll();
+      // Restoring it HERE is the whole fix. The board is already back in flow
+      // from the render the context triggered, so the page can hold the offset;
+      // the old capture has already been taken, so moving the page now cannot
+      // reach back and displace what the morph is flying FROM.
+      restoreParkedBoardScroll();
       holder.card = heroElement(mountedId);
       // AN ATTRIBUTE, for the same reason the opening flight uses one: React
       // is rendering this card now, and it rewrites the `style` attribute it
@@ -1930,6 +1927,39 @@ export function GraphItemDetailsModal() {
  * the subtree non-focusable and non-interactive for free, so no `inert` is
  * needed alongside it.
  */
+/**
+ * WHERE THE BOARD WAS SCROLLED TO, and WHO PUTS IT BACK (PL15-035).
+ *
+ * The value is parked by `GraphBoardContent` below, which is the only thing
+ * that knows when the board is showing. It is SPENT by the details view's
+ * closing transition, which is the only thing that knows when moving the page
+ * is invisible — and that is the whole reason this sits at module scope instead
+ * of in the ref it used to live in.
+ *
+ * The restore used to run in a layout effect on the render `openId` went null.
+ * That render still has the details view in normal flow, so scrolling the page
+ * down scrolled the view UP and out of the viewport, and the browser captured
+ * it there as the morph's old state. Doing it inside the transition's callback
+ * puts it after the old capture and before the new one.
+ *
+ * ZERO MEANS NOTHING TO DO, which is also what an unvisited board reads as —
+ * the two are the same instruction here.
+ */
+let parkedBoardScroll = 0;
+
+function restoreParkedBoardScroll(): void {
+  const to = parkedBoardScroll;
+  if (to === 0) return;
+  // TWICE, AND THE SECOND ONE IS THE ONE THAT LANDS. Closing by Back is a
+  // popstate, and the browser restores that entry's own scroll offset after
+  // this runs — an offset it recorded while the page was still short, so it is
+  // 0 and it overwrites the restore. A frame later nothing else is going to
+  // move it. Kept from the layout effect this moved out of; it was learned
+  // there and the popstate has not changed.
+  window.scrollTo(0, to);
+  requestAnimationFrame(() => window.scrollTo(0, to));
+}
+
 export function GraphBoardContent({ children }: Readonly<{ children: ReactNode }>) {
   const { openId } = useItemDetails();
   const open = openId !== null;
@@ -1949,43 +1979,40 @@ export function GraphBoardContent({ children }: Readonly<{ children: ReactNode }
   // number is already 0. Passive, and only registered while the board is
   // actually showing: it stores one integer and is not listening at all for
   // the whole time details are up.
-  const parked = useRef(0);
   const wasOpen = useRef(false);
 
   useEffect(() => {
     if (open) return;
     const onScroll = () => {
-      parked.current = window.scrollY;
+      parkedBoardScroll = window.scrollY;
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, [open]);
 
-  // A LAYOUT effect: the board is back in flow in this same commit, so the
-  // document is tall enough to hold the scroll again. In a passive effect the
-  // browser can paint the top of the board first, which reads as a jump.
+  // THE RESTORE MOVED OUT OF HERE (PL15-035), and what is left is the case it
+  // could not reach.
+  //
+  // It used to run on this commit, which is one render before the closing
+  // transition — and at that point the details view is still in normal flow, so
+  // scrolling the page down scrolled the view up out of the viewport and the
+  // browser captured it there. `restoreParkedBoardScroll` is now called inside
+  // the transition's callback, where the old capture is already taken.
+  //
+  // WHAT STAYS: closing without a transition to hang it on. The view's effect
+  // only runs when it had actually mounted, so an `openId` that never produced
+  // one — a node with no source, a deep link to something that has gone — hides
+  // the board and then reveals it with nothing in between. Guarded on the view
+  // being absent so it never races the path above.
   useLayoutEffect(() => {
     if (open) {
       wasOpen.current = true;
       return;
     }
-    // Only after a real close — on first mount there is nothing to restore,
-    // and scrolling to a parked 0 would fight the browser's own restoration.
     if (!wasOpen.current) return;
     wasOpen.current = false;
-    const to = parked.current;
-    if (to === 0) return;
-    // TWICE, AND THE SECOND ONE IS THE ONE THAT LANDS. Closing by Back is a
-    // popstate, and the browser restores that entry's own scroll offset after
-    // this effect runs — an offset it recorded while the page was still short,
-    // so it is 0 and it overwrites the restore. A frame later the board is
-    // painted, the document is tall again, and nothing else is going to move
-    // it. The immediate call stays for the close-button path, where there is
-    // no popstate to lose to and waiting a frame would show the top of the
-    // board first.
-    window.scrollTo(0, to);
-    const raf = requestAnimationFrame(() => window.scrollTo(0, to));
-    return () => cancelAnimationFrame(raf);
+    if (document.querySelector("[data-item-details]") !== null) return;
+    restoreParkedBoardScroll();
   }, [open]);
 
   return (

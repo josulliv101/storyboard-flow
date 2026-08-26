@@ -11,12 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { withViewTransition } from "@/lib/view-transition";
-import {
-  HERO as SHARED_HERO,
-  HERO_ATTRIBUTE,
-  heroElement,
-  rememberBoardScroll,
-} from "./graph-item-details-shared";
+import { HERO as SHARED_HERO, HERO_ATTRIBUTE, heroElement } from "./graph-item-details-shared";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
@@ -161,15 +156,6 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
       // the board returning rather than a picture travelling — the view owns
       // that one, where it still has itself on screen to fly from.
       const fromBoard = next !== null && !switching && typeof document !== "undefined";
-
-      // WHERE THE GRID WAS, BEFORE THE DOCUMENT CAN COLLAPSE UNDER IT.
-      //
-      // Recorded for EVERY open from the board, card on screen or not: the view
-      // fits the window either way, so the page's scroll range goes to zero and
-      // the browser clamps the offset to 0 whether or not there was something
-      // to fly from. `restoreBoardScroll`, in the view's closing callback, is
-      // the other half of it (PL15-033).
-      if (fromBoard) rememberBoardScroll();
 
       // THE PICTURE INSIDE THE CARD, not the card. Card-to-card was a 65%
       // vertical stretch cross-fading two unrelated layouts; picture-to-picture
