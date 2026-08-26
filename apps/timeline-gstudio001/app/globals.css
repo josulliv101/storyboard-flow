@@ -72,25 +72,49 @@
 html {
   background: #09090b;
   scrollbar-color: #52525b #09090b;
-  /* THE GUTTER IS ALWAYS THERE, whether or not the scrollbar is.
+  /* THE GUTTER IS MEANT TO BE ALWAYS THERE — AND ON THE ROOT IT IS NOT (#542).
    *
-   * Opening the preview makes the page tall enough to need a scrollbar, and a
-   * scrollbar appearing narrows the viewport by its own width — so the whole
-   * board reflows sideways at the exact moment it is also sliding down. Two
-   * unrelated movements at once read as one janky one, and it is the
-   * horizontal half that makes it look broken rather than merely fast.
+   * What this is FOR is unchanged and still worth wanting. A scrollbar
+   * appearing narrows the viewport by its own width, so the whole board reflows
+   * sideways at the moment it is also moving vertically; two unrelated
+   * movements at once read as one janky one, and the horizontal half is what
+   * makes it look broken rather than merely fast.
    *
-   * MEASURED BOTH WAYS, because this was nearly removed on a wrong reading.
-   * The 16px shift that started the investigation turned out to be the rail
-   * padding, vertical, and for a while that looked like grounds to drop this.
-   * It was not: with the gutter off, opening the preview flips the document
-   * from unscrollable to scrollable, takes the viewport from 1920 to 1905, and
-   * lands two horizontal shifts of -7px. Both effects were real; only one of
-   * them was the one being chased.
+   * IT DOES NOT DO THAT HERE. Measured in Chrome at a 1100px window, with the
+   * details view open so the page is not scrollable:
    *
-   * Costs those pixels permanently, and costs them when nothing is happening,
-   * which is the right trade: a fixed margin nobody notices beats a reflow
-   * everybody does. */
+   *     documentElement.clientWidth, page scrollable      1085
+   *     documentElement.clientWidth, page NOT scrollable  1100   <- 15px back
+   *
+   * So the shift this declaration is here to prevent is still live: every open
+   * and close of the details view moves every column sideways by 15px.
+   *
+   * AND IT IS NOT THE OVERFLOW VALUE. With the details view open, the width was
+   * measured under each of these and only the last one reserved anything:
+   *
+   *     (as shipped, overflow visible)                    1100
+   *     overflow-y: auto                                  1100
+   *     overflow: auto                                    1100
+   *     overflow-y: auto + scrollbar-gutter: stable       1100
+   *     overflow-y: scroll                                1085
+   *
+   * `scrollbar-gutter` works perfectly well on a REAL element — a plain div at
+   * `overflow-y: auto` reserves 0 and the same div with `scrollbar-gutter:
+   * stable` reserves 15, with no visible bar until it is scrolled. It is the
+   * ROOT that does not honour it, and the root is what the page scrolls.
+   *
+   * KEPT RATHER THAN DELETED. It costs nothing, it is correct as an intent, and
+   * other engines do honour it on the root — removing it would quietly give up
+   * on browsers where it works. What is corrected is the CLAIM: this comment
+   * used to say the shift was solved, which is exactly the kind of note that
+   * sends the next person measuring a sideways jump somewhere else.
+   *
+   * THE REAL FIX IS A REAL SCROLL CONTAINER — a shell element wrapping the whole
+   * page at `overflow-y: auto; scrollbar-gutter: stable`, which keeps today's
+   * behaviour (the header scrolls away with the content) and gives the gutter
+   * something that will honour it. Not done here: it moves the app off the
+   * window scroller, and the e2e cannot verify it either way because headless
+   * Chromium uses overlay scrollbars and shows no shift at all. See #542. */
   scrollbar-gutter: stable;
 }
 
