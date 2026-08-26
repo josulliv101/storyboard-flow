@@ -56,6 +56,22 @@ export type PreviewScrubRailProps = Readonly<{
 
 const clamp01 = (value: number) => (value < 0 ? 0 : value > 1 ? 1 : value);
 
+/** The gap BETWEEN two shots on the bar — real background, not a painted notch. */
+const SEGMENT_GAP_PX = 4;
+
+/**
+ * How bright an unplayed shot sits.
+ *
+ * 0.35, UP FROM THE 0.15 THE SPEC ASKED FOR, and the reason is that 0.15 is
+ * what made the cuts invisible: at that level the bar is so close to the page
+ * behind it that there is no shape for a gap to interrupt. Swept 0.15 / 0.25 /
+ * 0.35 / 0.45 side by side at 6x — below 0.3 the separation does not survive
+ * being looked at normally, and by 0.45 the bar reads as a bright band
+ * competing with the picture above it, which is the thing the spec was
+ * protecting when it picked a low number.
+ */
+const TRACK_ALPHA = 0.35;
+
 export function PreviewScrubRail({
   channel,
   totalSeconds,
@@ -91,6 +107,17 @@ export function PreviewScrubRail({
 
   // The track and fill grow from 4px to 6px together, so they are expressed
   // once and shared rather than kept in step in two places.
+  // EVERY SHOT AS ITS OWN PIECE. The boundaries are the cuts; the bar is what
+  // lies between them, plus the two ends.
+  const segments = (() => {
+    const edges = [0, ...boundaries.map(clamp01).filter((at) => at > 0 && at < 1), 1];
+    const out: { start: number; end: number }[] = [];
+    for (let i = 0; i < edges.length - 1; i += 1) {
+      out.push({ start: edges[i]!, end: edges[i + 1]! });
+    }
+    return out;
+  })();
+
   const grown = dragging || hoverFraction !== null;
   const barGeometry = grown ? { top: 7, height: 6 } : { top: 8, height: 4 };
 
@@ -155,31 +182,47 @@ export function PreviewScrubRail({
         }
       }}
     >
-      {/* THE TRACK — the whole sequence, unbroken. */}
-      <div
-        data-preview-scrub-track
-        className="absolute right-0 left-0 rounded-sm bg-white/15 transition-[height,top] duration-100"
-        style={{ top: barGeometry.top, height: barGeometry.height }}
-      />
-      {/* THE FILL — how much of it has gone by. */}
-      <div
-        data-preview-scrub-fill
-        className="absolute left-0 rounded-sm bg-white transition-[height,top] duration-100"
-        style={{ top: barGeometry.top, height: barGeometry.height, width: `${fraction * 100}%` }}
-      />
-      {/* THE CUTS. Painted in the surface's own colour rather than a darker
-          line, so they read as GAPS in the bar rather than as marks on it —
-          which is what a cut is. Above the fill so they survive being passed. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        {boundaries.map((at) => (
-          <i
-            key={at}
-            data-preview-scrub-tick
-            className="absolute block w-0.5 -translate-x-1/2 bg-zinc-950"
-            style={{ left: `${clamp01(at) * 100}%`, top: 6, height: 8 }}
-          />
-        ))}
-      </div>
+      {/* ONE PIECE PER SHOT, not one bar with notches painted in it.
+
+          THE NOTCHES WERE INVISIBLE WHERE THEY MATTERED. They were painted in
+          the surface's own colour so they would read as gaps — which works on
+          the elapsed side, where the fill is white, and fails completely on the
+          unplayed side, because the track there is itself nearly that colour.
+          A dark notch in a nearly-dark bar is nothing. Measured at 4x before
+          changing anything: the cuts simply were not there to the right of the
+          playhead.
+
+          Real gaps with the page showing through cannot go quiet that way, and
+          rounded caps make each piece read as a unit rather than as a bar that
+          happens to have a scratch in it. */}
+      {segments.map((segment) => {
+        const within =
+          segment.end === segment.start
+            ? 0
+            : clamp01((fraction - segment.start) / (segment.end - segment.start));
+        const leftPad = segment.start > 0 ? SEGMENT_GAP_PX / 2 : 0;
+        const rightPad = segment.end < 1 ? SEGMENT_GAP_PX / 2 : 0;
+        return (
+          <div
+            key={segment.start}
+            data-preview-scrub-segment
+            className="absolute overflow-hidden rounded-full transition-[height,top] duration-100"
+            style={{
+              backgroundColor: `rgba(255, 255, 255, ${TRACK_ALPHA})`,
+              top: barGeometry.top,
+              height: barGeometry.height,
+              left: `calc(${segment.start * 100}% + ${leftPad}px)`,
+              width: `calc(${(segment.end - segment.start) * 100}% - ${leftPad + rightPad}px)`,
+            }}
+          >
+            <div
+              data-preview-scrub-segment-fill
+              className="h-full rounded-full bg-white"
+              style={{ width: `${within * 100}%` }}
+            />
+          </div>
+        );
+      })}
       {/* THE HANDLE. No pointer events of its own — the strip is the target, so
           a press 3px away from a 12px dot still lands. */}
       <span

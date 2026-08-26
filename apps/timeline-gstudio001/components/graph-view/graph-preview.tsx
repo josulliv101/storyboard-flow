@@ -816,11 +816,12 @@ export function GraphGridPlayhead({
       // were different things. The glow goes white with it; a white line over a
       // red halo reads as a mistake rather than as emphasis.
       //
-      // AND HALF-STRENGTH. The line crosses the CARDS — it runs down the
-      // artwork someone is judging — while the rail's thumb above it sits on
-      // chrome. At full white the line competed with the frames it was drawn
-      // over; at half it still reads as one continuous mark without becoming
-      // part of the picture.
+      // AND WELL BACK — a fifth of full strength. The line crosses the CARDS,
+      // running down the artwork someone is judging, while the rail's thumb
+      // above it sits on chrome. At full white it competed with the frames it
+      // was drawn over; half was still too present over a dark frame. At 20%
+      // it is a trace you can follow from the head down when you look for it,
+      // and ignore when you are looking at the picture.
       //
       // `opacity`, NOT `bg-white/50`. The glow has to fade with the line: a
       // full-strength halo around a half-strength mark reads as a rendering
@@ -830,7 +831,7 @@ export function GraphGridPlayhead({
       // THE HEAD KEEPS FULL STRENGTH, and is not this element — it is the seek
       // rail's circular thumb, on chrome above the grid. That is the part you
       // aim at, so it stays at full opacity deliberately.
-      className="absolute top-0 left-0 w-0.5 bg-white opacity-50 shadow-[0_0_6px_rgba(255,255,255,0.9)]"
+      className="absolute top-0 left-0 w-0.5 bg-white opacity-20 shadow-[0_0_6px_rgba(255,255,255,0.9)]"
     />
   );
 }

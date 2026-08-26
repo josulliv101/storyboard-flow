@@ -3183,12 +3183,12 @@ test.describe("graph view E2E", () => {
     const playhead = page.locator("[data-graph-grid-playhead]");
     await expect(playhead).toBeVisible();
 
-    // HALF-STRENGTH LINE, FULL-STRENGTH HEAD (PL16-007). The line crosses the
+    // A TRACE OF A LINE, A FULL-STRENGTH HEAD (PL16-007). The line crosses the
     // CARDS — it runs down the artwork being judged — while the head sits on
     // chrome above the grid. The pair is asserted together because that is the
     // whole point: fading both would lose the thing you aim at, and fading
     // neither is what the line looked like before.
-    expect(await playhead.evaluate((el) => getComputedStyle(el).opacity)).toBe("0.5");
+    expect(await playhead.evaluate((el) => getComputedStyle(el).opacity)).toBe("0.2");
     const gridThumb = page.locator("[data-rail-thumb]").first();
     if ((await gridThumb.count()) > 0) {
       expect(await gridThumb.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
@@ -5682,7 +5682,11 @@ test.describe("graph view E2E", () => {
     await expect(page.locator("[data-preview-settled]")).toHaveCount(1, { timeout: 15000 });
 
     const rail = page.locator("[data-preview-scrub-rail]");
-    const track = page.locator("[data-preview-scrub-track]");
+    // GEOMETRY OFF THE RAIL, not off a track element: the bar is drawn as one
+    // piece PER SHOT now, so there is no single full-width track to measure.
+    // The rail is the strip those pieces are laid across, and it is what a
+    // pointer actually addresses.
+    const track = page.locator("[data-preview-scrub-rail]");
     const thumb = page.locator("[data-preview-scrub-thumb]");
     await expect(rail).toHaveCount(1);
     await expect(thumb).toHaveCount(1);
@@ -5734,35 +5738,48 @@ test.describe("graph view E2E", () => {
 
     const rail = page.locator("[data-preview-scrub-rail]");
     const track = page.locator("[data-preview-scrub-track]");
-    const ticks = page.locator("[data-preview-scrub-tick]");
+    const segments = page.locator("[data-preview-scrub-segment]");
 
-    // FOUR CUTS, not three. The root holds four clips, but one of them is a
-    // COLLECTION, and the preview plays its two children rather than the
-    // folder — five clips end to end. The ticks are drawn from the same list
-    // the pane plays, so they count the cuts a scrub can actually land on.
+    // FIVE PIECES, FOUR CUTS. The root holds four clips, but one is a
+    // COLLECTION and the preview plays its two children rather than the folder
+    // — five shots end to end.
     //
-    // The sequence's own start is not one of them: a tick there is a notch out
-    // of the left cap.
-    await expect(ticks).toHaveCount(4);
+    // DRAWN AS SEPARATE PIECES, not as one bar with notches painted in it. The
+    // notch version was invisible where it mattered: it was painted in the
+    // surface's own colour, and on the UNPLAYED side the track is itself nearly
+    // that colour, so there was nothing for it to cut through. Real gaps with
+    // real background between them cannot go quiet that way.
+    await expect(segments).toHaveCount(5);
 
-    const trackBox = (await track.boundingBox())!;
-    const tickXs: number[] = [];
-    for (let i = 0; i < 4; i += 1) {
-      tickXs.push((await ticks.nth(i).boundingBox())!.x);
+    const railBox = (await rail.boundingBox())!;
+    const boxes: { x: number; width: number; height: number }[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const box = (await segments.nth(i).boundingBox())!;
+      boxes.push({ x: box.x, width: box.width, height: box.height });
     }
-    // In order, and all of them strictly INSIDE the bar rather than piled on
-    // an end — which is what a broken fraction would look like.
-    for (let i = 1; i < tickXs.length; i += 1) {
-      expect(tickXs[i - 1]!).toBeLessThan(tickXs[i]!);
+    // IN ORDER, AND ACTUALLY APART: each piece starts clear of where the last
+    // one ended. An off-by-one in the fractions would overlap them, and an
+    // overlap looks exactly like the single bar this replaced.
+    for (let i = 1; i < boxes.length; i += 1) {
+      const gap = boxes[i]!.x - (boxes[i - 1]!.x + boxes[i - 1]!.width);
+      expect(gap).toBeGreaterThanOrEqual(3);
+      expect(gap).toBeLessThanOrEqual(6);
     }
-    expect(tickXs[0]!).toBeGreaterThan(trackBox.x + 2);
-    expect(tickXs[tickXs.length - 1]!).toBeLessThan(trackBox.x + trackBox.width - 2);
+    // The run spans the whole rail: first piece flush left, last flush right,
+    // so the bar still reads as the whole sequence rather than as a row of
+    // buttons floating in it.
+    expect(Math.round(boxes[0]!.x - railBox.x)).toBe(0);
+    expect(
+      Math.round(railBox.x + railBox.width - (boxes[4]!.x + boxes[4]!.width)),
+    ).toBe(0);
 
     // THICKER UNDER THE POINTER: 4px at rest, 6px when aimed at.
-    expect(Math.round(trackBox.height)).toBe(4);
-    await page.mouse.move(trackBox.x + trackBox.width * 0.25, trackBox.y + trackBox.height / 2);
+    expect(Math.round(boxes[0]!.height)).toBe(4);
+    await page.mouse.move(railBox.x + railBox.width * 0.25, railBox.y + 10);
     await expect
-      .poll(async () => Math.round((await track.boundingBox())!.height), { timeout: 3000 })
+      .poll(async () => Math.round((await segments.first().boundingBox())!.height), {
+        timeout: 3000,
+      })
       .toBe(6);
 
     // AND IT READS THE CURSOR, NOT THE PLAYHEAD. The playhead is parked at
