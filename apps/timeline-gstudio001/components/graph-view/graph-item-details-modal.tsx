@@ -12,6 +12,7 @@ import {
 import { AudioLines, Pause, Play, SkipBack, SkipForward, Redo2, Undo2, X } from "lucide-react";
 
 import { MediaPreviewSurface } from "./media-preview-surface";
+import { useDetailsPreviewMode } from "./details-preview-mode";
 
 import {
   TrimOverviewStrip,
@@ -302,6 +303,66 @@ function DetailsFilmstripModal({
   onClose: () => void;
   onOpenNeighbour: (id: string) => void;
 }>) {
+  /**
+   * COVER MODE: the view paints OVER the pane instead of replacing it
+   * (PL16-005).
+   *
+   * MEASURED, never a constant. The overlay starts exactly where the sticky
+   * header ends, and the header's height is the consumer's business —
+   * `workbench-display-surface` says so itself and measures it for the same
+   * reason. `[data-testid="workbench-header-region"]` is that element; the
+   * split pane's own root gives the column's left edge and width, so the
+   * overlay lands on the content area rather than on the window.
+   *
+   * `fixed` rather than `absolute`: the split pane is a grid of sticky rows,
+   * and an absolutely-positioned child would scroll away with the board
+   * underneath. What is wanted is the view sitting still over everything below
+   * the trail — which is what the header itself already does, one band up.
+   */
+  const coverMode = useDetailsPreviewMode() === "cover";
+  const [coverBox, setCoverBox] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    // NOTHING TO CLEAR on the way out: the mode is a URL parameter and does not
+    // change within a visit, so `coverBox` is simply never set in the default
+    // mode. Resetting it here would also be a synchronous setState in an
+    // effect, which the lint rejects as a cascading render — correctly.
+    if (!coverMode) return;
+    const header = document.querySelector<HTMLElement>(
+      '[data-testid="workbench-header-region"]',
+    );
+    const pane = document.querySelector<HTMLElement>('[data-testid="workbench-split-pane"]');
+    if (pane === null) return;
+    const measure = () => {
+      const paneRect = pane.getBoundingClientRect();
+      const top = header === null ? paneRect.top : header.getBoundingClientRect().bottom;
+      // Written only when it actually moves: this runs from observers watching
+      // the same elements it measures, and an unconditional setState is a loop.
+      setCoverBox((current) =>
+        current !== null &&
+        Math.round(current.top) === Math.round(top) &&
+        Math.round(current.left) === Math.round(paneRect.left) &&
+        Math.round(current.width) === Math.round(paneRect.width)
+          ? current
+          : { top, left: paneRect.left, width: paneRect.width },
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (header !== null) observer.observe(header);
+    observer.observe(pane);
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure);
+    };
+  }, [coverMode]);
+
   const graph = useCollectionsSelector((state) => state.graph);
   // The one mutation the deck makes — a trim — goes through the same command
   // path the trim fields used, so it is undoable like every other edit here.
@@ -1619,6 +1680,7 @@ function DetailsFilmstripModal({
     <section
       ref={viewRef}
       data-item-details={node.id}
+      data-details-preview-mode={coverMode ? "cover" : "standdown"}
       aria-label={`Details for ${node.name}`}
       // A REGION IN THE CONTENT AREA, NOT A DIALOG OVER IT (PL15-029).
       //
@@ -1700,6 +1762,25 @@ function DetailsFilmstripModal({
         // that appears only when the view genuinely cannot fit is the right
         // failure; silently hiding a card is not.
         overflowY: "auto",
+        // COVER MODE lifts the view out of the column and over the pane. z-45
+        // is above the surface's z-40 and below the header's z-50, which states
+        // the whole requirement as a single number: over the preview, under the
+        // breadcrumb.
+        //
+        // Only once the box has been MEASURED — painting a full-width overlay
+        // for the frame before the header has been read would flash the view
+        // across the trail, which is the one thing this mode must not do.
+        ...(coverMode && coverBox !== null
+          ? {
+              position: "fixed" as const,
+              top: Math.round(coverBox.top) + "px",
+              left: Math.round(coverBox.left) + "px",
+              width: Math.round(coverBox.width) + "px",
+              bottom: 0,
+              height: "auto",
+              zIndex: 45,
+            }
+          : {}),
       }}
       // `overflow-x: clip` still, for the row's scrim — but the Y axis is
       // `auto`: the height above is a CEILING, and on a window too short for

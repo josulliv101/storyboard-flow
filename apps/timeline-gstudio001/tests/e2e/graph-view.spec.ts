@@ -5559,6 +5559,73 @@ test.describe("graph view E2E", () => {
     await expect.poll(async () => await pane.count(), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
+  test("cover mode keeps the pane up and paints the view over it", async ({ page }) => {
+    // PL16-005. The default (`standdown`, PL16-003) unmounts the pane while the
+    // view is up. `?previewmode=cover` leaves it mounted and paints over it, so
+    // the two can be compared on one build rather than by reverting a commit.
+    //
+    // ASSERTED ON BOTH HALVES, because either alone would pass for the wrong
+    // reason: the pane must still BE there, and the view must actually be over
+    // it rather than below it in the column.
+    await installGraphApi(page);
+    // Same landing `openGraph` does — strip layout, wait for a real card, reveal
+    // the tree — with the mode param carried alongside it. Written out rather
+    // than calling the helper because the helper owns the URL.
+    await page.goto(`${GRAPH_URL}?surface=strip&previewmode=cover`);
+    await strip(page, PROJECT_ID)
+      .locator('[data-node-id="alpha"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+    await page.getByRole("button", { name: "Show children timelines" }).click();
+    await previewToggle(page).click();
+    const pane = page.locator("[data-preview-settled]");
+    await expect(pane).toHaveCount(1, { timeout: 15000 });
+
+    await openItemDetails(page, "alpha");
+    await settleViewTransition(page);
+
+    const view = page.locator("[data-item-details]");
+    await expect(view).toHaveCount(1);
+    await expect(view).toHaveAttribute("data-details-preview-mode", "cover");
+    // THE PANE IS STILL THERE — this is the whole difference from the default.
+    await expect(pane).toHaveCount(1);
+
+    // And the view is OVER it: fixed, stacked above the surface, and starting
+    // below the header rather than at the top of the window.
+    const box = await view.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const header = document.querySelector('[data-testid="workbench-header-region"]');
+      return {
+        position: style.position,
+        zIndex: Number(style.zIndex),
+        top: Math.round(el.getBoundingClientRect().top),
+        headerBottom: header ? Math.round(header.getBoundingClientRect().bottom) : null,
+      };
+    });
+    expect(box.position).toBe("fixed");
+    expect(box.zIndex).toBeGreaterThan(40);
+    expect(box.headerBottom).not.toBeNull();
+    // Starts at the header's bottom edge, so the trail stays readable.
+    expect(Math.abs(box.top - (box.headerBottom as number))).toBeLessThanOrEqual(2);
+  });
+
+  test("the default mode still stands the pane down", async ({ page }) => {
+    // The other half of PL16-005: the original behaviour is untouched, which is
+    // the point of keeping both — they are meant to be compared.
+    await installGraphApi(page);
+    await openGraph(page);
+    await previewToggle(page).click();
+    const pane = page.locator("[data-preview-settled]");
+    await expect(pane).toHaveCount(1, { timeout: 15000 });
+
+    await openItemDetails(page, "alpha");
+    await settleViewTransition(page);
+    await expect(page.locator("[data-item-details]")).toHaveAttribute(
+      "data-details-preview-mode",
+      "standdown",
+    );
+    await expect(pane).toHaveCount(0);
+  });
+
   // PARKED: the deck draws its trim strip on a STILL.
   //
   // A still has a duration but no SOURCE to window, so a map of the source is a
