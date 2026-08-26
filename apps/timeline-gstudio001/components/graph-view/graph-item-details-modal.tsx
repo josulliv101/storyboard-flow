@@ -14,7 +14,6 @@ import { AudioLines, Pause, Play, SkipBack, SkipForward, Redo2, Undo2, X } from 
 import { createPortal } from "react-dom";
 
 import { MediaPreviewSurface } from "./media-preview-surface";
-import { useDetailsPreviewMode } from "./details-preview-mode";
 
 import {
   TrimOverviewStrip,
@@ -303,8 +302,7 @@ function DetailsFilmstripModal({
   onOpenNeighbour: (id: string) => void;
 }>) {
   /**
-   * COVER MODE: the view paints OVER the pane instead of replacing it
-   * (PL16-005).
+   * THE VIEW PAINTS OVER THE PREVIEW PANE (PL16-005, made permanent).
    *
    * MEASURED, never a constant. The overlay starts exactly where the sticky
    * header ends, and the header's height is the consumer's business —
@@ -318,18 +316,12 @@ function DetailsFilmstripModal({
    * underneath. What is wanted is the view sitting still over everything below
    * the trail — which is what the header itself already does, one band up.
    */
-  const coverMode = useDetailsPreviewMode() === "cover";
   const [coverBox, setCoverBox] = useState<{
     top: number;
     left: number;
     width: number;
   } | null>(null);
   useLayoutEffect(() => {
-    // NOTHING TO CLEAR on the way out: the mode is a URL parameter and does not
-    // change within a visit, so `coverBox` is simply never set in the default
-    // mode. Resetting it here would also be a synchronous setState in an
-    // effect, which the lint rejects as a cascading render — correctly.
-    if (!coverMode) return;
     const header = document.querySelector<HTMLElement>(
       '[data-testid="workbench-header-region"]',
     );
@@ -360,7 +352,7 @@ function DetailsFilmstripModal({
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure);
     };
-  }, [coverMode]);
+  }, []);
 
   const graph = useCollectionsSelector((state) => state.graph);
   // The one mutation the deck makes — a trim — goes through the same command
@@ -1703,7 +1695,6 @@ function DetailsFilmstripModal({
     <section
       ref={viewRef}
       data-item-details={node.id}
-      data-details-preview-mode={coverMode ? "cover" : "standdown"}
       aria-label={`Details for ${node.name}`}
       // A REGION IN THE CONTENT AREA, NOT A DIALOG OVER IT (PL15-029).
       //
@@ -1805,7 +1796,7 @@ function DetailsFilmstripModal({
         // Only once the box has been MEASURED — painting a full-width overlay
         // for the frame before the header has been read would flash the view
         // across the trail, which is the one thing this mode must not do.
-        ...(coverMode && coverBox !== null
+        ...(coverBox !== null
           ? {
               position: "fixed" as const,
               top: Math.round(coverBox.top) + "px",
@@ -1834,7 +1825,7 @@ function DetailsFilmstripModal({
         // `zinc-950` is what the header region and the preview region are
         // already painted with, so the covered view matches the surface it is
         // standing in for rather than introducing a third shade.
-        coverMode ? "bg-zinc-950" : "",
+        "bg-zinc-950",
       ].join(" ")}
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
@@ -2087,7 +2078,7 @@ function DetailsFilmstripModal({
   // Portalled only while covering, and only once the box has been measured —
   // an unmeasured overlay at the root would paint full-bleed for a frame,
   // across the very trail this mode exists to keep visible.
-  return coverMode && coverBox !== null ? createPortal(view, document.body) : view;
+  return coverBox !== null ? createPortal(view, document.body) : view;
 }
 
 export function GraphItemDetailsModal() {

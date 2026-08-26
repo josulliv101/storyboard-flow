@@ -1808,7 +1808,11 @@ test.describe("graph view E2E", () => {
     // still everything but the first 36px of a divider that runs the full
     // width, which is why one icon was allowed there when a button AND a 64px
     // slider previously were not.
-    await divider.hover({ position: { x: 60, y: 10 } });
+    // y=30, NOT y=10 (PL16-006). The preview's scrub line is drawn 12px above
+    // the divider's visible bar, so its hit band covers the divider box's top
+    // 12px — a pointer there scrubs rather than resizes. The drag target is
+    // the remaining 32px, bar included. What is asserted below is unchanged.
+    await divider.hover({ position: { x: 60, y: 30 } });
     await expect.poll(dividerLineColor).not.toBe(restLineColor);
     await page.mouse.move(0, 0); // unhover before the resize steps below
 
@@ -2745,7 +2749,22 @@ test.describe("graph view E2E", () => {
       groupBox!.y + groupBox!.height / 2,
       0,
     );
-    expect(canvasBox!.y + canvasBox!.height).toBeCloseTo(dividerBox!.y, 0);
+    // THE SCRUB LINE SITS BETWEEN THE PICTURE AND THE DIVIDER'S BAR
+    // (PL16-006), and the two facts worth pinning are where it is NOT and how
+    // close it is.
+    //
+    // MEASURED AGAINST THE VISIBLE BAR, not the divider's box. The box is a
+    // 44px hit target whose gray bar sits 20px below its top edge — so a gap
+    // measured against the box is 20px larger than the one anyone can see,
+    // which is how this was asserted as "4" while reading as 24 on screen. The
+    // bar is what the eye uses, so the bar is what this measures.
+    const lineBox = await page.locator("[data-preview-scrub-track]").boundingBox();
+    expect(lineBox).not.toBeNull();
+    expect(Math.round(dividerLineBox!.y - (lineBox!.y + lineBox!.height))).toBe(12);
+    // And it is clear of the picture: the line starts below where the canvas
+    // ends, so it crosses nothing.
+    expect(lineBox!.y).toBeGreaterThanOrEqual(canvasBox!.y + canvasBox!.height);
+
     expect(
       Math.abs(timeBox!.x + timeBox!.width - (surfaceBox!.x + surfaceBox!.width - 12)),
     ).toBeLessThanOrEqual(1);
@@ -2786,7 +2805,15 @@ test.describe("graph view E2E", () => {
     // still everything but the first 36px of a divider that runs the full
     // width, which is why one icon was allowed there when a button AND a 64px
     // slider previously were not.
-    await divider.hover({ position: { x: 60, y: 6 } });
+    // y=30, NOT y=6 (PL16-006). The scrub line is drawn 4px above the divider's
+    // visible bar, so its hit band occupies the divider box's top ~20px of
+    // clearance — pressing there scrubs rather than resizes. That is a real
+    // trade and it is the one the placement forces: a line that close to the
+    // bar cannot have a usable target anywhere but in that clearance. What is
+    // left for the drag is 24px, including the bar itself, which is more than
+    // a resizer conventionally gets. The point being asserted — hovering the
+    // divider does not move the transport — is unchanged.
+    await divider.hover({ position: { x: 60, y: 30 } });
     const groupAfterHover = await buttonGroup.boundingBox();
     expect(groupAfterHover).not.toBeNull();
     expect(groupAfterHover!.x).toBeCloseTo(groupBox!.x, 0);
@@ -5525,57 +5552,17 @@ test.describe("graph view E2E", () => {
     await expect.poll(boxWidth, { timeout: 3000 }).toBe(restWidth);
   });
 
-  test("opening details takes the whole content area, preview pane included", async ({
-    page,
-  }) => {
-    // PL16-003. Reported: with the preview open, clicking a media item built the
-    // three-item view UNDERNEATH the pane, which stayed pinned above it.
-    //
-    // The view is not a panel inside the board — since PL15-029 it IS the
-    // content area — so the pane stands down for it. The breadcrumb stays: it
-    // is the shell's header slot rather than one of its children.
-    await installGraphApi(page);
-    await openGraph(page);
-
-    // Open the preview pane first; the bug needs it up.
-    await previewToggle(page).click();
-    // `data-preview-settled` is the pane's own "I am up and have a picture"
-    // marker — the same one the rest of this suite waits on.
-    const pane = page.locator("[data-preview-settled]");
-    await expect(pane).toHaveCount(1, { timeout: 15000 });
-
-    await openItemDetails(page, "alpha");
-    await settleViewTransition(page);
-
-    // The view is up, and the pane is not.
-    await expect(page.locator("[data-item-details]")).toHaveCount(1);
-    await expect(pane).toHaveCount(0);
-    // The chrome around it is still there — this is not "hide everything".
-    await expect(page.getByRole("button", { name: /(show|hide) preview/i })).toBeVisible();
-
-    // And it comes back when the view closes.
-    await page.keyboard.press("Escape");
-    await expect(page.locator("[data-item-details]")).toHaveCount(0);
-    await expect.poll(async () => await pane.count(), { timeout: 10000 }).toBeGreaterThan(0);
-  });
-
-  test("cover mode keeps the pane up and paints the view over it", async ({ page }) => {
-    // PL16-005. The default (`standdown`, PL16-003) unmounts the pane while the
-    // view is up. `?previewmode=cover` leaves it mounted and paints over it, so
-    // the two can be compared on one build rather than by reverting a commit.
+  test("opening a clip keeps the preview up and paints the view over it", async ({ page }) => {
+    // PL16-005, made permanent. The pane stays mounted while the details view
+    // is up and the view paints over it. The alternative — unmounting the pane
+    // for the duration — was carried alongside this behind `?previewmode=` for
+    // comparison, and is gone.
     //
     // ASSERTED ON BOTH HALVES, because either alone would pass for the wrong
     // reason: the pane must still BE there, and the view must actually be over
     // it rather than below it in the column.
     await installGraphApi(page);
-    // Same landing `openGraph` does — strip layout, wait for a real card, reveal
-    // the tree — with the mode param carried alongside it. Written out rather
-    // than calling the helper because the helper owns the URL.
-    await page.goto(`${GRAPH_URL}?surface=strip&previewmode=cover`);
-    await strip(page, PROJECT_ID)
-      .locator('[data-node-id="alpha"]')
-      .waitFor({ state: "visible", timeout: 30000 });
-    await page.getByRole("button", { name: "Show children timelines" }).click();
+    await openGraph(page);
     await previewToggle(page).click();
     const pane = page.locator("[data-preview-settled]");
     await expect(pane).toHaveCount(1, { timeout: 15000 });
@@ -5585,7 +5572,6 @@ test.describe("graph view E2E", () => {
 
     const view = page.locator("[data-item-details]");
     await expect(view).toHaveCount(1);
-    await expect(view).toHaveAttribute("data-details-preview-mode", "cover");
     // THE PANE IS STILL THERE — this is the whole difference from the default.
     await expect(pane).toHaveCount(1);
 
@@ -5674,22 +5660,57 @@ test.describe("graph view E2E", () => {
     expect(masked).not.toContain("gradient");
   });
 
-  test("the default mode still stands the pane down", async ({ page }) => {
-    // The other half of PL16-005: the original behaviour is untouched, which is
-    // the point of keeping both — they are meant to be compared.
+  test("the preview's scrub line moves the clock, and follows it", async ({ page }) => {
+    // PL16-006. A thin white line between the picture and the divider, with the
+    // playhead on it as a ball.
+    //
+    // BOTH DIRECTIONS ARE ASSERTED, because the feature is the pair: dragging
+    // moves the picture, and anything else moving the clock moves the ball. A
+    // rail that only did the first would be a control that starts lying the
+    // moment you press play.
     await installGraphApi(page);
     await openGraph(page);
     await previewToggle(page).click();
-    const pane = page.locator("[data-preview-settled]");
-    await expect(pane).toHaveCount(1, { timeout: 15000 });
+    await expect(page.locator("[data-preview-settled]")).toHaveCount(1, { timeout: 15000 });
 
-    await openItemDetails(page, "alpha");
-    await settleViewTransition(page);
-    await expect(page.locator("[data-item-details]")).toHaveAttribute(
-      "data-details-preview-mode",
-      "standdown",
-    );
-    await expect(pane).toHaveCount(0);
+    const rail = page.locator("[data-preview-scrub-rail]");
+    const track = page.locator("[data-preview-scrub-track]");
+    const thumb = page.locator("[data-preview-scrub-thumb]");
+    await expect(rail).toHaveCount(1);
+    await expect(thumb).toHaveCount(1);
+
+    // It reports the timeline it is scrubbing, so a rail over an empty one
+    // cannot pass this by sitting still.
+    const total = Number(await rail.getAttribute("aria-valuemax"));
+    expect(total).toBeGreaterThan(0);
+
+    const box = await track.boundingBox();
+    expect(box).not.toBeNull();
+    const { x, y, width, height } = box as { x: number; y: number; width: number; height: number };
+    const thumbX = async () => Math.round((await thumb.boundingBox())?.x ?? 0);
+    const startX = await thumbX();
+
+    // A real mouse, pressing two thirds along the line.
+    await page.mouse.move(x + width * 0.66, y + height / 2);
+    await page.mouse.down();
+    await page.mouse.move(x + width * 0.66, y + height / 2, { steps: 4 });
+    await page.mouse.up();
+
+    await expect
+      .poll(async () => Number(await rail.getAttribute("aria-valuenow")), { timeout: 5000 })
+      .toBeGreaterThan(total * 0.4);
+    expect(await thumbX()).toBeGreaterThan(startX);
+
+    // AND IT FOLLOWS THE CLOCK. `Home` writes to the same channel a board
+    // scrub or the transport writes to, so if the ball did not follow the clock
+    // this would leave it where the drag put it.
+    const movedX = await thumbX();
+    await rail.focus();
+    await page.keyboard.press("Home");
+    await expect
+      .poll(async () => Number(await rail.getAttribute("aria-valuenow")), { timeout: 5000 })
+      .toBe(0);
+    expect(await thumbX()).toBeLessThan(movedX);
   });
 
   // PARKED: the deck draws its trim strip on a STILL.
