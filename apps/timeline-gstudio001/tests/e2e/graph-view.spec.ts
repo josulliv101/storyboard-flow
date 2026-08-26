@@ -5444,6 +5444,121 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(parked);
   });
 
+  test("play raises the preview and actually runs the clock", async ({ page }) => {
+    // PL16-002. Both halves of this were broken and neither was visible from
+    // the other, so both are asserted.
+    //
+    // THE CLOCK. The strip has owned a rAF play loop the whole time, and every
+    // tick of it arrives in the view through `onScrub` — the same callback a
+    // DRAG reports through. The handler stopped playback on any scrub, so
+    // playback stopped itself on its first frame: the button toggled, the
+    // playhead did not move, and it toggled back. `onSkim` is what tells the
+    // two apart, because it only fires for a pointer holding the playhead.
+    //
+    // THE PREVIEW. Pressing play is a request to watch, so the deck becomes the
+    // screen exactly as it does under a scrub.
+    await installGraphApi(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openGraph(page);
+    await openItemDetails(page, "alpha");
+    await settleViewTransition(page);
+
+    const deck = page.locator(".deck");
+    const subject = page.locator(".deck .clip.active");
+    const play = page.locator("[data-details-transport-play]");
+    const boxWidth = async () =>
+      Math.round((await subject.boundingBox())?.width ?? 0);
+    const headOpacity = async () =>
+      await page.locator(".deck .clip.active .c-head").evaluate((el) => getComputedStyle(el).opacity);
+    const playheadX = async () =>
+      await page.evaluate(() => Math.round(document.querySelector(".playhead")?.getBoundingClientRect().x ?? -1));
+
+    await expect(play).toHaveAttribute("aria-label", "Play");
+    await expect(deck).not.toHaveClass(/previewing/);
+    const restWidth = await boxWidth();
+    expect(restWidth).toBeGreaterThan(0);
+
+    await play.click();
+
+    // It stays playing. Before the fix this flipped straight back to "Play".
+    await expect(play).toHaveAttribute("aria-label", "Pause");
+    await expect(deck).toHaveClass(/previewing/);
+    await expect
+      .poll(boxWidth, { timeout: 3000 })
+      .toBeGreaterThan(restWidth);
+    await expect.poll(headOpacity, { timeout: 3000 }).toBe("0");
+
+    // AND THE PLAYHEAD MOVES, which is the half the preview animation hides:
+    // the deck would collapse just as convincingly with a frozen clock.
+    const startX = await playheadX();
+    await page.waitForTimeout(900);
+    await expect(play).toHaveAttribute("aria-label", "Pause");
+    expect(await playheadX()).toBeGreaterThan(startX);
+
+    // AND IT IS A VIDEO ELEMENT, not a sequence of stills. The first cut drove
+    // the preview from a poster URL quantised to a quarter second, which is
+    // four updates a second — correct for a scrubbing pointer, a slideshow
+    // during playback.
+    //
+    // ASSERTED ON THE ELEMENT, NOT ON PLAYBACK. Whether it decodes depends on
+    // the media actually loading, and the fixture's sources do not — `play()`
+    // rejects and it stays paused here however correct the wiring is. What this
+    // can prove is that the element is mounted on the subject, pointed at a
+    // source, and carrying the two attributes without which a browser will
+    // refuse to autoplay it at all.
+    const video = page.locator(".deck .clip.active video");
+    await expect(video).toHaveCount(1);
+    const media = await video.evaluate((el) => {
+      const v = el as HTMLVideoElement;
+      return { src: v.getAttribute("src") ?? "", muted: v.muted, inline: v.playsInline };
+    });
+    expect(media.src.length).toBeGreaterThan(0);
+    expect(media.inline).toBe(true);
+    // AND IT HAS SOUND while playing. Muted is the resting state — several of
+    // these can exist at once and a scrub sweeping the bar should be silent —
+    // so this asserts the one moment it must not be.
+    expect(media.muted).toBe(false);
+
+    await play.click();
+    await expect(play).toHaveAttribute("aria-label", "Play");
+    await expect(deck).not.toHaveClass(/previewing/);
+    await expect.poll(boxWidth, { timeout: 3000 }).toBe(restWidth);
+  });
+
+  test("opening details takes the whole content area, preview pane included", async ({
+    page,
+  }) => {
+    // PL16-003. Reported: with the preview open, clicking a media item built the
+    // three-item view UNDERNEATH the pane, which stayed pinned above it.
+    //
+    // The view is not a panel inside the board — since PL15-029 it IS the
+    // content area — so the pane stands down for it. The breadcrumb stays: it
+    // is the shell's header slot rather than one of its children.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // Open the preview pane first; the bug needs it up.
+    await previewToggle(page).click();
+    // `data-preview-settled` is the pane's own "I am up and have a picture"
+    // marker — the same one the rest of this suite waits on.
+    const pane = page.locator("[data-preview-settled]");
+    await expect(pane).toHaveCount(1, { timeout: 15000 });
+
+    await openItemDetails(page, "alpha");
+    await settleViewTransition(page);
+
+    // The view is up, and the pane is not.
+    await expect(page.locator("[data-item-details]")).toHaveCount(1);
+    await expect(pane).toHaveCount(0);
+    // The chrome around it is still there — this is not "hide everything".
+    await expect(page.getByRole("button", { name: /(show|hide) preview/i })).toBeVisible();
+
+    // And it comes back when the view closes.
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+    await expect.poll(async () => await pane.count(), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
   // PARKED: the deck draws its trim strip on a STILL.
   //
   // A still has a duration but no SOURCE to window, so a map of the source is a

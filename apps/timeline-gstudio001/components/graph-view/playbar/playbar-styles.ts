@@ -622,7 +622,15 @@ export const PLAYBAR_CSS = `.pb{
    be invisible; growing it too would be work nobody sees, and it would widen
    the box the neighbours are travelling across. */
 .pb .deck.previewing .clip.active{
-  width: var(--preview-w, min(100%, 980px));
+  /* A PIXEL VALUE THE DECK PUBLISHES, and never a percentage.
+     \`min(100%, Npx)\` was tried and is wrong here: \`.clip\` is absolutely
+     positioned, so a percentage width resolves against its containing block
+     rather than the deck, and it measured 325.5px — the card's own resting
+     width — with the rule live and matching. An inline
+     \`width: min(100%, 720px)\` computed to the same 325.5px, which is what
+     proved it was the percentage and not the cascade.
+     \`clip-deck.tsx\` measures the deck and writes the number. */
+  width: var(--preview-w, 720px);
   padding: 0;
   border-radius: 12px;
 }

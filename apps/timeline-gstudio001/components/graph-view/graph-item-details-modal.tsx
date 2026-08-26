@@ -9,7 +9,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AudioLines, Pause, Play, Redo2, Undo2, X } from "lucide-react";
+import { AudioLines, Pause, Play, SkipBack, SkipForward, Redo2, Undo2, X } from "lucide-react";
+
+import { MediaPreviewSurface } from "./media-preview-surface";
 
 import {
   TrimOverviewStrip,
@@ -146,6 +148,20 @@ const DETAILS_BOTTOM_GAP_PX = 12;
  * spent in exactly the wrong order.
  */
 const DETAILS_MIN_FIT_PX = 360;
+
+/** The transport's skip buttons: quiet until reached for, and visibly dead at
+ *  the ends of the sequence rather than silently doing nothing. */
+const TRANSPORT_BUTTON_CLASS =
+  "flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors " +
+  "hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-1 " +
+  "focus-visible:ring-sky-400/60 disabled:pointer-events-none disabled:opacity-30";
+
+/** Play is the one control here anyone reaches for without looking, so it is
+ *  the only one that carries a filled surface. */
+const TRANSPORT_PLAY_CLASS =
+  "flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-zinc-100 " +
+  "transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-1 " +
+  "focus-visible:ring-sky-400/60 data-[playing]:bg-sky-500/20 data-[playing]:text-sky-300";
 
 /* ── CONCEDE ONLY WHEN CONCEDING WINS ────────────────────────────────────
    Something has to give in a window that cannot hold everything, and the
@@ -737,23 +753,96 @@ function DetailsFilmstripModal({
    *   otherwise the DECK takes it, becoming the preview screen itself;
    *   the strip's floating card is what is left when neither did.
    *
+   * IN PRACTICE THE FIRST BRANCH NO LONGER FIRES FROM IN HERE. PL16-003 stands
+   * the pane down for the whole time this view is up, so `skimTaken` is false
+   * throughout and the deck always wins. The branch is KEPT rather than
+   * deleted: it is the rule, the pane standing down is a decision about layout
+   * that could be revisited, and a precedence written down only in the places
+   * that currently happen to reach it is one that breaks quietly when they
+   * change.
+   *
    * That order is the existing rule extended by one, not a new one: the strip's
    * `skimPreview` already stood down for the pane, and `skimPreview` below now
    * stands down for this as well. Precisely one of the three is ever up.
+   *
+   * PLAYING RAISES IT TOO, not just scrubbing. Pressing play is a request to
+   * WATCH, and watching three cards at card size is the thing this view was
+   * asked to stop doing — so the transport puts the same screen up that
+   * dragging the playhead does. It comes down again on pause, which is why
+   * this is derived from `playing` rather than latched by the button.
    */
-  const deckPreviewing = !skimTaken && (skimSeconds !== null || trimSkim !== null);
+  const deckPreviewing =
+    !skimTaken && (playing || skimSeconds !== null || trimSkim !== null);
+  /**
+   * THE FRAME UNDER THE CLOCK, for the preview to follow while PLAYING.
+   *
+   * The skim derivation below cannot serve this: it is keyed on a pointer
+   * dragging the playhead, and while playback runs there is no pointer. Same
+   * arithmetic, different question — where is the clock, rather than where is
+   * the finger.
+   *
+   * QUANTISED BEFORE IT IS A DEPENDENCY, not inside. `shownSeconds` changes
+   * every frame, so keying the memo on it would rebuild a URL sixty times a
+   * second and ask Cloudinary for most of them; keying on the quarter-second it
+   * rounds to means four requests a second at most, and the second pass over a
+   * stretch comes from cache. The same reasoning the strip's card carries.
+   */
+  const clockQuarter = playing ? Math.round(shownSeconds * 4) / 4 : null;
+  const clockPoster = useMemo<string | undefined>(() => {
+    if (clockQuarter === null) return undefined;
+    const at = seamAt(timeline, clockQuarter);
+    if (at === null) return undefined;
+    const found = graph.nodesById.get(parseNodeId(at.clipId));
+    const media = found && found.kind === "media" ? (found as MediaNode) : null;
+    // Frame grabs are a video's business — see `deckClips`, which is careful
+    // about the same thing for the same reason.
+    if (media === null || media.mediaKind !== "video") return undefined;
+    const base = media.posterSrcs?.[0];
+    if (base === undefined) return undefined;
+    const source = (hasSourceWindow(media) ? media.trimInSeconds : 0) + at.clipSeconds;
+    return monitorPosterUrl(base, Math.round(source * 4) / 4);
+  }, [clockQuarter, timeline, graph]);
+
+  /**
+   * THE CLIP UNDER THE PLAYHEAD, and where inside it (PL16-002).
+   *
+   * NOT QUANTISED, unlike the poster. A poster is a URL and every distinct time
+   * is a distinct request, which is why that one rounds to a quarter second.
+   * This is a file and a seek offset: the element decodes forward on its own
+   * once it has started, so the only thing the exact number costs is one
+   * accurate seek at the moment the clip changes.
+   *
+   * The seam is read at the CLOCK, not at the skim, so it is right during
+   * playback and equally right when a scrub parks somewhere. `deckPreviewing`
+   * decides whether any of it is on screen.
+   */
+  const previewAt = seamAt(timeline, shownSeconds);
+  const previewNode = (() => {
+    if (previewAt === null) return null;
+    const found = graph.nodesById.get(parseNodeId(previewAt.clipId));
+    return found && found.kind === "media" ? (found as MediaNode) : null;
+  })();
+  const deckPreviewVideoTime =
+    previewAt === null || previewNode === null
+      ? undefined
+      : (hasSourceWindow(previewNode) ? previewNode.trimInSeconds : 0) + previewAt.clipSeconds;
+
   const deckPreviewPoster = useMemo<string | undefined>(() => {
-    if (!deckPreviewing || skimNode === null || skimSourceTime === null) return undefined;
+    if (!deckPreviewing) return undefined;
+    // A SCRUB OUTRANKS THE CLOCK. Dragging the playhead during playback is a
+    // question about somewhere else, and the answer should be where the finger
+    // is rather than where the clock has got to.
+    if (skimNode === null || skimSourceTime === null) return clockPoster;
     // Audio has no picture to show, and a clip with no addressable poster base
     // can only offer its own source — the deck falls back to the card's frame
     // for both rather than going black.
-    if (skimNode.mediaKind === "audio" || skimPosterBase === undefined) return undefined;
+    if (skimNode.mediaKind === "audio" || skimPosterBase === undefined) return clockPoster;
     // QUANTISED TO A QUARTER SECOND for the reason the strip's card is: every
     // distinct time is a distinct Cloudinary fetch, and a pointer sweeping the
     // bar would ask for hundreds. The pane's copy is not quantised because it
     // seeks an element it already holds; this one is a URL.
     return monitorPosterUrl(skimPosterBase, Math.round(skimSourceTime * 4) / 4);
-  }, [deckPreviewing, skimNode, skimSourceTime, skimPosterBase]);
+  }, [deckPreviewing, skimNode, skimSourceTime, skimPosterBase, clockPoster]);
 
   const skimPreview = useMemo<FilmStripSkimPreview | null>(() => {
     if (skimTaken || deckPreviewing || skimNode === null || skimSourceTime === null) return null;
@@ -1146,6 +1235,34 @@ function DetailsFilmstripModal({
   // released scrub differ only in how the clip was chosen; what happens next
   // — carry the clock, cut rather than travel, fade the panels either side —
   // is the same sentence and is written once.
+  /**
+   * THE CLIPS EITHER SIDE, for the transport's skip buttons.
+   *
+   * FROM `ids`, THE WHOLE FLAT ORDER, not from the deck's window: the deck
+   * shows three or five, and "next clip" at the edge of that window still means
+   * the next clip in the sequence rather than nothing. `null` only at the true
+   * ends, which is what disables the buttons.
+   */
+  /**
+   * A USER SCRUB STOPS PLAYBACK. PLAYBACK'S OWN TICKS MUST NOT (PL16-002).
+   *
+   * The strip owns the clock — it has run a rAF loop the whole time, advancing
+   * on wall clock and stopping at the end — and every tick of it arrives here
+   * through `onScrub`, because that is also how a drag reports. The handler
+   * could not tell them apart and stopped playback on the first frame it was
+   * given, so play toggled on and switched itself off before anything moved.
+   * Reported as "nothing's really going on", which was exactly right.
+   *
+   * `onSkim` IS the difference: it fires only for a pointer holding the
+   * playhead, and it is `null` the moment that ends. A ref rather than state
+   * because `onScrub` reads it in the same tick `onSkim` writes it, and a state
+   * update would not have landed yet.
+   */
+  const userScrubbingRef = useRef(false);
+
+  const previousClipId = centre > 0 ? (ids[centre - 1] ?? null) : null;
+  const nextClipId = centre < ids.length - 1 ? (ids[centre + 1] ?? null) : null;
+
   const landOn = useCallback(
     (clipId: string, at: SeamPosition | null) => {
       if (clipId === (node.id as string)) return;
@@ -1634,6 +1751,32 @@ function DetailsFilmstripModal({
         standalone={false}
         previewing={deckPreviewing}
         previewPoster={deckPreviewPoster}
+        previewSurface={
+          deckPreviewing && previewNode !== null ? (
+            <MediaPreviewSurface
+              media={previewNode}
+              sourceTime={deckPreviewVideoTime ?? null}
+              playing={playing}
+              // SOUND WHILE PLAYING, SILENT WHILE SCRUBBING (PL16-004).
+              //
+              // Judging a cut is not only a picture problem — a line landing
+              // across the join, or music that stops dead on it, is what is
+              // being listened for as often as the frame is looked at. But a
+              // dragged playhead sweeping a sequence is not playback, and
+              // unmuting it produces noise rather than information.
+              //
+              // Nothing new is built for this: the surface already takes
+              // `audible`, and the element it puts up carries the clip's own
+              // track. `useSeekedVideo` is what starts and stops it.
+              audible={playing}
+              scrubbing={skimSeconds !== null || trimSkim !== null}
+              // COVER, because this fills a card's picture box rather than a
+              // panel. The monitor's own use of the same component contains.
+              fit="cover"
+              className="h-full w-full"
+            />
+          ) : undefined
+        }
         // TAKES WHAT THE BAR LEAVES — but only when the pane is up and the
         // height is actually contested. `min-h-0` because a flex item's default
         // `min-height: auto` refuses to shrink below its content, which is the
@@ -1691,6 +1834,62 @@ function DetailsFilmstripModal({
         />
       </div>
 
+      {/* THE TRANSPORT: previous, play, next.
+          UNDER THE DECK AND ABOVE THE STRIP, which is where it belongs on both
+          counts — it acts on the cut the deck is showing, and the strip below
+          is the thing it moves through. Centred, because it is the one control
+          in this view that is about the whole sequence rather than about a
+          corner of it.
+
+          PLAY RAISES THE PREVIEW, and that is the point of it rather than a
+          side effect: pressing play is a request to watch, so the deck becomes
+          the screen exactly as it does under a scrub. Nothing here sets that —
+          `deckPreviewing` derives it from `playing`, so pause puts the cards
+          back without a second piece of state to keep in step. */}
+      <div className="flex items-center justify-center gap-2" data-details-transport>
+        <button
+          type="button"
+          data-details-transport-prev
+          aria-label="Previous clip"
+          title="Previous clip"
+          disabled={previousClipId === null}
+          onClick={() => {
+            if (previousClipId !== null) landOn(previousClipId, null);
+          }}
+          className={TRANSPORT_BUTTON_CLASS}
+        >
+          <SkipBack aria-hidden="true" className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          data-details-transport-play
+          data-playing={playing ? "" : undefined}
+          aria-label={playing ? "Pause" : "Play"}
+          title={playing ? "Pause" : "Play"}
+          onClick={() => setPlaying((was) => !was)}
+          className={TRANSPORT_PLAY_CLASS}
+        >
+          {playing ? (
+            <Pause aria-hidden="true" className="h-5 w-5" />
+          ) : (
+            <Play aria-hidden="true" className="h-5 w-5" />
+          )}
+        </button>
+        <button
+          type="button"
+          data-details-transport-next
+          aria-label="Next clip"
+          title="Next clip"
+          disabled={nextClipId === null}
+          onClick={() => {
+            if (nextClipId !== null) landOn(nextClipId, null);
+          }}
+          className={TRANSPORT_BUTTON_CLASS}
+        >
+          <SkipForward aria-hidden="true" className="h-4 w-4" />
+        </button>
+      </div>
+
       {/* The STRIP: one row, translated. Centred by the scrim, then offset by
           the subject's index so the clip being worked on lands mid-screen. */}
       {timeline.totalSeconds > 0 && (
@@ -1735,10 +1934,13 @@ function DetailsFilmstripModal({
               playing={playing}
               selectedId={node.id as string}
               onScrub={(seconds) => {
-                setPlaying(false);
+                if (userScrubbingRef.current) setPlaying(false);
                 setBarSeconds(Math.min(Math.max(seconds, 0), timeline.totalSeconds));
               }}
-              onSkim={setSkimSeconds}
+              onSkim={(seconds) => {
+                userScrubbingRef.current = seconds !== null;
+                setSkimSeconds(seconds);
+              }}
               onTrimSkim={setTrimSkim}
               skimPreview={skimPreview}
               onTrim={commitTrim}

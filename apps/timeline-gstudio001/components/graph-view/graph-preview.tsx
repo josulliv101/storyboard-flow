@@ -109,6 +109,7 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { compileClientPlaybackManifest } from "@/lib/client-playback-manifest";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
+import { useItemDetails } from "./graph-item-details-context";
 import { sharedWaveformCache, type WaveformCache } from "@/lib/waveform-cache";
 
 import {
@@ -1121,7 +1122,7 @@ export function useSelectionCount(): number {
 }
 
 export function PreviewShell({
-  enabled,
+  enabled: enabledProp,
   focusedId,
   channel,
   header,
@@ -1141,6 +1142,27 @@ export function PreviewShell({
   header?: React.ReactNode;
   children: React.ReactNode;
 }>) {
+  /**
+   * THE DETAILS VIEW TAKES THE WHOLE CONTENT AREA, PANE INCLUDED (PL16-003).
+   *
+   * The pane is the top of this shell's sticky stack and the details view is
+   * one of its children, so opening a clip from the grid built the view
+   * UNDERNEATH a preview that stayed exactly where it was. The view is not a
+   * panel inside the board — since PL15-029 it IS the content area — and a
+   * content area with something else pinned above it is not one.
+   *
+   * STOOD DOWN RATHER THAN COVERED. Painting the view over a live pane would
+   * leave a second video decoding behind it for the whole visit, and would
+   * leave `usePublishTrimPreview` reporting that the pane had TAKEN the scrub
+   * frame — which is what tells the deck not to show it. Both problems go away
+   * if the pane is simply not there.
+   *
+   * The breadcrumb row is untouched: it is this shell's `header` slot, not its
+   * child, and knowing where you are is exactly as useful inside a clip.
+   */
+  const { openId: detailsOpenId } = useItemDetails();
+  const enabled = enabledProp && detailsOpenId === null;
+
   const graph = useCollectionsSelector((snapshot) => snapshot.graph);
   const detailsStore = useGraphDetailsStore();
   const details = useSyncExternalStore(
