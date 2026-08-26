@@ -365,7 +365,7 @@ function SeekRailRow({
         ref={thumbRef}
         data-rail-thumb
         aria-hidden="true"
-        className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+        className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
       />
       {/* Where the playhead is HEADING, at the pointer — the transport's own
           clock is up in the preview chrome, too far to read mid-drag. Only

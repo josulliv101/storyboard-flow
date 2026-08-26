@@ -110,7 +110,7 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { compileClientPlaybackManifest } from "@/lib/client-playback-manifest";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 import { useItemDetails } from "./graph-item-details-context";
-import { useDetailsPreviewMode } from "./details-preview-mode";
+import { PreviewScrubRail } from "./preview-scrub-rail";
 import { sharedWaveformCache, type WaveformCache } from "@/lib/waveform-cache";
 
 import {
@@ -809,7 +809,12 @@ export function GraphGridPlayhead({
     <div
       ref={lineRef}
       data-graph-grid-playhead
-      className="absolute left-0 top-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+      // WHITE, matching the preview's scrub line (PL16-006). It was red, which
+      // is the editing convention for a playhead — but the two are the same
+      // playhead seen in two places, and showing it in two colours said they
+      // were different things. The glow goes white with it; a white line over a
+      // red halo reads as a mistake rather than as emphasis.
+      className="absolute left-0 top-0 w-0.5 bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)]"
     />
   );
 }
@@ -1123,7 +1128,7 @@ export function useSelectionCount(): number {
 }
 
 export function PreviewShell({
-  enabled: enabledProp,
+  enabled,
   focusedId,
   channel,
   header,
@@ -1161,17 +1166,23 @@ export function PreviewShell({
    * The breadcrumb row is untouched: it is this shell's `header` slot, not its
    * child, and knowing where you are is exactly as useful inside a clip.
    */
+  /**
+   * THE PANE STAYS UP WHILE THE DETAILS VIEW IS OPEN, and the view covers it.
+   *
+   * There were two of these for a while — one that unmounted the pane for the
+   * duration and one that painted over it — behind `?previewmode=` so they
+   * could be compared on one build. Covering won: the pane is exactly where you
+   * left it when you come back out, with no re-open, and the cost is one video
+   * decoding behind something nobody can see. The switch and the other path are
+   * gone rather than left as dead configuration.
+   *
+   * WHAT SURVIVES FROM THAT COMPARISON is the one thing that was held constant
+   * across both: the pane stops TAKING the scrub frame while the view is up. A
+   * covered pane would be showing it to nobody, and its reporting that it took
+   * the frame is what tells the deck not to show one.
+   */
   const { openId: detailsOpenId } = useItemDetails();
-  const detailsPreviewMode = useDetailsPreviewMode();
-  // `cover` keeps the pane mounted and lets the view paint over it; `standdown`
-  // takes it away for the duration. See `details-preview-mode` for the trade.
-  const enabled =
-    enabledProp && (detailsPreviewMode === "cover" || detailsOpenId === null);
-  // AND IN BOTH MODES THE PANE STOPS TAKING THE SCRUB FRAME while the view is
-  // up. A covered pane would be showing it to nobody, and its saying it had
-  // taken it is what stops the deck showing one. Held constant on purpose: it
-  // is what makes the two modes comparable.
-  const previewOwnsTrimFrame = enabledProp && detailsOpenId === null;
+  const previewOwnsTrimFrame = enabled && detailsOpenId === null;
 
   const graph = useCollectionsSelector((snapshot) => snapshot.graph);
   const detailsStore = useGraphDetailsStore();
@@ -1295,6 +1306,14 @@ export function PreviewShell({
               // video, its own geometry. `currentTime` above is untouched
               // throughout, which is what keeps the playhead where it was.
               frameOverride={trimFrame}
+              // THE SCRUB LINE, in the surface's own band below the picture.
+              // Through the slot rather than as an overlay: the picture is
+              // `flex-1` in that column, so the line takes its height from the
+              // picture and overlaps nothing — and the transport, which hangs
+              // off the surface's bottom edge, does not move.
+              underPicture={
+                <PreviewScrubRail channel={channel} totalSeconds={totalDuration} />
+              }
               className="h-full rounded-b-none border-b-0"
             />
           ) : null

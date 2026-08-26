@@ -167,6 +167,15 @@ type WorkbenchDisplaySurfaceProps = {
    */
   frameOverride?: Readonly<{ src: string; poster?: string; sourceTime: number }> | null;
   /**
+   * A band rendered BELOW the picture and above the surface's bottom edge.
+   *
+   * For anything that belongs to the preview but must not sit on top of it — a
+   * scrub line, a status strip. It takes its height from the picture, which is
+   * `flex-1`, so the surface's own box is unchanged and the transport hanging
+   * off its bottom edge stays where it is.
+   */
+  underPicture?: ReactNode;
+  /**
    * The RENDER's frame shape (width / height), for placing under-layer insets.
    *
    * A layer's rectangle is normalized to the OUTPUT frame, not to the picture,
@@ -872,6 +881,7 @@ export function WorkbenchDisplaySurface({
   onMutedChange,
   onClose,
   frameOverride = null,
+  underPicture,
   outputAspect,
 }: WorkbenchDisplaySurfaceProps) {
   const { getCollectionClipFramePreview } = useTimelineDocuments();
@@ -2268,6 +2278,20 @@ export function WorkbenchDisplaySurface({
           </button>
         )}
       </div>
+      {/* BETWEEN THE PICTURE AND THE BOTTOM EDGE (PL16-006).
+
+          A SIBLING OF THE PICTURE, not an overlay on it. The picture above is
+          `flex-1` in this column, so anything placed here takes its height out
+          of the PICTURE rather than out of the surface — which is the whole
+          reason the slot exists at this exact line. The transport hangs off the
+          surface's bottom edge (`top-full`), so it does not move; an earlier
+          attempt padded the surface from outside instead, and the transport
+          went up with it while the divider stayed, leaving the two 24px apart.
+
+          Optional and unstyled: the consumer decides whether there is anything
+          here at all and what it looks like. This file only promises it a band
+          below the picture and above the edge. */}
+      {underPicture}
       <WorkbenchAudioControls
         volume={activeVolume}
         muted={activeMuted}
