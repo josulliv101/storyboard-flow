@@ -5106,17 +5106,24 @@ test.describe("graph view E2E", () => {
     // Only the modal's frame holds the name while it is open — the card gave
     // it up in the same frame.
     expect(await heroCount()).toBe(1);
-    // ON THE CARD, NOT ON THE PICTURE INSIDE IT. Every card carries a transform
-    // and a filter written every frame, and a `view-transition-name` on a
-    // DESCENDANT of a transformed, filtered subtree is captured relative to
-    // that subtree — measured, the browser held the group at the destination
-    // for the whole flight and cross-faded in place instead of travelling. The
-    // card IS the transformed element, so its own transform is part of the
-    // geometry that gets captured.
+    // ON THE PICTURE, NOT ON THE CARD AROUND IT (PL15-034).
+    //
+    // The reverse of this was asserted here for two revisions, on the reasoning
+    // that a name inside a transformed and filtered subtree cannot be captured
+    // properly. An isolated probe disproved it — a named box inside the deck's
+    // own `translate(-50%,-50%) scale(1)` + `brightness(1) saturate(1)` wrapper
+    // produced a group that travels, source box to destination box.
+    //
+    // The card was the wrong end anyway: card-to-card is a 298x220 -> 326x363
+    // morph, a 65% vertical stretch cross-fading a grid card's contents against
+    // a deck card's. Picture-to-picture is 286x154 -> 296x148 — one thumbnail
+    // moving, which is what the flight is for.
     expect(
-      await detailsPanel(page).evaluate((el) =>
-        el instanceof HTMLElement ? getComputedStyle(el).viewTransitionName : "",
-      ),
+      await detailsPanel(page)
+        .locator("[data-item-details-frame]")
+        .evaluate((el) =>
+          el instanceof HTMLElement ? getComputedStyle(el).viewTransitionName : "",
+        ),
     ).toBe("trim-subject");
 
     // The whole source is in there, and it is the map for THIS clip.

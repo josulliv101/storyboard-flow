@@ -2384,3 +2384,190 @@ Acceptance criteria:
 - If it turns out to be the test rather than the component, the assertion is
   corrected rather than loosened — a poll that passes because it waits longer is
   a poll that has stopped asserting.
+
+## PL15-032 — The details view fits the window, and the cards get the space back
+
+- Status: Complete, shipped in #538. Written up here after the fact — the list
+  stopped at 031 while the work carried on, which is the gap this entry closes.
+- Area: `components/graph-view/graph-item-details-modal.tsx` (the fit ceiling),
+  `components/graph-view/playbar/clip-deck.tsx` (card padding, row margins)
+- Screenshot: Not captured
+
+Three changes to the three-item view, measured on a real click in the signed-in
+app at an 889px window.
+
+**The view forced a page scrollbar.** It started at y=70, stood 884 tall, and
+the document came to 954 — 65px past the fold. The ceiling that subtracts what
+sits above the view was gated to the preview-open path, so with the pane down
+nothing bounded it. Ungated: document 954 -> 889, page overflow 65 -> 0, view
+884 -> 807, deck 480 -> 420, film strip 150 -> 133. `overflowY` went from `clip`
+to `auto` with it, because `clip` against a ceiling cuts the bottom off the
+cards rather than letting you reach them.
+
+**This reversed an earlier decision on purpose:** the gate was deliberate, on
+the reasoning that fitting the view "cost the design its own sizes ... to avoid
+a scrollbar nobody minded". The scrollbar is minded. The cost is accepted —
+with the pane down the deck concedes rather than overflowing, so cards are
+narrower than the reference's own size at rest.
+
+**Vertical spacing, 24px from the card's own rows** (padding 12 -> 9, title
+margin 7/10 -> 5/7, bar 9/8 -> 6/6, in/out 9 -> 6, tags 10/24min -> 7/22min) and
+24px from the view column's gap (`gap-6` -> `gap-3`). Both feed `fit()`, which
+turns deck height into card WIDTH, so the space returns as a bigger picture.
+
+`Swiping The Picture Advances The Strip` went red and was right to: the deck
+adds `velocity * 160ms` of coast in PIXELS while the landing is measured in
+CARDS, so narrower cards make an identical flick throw further. The gesture is
+slower now (8x40ms rather than 6x25ms); `FLING_PROJECTION_MS` is left alone.
+
+**AND IT COST THE BOARD ITS SCROLL POSITION — see PL15-033.** Fitting the view
+to the window is exactly what collapses the document's scroll range to zero, and
+nothing was holding the offset the board had been left at.
+
+## PL15-033 — Opening the details view destroys the board's scroll position
+
+- Status: Complete. Measured before and after, in the signed-in app.
+- URL: http://localhost:3000/timeline/.../graph/.../... — scroll the grid, open
+  a clip, close it
+- Area: `components/graph-view/graph-item-details-shared.ts`
+  (`rememberBoardScroll`, `restoreBoardScroll`),
+  `components/graph-view/graph-item-details-context.tsx` (the way in),
+  `components/graph-view/graph-item-details-modal.tsx` (the way out)
+- Screenshot: Not captured
+
+Reported as "on a grid that is scrolled, the scroll jumps when the transition
+goes back to the grid view". It does, and the jump is the SYMPTOM — the position
+is destroyed on the way IN, silently, because the board is not on screen to show
+it.
+
+**THE MECHANISM, MEASURED.** The board grid scrolls the DOCUMENT: `main` is
+`flex-1` inside a `min-h-screen` shell, and PL15-032's own note says the board
+and the grid both legitimately scroll the page. PL15-032 then made the details
+view size itself to exactly `innerHeight - top - gap`, so while it is open the
+document IS the window and there is no scroll range left. A browser does not
+remember an offset it can no longer honour; it clamps.
+
+At a 560px window with 291px of grid scroll:
+
+    grid at bottom      scrollY 291   docH 851   max 291
+    details open        scrollY   0   docH 560   max   0     <- clamped
+    after close (was)   scrollY   0   docH 851   max 291     <- the jump
+
+It cost the closing flight as well, which is the second half of the report. The
+card clicked at y=76 landed at y=367 — 291px down, exactly the lost scroll — so
+the picture flew home to a place the card was not.
+
+**THE FIX IS TO CARRY THE OFFSET, not to stop the view fitting.** Fitting is
+PL15-032 and it was asked for. `rememberBoardScroll()` runs on every open FROM
+THE BOARD — card or no card, because the clamp does not care whether there was
+something to fly from — and `restoreBoardScroll()` runs INSIDE the closing
+transition's callback. Its position inside that callback is the whole of it:
+`setMountedId(null)` has already put the board back, so the page has its height
+again and the offset is honourable; and the browser has not yet captured the
+"after" frame, so the card is already where it belongs when it does.
+
+Module state rather than React state, deliberately: the two ends live in two
+files and the value has to survive the unmount between them, which is the one
+thing component state cannot do. Consumed on read, so a deep link into the view
+restores nothing rather than a stale offset from an earlier visit.
+
+    grid at bottom      scrollY 291   docH  851
+    details open        scrollY   0   docH  560
+    close +100ms        scrollY 291   docH 1795
+    close +1800ms       scrollY 291   docH  851
+    board card          back at y=76, where it was clicked
+
+Acceptance criteria:
+
+- Scrolling the grid, opening a clip and closing it returns the grid to the
+  same offset, and the closing morph lands on the card that was clicked.
+- A deep link straight to `?details=...` restores nothing.
+- Opening from the toolbar with no card on screen still restores on close.
+
+**Left standing, and it is not new.** For about a second after closing, the
+document measures 1795 rather than its settled 851 — the board mounts at full
+height before the fit runs. It was in the baseline measurement too and it costs
+nothing now (291 is reachable in both), but it is a real transient and the next
+person measuring the document during a close should expect it.
+
+## PL15-034 — The flight morphs the whole card; it should morph the picture
+
+- Status: Complete. The note that had blocked this was checked and is FALSE —
+  see below.
+- URL: same as PL15-033
+- Area: `components/graph-view/playbar/clip-deck.tsx` (the deck's `c-frame`),
+  `components/graph-view/graph-item-details-shared.ts` (`heroElement`),
+  `apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts`
+- Screenshot: Not captured — a recording of the slowed-down transition is what
+  this was reported from.
+
+Asked for as "instead of sliding the entire item, let's just slide the image and
+have it turn into the new item's image", after slowing the animation down enough
+to watch it.
+
+**WHY IT LOOKED WRONG, IN NUMBERS.** `trim-subject` was worn by the whole board
+card at one end and the whole deck card at the other. The group's own keyframes,
+read off `getAnimations()` at `ready`:
+
+    0%    (743.5, 367)    297.66 x 220
+    100%  (415.5, -10.5)  325.50 x 363
+
+A 65% vertical stretch, while the browser cross-faded a grid card's contents
+(one picture, one caption row) against a deck card's (header, title, picture,
+scrub bar, in/out row, tag row). Nothing in either box corresponds to anything
+in the other, so the middle of the flight is two unrelated layouts on top of
+each other. That is the ghosting in the recording, and it is not a duration
+problem — slowing it down only made it easier to see.
+
+The PICTURES, measured at the same moment, are 286x154 on the board and 296x148
+in the deck. Morphing those is +3.5% in width and -3.9% in height: a translation
+with a cross-fade between two renderings of the same frame.
+
+**THE NOTE THAT SAID THIS COULD NOT BE DONE IS WRONG.** Three places said, in
+the same words, that a `view-transition-name` on a DESCENDANT of a transformed
+and filtered subtree "is captured relative to that subtree", and that the
+browser "held the group at the destination for the whole flight". An isolated
+probe disproved it: a named 200x120 box, replaced inside a
+`translate(-50%,-50%) scale(1)` + `brightness(1) saturate(1)` wrapper — the
+deck's own active-card styles, written by `layout()` — by a named 420x200 box,
+produced
+
+    0%    matrix(1,0,0,1,  40,    40)   200x120
+    100%  matrix(1,0,0,1, 479.5, 206)   420x200
+
+It travels. What was really happening in the case that produced that note is the
+bug the two long comments in `graph-item-details-context` describe: the SOURCE
+losing its name to a re-render before the browser captured, which authors a
+group with both keyframes at the destination and reads exactly like "held at the
+destination, cross-fading in place". The note recorded the symptom of a
+different bug as a rule about nesting, and then that rule blocked the fix.
+
+**WHAT MOVED.** The board side names `[data-clip-artwork]` — already the board's
+own name for that box, measured by the grid play buttons to find where a picture
+ends inside a cell, and carried by both card kinds. The deck side names
+`.c-frame[data-item-details-frame]` on the active card instead of the card. The
+collection details view already named its frame, so the two paths now agree
+rather than one naming a picture and the other a card.
+
+Everything else is untouched: the attribute mechanism, the handover inside the
+callback, and the ordering that makes `flushSync` load-bearing.
+
+Verified in the app, with the one-element invariant holding throughout:
+
+    grid, nothing open        0 elements named
+    at the open call          BOARD-ARTWORK  286x154   (the source)
+    inside the open callback  DECK-PICTURE   296x148   (the destination)
+    while open                1 element
+    at the close call         DECK-PICTURE
+    inside the close callback BOARD-ARTWORK
+    back on the grid          0 elements named
+
+And on the collection path, which goes through the same code: BOARD-ARTWORK
+284x152 -> DETAILS-FRAME 734x203.
+
+Acceptance criteria:
+
+- Exactly one element carries `trim-subject` at any moment, and none at rest.
+- Both ends of the flight are pictures, on the clip path and the collection one.
+- The e2e's hero-holder assertion says the picture, and says why the old claim
+  about transformed subtrees was withdrawn.

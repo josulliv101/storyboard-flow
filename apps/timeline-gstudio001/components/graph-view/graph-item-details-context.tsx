@@ -11,7 +11,12 @@ import {
   type ReactNode,
 } from "react";
 import { withViewTransition } from "@/lib/view-transition";
-import { HERO as SHARED_HERO, HERO_ATTRIBUTE } from "./graph-item-details-shared";
+import {
+  HERO as SHARED_HERO,
+  HERO_ATTRIBUTE,
+  heroElement,
+  rememberBoardScroll,
+} from "./graph-item-details-shared";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
@@ -76,16 +81,14 @@ export const ITEM_DETAILS_PARAM = "details";
  * destination fading in by itself. This is the last moment the picture being
  * flown from is still on screen.
  *
- * `HERO` is the app's existing name, worn by the board card here and taken over
- * by the subject card's picture inside the details view. Only one element may
- * hold it, which the handover inside the callback guarantees.
+ * `HERO` is the app's existing name, worn by the board card's PICTURE here and
+ * taken over by the subject card's picture inside the details view. A picture at
+ * both ends since PL15-034 — it used to be the whole card at both, which made
+ * the flight a 65% vertical stretch with two unrelated layouts cross-fading
+ * through it. Only one element may hold the name, which the handover inside the
+ * callback guarantees.
  */
 const HERO = SHARED_HERO;
-
-/** The board card for this node, if it is on screen to fly from. */
-function boardCard(id: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
-}
 
 export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode }>) {
   const router = useRouter();
@@ -157,8 +160,21 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
       // already inside the view has no board card to come from, and closing is
       // the board returning rather than a picture travelling — the view owns
       // that one, where it still has itself on screen to fly from.
-      const card =
-        next === null || switching || typeof document === "undefined" ? null : boardCard(next);
+      const fromBoard = next !== null && !switching && typeof document !== "undefined";
+
+      // WHERE THE GRID WAS, BEFORE THE DOCUMENT CAN COLLAPSE UNDER IT.
+      //
+      // Recorded for EVERY open from the board, card on screen or not: the view
+      // fits the window either way, so the page's scroll range goes to zero and
+      // the browser clamps the offset to 0 whether or not there was something
+      // to fly from. `restoreBoardScroll`, in the view's closing callback, is
+      // the other half of it (PL15-033).
+      if (fromBoard) rememberBoardScroll();
+
+      // THE PICTURE INSIDE THE CARD, not the card. Card-to-card was a 65%
+      // vertical stretch cross-fading two unrelated layouts; picture-to-picture
+      // is a translation. `heroElement` carries the measurement (PL15-034).
+      const card = fromBoard && next !== null ? heroElement(next) : null;
       if (card === null) {
         setPending(next);
         commit();

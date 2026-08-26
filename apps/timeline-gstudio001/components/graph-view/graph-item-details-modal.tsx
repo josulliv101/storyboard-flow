@@ -71,7 +71,13 @@ import {
 import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
 import { DetailsPanel } from "./graph-item-details-panel";
 import { ItemDetailsHeader } from "./graph-item-details-header";
-import { HERO, HERO_ATTRIBUTE, PANEL_GAP, cardElement } from "./graph-item-details-shared";
+import {
+  HERO,
+  HERO_ATTRIBUTE,
+  PANEL_GAP,
+  heroElement,
+  restoreBoardScroll,
+} from "./graph-item-details-shared";
 import { useScopedHistory } from "./graph-item-details-history";
 import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
@@ -1783,7 +1789,7 @@ export function GraphItemDetailsModal() {
     //
     // This read used to sit out here, and at this moment the board DOES NOT
     // EXIST: the details view is still the content area, so there is no card
-    // to collapse back into and `cardElement` returned null every time. The
+    // to collapse back into and the lookup returned null every time. The
     // name was then handed to nothing, the browser had an old state and no new
     // one to morph toward, and closing was a fade — the exact mirror of the
     // opening bug, where the SOURCE had gone by capture time instead of the
@@ -1799,7 +1805,21 @@ export function GraphItemDetailsModal() {
       // the callback, after the browser has captured the frame the view is
       // still in. That ordering is the animation.
       setMountedId(null);
-      holder.card = cardElement(mountedId);
+      // AND THE GRID GOES BACK TO WHERE IT WAS, before anything is measured.
+      //
+      // Opening the view collapsed the document to exactly the window, and the
+      // browser clamped the page scroll to 0 on the way in — so without this
+      // the board returns at the top no matter where it was left, and the
+      // picture flies home to a card that has moved by however much scroll was
+      // lost. Measured: 291px, which is the whole of it at a 560px window.
+      //
+      // HERE rather than after the transition, and the order inside this
+      // callback is the point: `setMountedId(null)` has already put the board
+      // back, so the page has its height again and the offset is honourable;
+      // the browser has not yet captured the "after" frame, so the card is
+      // already at its restored position when it does.
+      restoreBoardScroll();
+      holder.card = heroElement(mountedId);
       // AN ATTRIBUTE, for the same reason the opening flight uses one: React
       // is rendering this card now, and it rewrites the `style` attribute it
       // manages on any re-render that lands before the browser captures. It
