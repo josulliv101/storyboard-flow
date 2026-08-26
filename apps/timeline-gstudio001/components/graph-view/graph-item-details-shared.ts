@@ -66,3 +66,60 @@ export function heroElement(id: string): HTMLElement | null {
   const card = cardElement(id);
   return card?.querySelector<HTMLElement>("[data-clip-artwork]") ?? card;
 }
+
+/**
+ * WHERE THE BOARD WAS SCROLLED TO — two sources, and the gesture wins
+ * (PL15-033, finally closed).
+ *
+ * The board scrolls the DOCUMENT, and hiding it collapses the page, so the
+ * browser clamps the window offset to 0. Carrying it across is
+ * `GraphBoardContent`'s job and it does so by parking every scroll while the
+ * board is showing.
+ *
+ * THAT ALONE IS A RACE, and it was seen in the wild once before it could be
+ * named. Hiding the board is the same commit that makes the browser clamp, and
+ * a clamp emits a scroll event; React's passive cleanup runs after paint. If
+ * the event beats the teardown the listener parks the clamped 0, the restore
+ * declines, and the grid comes back at the top. Nothing orders those two.
+ *
+ * So the OPEN GESTURE takes its own reading, synchronously, before React has
+ * rendered anything and therefore before anything can have clamped. That value
+ * cannot be wrong. The listener's is kept as the fallback for the ways in that
+ * are not a gesture — a deep link, Back/Forward — where there was no board on
+ * screen to read and 0 is the right answer anyway.
+ *
+ * Two slots rather than a lock, deliberately: a lock has to be released, and
+ * the release would be another ordering question between two components'
+ * effects. A value that simply outranks the other has none.
+ */
+let parkedBoardScroll = 0;
+let boardScrollAtOpen: number | null = null;
+
+/** From `GraphBoardContent`'s listener, while the board is showing. */
+export function parkBoardScroll(y: number): void {
+  parkedBoardScroll = y;
+}
+
+/** From the open gesture, before the board can be hidden out from under it. */
+export function captureBoardScrollAtOpen(y: number): void {
+  boardScrollAtOpen = y;
+}
+
+/**
+ * Puts the board back, and is called INSIDE the closing transition's callback
+ * (PL15-035): after the browser has captured the frame the details view is
+ * still in, so moving the page cannot displace what the morph flies from, and
+ * before it captures the frame the board is in, so the card is already where it
+ * belongs.
+ */
+export function restoreBoardScroll(): void {
+  const to = boardScrollAtOpen ?? parkedBoardScroll;
+  boardScrollAtOpen = null;
+  if (to === 0) return;
+  // TWICE, AND THE SECOND ONE IS THE ONE THAT LANDS. Closing by Back is a
+  // popstate, and the browser restores that entry's own offset after this runs
+  // — recorded while the page was short, so it is 0 and it overwrites this. A
+  // frame later nothing else is going to move it.
+  window.scrollTo(0, to);
+  requestAnimationFrame(() => window.scrollTo(0, to));
+}

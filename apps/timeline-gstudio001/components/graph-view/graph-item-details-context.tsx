@@ -11,7 +11,12 @@ import {
   type ReactNode,
 } from "react";
 import { withViewTransition } from "@/lib/view-transition";
-import { HERO as SHARED_HERO, HERO_ATTRIBUTE, heroElement } from "./graph-item-details-shared";
+import {
+  HERO as SHARED_HERO,
+  HERO_ATTRIBUTE,
+  captureBoardScrollAtOpen,
+  heroElement,
+} from "./graph-item-details-shared";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
@@ -156,6 +161,12 @@ export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode
       // the board returning rather than a picture travelling — the view owns
       // that one, where it still has itself on screen to fly from.
       const fromBoard = next !== null && !switching && typeof document !== "undefined";
+
+      // WHERE THE BOARD IS, READ NOW — before a render, and therefore before
+      // anything can have hidden it and made the browser clamp the page to 0.
+      // The board's own listener parks the same number continuously and races
+      // that clamp; this reading cannot. See `captureBoardScrollAtOpen`.
+      if (fromBoard) captureBoardScrollAtOpen(window.scrollY);
 
       // THE PICTURE INSIDE THE CARD, not the card. Card-to-card was a 65%
       // vertical stretch cross-fading two unrelated layouts; picture-to-picture

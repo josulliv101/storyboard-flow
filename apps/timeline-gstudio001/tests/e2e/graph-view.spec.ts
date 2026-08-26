@@ -5394,6 +5394,56 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(parked);
   });
 
+  test("a scroll landing as the view opens does not eat the board's offset", async ({
+    page,
+  }) => {
+    // PL15-033's remainder, and the reason that entry was left open rather than
+    // guessed at: the failure was seen ONCE and would not come back.
+    //
+    // `GraphBoardContent` parks `window.scrollY` on every scroll while the
+    // board is showing, and stops listening when it hides. Hiding the board is
+    // also what collapses the document and makes the browser CLAMP the window
+    // scroll to 0 — and a clamp emits a scroll event. Those two are ordered by
+    // nothing: React's passive cleanup runs after paint, the clamp's event
+    // fires off layout, and if the event wins the race the parked value becomes
+    // 0. `restoreParkedBoardScroll` then declines (`to === 0`) and the board
+    // comes back at the top.
+    //
+    // REPRODUCED BY FORCING THE ORDERING rather than by waiting for it. The
+    // scroll below is what the clamp does, delivered in the same task as the
+    // open so it lands before anything can react to it. That is a real
+    // interleaving, not a synthetic one — it is the interleaving that was
+    // observed.
+    await installGraphApi(page);
+    await page.setViewportSize({ width: 640, height: 470 });
+    await page.goto(`${GRAPH_URL}?surface=grid`);
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toHaveCount(1);
+
+    const maxScroll = await page.evaluate(
+      () => document.documentElement.scrollHeight - window.innerHeight,
+    );
+    expect(maxScroll).toBeGreaterThan(40);
+    const parked = Math.min(maxScroll, 200);
+    await page.evaluate((to) => window.scrollTo(0, to), parked);
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(parked);
+
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new CustomEvent("graph-view:open-item-details", { detail: "alpha" }),
+      );
+      // The clamp, by hand and in the same task.
+      window.scrollTo(0, 0);
+    });
+    await expect(page.locator("[data-item-details]")).toHaveCount(1);
+    await settleViewTransition(page);
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+
+    // The offset survives the interleaving.
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(parked);
+  });
+
   // PARKED: the deck draws its trim strip on a STILL.
   //
   // A still has a duration but no SOURCE to window, so a map of the source is a
