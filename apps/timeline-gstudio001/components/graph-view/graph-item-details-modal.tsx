@@ -11,6 +11,8 @@ import {
 } from "react";
 import { AudioLines, Pause, Play, SkipBack, SkipForward, Redo2, Undo2, X } from "lucide-react";
 
+import { createPortal } from "react-dom";
+
 import { MediaPreviewSurface } from "./media-preview-surface";
 import { useDetailsPreviewMode } from "./details-preview-mode";
 
@@ -1676,7 +1678,31 @@ function DetailsFilmstripModal({
   const rowTransform =
     `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + var(--drag-px, 0px)))`;
 
-  return (
+  /**
+   * COVER MODE PORTALS OUT, and no z-index could have replaced this.
+   *
+   * The board and this view live inside `[data-testid="workbench-lower-pane"]`,
+   * which is `position: relative; z-index: 0; isolation: isolate` — a stacking
+   * context of its own, at level ZERO. Everything inside it therefore paints at
+   * zero relative to the preview region, which is a z-40 SIBLING of that
+   * container. The first attempt asked for `z-index: 45` and got covered by the
+   * pane anyway, which is the tell: a number inside an isolated context is not
+   * competing with anything outside it.
+   *
+   * So the overlay leaves the context rather than trying to out-rank it from
+   * inside. `createPortal` moves the DOM node only — React context still
+   * resolves through the tree it was declared in, so every provider this view
+   * reads (the store, the details context, the trim preview) is untouched.
+   *
+   * At the root it competes with the header's z-50 and the surface's z-40 on
+   * equal terms, which is what makes 45 mean what it says: over the preview,
+   * under the breadcrumb. The box is already in viewport coordinates — `fixed`,
+   * measured off the header — so nothing about the positioning changes.
+   *
+   * The DEFAULT mode stays exactly where it was, in flow. This view is the
+   * content area there (PL15-029) and a portal would undo that.
+   */
+  const view = (
     <section
       ref={viewRef}
       data-item-details={node.id}
@@ -1786,7 +1812,21 @@ function DetailsFilmstripModal({
       // `auto`: the height above is a CEILING, and on a window too short for
       // even the smallest deck the scroll belongs INSIDE this view rather than
       // on the page, where it would carry the header and the bar away with it.
-      className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-x-clip"
+      className={[
+        "relative flex min-h-0 flex-1 flex-col gap-3 overflow-x-clip",
+        // AN OPAQUE GROUND WHILE COVERING, and it is not decoration.
+        //
+        // In the default mode this view REPLACES the board, so it sits on the
+        // page's own background and needs none of its own. Covering, it sits
+        // over a live preview and the divider band — and with a transparent
+        // ground both read straight through the cards, which is what "the
+        // preview and divider are still viewable behind it" is.
+        //
+        // `zinc-950` is what the header region and the preview region are
+        // already painted with, so the covered view matches the surface it is
+        // standing in for rather than introducing a third shade.
+        coverMode ? "bg-zinc-950" : "",
+      ].join(" ")}
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a
@@ -2034,6 +2074,11 @@ function DetailsFilmstripModal({
       )}
     </section>
   );
+
+  // Portalled only while covering, and only once the box has been measured —
+  // an unmeasured overlay at the root would paint full-bleed for a frame,
+  // across the very trail this mode exists to keep visible.
+  return coverMode && coverBox !== null ? createPortal(view, document.body) : view;
 }
 
 export function GraphItemDetailsModal() {

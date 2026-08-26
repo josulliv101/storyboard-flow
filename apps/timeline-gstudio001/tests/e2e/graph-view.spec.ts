@@ -5606,6 +5606,48 @@ test.describe("graph view E2E", () => {
     expect(box.headerBottom).not.toBeNull();
     // Starts at the header's bottom edge, so the trail stays readable.
     expect(Math.abs(box.top - (box.headerBottom as number))).toBeLessThanOrEqual(2);
+
+    // WHAT IS ACTUALLY ON TOP, asked of the browser rather than inferred from a
+    // number. The first attempt had `z-index: 45` against a pane at 40 and was
+    // covered by it anyway: the board's container is `isolation: isolate` at
+    // z-index 0, so nothing inside it competes with the pane at all. A z-index
+    // assertion passed while the feature was broken, which is why this one is
+    // a hit test.
+    const onTop = await page.evaluate(() => {
+      const surface = document.querySelector("[data-preview-settled]");
+      if (surface === null) return "no-surface";
+      const rect = surface.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        Math.round(rect.left + rect.width / 2),
+        Math.round(rect.top + rect.height / 2),
+      );
+      if (hit === null) return "nothing";
+      return hit.closest("[data-item-details]") !== null ? "details" : "pane";
+    });
+    expect(onTop).toBe("details");
+
+    // And the breadcrumb is still reachable — over the preview, UNDER the trail.
+    const headerOnTop = await page.evaluate(() => {
+      const header = document.querySelector('[data-testid="workbench-header-region"]');
+      if (header === null) return "no-header";
+      const rect = header.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        Math.round(rect.left + rect.width / 2),
+        Math.round(rect.top + Math.min(8, rect.height / 2)),
+      );
+      return hit !== null && hit.closest("[data-item-details]") === null ? "header" : "details";
+    });
+    expect(headerOnTop).toBe("header");
+
+    // AND IT IS OPAQUE. Being on top is not enough — with a transparent ground
+    // the live preview and the divider band read straight through the cards,
+    // which is what a first pass at this actually did.
+    const ground = await view.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const alpha = ground.startsWith("rgba")
+      ? Number(ground.split(",")[3]?.replace(")", "").trim() ?? "1")
+      : 1;
+    expect(ground).not.toBe("transparent");
+    expect(alpha).toBe(1);
   });
 
   test("the default mode still stands the pane down", async ({ page }) => {
