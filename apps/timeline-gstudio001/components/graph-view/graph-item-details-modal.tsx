@@ -1328,25 +1328,31 @@ function DetailsFilmstripModal({
         `${Math.round(element.getBoundingClientRect().width)}px`,
       );
 
-      // ── ONLY WHEN THE PREVIEW PANE IS UP ────────────────────────────────
+      // ── IN BOTH STATES, NOW ─────────────────────────────────────────────
       //
-      // With the pane down there is nothing above competing for the height, so
-      // the view is ordinary content: the bar, then the deck below it, and the
-      // page scrolls if that runs past the fold. Fitting it to the window in
-      // that case bought nothing and cost the design its own sizes — a strip
-      // shortened and cards narrowed to avoid a scrollbar nobody minded.
+      // This used to return here with the pane down, on the reasoning that
+      // nothing was competing for the height then: the view was ordinary
+      // content, and the page scrolled if it ran past the fold. The trade was
+      // stated as avoiding "a scrollbar nobody minded" — and the scrollbar is
+      // minded, so the trade flips.
       //
-      // With the pane up the height is genuinely contested, and THAT is when
-      // both have to give so the two of them stay readable together.
-      if (!previewOpen) {
-        element.style.removeProperty("height");
-        element.style.removeProperty("gap");
-        element.style.removeProperty("--strip-h");
-        concededRef.current = 0;
-        setFitting(false);
-        return;
-      }
-
+      // It was never a big overflow, which is what made it worth fixing rather
+      // than living with. Measured with the pane down at a 889px window: the
+      // view starts 70px down (13 of `main` padding, the rest the graph's own
+      // header) and stands 884 tall, so the document came to 954 — 65px over,
+      // just enough to put the bottom of the cards under the fold and a
+      // scrollbar down the side of an instrument meant to be read at a glance.
+      //
+      // Nothing above bounds it: `main` is `flex-1` inside a `min-h-screen`
+      // shell, so the column simply grows. The ceiling below is the only thing
+      // that subtracts what sits above the view, which is exactly what was
+      // missing.
+      //
+      // THE COST IS REAL AND IS ACCEPTED: with the pane down the deck now
+      // concedes rather than overflowing, so the cards are a little narrower
+      // than the design's own size. The ladder concedes the minimum that fits,
+      // and with the pane down there is far more room to play with, so it is a
+      // nudge rather than the squeeze the contested case needs.
       // AND THE VIEW ENDS WHERE THE WINDOW DOES.
       //
       // Nothing above this bounded it: `main` is `flex-1` inside a `min-h-screen`
@@ -1493,7 +1499,24 @@ function DetailsFilmstripModal({
       // against the bar. `TheTwoBarsAreAdjacent` caught precisely that, at 0
       // against its floor of 16. A flex gap applies either way, and the two
       // compose: the gap is the minimum, `my-auto` spends whatever is left
-      // over. 24px also lands where the design this follows sits, about 27.
+      // over.
+      //
+      // 12px, ASKED FOR. It was 24 — where the design this follows sits, about
+      // 27 — and this column has exactly three children, so that gap was being
+      // spent twice on the two places there was least to gain from it: above
+      // the cards, and between the cards and the film. Half of it goes back to
+      // the deck, which is the only child that can use height (`fit()` turns a
+      // taller deck into a wider card).
+      //
+      // THIS IS THE ONLY SPACING THERE. `.deck`'s own `margin:20px 0 4px` in
+      // `playbar-styles.ts` reads like it contributes and does not — `ClipDeck`
+      // zeroes both margins inline on every render, in both the fitted and the
+      // unfitted branch, so the flex gap is the whole story on both sides.
+      //
+      // The floor is `TheTwoBarsAreAdjacent`'s: the film and the cards may not
+      // touch, asserted at more than 8px. 12 clears it with room, and it is a
+      // gap rather than free space so it holds even when there is none to
+      // spend.
       // THE ROW FADES AT ITS EDGES RATHER THAN BEING CUT (PL15-030).
       //
       // `overflow-clip` alone ends a card mid-picture at the boundary, which
@@ -1509,22 +1532,27 @@ function DetailsFilmstripModal({
         containerType: "inline-size",
         maskImage: DECK_EDGE_FADE,
         WebkitMaskImage: DECK_EDGE_FADE,
-        // SCROLLS ONLY WHEN IT IS BOUNDED.
+        // SCROLLS ONLY WHEN IT IS BOUNDED — AND IT IS ALWAYS BOUNDED NOW.
         //
         // `auto` makes this a scroll container, and a scroll container inside
         // ancestors that allow shrinking takes the scroll off the PAGE and puts
         // it in here — measured, 222px of internal scroll with the pane down
-        // where the page had simply been longer. With the pane down the view
-        // should be ordinary content, so it clips like it always did and grows;
-        // with the pane up it is a fixed box and needs somewhere for the
-        // remainder to go.
-        overflowY: previewOpen ? "auto" : "clip",
+        // where the page had simply been longer. That was the argument for
+        // `clip` with the pane down: the view grew instead, and the page
+        // scrolled.
+        //
+        // The view no longer grows — the ceiling applies in both states — so
+        // `clip` would now mean the bottom of the cards is CUT OFF rather than
+        // reachable on a window too short for the ladder's floor. A scrollbar
+        // that appears only when the view genuinely cannot fit is the right
+        // failure; silently hiding a card is not.
+        overflowY: "auto",
       }}
       // `overflow-x: clip` still, for the row's scrim — but the Y axis is
       // `auto`: the height above is a CEILING, and on a window too short for
       // even the smallest deck the scroll belongs INSIDE this view rather than
       // on the page, where it would carry the header and the bar away with it.
-      className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-x-clip"
+      className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-x-clip"
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a

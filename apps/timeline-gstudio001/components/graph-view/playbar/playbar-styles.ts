@@ -281,7 +281,7 @@ export const PLAYBAR_CSS = `.pb{
 .pb .clip{
   position:absolute; top:50%; left:50%; width:clamp(300px, 30vw, 440px);
   transform:translate(-50%,-50%);
-  padding:12px 14px;
+  padding:9px 14px;
   background:linear-gradient(180deg, #141821, #0c0f14);
   border:1px solid rgba(255,255,255,.08); border-radius:16px;
   box-shadow:0 34px 80px -36px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.05);
@@ -309,11 +309,11 @@ export const PLAYBAR_CSS = `.pb{
 .pb .c-dur i{ font-style:normal; color:#3c434d; padding:0 2px; }
 .pb .c-menu{ background:none; border:0; color:#6a7380; font-size:15px; line-height:1; cursor:pointer; padding:2px 4px; border-radius:6px; }
 .pb .c-menu:hover{ color:#cfd7e1; background:rgba(255,255,255,.06); }
-.pb .c-title{ margin:7px 0 10px; font-size:12.5px; font-weight:500; color:#d3dae4; letter-spacing:.01em;
+.pb .c-title{ margin:5px 0 7px; font-size:12.5px; font-weight:500; color:#d3dae4; letter-spacing:.01em;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .pb .c-view{ position:relative; aspect-ratio:2/1; border-radius:10px; overflow:hidden; background:#000; box-shadow:inset 0 0 0 1px rgba(255,255,255,.08); }
 .pb .c-frame{ position:absolute; inset:0; }
-.pb .c-bar{ display:flex; align-items:center; gap:12px; margin:9px 2px 8px; }
+.pb .c-bar{ display:flex; align-items:center; gap:12px; margin:6px 2px 6px; }
 .pb .c-play{
   width:26px; height:26px; border-radius:50%; border:1px solid rgba(255,255,255,.14);
   background:rgba(255,255,255,.05); color:#c6cfda; cursor:pointer;
@@ -345,7 +345,7 @@ export const PLAYBAR_CSS = `.pb{
 .pb .c-h.r{ right:-6px; }
 .pb .c-h::after{ content:""; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
   width:2px; height:12px; border-radius:1px; background:rgba(10,13,18,.85); }
-.pb .c-io{ display:flex; align-items:center; gap:8px; margin-top:9px;
+.pb .c-io{ display:flex; align-items:center; gap:8px; margin-top:6px;
   font-size:9.5px; letter-spacing:.1em; color:#68717d; }
 .pb .c-io input{
   width:62px; padding:3px 6px; text-align:center;
@@ -355,7 +355,7 @@ export const PLAYBAR_CSS = `.pb{
 .pb .c-io input:focus{ border-color:rgba(56, 189, 248,.55); }
 .pb .c-io .arr{ color:#454c56; }
 .pb .c-total{ margin-left:auto; font-size:11px; font-weight:600; color:#dfe6ee; letter-spacing:.02em; }
-.pb .c-tags{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; min-height:24px; }
+.pb .c-tags{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:7px; min-height:22px; }
 .pb .chip{ display:inline-flex; align-items:center; gap:6px; padding:3px 5px 3px 9px; border-radius:7px;
   background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);
   font-size:9.5px; letter-spacing:.05em; color:#bac3cf; }

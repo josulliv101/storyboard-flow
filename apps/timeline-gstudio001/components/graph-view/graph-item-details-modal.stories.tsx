@@ -1119,12 +1119,21 @@ export const SwipingThePictureAdvancesTheStrip: Story = {
     // passed for two releases while measuring nothing, and only the return trip
     // (where the end is one clip too far) ever said so.
     //
-    // Six moves, 25ms apart, is a hand covering ~300px in 150ms — about 2px/ms,
-    // which projects a third of a card and lands one along. The numbers are a
-    // real gesture rather than a tuned one; anything a hand could actually do
-    // gives the same answer.
-    const STEPS = 6;
-    const STEP_MS = 25;
+    // Eight moves, 40ms apart, is a hand covering most of a card in about a
+    // third of a second — an unhurried swipe, and deliberately unhurried.
+    //
+    // The deck adds `velocity * 160ms` of coast to wherever the drag ended, and
+    // that coast is measured in PIXELS while the landing is measured in CARDS,
+    // so a narrower card turns the same flick into a longer throw. At 25ms a
+    // step the margin was thin enough that tightening the view's spacing —
+    // which narrows the cards, by design — pushed the return trip one clip too
+    // far. Halving the speed roughly halves the coast and puts the total back
+    // near one card, with room either side.
+    //
+    // Still a gesture a hand could make, which is the point: a test that has to
+    // flick unnaturally fast to pass is measuring the tuning, not the feature.
+    const STEPS = 8;
+    const STEP_MS = 40;
     const swipe = async (element: HTMLElement, from: number, to: number, at: number) => {
       const args = { isPrimary: true, pointerId: 1, button: 0, clientY: at };
       fireEvent.pointerDown(element, { ...args, clientX: from });
