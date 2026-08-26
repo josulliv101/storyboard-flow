@@ -203,11 +203,36 @@ export type ClipDeckProps = Readonly<{
    * entirely.
    */
   heroName?: string;
+  /**
+   * SOMEONE IS SCRUBBING, so the deck becomes the preview (PL16-001).
+   *
+   * The two neighbours slide inward and vanish UNDER the subject, the subject
+   * grows to a preview screen and drops its chrome, and the picture shows
+   * whatever frame the playhead is sitting on. Released, all of it reverses.
+   *
+   * A BOOLEAN RATHER THAN THE FRAME ITSELF, with `previewPoster` separate: the
+   * collapse is a state that outlives any one frame (it holds for the whole
+   * drag, across hundreds of poster changes), and folding them together would
+   * restart the animation every time the pointer moved a quarter second.
+   */
+  previewing?: boolean;
+  /**
+   * The frame under the playhead, for the subject to show while `previewing`.
+   *
+   * A URL, not a CSS value — the deck wraps it. Undefined is legitimate and
+   * common: audio has no picture, a still has one frame that scrubbing cannot
+   * change, and a poster that cannot be addressed is simply not there. The
+   * subject keeps its own frame in those cases rather than going black, which
+   * is a truer answer than an empty screen.
+   */
+  previewPoster?: string;
   className?: string;
 }>;
 
 export function ClipDeck({
   clips: clipsProp,
+  previewing = false,
+  previewPoster,
   activeId,
   onActivate,
   onTrim,
@@ -220,6 +245,20 @@ export function ClipDeck({
 }: ClipDeckProps) {
   const CLIPS = useMemo(() => clipsProp ?? REFERENCE_CLIPS, [clipsProp]);
   const deckRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * HOW FAR THE DECK HAS COLLAPSED INTO A PREVIEW, 0 to 1 (PL16-001).
+   *
+   * A ref driven by the same rAF loop as the glide, and read by `layout()`,
+   * because `layout()` is the ONE writer of every card's transform. Holding it
+   * in React state and letting CSS transition the neighbours would put a second
+   * writer on the same property — the transform `layout()` rewrites on every
+   * frame — and the two would erase each other. The subject's own morph IS left
+   * to CSS, which is safe because CSS is the only thing touching those
+   * properties (width, padding, aspect-ratio).
+   */
+  const collapseRef = useRef(0);
+  const collapseTargetRef = useRef(0);
+  const collapseRafRef = useRef(0);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const posRef = useRef(6); // boots on the shot the reference selects
   const targetRef = useRef(6);
@@ -360,16 +399,34 @@ export function ClipDeck({
       // makes five an ADDITION: the three in the middle are untouched by the
       // setting, and the extra pair joins them at the same size.
       const k = Math.min(distance, 1);
-      card.style.transform = `translate(calc(-50% + ${offset * spacingRef.current}px), -50%) scale(${1 - k * 0.14})`;
+      // ── THE COLLAPSE ────────────────────────────────────────────────────
+      //
+      // At `collapse = 1` every neighbour sits exactly where the subject sits
+      // and is invisible, so they read as having slid inward and gone UNDER it
+      // — under rather than over because the subject's z-index is raised below.
+      // The subject itself is unaffected: its offset is already 0 and its
+      // scale already 1, so multiplying both by `(1 - collapse)` and lerping
+      // the scale toward 1 leaves it exactly where it was. One expression
+      // covers both cases rather than branching on which card this is.
+      const collapse = collapseRef.current;
+      const spread = 1 - collapse;
+      const scale = (1 - k * 0.14) * spread + collapse;
+      card.style.transform = `translate(calc(-50% + ${offset * spacingRef.current * spread}px), -50%) scale(${scale})`;
       // `shown` is how far out a card is still fully drawn; one further out is
       // the fade, and past that nothing. At `neighbours = 1` this is the
       // reference's own `2 - distance`, unchanged.
       const shown = neighbours + 1;
       card.style.opacity = String(
-        distance > shown ? 0 : (1 - k * 0.16) * clamp(shown - distance, 0, 1),
+        // `* spread` on the NEIGHBOURS only: `k` is 0 for the subject, so its
+        // own term is 1 and it keeps full opacity all the way through the
+        // collapse. Everything else fades out as it travels in.
+        (distance > shown ? 0 : (1 - k * 0.16) * clamp(shown - distance, 0, 1)) *
+          (k === 0 ? 1 : spread),
       );
       card.style.filter = `brightness(${1 - k * 0.22}) saturate(${1 - k * 0.08})`;
-      card.style.zIndex = String(30 - Math.round(distance * 6));
+      // The subject rides ABOVE its neighbours by more than one step while the
+      // deck is collapsing, so they pass beneath it rather than through it.
+      card.style.zIndex = String(30 - Math.round(distance * 6) + (k === 0 ? 10 : 0));
       // A card you can see is a card you can hit. The 0.6 is the reference's
       // own margin past the last fully-drawn card.
       card.style.pointerEvents = distance > neighbours + 0.6 ? "none" : "";
@@ -385,6 +442,46 @@ export function ClipDeck({
     setNearIndex(near);
     return near;
   }, [neighbours]);
+
+  /**
+   * DRIVES THE COLLAPSE, and repaints the deck while it runs (PL16-001).
+   *
+   * `layout()` reads `collapseRef` but is only called by the glide's own loop,
+   * which is idle when nobody is dragging a card — so the collapse has to run
+   * its own frames and call `layout()` itself. It stops as soon as it lands,
+   * rather than running while a scrub continues, because the collapse is over
+   * long before the scrub is.
+   *
+   * REDUCED MOTION SNAPS. The whole point of this is motion; someone who has
+   * asked for less of it still needs the preview, so the destination is
+   * honoured immediately and only the travel is dropped.
+   */
+  useEffect(() => {
+    collapseTargetRef.current = previewing ? 1 : 0;
+    if (reduced) {
+      collapseRef.current = collapseTargetRef.current;
+      layout();
+      return;
+    }
+    cancelAnimationFrame(collapseRafRef.current);
+    const step = () => {
+      const target = collapseTargetRef.current;
+      const delta = target - collapseRef.current;
+      if (Math.abs(delta) < 0.001) {
+        collapseRef.current = target;
+        layout();
+        return;
+      }
+      // The same shape the glide uses: a proportional step, which eases out on
+      // its own and needs no clock. 0.18 lands in about 12 frames.
+      collapseRef.current += delta * 0.18;
+      layout();
+      collapseRafRef.current = requestAnimationFrame(step);
+    };
+    collapseRafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(collapseRafRef.current);
+  }, [previewing, reduced, layout]);
+
 
   const animate = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -773,7 +870,7 @@ export function ClipDeck({
       <style>{PLAYBAR_CSS}</style>
       <PlaybarFrame standalone={standalone}>
           <section
-            className="deck"
+            className={previewing ? "deck previewing" : "deck"}
             ref={deckRef}
             // NO MARGIN OF ITS OWN WHEN EMBEDDED. The reference's deck carries
             // `margin: 20px 0 4px` because it sits under a preview panel on its
@@ -933,7 +1030,26 @@ export function ClipDeck({
                           // the committed one, which is exactly the span of a
                           // drag on THIS card: the out handle never moves the
                           // in point, so it never asks.
-                          background: livePoster ?? clip.poster ?? clip.frames[0] ?? "#0d0d10",
+                          // THE PLAYHEAD'S FRAME WINS WHILE SCRUBBING, and
+                          // only on the subject — a neighbour is sliding out
+                          // of sight and repainting it would be work nobody
+                          // sees. Falls through to the card's own frame when
+                          // the scrub has no poster to offer (audio, or one
+                          // that cannot be addressed), which beats going black.
+                          background:
+                            // WRAPPED HERE, because the prop is a URL and this
+                            // is a `background` shorthand — handing it a bare
+                            // URL is invalid CSS and the browser silently drops
+                            // the whole declaration, which reads as the preview
+                            // simply not working. Same shape as `livePoster`
+                            // just below, so the two cannot drift.
+                            (previewing && index === active && previewPoster !== undefined
+                              ? `center/cover no-repeat url("${previewPoster}")`
+                              : undefined) ??
+                            livePoster ??
+                            clip.poster ??
+                            clip.frames[0] ??
+                            "#0d0d10",
                         }}
                       />
                     </div>
