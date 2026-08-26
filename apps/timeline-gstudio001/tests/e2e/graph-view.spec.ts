@@ -5648,6 +5648,30 @@ test.describe("graph view E2E", () => {
       : 1;
     expect(ground).not.toBe("transparent");
     expect(alpha).toBe(1);
+
+    // AND OPAQUE AT THE EDGES TOO. The view used to carry the deck's own edge
+    // fade as a mask, and a mask applies to the BACKGROUND as well — so the
+    // outer few percent either side faded to transparent and the live pane read
+    // straight through them. Sampled just inside both edges, at the vertical
+    // middle, which is where that hole was.
+    const edges = await page.evaluate(() => {
+      const el = document.querySelector("[data-item-details]");
+      if (el === null) return ["no-view"];
+      const rect = el.getBoundingClientRect();
+      const y = Math.round(rect.top + rect.height / 2);
+      return [Math.round(rect.left + 4), Math.round(rect.right - 4)].map((x) => {
+        const hit = document.elementFromPoint(x, y);
+        if (hit === null) return "nothing";
+        return hit.closest("[data-item-details]") !== null ? "details" : "pane";
+      });
+    });
+    expect(edges).toEqual(["details", "details"]);
+    // Nothing is masking the view itself; the deck keeps its own fade.
+    const masked = await view.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return `${style.maskImage}|${(style as unknown as { webkitMaskImage?: string }).webkitMaskImage ?? "none"}`;
+    });
+    expect(masked).not.toContain("gradient");
   });
 
   test("the default mode still stands the pane down", async ({ page }) => {
