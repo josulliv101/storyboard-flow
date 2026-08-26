@@ -195,9 +195,6 @@ const STRIP_FLOOR_HEIGHT_PX = 104;
 const DETAILS_GAP_PX = 24;
 const DETAILS_GAP_FLOOR_PX = 12;
 
-const DECK_EDGE_FADE =
-  "linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)";
-
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
 // The board had too much on it: a strip, a tree, a preview, a ruler, a rail,
@@ -1771,8 +1768,20 @@ function DetailsFilmstripModal({
       // is meant to be softening.
       style={{
         containerType: "inline-size",
-        maskImage: DECK_EDGE_FADE,
-        WebkitMaskImage: DECK_EDGE_FADE,
+        // THE EDGE FADE IS NOT HERE ANY MORE, and it never should have been.
+        //
+        // A mask applies to everything the element paints — its BACKGROUND
+        // included — so the same gradient that softened the outer cards also
+        // faded this view's own opaque ground to transparent at both edges. In
+        // cover mode that is a hole: the live preview underneath reads straight
+        // through the outer 5% either side, which is what "the sides let the
+        // preview poke through" is.
+        //
+        // NOTHING IS LOST BY REMOVING IT. `.pb .deck` carries the identical
+        // mask — `linear-gradient(90deg, transparent 0, #000 5%, #000 95%,
+        // transparent 100%)` — and the deck is the element that actually holds
+        // the cards, which is where the reference put it. The fade was being
+        // applied TWICE; this was the copy in the wrong place.
         // SCROLLS ONLY WHEN IT IS BOUNDED — AND IT IS ALWAYS BOUNDED NOW.
         //
         // `auto` makes this a scroll container, and a scroll container inside
