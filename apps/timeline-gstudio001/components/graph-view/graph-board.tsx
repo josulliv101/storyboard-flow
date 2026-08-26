@@ -2156,6 +2156,11 @@ export function GraphBoard({
         enabled={previewOn}
         focusedId={focusedId}
         channel={timeChannel}
+        // WHERE THE SPLIT IS REMEMBERED, and it is the PROJECT rather than the
+        // focused collection: drilling into a folder is moving around inside
+        // one piece of work, and a pane that resized itself at every step would
+        // be unusable.
+        projectId={projectId}
         /*
          * TOP of the sticky stack, above the preview rather than below it.
          *

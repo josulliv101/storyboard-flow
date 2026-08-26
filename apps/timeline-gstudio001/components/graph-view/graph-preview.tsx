@@ -109,6 +109,7 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { compileClientPlaybackManifest } from "@/lib/client-playback-manifest";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
+import { readPreviewSplit, writePreviewSplit } from "@/lib/preview-split-store";
 import { useItemDetails } from "./graph-item-details-context";
 import { PreviewScrubRail } from "./preview-scrub-rail";
 import { sharedWaveformCache, type WaveformCache } from "@/lib/waveform-cache";
@@ -814,7 +815,22 @@ export function GraphGridPlayhead({
       // playhead seen in two places, and showing it in two colours said they
       // were different things. The glow goes white with it; a white line over a
       // red halo reads as a mistake rather than as emphasis.
-      className="absolute left-0 top-0 w-0.5 bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)]"
+      //
+      // AND HALF-STRENGTH. The line crosses the CARDS — it runs down the
+      // artwork someone is judging — while the rail's thumb above it sits on
+      // chrome. At full white the line competed with the frames it was drawn
+      // over; at half it still reads as one continuous mark without becoming
+      // part of the picture.
+      //
+      // `opacity`, NOT `bg-white/50`. The glow has to fade with the line: a
+      // full-strength halo around a half-strength mark reads as a rendering
+      // fault rather than as emphasis, which is the same reason the colour was
+      // unified above.
+      //
+      // THE HEAD KEEPS FULL STRENGTH, and is not this element — it is the seek
+      // rail's circular thumb, on chrome above the grid. That is the part you
+      // aim at, so it stays at full opacity deliberately.
+      className="absolute top-0 left-0 w-0.5 bg-white opacity-50 shadow-[0_0_6px_rgba(255,255,255,0.9)]"
     />
   );
 }
@@ -1130,12 +1146,15 @@ export function useSelectionCount(): number {
 export function PreviewShell({
   enabled,
   focusedId,
+  projectId,
   channel,
   header,
   children,
 }: Readonly<{
   enabled: boolean;
   focusedId: string;
+  /** Which project's remembered split to use. See `preview-split-store`. */
+  projectId: string;
   channel: PreviewTimeChannel;
   /**
    * Pinned above the preview surface — the board's breadcrumb/select row.
@@ -1248,6 +1267,35 @@ export function PreviewShell({
   const lastClip = clips[clips.length - 1];
   const totalDuration =
     lastClip === undefined ? 0 : lastClip.startTime + lastClip.duration;
+  /**
+   * WHERE ONE CLIP BECOMES THE NEXT, as fractions of the whole.
+   *
+   * The scrubber cuts a gap through its bar at each of these, so a sequence
+   * reads as a set of shots rather than one undifferentiated span. Drawn from
+   * the same `clips` the pane plays, so they cannot drift from what a scrub
+   * actually lands on.
+   *
+   * THE FIRST CLIP'S START IS NOT A BOUNDARY — it is the beginning of the bar,
+   * and a tick there is a notch out of the left cap for no reason.
+   */
+  // STABLE IDENTITIES, both of them. The pane reads the getter once at mount
+  // and holds the change callback in an effect dependency, so a new function on
+  // every render would re-run that effect on every drag frame.
+  const readInitialSplit = useCallback(() => readPreviewSplit(projectId), [projectId]);
+  const persistSplit = useCallback(
+    (height: number) => writePreviewSplit(projectId, height),
+    [projectId],
+  );
+  const clipBoundaries = useMemo(
+    () =>
+      totalDuration <= 0
+        ? []
+        : clips
+            .slice(1)
+            .map((clip) => clip.startTime / totalDuration)
+            .filter((at) => at > 0 && at < 1),
+    [clips, totalDuration],
+  );
   useEffect(() => {
     if (channel.get() > totalDuration) channel.set(totalDuration);
   }, [channel, totalDuration]);
@@ -1275,6 +1323,17 @@ export function PreviewShell({
       ) : null}
       <WorkbenchSplitPane
         header={header}
+        // THE SPLIT SURVIVES THE SESSION (PL16-007).
+        //
+        // A GETTER, read once at mount, because the pane treats a remembered
+        // height as the user's own and skips its one-time automatic fit — so
+        // this has to answer before the first layout, not after it.
+        getInitialSurfaceHeight={readInitialSplit}
+        // WRITTEN ON EVERY DRAG FRAME, which is why the read side is a ref and
+        // not state: this fires many times a second while the edge is moving,
+        // and a `setState` here would re-render the whole board on each one.
+        // `localStorage` writes are synchronous but cheap at this size.
+        onSurfaceHeightChange={persistSplit}
         // The shell and lower pane stay mounted whether the surface is open or
         // closed. That keeps the virtual strip DOM node—and therefore its
         // horizontal scroll position—alive through the preview toggle.
@@ -1312,7 +1371,17 @@ export function PreviewShell({
               // picture and overlaps nothing — and the transport, which hangs
               // off the surface's bottom edge, does not move.
               underPicture={
-                <PreviewScrubRail channel={channel} totalSeconds={totalDuration} />
+                // 4px BELOW THE FRAME, 14px IN FROM EACH SIDE — the spec's own
+                // numbers. The gap exists so the track never fuses with the
+                // bottom of a bright clip; the inset lines the scrubber up with
+                // the controls row beneath it.
+                <div className="px-[14px] pt-1">
+                <PreviewScrubRail
+                  channel={channel}
+                  totalSeconds={totalDuration}
+                  boundaries={clipBoundaries}
+                />
+                </div>
               }
               className="h-full rounded-b-none border-b-0"
             />

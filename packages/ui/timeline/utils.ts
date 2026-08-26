@@ -48,6 +48,42 @@ export function formatSeconds(value: number) {
   return `${value.toFixed(1)}s`;
 }
 
+/**
+ * A PLAYHEAD'S TIME, as `m:ss.d` — 71.1s reads as `1:11.1`.
+ *
+ * NOT `formatSeconds`, and not a replacement for it. That one labels a
+ * DURATION on a card ("4.25s", "0s"), where the unit is the point and the
+ * value stands alone. This is a POSITION on a clock, read against another
+ * position, where what matters is that the digits line up and that the last
+ * one moves visibly under a dragging hand.
+ *
+ * TENTHS: frames would flicker faster than anyone can read, and hundredths
+ * are two columns of noise. One place after the point changes about as fast
+ * as the eye can follow it.
+ *
+ * ONE DEFINITION, deliberately, because the transport's readout and the
+ * scrubber's hover tooltip both spend it and the spec's acceptance is that
+ * they always agree. Two copies of this would agree until one of them was
+ * rounded differently.
+ */
+export function formatTimecode(seconds: number): string {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  // QUANTISE FIRST, then split. Subtracting the minutes off in seconds and
+  // flooring what is left is the obvious way to write this and it is wrong:
+  // 71.1 - 60 is 11.099999999999994 in binary floating point, so the tenth
+  // floors to 0 and the spec's own worked example renders `1:11.0`.
+  //
+  // FLOOR, not round, because a clock that rounds shows the next tenth before
+  // it has arrived — a playhead parked exactly on a cut would read as past it.
+  // The epsilon is 100 nanoseconds: far below anything a frame can express, and
+  // enough to absorb the representation error that made 71.1 land just under.
+  const tenths = Math.floor(safe * 10 + 1e-6);
+  const minutes = Math.floor(tenths / 600);
+  const whole = Math.floor(tenths / 10) % 60;
+  const tenth = tenths % 10;
+  return `${minutes}:${whole < 10 ? "0" : ""}${whole}.${tenth}`;
+}
+
 export function getTrimHandleSourceTime(clip: TimelineClip, edge: "left" | "right") {
   const frameEpsilon = Math.min(1 / 60, clip.sourceDuration / 200);
   const sourceOutTime = clip.trimIn + clip.duration;
