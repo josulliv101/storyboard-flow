@@ -1,29 +1,27 @@
 "use client";
 
-import { useCallback, useRef, useSyncExternalStore } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 
 import type { PreviewTimeChannel } from "./preview-time-channel";
 
 /**
- * THE PREVIEW'S SCRUB LINE (PL16-006).
+ * THE PREVIEW'S SCRUBBER (PL16-007, to the transport-bar spec).
  *
- * A thin white line across the preview, with the playhead on it as a ball.
- * Drag the ball — or press anywhere on the line — to move the picture; play, or
- * scrub anywhere else, and it moves itself.
+ * A full-width strip below the picture: a 4px track, a white fill for the
+ * elapsed part, a round handle at the playhead, ticks cut through it at every
+ * clip boundary, and a tooltip that follows the cursor.
  *
- * NOTHING HERE OWNS THE CLOCK, and that is what makes "always in unison" true
- * by construction rather than by keeping two things in step.
+ * NOTHING HERE OWNS THE CLOCK, and that is what makes it agree with everything
+ * else by construction rather than by keeping two things in step.
  * `PreviewTimeChannel` is the one clock: this subscribes to it for where the
- * ball goes and writes to it when dragged. The film strip, a board scrub, the
+ * handle goes and writes to it when dragged. The film strip, a board scrub, the
  * transport and this rail all read and write the same value, so none of them
  * can disagree — there is no second copy of the time to drift.
  *
- * NOT `GraphSeekRails`, which already exists and is a different shape. That
- * draws a rail PER GRID ROW mapped onto the cells beneath it (`rowCards`,
- * `offsetX`, `cellWidth`, `columns`); the strip's is the same idea against a
- * scroller. This is the whole timeline as one uninterrupted line, with no cells
- * to map onto and no scroller to follow. Sharing the CLOCK is the reuse that
- * matters here; sharing geometry built for a grid would not be.
+ * ON CHROME, NEVER OVER THE FRAME. The spec's reason is legibility: a control
+ * drawn on footage changes contrast with every clip, so none of them are. That
+ * is also why the strip keeps a 4px gap below the picture — without it the
+ * track fuses with a bright frame's bottom edge.
  *
  * `setScrub` IS DELIBERATELY NOT CALLED. That publishes a pointer position on a
  * BOARD surface so the card under it can raise a hint — it carries a
@@ -32,105 +30,130 @@ import type { PreviewTimeChannel } from "./preview-time-channel";
 export type PreviewScrubRailProps = Readonly<{
   channel: PreviewTimeChannel;
   /** The reachable length of the focused timeline, in seconds. Zero is a
-   *  legitimate resting state — an empty collection — and draws the line with
-   *  the ball parked at its start rather than refusing to render. */
+   *  legitimate resting state — an empty collection — and draws the strip with
+   *  the handle parked at its start rather than refusing to render. */
   totalSeconds: number;
+  /**
+   * Clip boundaries as fractions of the total, 0..1, excluding the ends.
+   *
+   * Fractions rather than seconds because that is what they are drawn as, and
+   * converting once here would leave two representations of the same fact for
+   * the next reader to reconcile.
+   */
+  boundaries?: readonly number[];
+  /**
+   * One frame, in seconds — what an arrow key steps by.
+   *
+   * A PROP because the spec is explicit that stepping must match the sequence's
+   * real rate, and this component has no way to know it. The default is the
+   * prototype's 24fps assumption and is exactly that: an assumption, to be
+   * replaced the moment the caller can answer properly.
+   */
+  frameSeconds?: number;
 }>;
 
 const clamp01 = (value: number) => (value < 0 ? 0 : value > 1 ? 1 : value);
 
-/** Arrow-key steps. A second is the unit people think in when placing a cut;
- *  Shift takes it to ten for crossing a sequence. */
-const ARROW_STEP_SECONDS = 1;
-const ARROW_STEP_COARSE_SECONDS = 10;
+/**
+ * `m:ss.d` — 71.1s reads as `1:11.1`.
+ *
+ * TENTHS, not frames, and not hundredths. This is the number you read while
+ * dragging, so it has to change visibly with the hand without flickering
+ * digits nobody can track.
+ */
+export function formatScrubTime(seconds: number): string {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const minutes = Math.floor(safe / 60);
+  const rest = safe - minutes * 60;
+  const whole = Math.floor(rest);
+  const tenth = Math.floor((rest - whole) * 10);
+  return `${minutes}:${whole < 10 ? "0" : ""}${whole}.${tenth}`;
+}
 
-export function PreviewScrubRail({ channel, totalSeconds }: PreviewScrubRailProps) {
+export function PreviewScrubRail({
+  channel,
+  totalSeconds,
+  boundaries = [],
+  frameSeconds = 1 / 24,
+}: PreviewScrubRailProps) {
   const time = useSyncExternalStore(channel.subscribe, channel.get, () => 0);
-  const trackRef = useRef<HTMLDivElement | null>(null);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  // A CLASS, not just `:hover`, because a fast drag leaves the strip — the
+  // pointer is captured so the scrub continues, and the grown track has to
+  // continue with it or the control appears to let go mid-gesture.
+  const [dragging, setDragging] = useState(false);
+  const [hoverFraction, setHoverFraction] = useState<number | null>(null);
 
   const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : 0;
   const fraction = total === 0 ? 0 : clamp01(time / total);
 
+  const fractionAt = useCallback((clientX: number): number | null => {
+    const strip = stripRef.current;
+    if (strip === null) return null;
+    const rect = strip.getBoundingClientRect();
+    if (rect.width === 0) return null;
+    return clamp01((clientX - rect.left) / rect.width);
+  }, []);
+
   const seekTo = useCallback(
     (clientX: number) => {
-      const track = trackRef.current;
-      if (track === null || total === 0) return;
-      const rect = track.getBoundingClientRect();
-      if (rect.width === 0) return;
-      channel.set(clamp01((clientX - rect.left) / rect.width) * total);
+      const next = fractionAt(clientX);
+      if (next !== null && total > 0) channel.set(next * total);
     },
-    [channel, total],
+    [channel, fractionAt, total],
   );
+
+  // The track and fill grow from 4px to 6px together, so they are expressed
+  // once and shared rather than kept in step in two places.
+  const grown = dragging || hoverFraction !== null;
+  const barGeometry = grown ? { top: 7, height: 6 } : { top: 8, height: 4 };
 
   return (
     <div
       data-preview-scrub-rail
-      // THE WHOLE BAND IS THE TARGET, not just the ball. A 10px ball is hard to
-      // catch with a mouse and unreasonable with a finger, and pressing
-      // anywhere on a progress line to jump there is the gesture people already
-      // expect — the drag then continues from under the pointer.
-      //
-      // IN FLOW, and that is the point of it. It renders through the display
-      // surface's `underPicture` slot, where it is a sibling of a `flex-1`
-      // picture — so its height comes out of the PICTURE and it overlaps
-      // nothing. The transport hangs off the surface's bottom edge and is
-      // untouched.
-      // EXACTLY 4px ABOVE THE DIVIDER, and that number is asked for rather than
-      // arrived at — `pb-1`. The line belongs to the divider below it, not to
-      // the picture above, so all the clearance goes above it.
-      //
-      // Twice this was set by eye and twice it was too far: centred in the band
-      // it sat 10px clear, then 6px. The e2e now asserts the 4 exactly, so the
-      // next person changing the band's height cannot move it by accident.
-      //
-      // The ball overhangs it — 5px radius at rest, 6px hovered — which is why
-      // the band does not clip: it is `overflow` visible, and the ball reaching
-      // a couple of pixels over the divider's own clearance is what makes it
-      // read as sitting ON the line rather than above it.
-      // PAINTED 20px LOWER THAN ITS LAYOUT BOX, which is the whole trick.
-      //
-      // The divider is a 44px HIT TARGET whose visible gray bar sits 20px below
-      // its top edge — measured: box top 306, bar top 326. So a gap measured
-      // against the BOX is 20px larger than the gap anyone can see, which is
-      // how this was set to "4px" twice and looked like 24.
-      //
-      // `top-3` shifts the paint 12px down onto the divider's empty top
-      // clearance without moving the layout box, so the picture above is
-      // unaffected and the line lands 12px above the BAR. Twelve, not the four
-      // tried first: at four the line read as part of the divider rather than
-      // as its own control.
-      //
-      // No background: the band it now paints over belongs to the divider, and
-      // filling it would put a black strip across the divider's own ground.
-      className="group/rail relative top-3 z-10 flex h-4 w-full shrink-0 cursor-pointer items-end px-3 pb-1"
+      data-dragging={dragging ? "" : undefined}
+      // 20px OF POINTER, 4px OF PAINT. The strip is the target — pressing
+      // anywhere on it seeks and the drag continues from under the pointer —
+      // while what is drawn stays thin enough not to compete with the picture.
+      // `touch-action: none` so a vertical flick on a touchscreen scrubs rather
+      // than scrolling the page out from under the gesture.
+      className="relative h-5 w-full shrink-0 cursor-pointer"
+      style={{ touchAction: "none" }}
       role="slider"
       tabIndex={0}
       aria-label="Preview position"
       aria-valuemin={0}
       aria-valuemax={Math.round(total * 100) / 100}
       aria-valuenow={Math.round(time * 100) / 100}
-      aria-valuetext={`${time.toFixed(2)} of ${total.toFixed(2)} seconds`}
+      aria-valuetext={`${formatScrubTime(time)} of ${formatScrubTime(total)}`}
+      ref={stripRef}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
-        // POINTER CAPTURE, so a drag that leaves the band keeps scrubbing — the
-        // same thing the seam bar does, and for the same reason: a hand moving
-        // at any speed leaves a 16px band immediately.
+        // POINTER CAPTURE, so a drag that leaves the strip keeps scrubbing.
         event.currentTarget.setPointerCapture(event.pointerId);
         event.preventDefault();
+        setDragging(true);
         seekTo(event.clientX);
       }}
       onPointerMove={(event) => {
-        if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-        seekTo(event.clientX);
+        const at = fractionAt(event.clientX);
+        if (at !== null) setHoverFraction(at);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) seekTo(event.clientX);
       }}
       onPointerUp={(event) => {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
+        setDragging(false);
       }}
+      onPointerLeave={() => setHoverFraction(null)}
+      // A SLIDER HAS TO BE OPERABLE FROM THE KEYBOARD, and the spec is specific
+      // about the units: an arrow is one FRAME, not one second, because the
+      // thing being placed is a cut. Shift takes it to a second for crossing
+      // ground. Home and End are the sequence's own ends.
       onKeyDown={(event) => {
         if (total === 0) return;
-        const step = event.shiftKey ? ARROW_STEP_COARSE_SECONDS : ARROW_STEP_SECONDS;
+        const step = event.shiftKey ? 1 : frameSeconds;
         if (event.key === "ArrowLeft") {
           event.preventDefault();
           channel.set(Math.max(0, time - step));
@@ -146,23 +169,56 @@ export function PreviewScrubRail({ channel, totalSeconds }: PreviewScrubRailProp
         }
       }}
     >
-      {/* THE LINE. Continuous across the whole width — it is the sequence, not
-          a set of clips, so nothing divides it. One pixel: it is a reference
-          for the ball to sit on, not a bar to read a value off. */}
-      <div ref={trackRef} data-preview-scrub-track className="relative h-px w-full bg-white/70">
-        {/* THE BALL, white like the line because it is the same object — where
-            you are on it. A second hue would read as a different kind of thing.
-
-            `translate(-50%, -50%)` on both axes so its CENTRE sits on the
-            value; anchored by its left edge it would lie by a radius, which at
-            these scales is a frame or more. */}
-        <span
-          data-preview-scrub-thumb
-          aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 block h-2.5 w-2.5 rounded-full bg-white transition-[height,width] group-hover/rail:h-3 group-hover/rail:w-3"
-          style={{ left: `${fraction * 100}%`, transform: "translate(-50%, -50%)" }}
-        />
+      {/* THE TRACK — the whole sequence, unbroken. */}
+      <div
+        data-preview-scrub-track
+        className="absolute right-0 left-0 rounded-sm bg-white/15 transition-[height,top] duration-100"
+        style={{ top: barGeometry.top, height: barGeometry.height }}
+      />
+      {/* THE FILL — how much of it has gone by. */}
+      <div
+        data-preview-scrub-fill
+        className="absolute left-0 rounded-sm bg-white transition-[height,top] duration-100"
+        style={{ top: barGeometry.top, height: barGeometry.height, width: `${fraction * 100}%` }}
+      />
+      {/* THE CUTS. Painted in the surface's own colour rather than a darker
+          line, so they read as GAPS in the bar rather than as marks on it —
+          which is what a cut is. Above the fill so they survive being passed. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        {boundaries.map((at) => (
+          <i
+            key={at}
+            data-preview-scrub-tick
+            className="absolute block w-0.5 -translate-x-1/2 bg-zinc-950"
+            style={{ left: `${clamp01(at) * 100}%`, top: 6, height: 8 }}
+          />
+        ))}
       </div>
+      {/* THE HANDLE. No pointer events of its own — the strip is the target, so
+          a press 3px away from a 12px dot still lands. */}
+      <span
+        data-preview-scrub-thumb
+        aria-hidden="true"
+        className="pointer-events-none absolute block h-3 w-3 rounded-full bg-white transition-transform duration-100"
+        style={{
+          top: 10,
+          left: `${fraction * 100}%`,
+          transform: `translate(-50%, -50%) scale(${grown ? 1.2 : 1})`,
+        }}
+      />
+      {/* THE TOOLTIP, showing the time UNDER THE CURSOR rather than the
+          playhead's — the question it answers is "what is here", which is what
+          you need before deciding to go there. */}
+      {hoverFraction !== null && total > 0 && (
+        <span
+          data-preview-scrub-tip
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-5 -translate-x-1/2 rounded-md border border-white/15 bg-[#17181c] px-[7px] py-0.5 font-mono text-[11px] whitespace-nowrap text-white"
+          style={{ left: `${hoverFraction * 100}%` }}
+        >
+          {formatScrubTime(hoverFraction * total)}
+        </span>
+      )}
     </div>
   );
 }

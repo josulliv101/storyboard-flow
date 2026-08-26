@@ -1248,6 +1248,27 @@ export function PreviewShell({
   const lastClip = clips[clips.length - 1];
   const totalDuration =
     lastClip === undefined ? 0 : lastClip.startTime + lastClip.duration;
+  /**
+   * WHERE ONE CLIP BECOMES THE NEXT, as fractions of the whole.
+   *
+   * The scrubber cuts a gap through its bar at each of these, so a sequence
+   * reads as a set of shots rather than one undifferentiated span. Drawn from
+   * the same `clips` the pane plays, so they cannot drift from what a scrub
+   * actually lands on.
+   *
+   * THE FIRST CLIP'S START IS NOT A BOUNDARY — it is the beginning of the bar,
+   * and a tick there is a notch out of the left cap for no reason.
+   */
+  const clipBoundaries = useMemo(
+    () =>
+      totalDuration <= 0
+        ? []
+        : clips
+            .slice(1)
+            .map((clip) => clip.startTime / totalDuration)
+            .filter((at) => at > 0 && at < 1),
+    [clips, totalDuration],
+  );
   useEffect(() => {
     if (channel.get() > totalDuration) channel.set(totalDuration);
   }, [channel, totalDuration]);
@@ -1312,7 +1333,17 @@ export function PreviewShell({
               // picture and overlaps nothing — and the transport, which hangs
               // off the surface's bottom edge, does not move.
               underPicture={
-                <PreviewScrubRail channel={channel} totalSeconds={totalDuration} />
+                // 4px BELOW THE FRAME, 14px IN FROM EACH SIDE — the spec's own
+                // numbers. The gap exists so the track never fuses with the
+                // bottom of a bright clip; the inset lines the scrubber up with
+                // the controls row beneath it.
+                <div className="px-[14px] pt-1">
+                <PreviewScrubRail
+                  channel={channel}
+                  totalSeconds={totalDuration}
+                  boundaries={clipBoundaries}
+                />
+                </div>
               }
               className="h-full rounded-b-none border-b-0"
             />

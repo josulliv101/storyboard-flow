@@ -1808,11 +1808,7 @@ test.describe("graph view E2E", () => {
     // still everything but the first 36px of a divider that runs the full
     // width, which is why one icon was allowed there when a button AND a 64px
     // slider previously were not.
-    // y=30, NOT y=10 (PL16-006). The preview's scrub line is drawn 12px above
-    // the divider's visible bar, so its hit band covers the divider box's top
-    // 12px — a pointer there scrubs rather than resizes. The drag target is
-    // the remaining 32px, bar included. What is asserted below is unchanged.
-    await divider.hover({ position: { x: 60, y: 30 } });
+    await divider.hover({ position: { x: 60, y: 10 } });
     await expect.poll(dividerLineColor).not.toBe(restLineColor);
     await page.mouse.move(0, 0); // unhover before the resize steps below
 
@@ -2749,21 +2745,13 @@ test.describe("graph view E2E", () => {
       groupBox!.y + groupBox!.height / 2,
       0,
     );
-    // THE SCRUB LINE SITS BETWEEN THE PICTURE AND THE DIVIDER'S BAR
-    // (PL16-006), and the two facts worth pinning are where it is NOT and how
-    // close it is.
-    //
-    // MEASURED AGAINST THE VISIBLE BAR, not the divider's box. The box is a
-    // 44px hit target whose gray bar sits 20px below its top edge — so a gap
-    // measured against the box is 20px larger than the one anyone can see,
-    // which is how this was asserted as "4" while reading as 24 on screen. The
-    // bar is what the eye uses, so the bar is what this measures.
-    const lineBox = await page.locator("[data-preview-scrub-track]").boundingBox();
-    expect(lineBox).not.toBeNull();
-    expect(Math.round(dividerLineBox!.y - (lineBox!.y + lineBox!.height))).toBe(12);
-    // And it is clear of the picture: the line starts below where the canvas
-    // ends, so it crosses nothing.
-    expect(lineBox!.y).toBeGreaterThanOrEqual(canvasBox!.y + canvasBox!.height);
+    // THE SCRUBBER SITS BELOW THE PICTURE, ON CHROME (PL16-007). The spec's
+    // reason is legibility — a control drawn on footage changes contrast with
+    // every clip — so what is asserted is that it clears the frame, and by the
+    // 4px the spec asks for so the track cannot fuse with a bright bottom edge.
+    const railBox = await page.locator("[data-preview-scrub-rail]").boundingBox();
+    expect(railBox).not.toBeNull();
+    expect(Math.round(railBox!.y - (canvasBox!.y + canvasBox!.height))).toBe(4);
 
     expect(
       Math.abs(timeBox!.x + timeBox!.width - (surfaceBox!.x + surfaceBox!.width - 12)),
@@ -5711,6 +5699,78 @@ test.describe("graph view E2E", () => {
       .poll(async () => Number(await rail.getAttribute("aria-valuenow")), { timeout: 5000 })
       .toBe(0);
     expect(await thumbX()).toBeLessThan(movedX);
+  });
+
+  test("the scrubber cuts its bar at the cuts, and answers the cursor", async ({ page }) => {
+    // PL16-007, the transport-bar spec's scrubber.
+    //
+    // THREE THINGS THAT CAN EACH BREAK ALONE, so each is asserted alone: the
+    // bar is divided at the cuts, the bar THICKENS under the pointer, and the
+    // tooltip answers "what is HERE" rather than repeating the playhead.
+    await installGraphApi(page);
+    await openGraph(page);
+    await previewToggle(page).click();
+    await expect(page.locator("[data-preview-settled]")).toHaveCount(1, { timeout: 15000 });
+
+    const rail = page.locator("[data-preview-scrub-rail]");
+    const track = page.locator("[data-preview-scrub-track]");
+    const ticks = page.locator("[data-preview-scrub-tick]");
+
+    // FOUR CUTS, not three. The root holds four clips, but one of them is a
+    // COLLECTION, and the preview plays its two children rather than the
+    // folder — five clips end to end. The ticks are drawn from the same list
+    // the pane plays, so they count the cuts a scrub can actually land on.
+    //
+    // The sequence's own start is not one of them: a tick there is a notch out
+    // of the left cap.
+    await expect(ticks).toHaveCount(4);
+
+    const trackBox = (await track.boundingBox())!;
+    const tickXs: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      tickXs.push((await ticks.nth(i).boundingBox())!.x);
+    }
+    // In order, and all of them strictly INSIDE the bar rather than piled on
+    // an end — which is what a broken fraction would look like.
+    for (let i = 1; i < tickXs.length; i += 1) {
+      expect(tickXs[i - 1]!).toBeLessThan(tickXs[i]!);
+    }
+    expect(tickXs[0]!).toBeGreaterThan(trackBox.x + 2);
+    expect(tickXs[tickXs.length - 1]!).toBeLessThan(trackBox.x + trackBox.width - 2);
+
+    // THICKER UNDER THE POINTER: 4px at rest, 6px when aimed at.
+    expect(Math.round(trackBox.height)).toBe(4);
+    await page.mouse.move(trackBox.x + trackBox.width * 0.25, trackBox.y + trackBox.height / 2);
+    await expect
+      .poll(async () => Math.round((await track.boundingBox())!.height), { timeout: 3000 })
+      .toBe(6);
+
+    // AND IT READS THE CURSOR, NOT THE PLAYHEAD. The playhead is parked at
+    // zero; the tip a quarter of the way along must not say 0:00.0.
+    const tip = page.locator("[data-preview-scrub-tip]");
+    await expect(tip).toHaveCount(1);
+    const total = Number(await rail.getAttribute("aria-valuemax"));
+    expect(Number(await rail.getAttribute("aria-valuenow"))).toBe(0);
+    const quarter = (await tip.textContent())!.trim();
+    expect(quarter).not.toBe("0:00.0");
+    expect(quarter).toMatch(/^\d+:\d\d\.\d$/);
+
+    // ONE FRAME PER ARROW, at the rate it was given — 1/24s reads as 0.04.
+    await rail.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(async () => Number(await rail.getAttribute("aria-valuenow")), { timeout: 3000 })
+      .toBe(0.04);
+    // Shift crosses ground instead: a whole second.
+    await page.keyboard.press("Shift+ArrowRight");
+    await expect
+      .poll(async () => Number(await rail.getAttribute("aria-valuenow")), { timeout: 3000 })
+      .toBe(1.04);
+    // And End is the far end of the same clock the bar is drawn from.
+    await page.keyboard.press("End");
+    await expect
+      .poll(async () => Number(await rail.getAttribute("aria-valuenow")), { timeout: 3000 })
+      .toBe(Math.round(total * 100) / 100);
   });
 
   // PARKED: the deck draws its trim strip on a STILL.
