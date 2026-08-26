@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 import { LOOKS, SECTIONS, SHOTS, clamp } from "./playbar-model";
@@ -49,6 +50,9 @@ const MODELS = ["H3 4-ref", "ref2va", "minimax-h3", "comfy-cloud H3"] as const;
 export const CLIP_DECK_STRIP_CELLS = 8;
 const CELLS = CLIP_DECK_STRIP_CELLS;
 /** How much of a card's width the next one sits away by, plus the gap. */
+/** Widest the preview ever gets, however wide the deck is. */
+const PREVIEW_MAX_W = 720;
+
 const CARD_GAP_PX = 18;
 
 /** The reference's own `clamp(300px, 30vw, 440px)` ends, restated so the fitted
@@ -226,6 +230,26 @@ export type ClipDeckProps = Readonly<{
    * is a truer answer than an empty screen.
    */
   previewPoster?: string;
+  /**
+   * THE SUBJECT PLAYS REAL VIDEO WHILE PREVIEWING (PL16-002).
+   *
+   * `previewPoster` alone cannot do this. It is a frame grab quantised to a
+   * quarter second — deliberately, because a scrubbing pointer would otherwise
+   * ask for hundreds — and a quarter second is four updates a second, which
+   * during PLAYBACK reads as a slideshow rather than a shot. Reported as
+   * "chunky, like it's playing every tenth frame", which is what four frames a
+   * second is.
+   *
+   * So playback gets a real media element instead — and NOT one built here.
+   * `MediaPreviewSurface` already owns the seek, the low-res scrub twin and the
+   * crossfade canvas, and a bare `<video>` in this file was a fourth, worse
+   * copy of all three. The caller passes the surface in; the deck decides where
+   * it goes and when it is on screen, which is the only part of this that is
+   * the deck's business.
+   *
+   * The poster stays as what paints before the surface has decoded anything.
+   */
+  previewSurface?: ReactNode;
   className?: string;
 }>;
 
@@ -233,6 +257,7 @@ export function ClipDeck({
   clips: clipsProp,
   previewing = false,
   previewPoster,
+  previewSurface,
   activeId,
   onActivate,
   onTrim,
@@ -458,6 +483,24 @@ export function ClipDeck({
    */
   useEffect(() => {
     collapseTargetRef.current = previewing ? 1 : 0;
+    // HOW WIDE THE PREVIEW IS, measured rather than expressed as a percentage.
+    //
+    // `.clip` is absolutely positioned, so a `%` width resolves against its
+    // containing block and not against the deck — measured, `min(100%, 720px)`
+    // came out at the card's own 325.5px even inline, where nothing could be
+    // overriding it. The deck is the only thing that knows its own width, so
+    // the deck is what publishes the number.
+    //
+    // Capped as well as proportional: 78% keeps the deck's edges visible either
+    // side so the subject still reads as one of three cards that grew, and the
+    // ceiling stops it becoming a wall on a very wide window.
+    const deckWidth = deckRef.current?.clientWidth ?? 0;
+    if (deckWidth > 0) {
+      deckRef.current?.style.setProperty(
+        "--preview-w",
+        `${Math.round(Math.min(deckWidth * 0.78, PREVIEW_MAX_W))}px`,
+      );
+    }
     if (reduced) {
       collapseRef.current = collapseTargetRef.current;
       layout();
@@ -1052,6 +1095,9 @@ export function ClipDeck({
                             "#0d0d10",
                         }}
                       />
+                      {previewing && index === active && previewSurface !== undefined ? (
+                        <div className="absolute inset-0">{previewSurface}</div>
+                      ) : null}
                     </div>
 
                     <div className="c-bar">
