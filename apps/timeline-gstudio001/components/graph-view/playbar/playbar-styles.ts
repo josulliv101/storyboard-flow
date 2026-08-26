@@ -592,6 +592,66 @@ export const PLAYBAR_CSS = `.pb{
    deck and any surface that never sets it are unchanged. ─────────────────── */
 .pb .clip{ width: var(--clip-w, clamp(300px, 30vw, 440px)); }
 
+/* ── THE DECK BECOMES THE PREVIEW WHILE SOMEONE SCRUBS (PL16-001) ─────────
+   The neighbours' half of this is NOT here: their travel is a transform, and
+   \`layout()\` rewrites every card's transform on every frame, so a CSS
+   transition on the same property would be a second writer and the two would
+   erase each other. What is here is the subject's own morph, which touches
+   properties nothing else writes.
+
+   THE ORDER IS THE EFFECT, and it is why the chrome and the picture have
+   different timings. The chrome leaves first and quickly (120ms, no delay) so
+   the card is already bare by the time it has finished growing; the box takes
+   the full 260ms; and the picture's aspect goes with the box so the frame
+   reshapes rather than being letterboxed into the old one. Reversed on the way
+   out by the un-prefixed rules above, which is what makes release read as the
+   card coming back rather than a second, different animation. */
+.pb .deck .clip{
+  transition: width 260ms cubic-bezier(.2,0,0,1), padding 260ms cubic-bezier(.2,0,0,1),
+              border-radius 260ms cubic-bezier(.2,0,0,1);
+}
+.pb .deck .clip .c-view{ transition: aspect-ratio 260ms cubic-bezier(.2,0,0,1); }
+.pb .deck .clip .c-head,.pb .deck .clip .c-title,.pb .deck .clip .c-bar,
+.pb .deck .clip .c-strip,.pb .deck .clip .c-io,.pb .deck .clip .c-tags{
+  transition: opacity 160ms ease-out 100ms, max-height 260ms cubic-bezier(.2,0,0,1),
+              margin 260ms cubic-bezier(.2,0,0,1);
+  max-height: 200px;
+}
+
+/* THE SUBJECT ONLY. A neighbour is on its way under this card and is about to
+   be invisible; growing it too would be work nobody sees, and it would widen
+   the box the neighbours are travelling across. */
+.pb .deck.previewing .clip.active{
+  width: var(--preview-w, min(100%, 980px));
+  padding: 0;
+  border-radius: 12px;
+}
+.pb .deck.previewing .clip.active .c-view{ aspect-ratio: 16/9; border-radius: 12px; }
+/* GONE, NOT JUST INVISIBLE. Opacity alone leaves the rows holding their height,
+   so the card would keep a picture-sized hole above and below the frame and
+   never actually become a preview screen. */
+.pb .deck.previewing .clip.active .c-head,
+.pb .deck.previewing .clip.active .c-title,
+.pb .deck.previewing .clip.active .c-bar,
+.pb .deck.previewing .clip.active .c-strip,
+.pb .deck.previewing .clip.active .c-io,
+.pb .deck.previewing .clip.active .c-tags{
+  opacity: 0; max-height: 0; margin-top: 0; margin-bottom: 0; overflow: hidden;
+  /* Out fast and with no delay: the chrome should be gone before the box has
+     finished growing, so what grows is already a screen. */
+  transition: opacity 110ms ease-out, max-height 200ms cubic-bezier(.2,0,0,1),
+              margin 200ms cubic-bezier(.2,0,0,1);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce){
+  .pb .deck .clip,.pb .deck .clip .c-view,
+  .pb .deck .clip .c-head,.pb .deck .clip .c-title,.pb .deck .clip .c-bar,
+  .pb .deck .clip .c-strip,.pb .deck .clip .c-io,.pb .deck .clip .c-tags{
+    transition: none;
+  }
+}
+
 /* ── AND THE STRIP GIVES A LITTLE BEFORE THE CARD GIVES A LOT ────────────
    150px of film is generous on a short window, and the bar is the one part
    whose job survives being shorter — a shot box still reads as a shot box at

@@ -726,8 +726,37 @@ function DetailsFilmstripModal({
   }, [skimSrc, skimPosterBase, skimSourceTime]);
   const skimTaken = usePublishTrimPreview(skimFrame);
 
+  /**
+   * THE DECK BECOMES THE PREVIEW WHILE THE PLAYHEAD IS HELD (PL16-001).
+   *
+   * Same source as the strip's skim card and the pane's frame — one scrub, three
+   * possible places to show it — so the precedence has to be stated rather than
+   * left to whoever renders last:
+   *
+   *   the PANE takes it when it is open (`skimTaken`), and nothing else shows;
+   *   otherwise the DECK takes it, becoming the preview screen itself;
+   *   the strip's floating card is what is left when neither did.
+   *
+   * That order is the existing rule extended by one, not a new one: the strip's
+   * `skimPreview` already stood down for the pane, and `skimPreview` below now
+   * stands down for this as well. Precisely one of the three is ever up.
+   */
+  const deckPreviewing = !skimTaken && (skimSeconds !== null || trimSkim !== null);
+  const deckPreviewPoster = useMemo<string | undefined>(() => {
+    if (!deckPreviewing || skimNode === null || skimSourceTime === null) return undefined;
+    // Audio has no picture to show, and a clip with no addressable poster base
+    // can only offer its own source — the deck falls back to the card's frame
+    // for both rather than going black.
+    if (skimNode.mediaKind === "audio" || skimPosterBase === undefined) return undefined;
+    // QUANTISED TO A QUARTER SECOND for the reason the strip's card is: every
+    // distinct time is a distinct Cloudinary fetch, and a pointer sweeping the
+    // bar would ask for hundreds. The pane's copy is not quantised because it
+    // seeks an element it already holds; this one is a URL.
+    return monitorPosterUrl(skimPosterBase, Math.round(skimSourceTime * 4) / 4);
+  }, [deckPreviewing, skimNode, skimSourceTime, skimPosterBase]);
+
   const skimPreview = useMemo<FilmStripSkimPreview | null>(() => {
-    if (skimTaken || skimNode === null || skimSourceTime === null) return null;
+    if (skimTaken || deckPreviewing || skimNode === null || skimSourceTime === null) return null;
     // QUANTISED TO A QUARTER SECOND, because the URL is a Cloudinary frame grab
     // and every distinct time is a distinct fetch — a pointer sweeping the bar
     // would ask for hundreds. Finer than the eye tracks mid-sweep, and coarse
@@ -748,7 +777,7 @@ function DetailsFilmstripModal({
       // chosen rather than something to measure against.
       meta: `${(trimSkim === null ? (skimAt?.clipSeconds ?? 0) : skimSourceTime).toFixed(2)}s / ${total.toFixed(2)}s`,
     };
-  }, [skimTaken, skimNode, skimAt, skimSourceTime, skimPosterBase, trimSkim]);
+  }, [skimTaken, deckPreviewing, skimNode, skimAt, skimSourceTime, skimPosterBase, trimSkim]);
   // ANY clip the bar covers, not just the three it used to. With nine panels
   // the playhead can be inside a clip four along, and the monitor still has to
   // be able to paint it.
@@ -1603,6 +1632,8 @@ function DetailsFilmstripModal({
           which dispatches the same `update-media` the trim fields did. */}
       <ClipDeck
         standalone={false}
+        previewing={deckPreviewing}
+        previewPoster={deckPreviewPoster}
         // TAKES WHAT THE BAR LEAVES — but only when the pane is up and the
         // height is actually contested. `min-h-0` because a flex item's default
         // `min-height: auto` refuses to shrink below its content, which is the
