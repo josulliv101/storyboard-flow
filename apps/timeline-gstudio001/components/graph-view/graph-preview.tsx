@@ -109,6 +109,7 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { compileClientPlaybackManifest } from "@/lib/client-playback-manifest";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
+import { readPreviewSplit, writePreviewSplit } from "@/lib/preview-split-store";
 import { useItemDetails } from "./graph-item-details-context";
 import { PreviewScrubRail } from "./preview-scrub-rail";
 import { sharedWaveformCache, type WaveformCache } from "@/lib/waveform-cache";
@@ -1130,12 +1131,15 @@ export function useSelectionCount(): number {
 export function PreviewShell({
   enabled,
   focusedId,
+  projectId,
   channel,
   header,
   children,
 }: Readonly<{
   enabled: boolean;
   focusedId: string;
+  /** Which project's remembered split to use. See `preview-split-store`. */
+  projectId: string;
   channel: PreviewTimeChannel;
   /**
    * Pinned above the preview surface — the board's breadcrumb/select row.
@@ -1259,6 +1263,14 @@ export function PreviewShell({
    * THE FIRST CLIP'S START IS NOT A BOUNDARY — it is the beginning of the bar,
    * and a tick there is a notch out of the left cap for no reason.
    */
+  // STABLE IDENTITIES, both of them. The pane reads the getter once at mount
+  // and holds the change callback in an effect dependency, so a new function on
+  // every render would re-run that effect on every drag frame.
+  const readInitialSplit = useCallback(() => readPreviewSplit(projectId), [projectId]);
+  const persistSplit = useCallback(
+    (height: number) => writePreviewSplit(projectId, height),
+    [projectId],
+  );
   const clipBoundaries = useMemo(
     () =>
       totalDuration <= 0
@@ -1296,6 +1308,17 @@ export function PreviewShell({
       ) : null}
       <WorkbenchSplitPane
         header={header}
+        // THE SPLIT SURVIVES THE SESSION (PL16-007).
+        //
+        // A GETTER, read once at mount, because the pane treats a remembered
+        // height as the user's own and skips its one-time automatic fit — so
+        // this has to answer before the first layout, not after it.
+        getInitialSurfaceHeight={readInitialSplit}
+        // WRITTEN ON EVERY DRAG FRAME, which is why the read side is a ref and
+        // not state: this fires many times a second while the edge is moving,
+        // and a `setState` here would re-render the whole board on each one.
+        // `localStorage` writes are synchronous but cheap at this size.
+        onSurfaceHeightChange={persistSplit}
         // The shell and lower pane stay mounted whether the surface is open or
         // closed. That keeps the virtual strip DOM node—and therefore its
         // horizontal scroll position—alive through the preview toggle.

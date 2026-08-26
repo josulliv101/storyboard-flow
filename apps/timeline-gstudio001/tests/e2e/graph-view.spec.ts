@@ -1762,21 +1762,26 @@ test.describe("graph view E2E", () => {
     await expect.poll(heightOf).toBeGreaterThan(0);
     const initial = await heightOf();
 
-    // The 44px box is the DRAG TARGET and never changes; the visible band is
-    // smaller and sits just below centre inside it (8px at desktop, 12 where
-    // it has to hold the grip), so the space either side of it reads as
-    // clearance between the preview and the timeline.
+    // 22px IN FLOW (PL16-007): the spec's 8px gap under the controls row, then
+    // the pane's 14px lip. It was 44 — a well tall enough to hold the
+    // transport, which used to ride on it and no longer does.
     expect(
       await divider.evaluate((el) => Math.round(el.getBoundingClientRect().height)),
-    ).toBe(44);
-    expect(
-      await divider
-        .locator("[data-divider-line]")
-        .evaluate((el) => Math.round(el.getBoundingClientRect().height)),
-    ).toBe(8);
-    // The grip is for coarse pointers only: present in the DOM, not painted
-    // at desktop width.
-    await expect(divider.locator("[data-divider-grip]")).toBeHidden();
+    ).toBe(22);
+    // THE HIT TARGET IS BIGGER THAN THE BOX, and reaches DOWN only. It
+    // straddles the edge so a pointer aimed at the gap between the panes still
+    // catches it; reaching up would put it under the controls row.
+    const zoneBox = await divider.locator("[data-divider-zone]").boundingBox();
+    const dividerBoxForZone = await divider.boundingBox();
+    expect(Math.round(zoneBox!.height)).toBe(30);
+    expect(Math.round(zoneBox!.y)).toBe(Math.round(dividerBoxForZone!.y));
+    // The grip is the resting affordance now — a pill, painted at every width.
+    // It used to be a coarse-pointer-only mark hidden at desktop.
+    const grip = divider.locator("[data-divider-grip]");
+    await expect(grip).toBeVisible();
+    const gripBox = await grip.boundingBox();
+    expect(Math.round(gripBox!.width)).toBe(40);
+    expect(Math.round(gripBox!.height)).toBe(4);
     const splitPane = page.getByTestId("workbench-split-pane");
     const displaySurface = page.getByTestId("workbench-display-surface");
     expect(
@@ -1788,28 +1793,34 @@ test.describe("graph view E2E", () => {
         (element) => getComputedStyle(element).borderBottomWidth,
       ),
     ).toBe("0px");
-    const dividerLine = divider.locator("[data-divider-line]");
-    await expect(dividerLine).toHaveCount(1);
-    expect(
-      await dividerLine.evaluate((element) => getComputedStyle(element).backgroundImage),
-    ).toContain("linear-gradient");
-    // The band is painted by a gradient built from `currentColor`, so COLOR
-    // is what hover changes. (This read used to be `backgroundColor`, which
-    // is transparent on a gradient-backed element in both states — the
-    // assertion could not fail and, once the gradient landed, could not pass
-    // either.)
-    const dividerLineColor = () =>
-      dividerLine.evaluate((el) => getComputedStyle(el).color);
-    const restLineColor = await dividerLineColor();
-    // x=60, NOT x=20 (PL15-008). The divider's left end carries the preview's
-    // audio icon now — a 28px control at `left-2`, so it occupies roughly the
-    // first 36 pixels — and hovering THAT is not hovering the divider. Moving
-    // the point is only honest because of what is left: the drag target is
-    // still everything but the first 36px of a divider that runs the full
-    // width, which is why one icon was allowed there when a button AND a 64px
-    // slider previously were not.
+    // THE OLD BAND IS GONE, not restyled. The spec's acceptance is that exactly
+    // ONE bright horizontal line survives below the picture — the scrubber —
+    // and the divider communicates through cursor, grip and hover instead.
+    await expect(divider.locator("[data-divider-line]")).toHaveCount(0);
+    const edge = divider.locator("[data-divider-edge]");
+    // AT REST THE EDGE PAINTS NOTHING — the one assertion that carries the
+    // spec's acceptance criterion.
+    expect(await edge.evaluate((el) => (el as HTMLElement).style.backgroundColor)).toBe(
+      "transparent",
+    );
+    await expect(divider).not.toHaveAttribute("data-divider-reached", "");
+
+    // HOVER BRINGS THE EDGE UP. x=60 is fine again: the audio control moved off
+    // the divider into the transport row, so the whole width is the zone.
     await divider.hover({ position: { x: 60, y: 10 } });
-    await expect.poll(dividerLineColor).not.toBe(restLineColor);
+    // ASSERTED ON THE PUBLISHED STATE AND THE SPECIFIED COLOUR, not on the
+    // computed one. Both marks fade over 120ms, and a computed read after the
+    // flip returns the value being faded FROM — it stayed there through a
+    // five-second poll, which is indistinguishable from a rule that never
+    // applied. What is checked instead is the fact (the pane says it is being
+    // reached for) and the colour it is heading to.
+    await expect(divider).toHaveAttribute("data-divider-reached", "");
+    await expect
+      .poll(() => edge.evaluate((el) => (el as HTMLElement).style.backgroundColor))
+      .toBe("rgba(255, 255, 255, 0.25)");
+    await expect
+      .poll(() => grip.evaluate((el) => (el as HTMLElement).style.backgroundColor))
+      .toBe("rgba(255, 255, 255, 0.55)");
     await page.mouse.move(0, 0); // unhover before the resize steps below
 
     // Expanding a sub-graph grows the content BELOW the preview. The preview
@@ -2662,218 +2673,204 @@ test.describe("graph view E2E", () => {
     await expect.poll(translateX).toBeLessThan(20);
   });
 
-  test("preview transport stays static in the divider with time aligned right", async ({
+  test("the transport is a row under the picture, and the divider is the pane's edge", async ({
     page,
   }) => {
+    // PL16-007, the transport-bar spec. THE PREVIOUS VERSION OF THIS TEST
+    // asserted the opposite arrangement — a transport hung off the surface's
+    // bottom edge and centred on a divider band's mid-line, with the band
+    // carrying a hand-written gradient window punched through it so no line ran
+    // behind the glyphs. That is the thing the spec replaces: below the picture
+    // there is now exactly ONE bright horizontal line, the scrubber, and the
+    // divider is the pane's own edge rather than a shelf for controls.
     await installGraphApi(page);
     await openGraph(page);
     await previewToggle(page).click();
-    // The pane SLIDES open and its chrome fades in once it lands, so every
-    // measurement below has to be taken against a pane that has stopped
-    // moving — otherwise "the transport does not move on hover" is measured
-    // across a transport that was still arriving. `data-preview-settled` is
-    // the pane saying it is open and still.
+    // Every measurement below has to be taken against a pane that has stopped
+    // moving, or "the row does not overlap the picture" is measured across a
+    // row that was still arriving.
     await page.locator("[data-preview-settled]").waitFor({ state: "attached" });
 
     const surface = page.getByTestId("workbench-display-surface");
     const canvas = page.getByTestId("workbench-display-canvas");
     const controls = page.getByTestId("workbench-preview-controls");
     const buttonGroup = controls.locator("[data-transport-button-group]");
-    const primaryControl = controls.locator("[data-transport-primary-control]");
     const time = page.getByTestId("workbench-preview-time");
-    const divider = page.getByRole("separator", {
-      name: "Resize workbench display",
-    });
-    const dividerLine = divider.locator("[data-divider-line]");
-    const playButton = page.getByRole("button", {
-      name: "Play workbench preview",
-    });
+    const rail = page.locator("[data-preview-scrub-rail]");
+    const divider = page.getByRole("separator", { name: "Resize workbench display" });
 
+    // IN FLOW, and a child of the surface. This is the change itself: the row
+    // used to be `position: absolute` at `top-full`, hanging below the surface.
     expect(await controls.evaluate((element) => getComputedStyle(element).position)).toBe(
-      "absolute",
+      "static",
     );
-    await expect(controls).toHaveAttribute("data-transport-layout", "static");
-    await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
-    await expect(time).toContainText("/");
-    await expect(controls.locator("[data-transport-capsule]")).toHaveCount(0);
-    // Grip marks are the coarse-pointer affordance; this runs at desktop
-    // width, where the hover brighten does the job and the grip stays unpainted.
-    await expect(divider.locator("[data-divider-grip]")).toBeHidden();
-    // RESTING (nothing hovered): background-free. The ACTIVE invert to a white
-    // disc is covered by the WorkbenchSplitPane story, which can hover the
-    // preview deterministically.
+    await expect(controls).toHaveAttribute("data-transport-layout", "row");
     expect(
-      await primaryControl.evaluate(
-        (element) => getComputedStyle(element).backgroundColor,
-      ),
-    ).toBe("rgba(0, 0, 0, 0)");
+      await controls.evaluate((element) => element.parentElement?.dataset.testid ?? ""),
+    ).toBe("workbench-display-surface");
 
-    // All three 44px hit targets remain centered on the divider's visible
-    // band, while their own chrome stays deliberately compact.
-    const [surfaceBox, canvasBox, groupBox, dividerBox, dividerLineBox, timeBox] =
+    const [surfaceBox, canvasBox, railBox, controlsBox, groupBox, timeBox, dividerBox] =
       await Promise.all([
         surface.boundingBox(),
         canvas.boundingBox(),
+        rail.boundingBox(),
+        controls.boundingBox(),
         buttonGroup.boundingBox(),
-        divider.boundingBox(),
-        dividerLine.boundingBox(),
         time.boundingBox(),
+        divider.boundingBox(),
       ]);
-    expect(surfaceBox).not.toBeNull();
-    expect(canvasBox).not.toBeNull();
-    expect(groupBox).not.toBeNull();
-    expect(dividerBox).not.toBeNull();
-    expect(dividerLineBox).not.toBeNull();
-    expect(timeBox).not.toBeNull();
-    // The BOX is the hit target and never changes; the visible band is
-    // smaller and centred on one fixed mid-line, so its height can differ by
-    // breakpoint (8 here at desktop, 12 where it hosts the grip) with nothing
-    // else moving.
-    expect(dividerBox!.height).toBe(44);
-    expect(dividerLineBox!.height).toBe(8);
-    // Just BELOW centre, so there is more clearance above the band than below
-    // it — the transport overhangs far enough to crowd the preview more than
-    // the timeline, and an even split read bottom-heavy.
-    expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(dividerBox!.y + 24, 0);
-    // 5 × the 44px button well — jump-to-start, previous, play, next,
-    // jump-to-end. It was 132 (three wells) before the two edge buttons.
-    expect(groupBox!.width).toBe(220);
-    expect(groupBox!.height).toBe(44);
-    // Centered on the BAND, not on the box.
-    expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(
-      groupBox!.y + groupBox!.height / 2,
-      0,
-    );
-    // THE SCRUBBER SITS BELOW THE PICTURE, ON CHROME (PL16-007). The spec's
-    // reason is legibility — a control drawn on footage changes contrast with
-    // every clip — so what is asserted is that it clears the frame, and by the
-    // 4px the spec asks for so the track cannot fuse with a bright bottom edge.
-    const railBox = await page.locator("[data-preview-scrub-rail]").boundingBox();
-    expect(railBox).not.toBeNull();
-    expect(Math.round(railBox!.y - (canvasBox!.y + canvasBox!.height))).toBe(4);
-
-    expect(
-      Math.abs(timeBox!.x + timeBox!.width - (surfaceBox!.x + surfaceBox!.width - 12)),
-    ).toBeLessThanOrEqual(1);
-
-    const [previousVisualBox, playVisualBox, nextVisualBox] = await Promise.all([
-      page
-        .getByRole("button", { name: "Previous workbench clip" })
-        .locator("span")
-        .boundingBox(),
-      page
-        .getByRole("button", { name: "Play workbench preview" })
-        .locator("span")
-        .boundingBox(),
-      page
-        .getByRole("button", { name: "Next workbench clip" })
-        .locator("span")
-        .boundingBox(),
-    ]);
-    expect(previousVisualBox).not.toBeNull();
-    expect(playVisualBox).not.toBeNull();
-    expect(nextVisualBox).not.toBeNull();
-    expect(
-      playVisualBox!.x +
-        playVisualBox!.width / 2 -
-        (previousVisualBox!.x + previousVisualBox!.width / 2),
-    ).toBeCloseTo(36, 0);
-    expect(
-      nextVisualBox!.x +
-        nextVisualBox!.width / 2 -
-        (playVisualBox!.x + playVisualBox!.width / 2),
-    ).toBeCloseTo(36, 0);
-
-    // Divider hover does not resize or move the transport.
-    // x=60, NOT x=20 (PL15-008). The divider's left end carries the preview's
-    // audio icon now — a 28px control at `left-2`, so it occupies roughly the
-    // first 36 pixels — and hovering THAT is not hovering the divider. Moving
-    // the point is only honest because of what is left: the drag target is
-    // still everything but the first 36px of a divider that runs the full
-    // width, which is why one icon was allowed there when a button AND a 64px
-    // slider previously were not.
-    // y=30, NOT y=6 (PL16-006). The scrub line is drawn 4px above the divider's
-    // visible bar, so its hit band occupies the divider box's top ~20px of
-    // clearance — pressing there scrubs rather than resizes. That is a real
-    // trade and it is the one the placement forces: a line that close to the
-    // bar cannot have a usable target anywhere but in that clearance. What is
-    // left for the drag is 24px, including the bar itself, which is more than
-    // a resizer conventionally gets. The point being asserted — hovering the
-    // divider does not move the transport — is unchanged.
-    await divider.hover({ position: { x: 60, y: 30 } });
-    const groupAfterHover = await buttonGroup.boundingBox();
-    expect(groupAfterHover).not.toBeNull();
-    expect(groupAfterHover!.x).toBeCloseTo(groupBox!.x, 0);
-    expect(groupAfterHover!.y).toBeCloseTo(groupBox!.y, 0);
-    expect(groupAfterHover!.width).toBe(groupBox!.width);
-    expect(groupAfterHover!.height).toBe(groupBox!.height);
-
-    const overhangPaintsAboveLowerContent = await playButton.evaluate((element) => {
-      const buttonBox = element.getBoundingClientRect();
-      const controls = element.closest("[data-testid='workbench-preview-controls']");
-      const hit = document.elementFromPoint(
-        buttonBox.left + buttonBox.width / 2,
-        buttonBox.bottom - 2,
-      );
-      return controls === hit || controls?.contains(hit) === true;
-    });
-    expect(overhangPaintsAboveLowerContent).toBe(true);
-
-    // Keyboard focus follows the visible previous/play/next DOM order without
-    // changing the transport's dimensions.
-    const stripButton = page.getByRole("button", {
-      name: "Strip layout",
-      exact: true,
-    });
-    await stripButton.focus();
-    let playHasFocus = false;
-    for (let step = 0; step < 16 && !playHasFocus; step += 1) {
-      await page.keyboard.press("Tab");
-      playHasFocus = await playButton.evaluate(
-        (element) => document.activeElement === element,
-      );
+    for (const box of [surfaceBox, canvasBox, railBox, controlsBox, groupBox, timeBox, dividerBox]) {
+      expect(box).not.toBeNull();
     }
-    expect(playHasFocus).toBe(true);
-    expect(await playButton.evaluate((element) => element.matches(":focus-visible"))).toBe(
-      true,
-    );
-    await expect(controls).toHaveAttribute("data-transport-layout", "static");
-    const groupAfterFocus = await buttonGroup.boundingBox();
-    expect(groupAfterFocus).not.toBeNull();
-    expect(groupAfterFocus!.width).toBe(groupBox!.width);
-    expect(groupAfterFocus!.height).toBe(groupBox!.height);
 
-    // Clicking the transport must not engage the divider's resize gesture.
-    const surfaceHeightBeforePlay = await divider.getAttribute("aria-valuenow");
-    await playButton.click();
-    await expect(surface).toHaveAttribute("data-preview-playing", "true");
-    await expect(divider).toHaveAttribute("aria-valuenow", surfaceHeightBeforePlay!);
+    // THE ORDER, TOP TO BOTTOM, WITH NOTHING OVERLAPPING: picture, scrubber,
+    // controls, edge. Every control sits on chrome and none is drawn over the
+    // frame, which is the spec's reason — a control on footage changes contrast
+    // with every clip.
+    expect(Math.round(railBox!.y - (canvasBox!.y + canvasBox!.height))).toBe(4);
+    expect(controlsBox!.y).toBeGreaterThanOrEqual(railBox!.y + railBox!.height);
+    expect(dividerBox!.y).toBeGreaterThanOrEqual(controlsBox!.y + controlsBox!.height);
+    expect(Math.round(controlsBox!.height)).toBe(44);
 
-    // The rest of the divider remains a resize target.
-    //
-    // AT x=60, NOT x=20 (PL15-008). The divider's left end carries the
-    // preview's audio icon now — 28px at `left-2` — and that control stops
-    // pointer propagation for exactly the reason the transport does: a press on
-    // it must not begin a resize. So x=20 lands ON the island and the drag
-    // correctly does nothing, which is a pass for the island and a false
-    // failure for this assertion. The claim here is about the REST of the
-    // divider, and 36px in is where the rest begins.
-    const dividerBoxAfterPlay = await divider.boundingBox();
-    expect(dividerBoxAfterPlay).not.toBeNull();
-    await page.mouse.move(
-      dividerBoxAfterPlay!.x + 60,
-      dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2,
+    // ONE 14px INSET, shared, so the bar begins and ends where the controls do.
+    expect(Math.round(railBox!.x - surfaceBox!.x)).toBe(14);
+    expect(
+      Math.round(surfaceBox!.x + surfaceBox!.width - (timeBox!.x + timeBox!.width)),
+    ).toBe(14);
+
+    // CENTRED ON THE PICTURE, not on what the other two columns leave over.
+    // `1fr auto 1fr` is what makes that survive the timecode changing width,
+    // which it does on the tenth, ten times a second.
+    expect(
+      Math.abs(groupBox!.x + groupBox!.width / 2 - (surfaceBox!.x + surfaceBox!.width / 2)),
+    ).toBeLessThanOrEqual(1);
+    // Four 30px ghosts, a 36px play disc, and its 6px margins.
+    expect(Math.round(groupBox!.width)).toBe(168);
+    expect(await controls.locator("[data-transport-capsule]").count()).toBe(0);
+
+    // `m:ss.d`, the same function the scrubber's tooltip spends — the spec
+    // requires the two to agree and one definition is how that is guaranteed.
+    await expect(time).toHaveText(/^\d+:\d\d\.\d \/ \d+:\d\d\.\d$/);
+
+    await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Jump to start of workbench preview" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Jump to end of workbench preview" }),
+    ).toBeVisible();
+
+    // THE EDGE PAIR SITS OUTSIDE THE CLIP STEPPERS. Asserted by x rather than by
+    // DOM order: what matters is that reading outward from play you get "one
+    // clip" then "all the way", and a DOM check would pass on a layout that
+    // visually interleaved them.
+    const xOf = async (name: string) =>
+      (await page.getByRole("button", { name }).boundingBox())!.x;
+    expect(await xOf("Jump to start of workbench preview")).toBeLessThan(
+      await xOf("Previous workbench clip"),
     );
+    expect(await xOf("Jump to end of workbench preview")).toBeGreaterThan(
+      await xOf("Next workbench clip"),
+    );
+
+    // AND THE VOLUME IS IN THE ROW NOW, at its left, rather than parked on the
+    // divider where it used to shrink the drag target.
+    const mute = page.getByTestId("workbench-preview-mute");
+    const muteBox = (await mute.boundingBox())!;
+    expect(Math.round(muteBox.x - surfaceBox!.x)).toBe(14);
+    expect(muteBox.y).toBeGreaterThanOrEqual(controlsBox!.y);
+    expect(muteBox.y + muteBox.height).toBeLessThanOrEqual(controlsBox!.y + controlsBox!.height);
+
+    // THE DIVIDER IS THE PANE'S EDGE. Its old band is gone entirely, and the
+    // resting affordance is a grip pill rather than a rule.
+    expect(Math.round(dividerBox!.height)).toBe(22);
+    await expect(divider.locator("[data-divider-line]")).toHaveCount(0);
+    const gripBox = (await divider.locator("[data-divider-grip]").boundingBox())!;
+    expect(Math.round(gripBox.width)).toBe(40);
+    expect(Math.round(gripBox.height)).toBe(4);
+    // A PILL, NOT A RULE — the distinction the whole redesign turns on.
+    expect(gripBox.width).toBeLessThan(dividerBox!.width / 4);
+    // And it is centred, so it reads as a handle on the edge rather than a mark
+    // at one end of it.
+    expect(
+      Math.abs(gripBox.x + gripBox.width / 2 - (dividerBox!.x + dividerBox!.width / 2)),
+    ).toBeLessThanOrEqual(1);
+  });
+
+  test("the pane's edge drags, resets, nudges, and is remembered", async ({ page }) => {
+    // PL16-007. The sheet edge's four behaviours, each of which can break
+    // alone, and the last of which survives a reload.
+    await installGraphApi(page);
+    await openGraph(page);
+    await previewToggle(page).click();
+    await page.locator("[data-preview-settled]").waitFor({ state: "attached" });
+
+    const divider = page.getByRole("separator", { name: "Resize workbench display" });
+    const grip = divider.locator("[data-divider-grip]");
+    const edge = divider.locator("[data-divider-edge]");
+    const heightOf = async () => Number(await divider.getAttribute("aria-valuenow"));
+    const specified = (locator: Locator) =>
+      locator.evaluate((element) => (element as HTMLElement).style.backgroundColor);
+
+    const opened = await heightOf();
+    expect(opened).toBeGreaterThan(0);
+
+    // DRAGGING. The zone reaches 8px past the box into the pane below, so the
+    // press is taken at the very bottom of the box to prove the straddle: a
+    // zone that only covered the box would miss this and resize nothing.
+    const box = (await divider.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 1);
     await page.mouse.down();
-    await page.mouse.move(
-      dividerBoxAfterPlay!.x + 60,
-      dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2 + 24,
-    );
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height + 39, { steps: 6 });
+    // WHILE DRAGGING both marks take the accent, and they take the SAME one —
+    // one constant drives both, so they cannot drift apart mid-gesture.
+    await expect(divider).toHaveAttribute("data-divider-dragging", "");
+    const draggingGrip = await specified(grip);
+    expect(await specified(edge)).toBe(draggingGrip);
+    expect(draggingGrip).not.toBe("transparent");
+    // And the page wears the resize cursor, because the pointer has long since
+    // left the 30px zone it is still resizing from.
+    expect(await page.evaluate(() => document.body.style.cursor)).toBe("ns-resize");
+    expect(await page.evaluate(() => document.body.style.userSelect)).toBe("none");
     await page.mouse.up();
-    await expect
-      .poll(() => divider.getAttribute("aria-valuenow"))
-      .not.toBe(surfaceHeightBeforePlay);
+
+    const dragged = await heightOf();
+    expect(dragged).toBeGreaterThan(opened + 20);
+    // The body is handed back exactly what it had.
+    expect(await page.evaluate(() => document.body.style.cursor)).toBe("");
+
+    // ARROWS NUDGE IT, 8px a press, and UP shrinks — the key moves the edge,
+    // which is the thing under the hand, not the value the label names.
+    await divider.focus();
+    await page.keyboard.press("ArrowUp");
+    await expect.poll(heightOf).toBe(dragged - 8);
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(heightOf).toBe(dragged);
+
+    // DOUBLE-CLICK RESETS, which is the only way back for someone who has
+    // dragged the pane somewhere useless.
+    await divider.dblclick({ position: { x: 200, y: 14 } });
+    await expect.poll(heightOf).not.toBe(dragged);
+    const reset = await heightOf();
+
+    // AND IT IS REMEMBERED PER PROJECT, across a full reload rather than just a
+    // pane toggle — the toggle keeps the component tree, so it would pass on
+    // nothing more than React state.
+    await divider.focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(heightOf).toBe(reset + 16);
+    const chosen = await heightOf();
+
+    await page.reload();
+    // The pane's OPEN state is not persisted — only the split is — so it is
+    // reopened here rather than expected back. That is deliberate on both
+    // counts: which panes are showing is a per-visit decision, and how big they
+    // are once shown is a preference.
+    await previewToggle(page).click();
+    await expect(page.locator("[data-preview-settled]")).toHaveCount(1, { timeout: 15000 });
+    await expect.poll(heightOf).toBe(chosen);
   });
 
   test("preview surface is a pointer shortcut that activates the compact control", async ({
@@ -2891,10 +2888,14 @@ test.describe("graph view E2E", () => {
     const surface = page.getByTestId("workbench-display-surface");
     const canvas = page.getByTestId("workbench-display-canvas");
     const controls = page.getByTestId("workbench-preview-controls");
-    const primaryControl = controls.locator("[data-transport-primary-control]");
-    const primaryColor = () =>
-      primaryControl.evaluate((element) => getComputedStyle(element).color);
-    const restingColor = await primaryColor();
+    // THE HOVER FEEDBACK MOVED TO THE PICTURE (PL16-007). It used to be the
+    // play control inverting to a white disc; the spec makes that disc the
+    // RESTING state, so there is nothing left for it to invert to. What still
+    // answers a hover is the faint play mark over the frame, which is the
+    // better place for it anyway — it is where the pointer is.
+    const hint = page.getByTestId("workbench-hover-transport-hint");
+    const hintOpacity = () =>
+      hint.evaluate((element) => Number(getComputedStyle(element).opacity));
 
     await expect(canvas).toHaveAttribute("data-preview-playback-surface-ready", "true");
 
@@ -2917,7 +2918,7 @@ test.describe("graph view E2E", () => {
     expect(await canvas.evaluate((element) => getComputedStyle(element).cursor)).toBe(
       "default",
     );
-    await expect.poll(primaryColor).toBe(restingColor);
+    await expect.poll(hintOpacity).toBe(0);
     await canvas.click({ position: emptyGutter });
     await expect(surface).toHaveAttribute("data-preview-playing", "false");
 
@@ -2926,15 +2927,15 @@ test.describe("graph view E2E", () => {
     expect(await canvas.evaluate((element) => getComputedStyle(element).cursor)).toBe(
       "pointer",
     );
-    await expect(controls).toHaveAttribute("data-transport-layout", "static");
-    await expect.poll(primaryColor).not.toBe(restingColor);
+    await expect(controls).toHaveAttribute("data-transport-layout", "row");
+    await expect.poll(hintOpacity).toBeGreaterThan(0);
 
     await canvas.click({ position: playbackCenter });
     await expect(surface).toHaveAttribute("data-preview-playing", "true");
     await expect(
       page.getByRole("button", { name: "Pause workbench preview" }),
     ).toBeVisible();
-    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await expect(controls).toHaveAttribute("data-transport-layout", "row");
 
     await canvas.click({ position: playbackCenter });
     await expect(surface).toHaveAttribute("data-preview-playing", "false");
@@ -2943,7 +2944,7 @@ test.describe("graph view E2E", () => {
     ).toBeVisible();
 
     await page.getByRole("button", { name: "Strip layout", exact: true }).hover();
-    await expect.poll(primaryColor).toBe(restingColor);
+    await expect.poll(hintOpacity).toBe(0);
   });
 
   test("preview audio: mute and volume survive a pane toggle", async ({ page }) => {
@@ -2960,18 +2961,21 @@ test.describe("graph view E2E", () => {
     await expect(surface).toHaveAttribute("data-preview-muted", "false");
     await expect(surface).toHaveAttribute("data-preview-volume", "1");
 
-    // THE SLIDER AND MUTE LIVE BEHIND THE ICON NOW (PL15-008): the divider
-    // carries one audio icon, and a press on it reveals the pair. Opening is
-    // part of the flow rather than setup noise — the state being pinned here
-    // is reached the way a user reaches it.
-    const audioToggle = page.getByTestId("workbench-preview-volume-toggle");
-    await audioToggle.click();
+    // ONE BUTTON, AND IT MUTES (PL16-007). It used to be an icon on the divider
+    // whose click opened a popover holding a mute button and the slider — a
+    // trade forced by there being nowhere beside it to put them. In the
+    // transport row there is room, so the slider expands on hover and the
+    // click goes back to being the mute.
+    const mute = page.getByTestId("workbench-preview-mute");
     const volume = page.getByTestId("workbench-preview-volume");
+    // THE SLIDER IS ALWAYS IN THE TREE, at zero width until reached for, so it
+    // keeps its place in the tab order and can be opened by keyboard.
     await expect(volume).toHaveValue("1");
 
-    await page.getByRole("button", { name: "Mute workbench preview" }).click();
+    await mute.click();
     await expect(surface).toHaveAttribute("data-preview-muted", "true");
     await expect(volume).toHaveValue("0");
+    await expect(mute).toHaveAccessibleName("Unmute workbench preview");
 
     // The whole reason audio state lives on the channel rather than in the
     // surface: closing the pane unmounts the surface, and the setting must not
@@ -2981,11 +2985,12 @@ test.describe("graph view E2E", () => {
     await previewToggle(page).click();
     await expect(surface).toHaveAttribute("data-preview-muted", "true");
 
-    // Reopened pane, reopened popover: the surface unmounted with the pane, so
-    // the reveal is closed again while the MUTE it was showing survived on the
-    // channel — which is the point of the round trip above.
-    await audioToggle.click();
-    await page.getByRole("button", { name: "Unmute workbench preview" }).click();
+    // AND THE ROUND TRIP LEFT THE CONTROL AGREEING WITH THE CHANNEL: a fresh
+    // surface mounted showing the mute that outlived it.
+    await expect(page.getByTestId("workbench-preview-mute")).toHaveAccessibleName(
+      "Unmute workbench preview",
+    );
+    await page.getByTestId("workbench-preview-mute").click();
     await expect(surface).toHaveAttribute("data-preview-muted", "false");
   });
 
@@ -3011,13 +3016,14 @@ test.describe("graph view E2E", () => {
 
     const controls = page.getByTestId("workbench-preview-controls");
     const buttonGroup = controls.locator("[data-transport-button-group]");
-    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await expect(controls).toHaveAttribute("data-transport-layout", "row");
     await expect
       .poll(() =>
         buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
       )
-      // 5 × 44px wells, up from 3 — see the static-transport test above.
-      .toBe(220);
+      // 4 × 30px ghost wells + a 36px play disc + its 6px margins (PL16-007).
+      // It was 220 — five 44px wells — while the row rode the divider.
+      .toBe(168);
     await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
     // The whole point of this test is TOUCH reach, so the two new edge buttons
@@ -3044,7 +3050,7 @@ test.describe("graph view E2E", () => {
       "data-preview-playing",
       "true",
     );
-    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await expect(controls).toHaveAttribute("data-transport-layout", "row");
     await canvas.click({ position: playbackCenter });
     await expect(page.getByTestId("workbench-display-surface")).toHaveAttribute(
       "data-preview-playing",
@@ -3054,12 +3060,11 @@ test.describe("graph view E2E", () => {
     await page.getByRole("button", { name: "Play workbench preview" }).click();
     // The SAME width while playing — this is the "stays static" half of the
     // test: the transport must not resize or re-lay-out when playback starts.
-    // 5 × 44px wells, up from 3 with the two edge buttons.
     await expect
       .poll(() =>
         buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
       )
-      .toBe(220);
+      .toBe(168);
     await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
     await expect(
@@ -3072,7 +3077,7 @@ test.describe("graph view E2E", () => {
     await page.getByTestId("workbench-display-canvas").click({
       position: playbackCenter,
     });
-    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await expect(controls).toHaveAttribute("data-transport-layout", "row");
   });
 
   test("strip seek rail auto-pans at the scroller's edge while scrubbing", async ({
@@ -3389,10 +3394,14 @@ test.describe("graph view E2E", () => {
 
     // Seconds off the transport's readout. It renders the value twice (a
     // visible span and a screen-reader one), so the FIRST match is the clock.
+    // `m:ss.d / m:ss.d` since PL16-007 — it used to read `4.25s / 25.3s`. Only
+    // the ELAPSED half is parsed: the duration is the same shape and a looser
+    // pattern would happily read the wrong one.
     const clock = async () => {
       const text = (await page.getByTestId("workbench-preview-time").textContent()) ?? "";
-      const match = text.match(/([\d.]+)\s*s/);
-      return match === null ? Number.NaN : Number(match[1]);
+      const match = text.match(/^\s*(\d+):(\d\d)\.(\d)/);
+      if (match === null) return Number.NaN;
+      return Number(match[1]) * 60 + Number(match[2]) + Number(match[3]) / 10;
     };
     const cue = (id: string) => page.locator(`[data-grid-cue="${id}"]`);
     const play = (id: string) => page.locator(`[data-grid-play="${id}"]`);

@@ -2,6 +2,8 @@
 
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 
+import { formatTimecode } from "@storyboard/ui/timeline/utils";
+
 import type { PreviewTimeChannel } from "./preview-time-channel";
 
 /**
@@ -53,22 +55,6 @@ export type PreviewScrubRailProps = Readonly<{
 }>;
 
 const clamp01 = (value: number) => (value < 0 ? 0 : value > 1 ? 1 : value);
-
-/**
- * `m:ss.d` — 71.1s reads as `1:11.1`.
- *
- * TENTHS, not frames, and not hundredths. This is the number you read while
- * dragging, so it has to change visibly with the hand without flickering
- * digits nobody can track.
- */
-export function formatScrubTime(seconds: number): string {
-  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  const minutes = Math.floor(safe / 60);
-  const rest = safe - minutes * 60;
-  const whole = Math.floor(rest);
-  const tenth = Math.floor((rest - whole) * 10);
-  return `${minutes}:${whole < 10 ? "0" : ""}${whole}.${tenth}`;
-}
 
 export function PreviewScrubRail({
   channel,
@@ -125,7 +111,7 @@ export function PreviewScrubRail({
       aria-valuemin={0}
       aria-valuemax={Math.round(total * 100) / 100}
       aria-valuenow={Math.round(time * 100) / 100}
-      aria-valuetext={`${formatScrubTime(time)} of ${formatScrubTime(total)}`}
+      aria-valuetext={`${formatTimecode(time)} of ${formatTimecode(total)}`}
       ref={stripRef}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -216,7 +202,7 @@ export function PreviewScrubRail({
           className="pointer-events-none absolute bottom-5 -translate-x-1/2 rounded-md border border-white/15 bg-[#17181c] px-[7px] py-0.5 font-mono text-[11px] whitespace-nowrap text-white"
           style={{ left: `${hoverFraction * 100}%` }}
         >
-          {formatScrubTime(hoverFraction * total)}
+          {formatTimecode(hoverFraction * total)}
         </span>
       )}
     </div>

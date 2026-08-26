@@ -118,64 +118,46 @@ export const StickyPreview: Story = {
       canvasElement.querySelectorAll("[data-preview-edge-occluder]"),
     ).toHaveLength(2);
     expect(getComputedStyle(displaySurface).borderBottomWidth).toBe("0px");
-    expect(getComputedStyle(controls).position).toBe("absolute");
+    // IN FLOW UNDER THE PICTURE (PL16-007). It used to be `absolute` at
+    // `top-full`, riding the divider, with the divider's band carrying a
+    // hand-written gradient window punched through it so no line ran behind the
+    // transport's glyphs. The spec replaces all of that: one bright horizontal
+    // line below the picture (the scrubber), and a divider that is the pane's
+    // own edge rather than a shelf.
+    expect(getComputedStyle(controls).position).toBe("static");
     expect(controls.parentElement).toBe(displaySurface);
+    expect(controls).toHaveAttribute("data-transport-layout", "row");
     const buttonGroup = controls.querySelector<HTMLElement>("[data-transport-button-group]");
-    const dividerLine = divider.querySelector<HTMLElement>("[data-divider-line]");
     expect(buttonGroup).not.toBeNull();
-    expect(dividerLine).not.toBeNull();
     const buttonGroupBox = buttonGroup!.getBoundingClientRect();
     const dividerBox = divider.getBoundingClientRect();
-    const dividerLineBox = dividerLine!.getBoundingClientRect();
-    expect(getComputedStyle(dividerLine!).backgroundImage).toContain("linear-gradient");
-    // 5 × the 44px button well: jump-to-start, previous, play, next,
-    // jump-to-end. It was 132 (three wells) before the two edge buttons were
-    // added, and the number is pinned rather than derived because the time
-    // readout budgets its own max-width against half of it — the two have to
-    // be changed together, and a hard number is what makes that fail loudly.
-    expect(buttonGroupBox.width).toBe(220);
-    expect(buttonGroupBox.height).toBe(44);
-    // THE BAND'S CLEAR WINDOW IS HALF THAT WIDTH, either side of centre.
-    //
-    // The gradient breaks the divider so no line runs behind the transport's
-    // background-free glyphs. Its stops are hand-written and cannot read the
-    // sibling's width, so adding the two outer buttons widened the group to
-    // five wells and left the window at three — the jump-to-start and
-    // jump-to-end glyphs sat in the fade with the line still showing through.
-    // The assertion above was updated to 220 at the time; this one did not
-    // exist, so nothing caught it.
-    //
-    // Read off the COMPUTED gradient, which resolves the rem stops to pixels,
-    // so the check is against the group's real width rather than against the
-    // literal that produced it.
-    const bandGradient = getComputedStyle(dividerLine!).backgroundImage;
-    const clearHalf = buttonGroupBox.width / 2;
-    expect(bandGradient).toContain(`${clearHalf}px`);
+    // THE OLD BAND IS GONE, not restyled.
+    expect(divider.querySelector("[data-divider-line]")).toBeNull();
+    // Four 30px ghost wells, a 36px play disc, and its 6px side margins. Pinned
+    // rather than derived: it is the number the row's centre column is, and a
+    // hard value is what makes a change to the control set fail loudly.
+    expect(Math.round(buttonGroupBox.width)).toBe(168);
+    expect(Math.round(buttonGroupBox.height)).toBe(36);
     expect(controls.querySelector("[data-transport-capsule]")).toBeNull();
-    // The grip is the coarse-pointer affordance — always in the DOM, painted
-    // only at tablet width and below (md:hidden), so presence is what this
-    // story can assert without pinning the canvas width.
-    expect(divider.querySelector("[data-divider-grip]")).not.toBeNull();
-    // The box is the hit target and stays 44 at every breakpoint. The visible
-    // band is smaller and CENTERED on one fixed mid-line, so its height can
-    // change (8 desktop / 12 coarse-pointer) without moving anything.
-    expect(dividerBox.height).toBe(44);
-    expect(dividerLineBox.height).toBeLessThan(dividerBox.height);
-    expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(dividerBox.y + 24, 0);
-    // The band sits BELOW centre on purpose: more clearance above it than
-    // below. The transport is centred on the same line and overhangs the band
-    // far enough to crowd the preview above more than the timeline below, so
-    // an even split still read bottom-heavy. Asserted as an inequality rather
-    // than a number, so it survives a retune of the exact gap.
-    const above = dividerLineBox.y - dividerBox.y;
-    const below = dividerBox.y + dividerBox.height - (dividerLineBox.y + dividerLineBox.height);
-    expect(above).toBeGreaterThan(below);
-    // The transport centers on the BAND, not on the padded box.
-    expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(
-      buttonGroupBox.y + buttonGroupBox.height / 2,
-      0,
-    );
-    expect(controls).toHaveAttribute("data-transport-layout", "static");
+    // 22px: the spec's 8px gap under the row, then the pane's 14px lip.
+    expect(Math.round(dividerBox.height)).toBe(22);
+    // THE GRIP IS THE RESTING AFFORDANCE now — a 40x4 pill, painted at every
+    // width. It used to be a coarse-pointer-only mark, hidden at desktop.
+    const grip = divider.querySelector<HTMLElement>("[data-divider-grip]");
+    expect(grip).not.toBeNull();
+    const gripBox = grip!.getBoundingClientRect();
+    expect(Math.round(gripBox.width)).toBe(40);
+    expect(Math.round(gripBox.height)).toBe(4);
+    // A PILL, NOT A RULE — the distinction the redesign turns on.
+    expect(gripBox.width).toBeLessThan(dividerBox.width / 4);
+    // THE HIT TARGET STRADDLES THE EDGE: it reaches 8px past the box into the
+    // pane below, and deliberately not upward, where the controls row is.
+    const zone = divider.querySelector<HTMLElement>("[data-divider-zone]");
+    expect(zone).not.toBeNull();
+    const zoneBox = zone!.getBoundingClientRect();
+    expect(Math.round(zoneBox.height)).toBe(30);
+    expect(Math.round(zoneBox.top)).toBe(Math.round(dividerBox.top));
+
     expect(
       canvas.getByRole("button", { name: "Previous workbench clip" }),
     ).toBeVisible();
@@ -192,13 +174,14 @@ export const StickyPreview: Story = {
     const x = (el: HTMLElement) => el.getBoundingClientRect().x;
     expect(x(jumpStart)).toBeLessThan(x(canvas.getByRole("button", { name: "Previous workbench clip" })));
     expect(x(jumpEnd)).toBeGreaterThan(x(canvas.getByRole("button", { name: "Next workbench clip" })));
-    // Both live inside the button group, so the divider-drag guard on it (a
-    // transport press must never begin a resize) covers them too.
     expect(buttonGroup!.contains(jumpStart)).toBe(true);
     expect(buttonGroup!.contains(jumpEnd)).toBe(true);
 
-    expect(canvas.getByTestId("workbench-preview-time")).toHaveTextContent("0s / 0s");
-    expect(previewCanvas.getBoundingClientRect().bottom).toBeCloseTo(dividerBox.y, 0);
+    // `m:ss.d`, since PL16-007 — it used to read `0s / 0s`.
+    expect(canvas.getByTestId("workbench-preview-time")).toHaveTextContent("0:00.0 / 0:00.0");
+    // The picture no longer runs to the divider: the scrubber and the controls
+    // row sit between them, on chrome, which is the spec's whole premise.
+    expect(previewCanvas.getBoundingClientRect().bottom).toBeLessThan(dividerBox.y);
     expect(getComputedStyle(lowerPane).zIndex).toBe("0");
   },
 };
@@ -379,16 +362,17 @@ export const ControlledPlayback: Story = {
 
     // Starts paused → the surface offers "Play".
     expect(canvas.getByRole("button", { name: "Play workbench preview" })).toBeInTheDocument();
-    expect(controls).toHaveAttribute("data-transport-layout", "static");
+    expect(controls).toHaveAttribute("data-transport-layout", "row");
     expect(
       canvas.getByRole("button", { name: "Previous workbench clip" }),
     ).toBeVisible();
     expect(canvas.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
     expect(previewCanvas).not.toHaveAttribute("tabindex");
 
-    // RESTING: background-free, so the mark reads straight off the divider.
-    expect(getComputedStyle(primaryControl!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    const restingColor = getComputedStyle(primaryControl!).color;
+    // WHITE AT REST (PL16-007). It used to be background-free and invert to a
+    // white disc on hover; the spec makes the disc the resting state, because
+    // play is the one control in this row you look for without hunting.
+    expect(getComputedStyle(primaryControl!).backgroundColor).toBe("rgb(255, 255, 255)");
 
     const previewBounds = previewCanvas.getBoundingClientRect();
     await user.pointer({
@@ -399,21 +383,17 @@ export const ControlledPlayback: Story = {
       },
     });
     expect(getComputedStyle(previewCanvas).cursor).toBe("pointer");
-    // ACTIVE: the control INVERTS — solid white disc, mark punched black out
-    // of it — rather than just brightening the glyph.
-    // POLLED, not read once: the control carries `transition-colors`, so an
-    // immediate getComputedStyle returns a value part-way through the fade —
-    // which read as "still transparent" and looked exactly like the class not
-    // applying at all.
-    await waitFor(() =>
-      expect(getComputedStyle(primaryControl!).backgroundColor).toBe("rgb(255, 255, 255)"),
-    );
-    // The glyph color is not pinned to a literal: the token serializes as
-    // oklch, and which color space a browser reports is not what this story is
-    // about. What matters is that it left the resting zinc for the dark mark
-    // the new white disc needs.
-    expect(getComputedStyle(primaryControl!).color).not.toBe(restingColor);
-    expect(controls).toHaveAttribute("data-transport-layout", "static");
+    // THE HOVER FEEDBACK MOVED TO THE PICTURE. With the play control white at
+    // rest there is nothing left for it to invert to, so what answers a hover
+    // is the faint play mark over the frame — which is where the pointer is,
+    // and so the better place for it.
+    //
+    // POLLED, not read once: the hint carries a transition, and an immediate
+    // read returns the value it is fading FROM, which is indistinguishable from
+    // a rule that never applied.
+    const hint = canvas.getByTestId("workbench-hover-transport-hint");
+    await waitFor(() => expect(Number(getComputedStyle(hint).opacity)).toBeGreaterThan(0));
+    expect(controls).toHaveAttribute("data-transport-layout", "row");
     await user.unhover(previewCanvas);
 
     // Flip the controlled prop from OUTSIDE the surface; it re-renders as
@@ -423,30 +403,28 @@ export const ControlledPlayback: Story = {
     expect(
       await canvas.findByRole("button", { name: "Pause workbench preview" }),
     ).toBeInTheDocument();
+    // `m:ss.d` since PL16-007 — `0:00.0 / 0:30.0` rather than `0s / 30.0s`.
     expect(canvas.getByTestId("workbench-preview-time")).toHaveTextContent(
-      /0(?:\.\d+)?s \/ 30\.0s/,
+      /^0:00\.\d \/ 0:30\.0$/,
     );
 
-    // Tab order follows the DOM: the audio control sits on the divider before
-    // the transport, so it comes first. Walk past it and the transport is
-    // still reachable, which is what this ever asserted.
+    // TAB ORDER FOLLOWS THE ROW, left to right: the mute button is the row's
+    // first column, then its slider, then the transport cluster.
     //
-    // ONE STOP, NOT TWO (PL15-008). It used to be mute then the slider, both
-    // permanently in the picture. They are behind the icon now, so a keyboard
-    // user walking the view passes ONE audio control rather than two — and the
-    // pair below proves they are still reachable once it is opened, which is
-    // the half that would otherwise be lost silently.
+    // THE SLIDER IS A REAL STOP AGAIN (PL16-007), and that is the point of
+    // asserting it. It used to hide inside a popover, so a keyboard user
+    // walking the view passed one control and had to know to open it; it now
+    // lives at zero width in the tree and `focus-within` opens it, so tabbing
+    // reaches the level without a press.
     await user.tab();
-    const audioToggle = canvas.getByTestId("workbench-preview-volume-toggle");
-    expect(audioToggle).toHaveFocus();
+    const mute = canvas.getByTestId("workbench-preview-mute");
+    expect(mute).toHaveFocus();
+    await user.tab();
+    expect(canvas.getByTestId("workbench-preview-volume")).toHaveFocus();
     await user.tab();
     expect(controls.contains(document.activeElement)).toBe(true);
 
-    // Opened, the mute button and the slider are both reachable from the icon.
-    await user.click(audioToggle);
-    expect(canvas.getByTestId("workbench-preview-mute")).toBeInTheDocument();
-    expect(canvas.getByTestId("workbench-preview-volume")).toBeInTheDocument();
-    expect(controls).toHaveAttribute("data-transport-layout", "static");
+    expect(controls).toHaveAttribute("data-transport-layout", "row");
   },
 };
 
@@ -496,10 +474,11 @@ export const ControlledAudio: Story = {
     expect(surface).toHaveAttribute("data-preview-volume", "1");
     expect(canvas.getByTestId("audio-readout")).toHaveTextContent("volume=1 muted=false");
 
-    // The divider carries an audio ICON; mute and the slider are behind it
-    // (PL15-008), so opening it is the first step of the flow now.
-    await user.click(canvas.getByRole("button", { name: "Preview audio" }));
-
+    // ONE BUTTON, AND IT MUTES (PL16-007). The divider used to carry an audio
+    // icon whose click opened a popover holding a mute button and the slider,
+    // because there was nowhere beside it to put them. In the transport row
+    // there is: the slider expands on hover, and the click is the mute again —
+    // so there is no step before this one any more.
     const mute = canvas.getByRole("button", { name: "Mute workbench preview" });
     expect(mute).toHaveAttribute("aria-pressed", "false");
 

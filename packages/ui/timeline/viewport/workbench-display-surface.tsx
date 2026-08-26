@@ -3,7 +3,6 @@
 import {
   ChevronFirst,
   ChevronLast,
-  GripHorizontal,
   Pause,
   Play,
   SkipBack,
@@ -21,6 +20,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -38,7 +38,7 @@ import {
   type LayerFrame,
 } from "@storyboard/timeline-model/layer-frame";
 import type { CollectionTimelineClip, TimelineClip } from "../types";
-import { formatSeconds } from "../utils";
+import { formatTimecode } from "../utils";
 import {
   clipContainsPlaybackTime,
   clipToPreroll,
@@ -228,36 +228,45 @@ const PREROLL_LEAD_SECONDS = 1;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
-/** The divider button's full height — the DRAG HIT TARGET, and what
- *  `--workbench-preview-offset` is built from. Constant at every breakpoint
- *  (Tailwind h-7), so the band inside it can change height without moving the
- *  preview, the transport, or anything sticking below.
+/**
+ * THE DIVIDER'S HEIGHT IN FLOW, and what `--workbench-preview-offset` is built
+ * from, so anything pinned below the sticky stack follows it.
  *
- *  44 rather than 16: the band needs clear space on BOTH sides of it, and at
- *  16 with the mid-line at 10 it had 10 above and 6 below — the surface and
- *  the timeline crowded it from either side.
+ * 22, DOWN FROM 44. It used to be a well tall enough to hold the transport,
+ * which rode on it; the transport is a row of its own now, so this is back to
+ * the size of the thing it actually draws — the spec's 8px gap under the
+ * controls row, then the pane's 14px lip.
  *
- *  It is also the drag hit target, and a taller one is strictly easier to
- *  grab — there is no cost here to spend against. */
-const DIVIDER_HEIGHT_PX = 44;
+ * IT IS NO LONGER THE HIT TARGET. The zone inside it reaches 8px further down,
+ * into the pane below, for the 30px the spec asks for. It deliberately does not
+ * reach UP: 8px above this box is the controls row, and a resize that starts on
+ * a button is what the old arrangement needed a `stopPropagation` on every
+ * control to prevent.
+ */
+const DIVIDER_HEIGHT_PX = 22;
 
+/** The gap between the controls row and the pane's lip, and therefore where the
+ *  lip — and the edge line drawn along its top — begins inside the box. */
+const DIVIDER_LIP_TOP_PX = 8;
 
-/** Where the visible band's mid-line falls inside that box. The band is
- *  CENTERED on this line at every breakpoint rather than sized from the top,
- *  which is what lets it be 8px on desktop and 12px on coarse-pointer widths
- *  (where it hosts the grip) without the transport shifting. The transport is
- *  centered on the same line and may overhang the band freely.
- *
- *  DELIBERATELY BELOW CENTRE — 24 in a 44 box, so the band gets 20 clear above
- *  and 16 below. Optical, not arithmetic: the transport (h-11) is centred on
- *  this same line and overhangs the band by more than the clearance either
- *  side, so it crowds the preview above more than it crowds the timeline
- *  below, and a mathematically even 22/22 still read bottom-heavy. It is a
- *  constant rather than a fraction of the height for exactly that reason —
- *  the right value is judged, not derived. */
-const DIVIDER_BAND_CENTER_PX = 24;
+/** How far the invisible zone reaches PAST the box, into the pane below. 8 + 22
+ *  is the spec's ~30px target, straddling the edge so a pointer aimed at the
+ *  gap between the panes still catches it. */
+const DIVIDER_ZONE_OVERHANG_PX = 8;
 
-type WorkbenchDividerTransportProps = {
+/** One arrow press. Big enough to be worth pressing, small enough to place an
+ *  edge with. */
+const DIVIDER_NUDGE_PX = 8;
+
+/** The accent the grip and the edge line both take while the split is being
+ *  dragged. ONE constant so the two cannot drift apart mid-gesture, and
+ *  `sky-400` — the accent this file's focus rings already use — rather than the
+ *  spec's `#4d8dfa`, which the spec itself says to reconcile with whatever the
+ *  app's accent actually is. Spelled out rather than named as a class because
+ *  these two are styled inline; see the note on the edge. */
+const DIVIDER_ACCENT = "oklch(0.746 0.16 232.661)";
+
+type WorkbenchTransportRowProps = {
   currentTime: number;
   duration: number;
   isPlaying: boolean;
@@ -268,12 +277,18 @@ type WorkbenchDividerTransportProps = {
    *  distinct from the clip-to-clip pair above, which step between clips. */
   canSeekStart: boolean;
   canSeekEnd: boolean;
-  previewHovered: boolean;
   onTogglePlaying: () => void;
   onSeekPrevious: () => void;
   onSeekNext: () => void;
   onSeekStart: () => void;
   onSeekEnd: () => void;
+  /** The row's LEFT column, passed in rather than rendered here.
+   *
+   *  The volume control is the only thing in this row that owns state, and the
+   *  state it owns belongs to the surface (the mixer, the blocked-audio flag).
+   *  Handing it in as a node keeps the row itself a pure arrangement of three
+   *  columns — which is the one thing it has to get right. */
+  volume: ReactNode;
 };
 
 type WorkbenchAudioControlsProps = {
@@ -286,36 +301,33 @@ type WorkbenchAudioControlsProps = {
   audioBlocked: boolean;
 };
 
+/** The two secondary shapes in the row: a 30px ghost square with an 8px
+ *  radius, dimmed until aimed at. One constant because there are seven of them
+ *  and a row whose buttons differ by a pixel reads as a row that was assembled
+ *  rather than laid out. */
+const TRANSPORT_GHOST_BUTTON =
+  "grid size-[30px] shrink-0 place-items-center rounded-lg text-white/70 transition-colors hover:bg-white/[0.09] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent";
+
 /**
- * Volume: an icon on the DIVIDER, and a slider it reveals.
+ * VOLUME: a mute button that GROWS A SLIDER when it is aimed at (PL16-007).
  *
- * IT USED TO LIVE INSIDE THE PREVIEW, and the comment here said why: "The
- * divider is a resize handle first: its whole band is the drag target, and
- * parking a button at its left end quietly shrank that target — the e2e that
- * hovers the divider at x=20 caught it immediately."
+ * IT USED TO BE A CLICK-OPENED POPOVER ON THE DIVIDER, and the note here
+ * explained the trade that forced it: the icon's click was spent opening the
+ * slider, so mute had to move inside the popover as a second button, because
+ * "drag to zero and drag back to a level you have to remember" is not a
+ * replacement for one press.
  *
- * That objection was against a button AND a 64px slider sitting there
- * permanently. What sits there now is one 28px icon, and the slider only
- * exists while it is open — so the band it costs is the left 36px of a divider
- * that runs the full width. The two e2e hover points moved off that end with
- * this change, which is only honest because of that measurement: the drag
- * target is still everything but its first 36 pixels.
+ * THE ROW DISSOLVES THAT TRADE. With the control in flow there is room beside
+ * it, so the slider can arrive on HOVER and the click is free again: the button
+ * is the mute, and the level is one pointer-move away. Nothing is nested, so
+ * there is no popover to dismiss, no outside-press listener, and no Escape
+ * handler racing whatever else in the view treats Escape as "close me".
  *
- * THE ISLAND PATTERN IS THE TRANSPORT'S, not a new one. The wrapper is
- * `pointer-events-none` so the divider keeps every pixel it is not actually
- * covering, the control itself is `pointer-events-auto`, and a pointer press
- * on it stops propagating — a press on the audio control must never begin a
- * resize, exactly as a transport press must not.
- *
- * CLICK OPENS THE SLIDER; MUTE MOVES INSIDE IT. Click used to mute, and the
- * plain reading of "click the icon and you get the slider" would have left
- * mute as "drag to zero and drag back to a level you have to remember" —
- * losing a one-press action to gain a reveal. So the popover carries a mute
- * button beside the slider: mute costs one extra press rather than a gesture
- * and a memory, and the icon still SHOWS the silent state whether or not the
- * popover is open.
+ * IT NO LONGER STEALS FROM A DRAG TARGET EITHER. The old objection -- a button
+ * on the divider quietly shrinks the resize handle -- was about the divider,
+ * and this is not on it any more.
  */
-function WorkbenchAudioControls({
+function WorkbenchVolumeControl({
   volume,
   muted,
   onToggleMuted,
@@ -323,106 +335,76 @@ function WorkbenchAudioControls({
   audioBlocked,
 }: WorkbenchAudioControlsProps) {
   const silent = muted || volume <= 0;
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  // DISMISS ON A PRESS OUTSIDE, AND ON ESCAPE — with one owner, so there is no
-  // question which of them closed it. `pointerdown` rather than `click`: the
-  // click that opens the popover is still in flight when the listener is
-  // attached, and listening for clicks would close it in the same gesture.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: PointerEvent) => {
-      if (rootRef.current?.contains(event.target as Node)) return;
-      setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      // Stopped, or Escape reaches whatever else in the view treats it as
-      // "close me" and two things answer one press.
-      event.stopPropagation();
-      setOpen(false);
-    };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
-
   return (
-    <div
-      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0"
-      data-testid="workbench-preview-audio"
-    >
-      <div
-        ref={rootRef}
-        className="pointer-events-auto absolute left-2 flex items-center"
-        style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
-        onPointerDown={(event) => {
-          // The audio control visually occupies the divider and is its own
-          // interaction island — a press here must never begin a resize.
-          event.stopPropagation();
-        }}
+    <div className="group/volume flex items-center" data-testid="workbench-preview-audio">
+      <button
+        type="button"
+        onClick={onToggleMuted}
+        className={TRANSPORT_GHOST_BUTTON}
+        aria-label={silent ? "Unmute workbench preview" : "Mute workbench preview"}
+        aria-pressed={silent}
+        title={audioBlocked ? "Click to enable sound" : silent ? "Unmute" : "Mute"}
+        data-testid="workbench-preview-mute"
+        data-audio-blocked={audioBlocked || undefined}
       >
-        <button
-          type="button"
-          onClick={() => setOpen((was) => !was)}
-          className="grid size-7 shrink-0 place-items-center rounded-full text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-          // NOT "Workbench preview volume" — that name belongs to the SLIDER,
-          // and it has had it since before this control existed. Handing it to
-          // the trigger would have made an accessible-name lookup ambiguous the
-          // moment the popover opened, and silently changed which element every
-          // existing `getByRole("slider", { name: … })` resolves to.
-          aria-label="Preview audio"
-          aria-expanded={open}
-          title={audioBlocked ? "Click to enable sound" : "Volume"}
-          data-testid="workbench-preview-volume-toggle"
-          data-audio-blocked={audioBlocked || undefined}
-        >
-          {silent ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
-        </button>
-
-        {open && (
-          <div
-            className="ml-1 flex items-center gap-2 rounded-full bg-zinc-950/90 px-2 py-1 shadow-lg ring-1 ring-white/15 backdrop-blur-sm"
-            data-testid="workbench-preview-volume-popover"
-          >
-            {/* MUTE, which the icon outside used to carry on its own click.
-                Kept as a press rather than folded into the slider's zero end:
-                muting and restoring is one action, and a drag to zero followed
-                by a drag back to a level you have to remember is not. */}
-            <button
-              type="button"
-              onClick={onToggleMuted}
-              className="grid size-6 shrink-0 place-items-center rounded-full text-zinc-300 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-              aria-label={silent ? "Unmute workbench preview" : "Mute workbench preview"}
-              aria-pressed={silent}
-              title={silent ? "Unmute" : "Mute"}
-              data-testid="workbench-preview-mute"
-            >
-              {silent ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={muted ? 0 : volume}
-              onChange={(event) => onVolumeChange(Number(event.target.value))}
-              className="h-1 w-16 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-              aria-label="Workbench preview volume"
-              data-testid="workbench-preview-volume"
-            />
-          </div>
-        )}
+        {silent ? <VolumeX className="size-[17px]" /> : <Volume2 className="size-[17px]" />}
+      </button>
+      {/* WIDTH, not display or mounting. The slider stays in the tree at zero
+          width so it keeps its place in the tab order and can be reached by
+          keyboard -- `focus-within` is what opens it -- and so the expansion is
+          something to animate rather than a mount. `overflow-hidden` is what
+          makes a zero-width box actually hide a 64px child. */}
+      <div
+        className="w-0 overflow-hidden opacity-0 transition-[width,opacity] duration-[180ms] ease-out group-hover/volume:w-[70px] group-hover/volume:opacity-100 group-focus-within/volume:w-[70px] group-focus-within/volume:opacity-100 motion-reduce:transition-none"
+        data-testid="workbench-preview-volume-well"
+      >
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={muted ? 0 : volume}
+          onChange={(event) => onVolumeChange(Number(event.target.value))}
+          className="ml-1.5 h-[3px] w-16 cursor-pointer appearance-none rounded-full bg-white/20 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          // NOT renamed. This name has belonged to the SLIDER since before the
+          // popover existed, and every `getByRole("slider", { name })` in the
+          // suite resolves through it.
+          aria-label="Workbench preview volume"
+          data-testid="workbench-preview-volume"
+        />
       </div>
     </div>
   );
 }
 
-function WorkbenchDividerTransport({
+/**
+ * THE TRANSPORT ROW (PL16-007, to the transport-bar spec).
+ *
+ * IT USED TO HANG OFF THE SURFACE AND RIDE THE DIVIDER -- `absolute top-full`,
+ * every child positioned against the divider band's mid-line, with the band
+ * itself carrying a gradient window punched through it so no line ran behind
+ * the glyphs. That arrangement put THREE horizontal lines below the picture
+ * competing for the same job, and made the divider two things at once: a resize
+ * handle and a shelf for controls, so every button on it needed a
+ * `stopPropagation` to keep a press from starting a drag.
+ *
+ * NOW IT IS A ROW IN FLOW, and both problems go away rather than get managed.
+ * There is no overlap to punch a hole for and no drag to suppress, so the
+ * divider is free to become the bin's own edge and nothing else.
+ *
+ * A THREE-COLUMN GRID, `1fr auto 1fr`, so the transport cluster is OPTICALLY
+ * CENTRED ON THE PICTURE regardless of what sits either side of it. A flex row
+ * with `justify-between` would centre the cluster on the leftovers instead, and
+ * would shift it every time the timecode's width changed -- which it does, on
+ * the tenth, ten times a second.
+ *
+ * THE INNER PAIR STEPS CLIPS, NOT FRAMES. The spec's prototype labels them
+ * frame-back and frame-forward, but frame stepping already exists here, on the
+ * scrubber's arrow keys, and these two are wired to `seekToClip`: moving
+ * between shots, which is what this view is for. Making them frames would
+ * duplicate the keyboard and delete the only pointer route to the next cut.
+ */
+function WorkbenchTransportRow({
   currentTime,
   duration,
   isPlaying,
@@ -431,145 +413,114 @@ function WorkbenchDividerTransport({
   canSeekNext,
   canSeekStart,
   canSeekEnd,
-  previewHovered,
   onTogglePlaying,
   onSeekPrevious,
   onSeekNext,
   onSeekStart,
   onSeekEnd,
-}: WorkbenchDividerTransportProps) {
+  volume,
+}: WorkbenchTransportRowProps) {
   return (
     <div
       role="group"
       aria-label="Preview transport"
-      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0 transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none"
+      // 44px TALL AND IN FLOW. The picture above is `flex-1`, so this row's
+      // height comes out of the PICTURE rather than off the surface's bottom
+      // edge -- the pane the user sized stays the size they made it.
+      //
+      // The fade is unchanged from the overlay's, and is now free: a row that
+      // fades in flow leaves its own space behind, so nothing below it reflows
+      // as the chrome arrives.
+      className="grid h-11 w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center px-[14px] transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none"
       data-testid="workbench-preview-controls"
-      data-transport-layout="static"
+      data-transport-layout="row"
     >
-      {/* FIVE controls now, so 13.75rem — the width is 5 × the 44px button
-          well (size-11) and has to be kept in step with the count, since the
-          time readout to the right budgets its own width against half of it. */}
-      <div
-        className="pointer-events-auto absolute left-1/2 flex h-11 w-[13.75rem] items-center justify-center"
-        data-transport-button-group
-        style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translate(-50%, -50%)" }}
-        onPointerDown={(event) => {
-          // The transport visually occupies the divider, but remains its own
-          // interaction island. A transport press must never begin a resize.
-          event.stopPropagation();
-        }}
-      >
-        {/* THE ENDS, outside the clip-steppers. The pairing is deliberate:
-            reading outwards from the play button you get "one clip back" then
-            "all the way back", which is the order every transport in every
-            editor uses. Putting them inside would have made the two arrow
-            pairs read as one four-way stepper.
+      <div className="flex min-w-0 items-center justify-self-start">{volume}</div>
 
-            `translate-x-4` against the steppers' `2` is what makes the row
-            EVENLY spaced, and the number is not free. Each button is a 44px
-            well, so a glyph's position is its well's centre plus its nudge:
-            22+16, 66+8, 110, 154−8, 198−16 → 38, 74, 110, 146, 182. Four gaps
-            of 36px.
-
-            It was `3`, which put the outer glyphs at 34 and 186 — gaps of
-            40, 36, 36, 40. Only 4px, and it read exactly as what it was: the
-            new pair pushed out too far, the cluster reading as a control with
-            two satellites rather than one row. */}
+      <div className="flex items-center justify-self-center" data-transport-button-group>
+        {/* THE ENDS OUTSIDE THE CLIP-STEPPERS. Reading outwards from play you
+            get "one clip back" then "all the way back", which is the order
+            every transport people already know uses. Inside, the two arrow
+            pairs would read as one four-way stepper. */}
         <button
           type="button"
           onClick={onSeekStart}
           disabled={!canSeekStart}
-          className="group/start relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          className={TRANSPORT_GHOST_BUTTON}
           aria-label="Jump to start of workbench preview"
           title="Jump to start"
         >
-          <span className="grid size-5 translate-x-4 place-items-center rounded-full transition-colors group-focus-visible/start:ring-2 group-focus-visible/start:ring-sky-400 group-focus-visible/start:ring-offset-2 group-focus-visible/start:ring-offset-zinc-950">
-            <ChevronFirst className="size-3.5" />
-          </span>
+          <ChevronFirst className="size-[17px]" />
         </button>
-
         <button
           type="button"
           onClick={onSeekPrevious}
           disabled={!canSeekPrevious}
-          className="group/previous relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          className={TRANSPORT_GHOST_BUTTON}
           aria-label="Previous workbench clip"
           title="Previous clip"
         >
-          <span className="grid size-5 translate-x-2 place-items-center rounded-full transition-colors group-focus-visible/previous:ring-2 group-focus-visible/previous:ring-sky-400 group-focus-visible/previous:ring-offset-2 group-focus-visible/previous:ring-offset-zinc-950">
-            <SkipBack className="size-3.5 fill-current" />
-          </span>
+          <SkipBack className="size-[17px] fill-current" />
         </button>
 
+        {/* WHITE AT REST, not on hover. The old control was background-free
+            until the preview or the button was hovered and then inverted to a
+            white disc; the spec makes the disc the resting state, because play
+            is the one thing in this row you look for without hunting. There is
+            no hover-invert left to do, so the prop that drove it is gone rather
+            than kept as a no-op. */}
         <button
           type="button"
           onClick={onTogglePlaying}
           disabled={!canPlay}
-          className="group/play relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="mx-1.5 grid size-9 shrink-0 place-items-center rounded-full bg-white text-zinc-950 transition-colors hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={isPlaying ? "Pause workbench preview" : "Play workbench preview"}
           title={isPlaying ? "Pause" : "Play"}
+          data-transport-primary-control
         >
-          {/* ACTIVE = the highlighted state (the preview is hovered, or this
-              button is), the same condition that used to only whiten the
-              glyph. It now INVERTS: a solid white disc with the mark punched
-              black out of it. Resting stays background-free, and the disc is
-              the well's own size, so nothing shifts as it lights up. */}
-          <span
-            className={cn(
-              "grid size-5 place-items-center rounded-full transition-colors group-hover/play:bg-white group-hover/play:text-zinc-950 group-focus-visible/play:ring-2 group-focus-visible/play:ring-sky-400 group-focus-visible/play:ring-offset-2 group-focus-visible/play:ring-offset-zinc-950",
-              previewHovered && "bg-white text-zinc-950",
-            )}
-            data-transport-primary-control
-          >
-            {isPlaying ? (
-              <Pause className="size-3 fill-current" />
-            ) : (
-              <Play className="ml-0.5 size-3 fill-current" />
-            )}
-          </span>
+          {isPlaying ? (
+            <Pause className="size-[15px] fill-current" />
+          ) : (
+            // Nudged right: a triangle's visual centre is left of its bounding
+            // box, so a geometrically centred play glyph reads as sitting back
+            // in its disc.
+            <Play className="ml-0.5 size-[15px] fill-current" />
+          )}
         </button>
 
         <button
           type="button"
           onClick={onSeekNext}
           disabled={!canSeekNext}
-          className="group/next relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          className={TRANSPORT_GHOST_BUTTON}
           aria-label="Next workbench clip"
           title="Next clip"
         >
-          <span className="grid size-5 -translate-x-2 place-items-center rounded-full transition-colors group-focus-visible/next:ring-2 group-focus-visible/next:ring-sky-400 group-focus-visible/next:ring-offset-2 group-focus-visible/next:ring-offset-zinc-950">
-            <SkipForward className="size-3.5 fill-current" />
-          </span>
+          <SkipForward className="size-[17px] fill-current" />
         </button>
-
         <button
           type="button"
           onClick={onSeekEnd}
           disabled={!canSeekEnd}
-          className="group/end relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          className={TRANSPORT_GHOST_BUTTON}
           aria-label="Jump to end of workbench preview"
           title="Jump to end"
         >
-          <span className="grid size-5 -translate-x-4 place-items-center rounded-full transition-colors group-focus-visible/end:ring-2 group-focus-visible/end:ring-sky-400 group-focus-visible/end:ring-offset-2 group-focus-visible/end:ring-offset-zinc-950">
-            <ChevronLast className="size-3.5" />
-          </span>
+          <ChevronLast className="size-[17px]" />
         </button>
       </div>
 
+      {/* THE CLOCK. `tabular-nums` because it changes ten times a second and a
+          proportional 1 is narrower than a 0 -- without it the whole readout
+          twitches sideways on every tenth. Elapsed is white and the duration is
+          dim, so the eye lands on the number that is moving. */}
       <span
-        // Budgeted against HALF the button group (now 13.75rem ⇒ 6.875rem)
-        // plus a gap, so the readout cannot slide under the outermost button.
-        // This number is not free-standing — it moves whenever the group's
-        // width does.
-        className="absolute right-3 max-w-[calc(50%_-_7.75rem)] overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-zinc-900/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400 shadow-sm"
-        aria-label={`Preview time ${formatSeconds(currentTime)} of ${formatSeconds(duration)}`}
+        className="min-w-0 justify-self-end overflow-hidden font-mono text-[12px] tabular-nums whitespace-nowrap text-ellipsis"
+        aria-label={`Preview time ${formatTimecode(currentTime)} of ${formatTimecode(duration)}`}
         data-testid="workbench-preview-time"
-        style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
       >
-        <span className="sm:hidden">{formatSeconds(currentTime)}</span>
-        <span className="hidden sm:inline">
-          {formatSeconds(currentTime)} / {formatSeconds(duration)}
-        </span>
+        <span className="font-medium text-white">{formatTimecode(currentTime)}</span>
+        <span className="text-white/40"> / {formatTimecode(duration)}</span>
       </span>
     </div>
   );
@@ -2292,26 +2243,7 @@ export function WorkbenchDisplaySurface({
           here at all and what it looks like. This file only promises it a band
           below the picture and above the edge. */}
       {underPicture}
-      <WorkbenchAudioControls
-        volume={activeVolume}
-        muted={activeMuted}
-        audioBlocked={audioBlocked}
-        onToggleMuted={() => {
-          // This click IS a user gesture — resume the context on it.
-          void getMixer().resume();
-          // Unmuting from a zeroed slider must actually be audible, or the
-          // control appears to do nothing.
-          if (activeMuted && activeVolume <= 0) setVolume(1);
-          setMuted(!activeMuted);
-        }}
-        onVolumeChange={(next) => {
-          void getMixer().resume();
-          setVolume(next);
-          // Dragging the slider up is an unmute in every player people know.
-          if (next > 0 && activeMuted) setMuted(false);
-        }}
-      />
-      <WorkbenchDividerTransport
+      <WorkbenchTransportRow
         currentTime={currentTime}
         duration={duration}
         isPlaying={isPlaying}
@@ -2320,7 +2252,6 @@ export function WorkbenchDisplaySurface({
         canSeekNext={canSeekNext}
         canSeekStart={canSeekStart}
         canSeekEnd={canSeekEnd}
-        previewHovered={canPlay && previewHovered}
         onTogglePlaying={() => {
           // This click IS the user gesture the AudioContext has been waiting
           // for, so resume before play() rather than after it is refused.
@@ -2331,6 +2262,27 @@ export function WorkbenchDisplaySurface({
         onSeekNext={() => seekToClip(1)}
         onSeekStart={() => seekToEdge("start")}
         onSeekEnd={() => seekToEdge("end")}
+        volume={
+          <WorkbenchVolumeControl
+            volume={activeVolume}
+            muted={activeMuted}
+            audioBlocked={audioBlocked}
+            onToggleMuted={() => {
+              // This click IS a user gesture — resume the context on it.
+              void getMixer().resume();
+              // Unmuting from a zeroed slider must actually be audible, or the
+              // control appears to do nothing.
+              if (activeMuted && activeVolume <= 0) setVolume(1);
+              setMuted(!activeMuted);
+            }}
+            onVolumeChange={(next) => {
+              void getMixer().resume();
+              setVolume(next);
+              // Dragging the slider up is an unmute in every player people know.
+              if (next > 0 && activeMuted) setMuted(false);
+            }}
+          />
+        }
       />
     </section>
   );
@@ -2471,6 +2423,20 @@ export function WorkbenchSplitPane({
     () => restoredSurfaceHeight ?? DEFAULT_SURFACE_HEIGHT,
   );
   const [isDividerDragging, setIsDividerDragging] = useState(false);
+  /**
+   * THE POINTER IS ON THE EDGE, OR THE KEYBOARD IS — one flag for both.
+   *
+   * React state rather than `group-hover`, for a reason `group-hover` cannot
+   * cover: a keyboard user gets no pointer, and the spec's rest state is a
+   * grip so faint that a focused separator with no other feedback is
+   * invisible. `onFocus`/`onBlur` write the same flag, so focusing the edge
+   * lights it exactly as hovering does, and there is one condition to read
+   * rather than a hover variant plus a focus variant on every child.
+   *
+   * It is also the pattern the file already uses one component up:
+   * `previewHovered` drives the picture's play hint the same way.
+   */
+  const [isDividerHovered, setIsDividerHovered] = useState(false);
   // False until the opening height has been measured AND painted (see the
   // double-rAF below), so the pane appears at its size instead of animating
   // into it.
@@ -2914,6 +2880,63 @@ export function WorkbenchSplitPane({
     onSurfaceHeightChange?.(surfaceHeight);
   }, [surfaceHeight, onSurfaceHeightChange]);
 
+  /**
+   * WHILE DRAGGING, THE WHOLE PAGE GETS THE RESIZE CURSOR.
+   *
+   * Without this the cursor reverts the instant the pointer leaves the 30px
+   * zone — which it does immediately, because dragging the edge is precisely
+   * moving away from where it was. The pointer is captured so the resize keeps
+   * working, and a control that keeps working while its cursor says otherwise
+   * reads as a gesture that has been dropped.
+   *
+   * `user-select: none` for the same reason from the other side: a vertical
+   * drag across a page of text otherwise selects it, and the selection stays
+   * behind after the release.
+   */
+  useEffect(() => {
+    if (!isDividerDragging) return;
+    const { body } = document;
+    const priorCursor = body.style.cursor;
+    const priorUserSelect = body.style.userSelect;
+    body.style.cursor = "ns-resize";
+    body.style.userSelect = "none";
+    return () => {
+      body.style.cursor = priorCursor;
+      body.style.userSelect = priorUserSelect;
+    };
+  }, [isDividerDragging]);
+
+  /** Back to the size the pane opens at. Double-click to reset a splitter is a
+   *  convention old enough that its absence reads as a bug, and it is the only
+   *  way back for someone who has dragged the pane somewhere useless. */
+  const handleDividerReset = useCallback(() => {
+    setSurfaceHeight(clampSurfaceHeight(DEFAULT_SURFACE_HEIGHT));
+  }, [clampSurfaceHeight]);
+
+  /**
+   * ARROWS NUDGE THE SPLIT, 8px a press.
+   *
+   * A `role="separator"` with `aria-valuenow` that cannot be moved from the
+   * keyboard is a control that only claims to be one. Up SHRINKS the preview,
+   * because up is where the edge goes — the key moves the thing under the
+   * hand, not the value the label happens to name.
+   */
+  const handleDividerKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      const step =
+        event.key === "ArrowUp"
+          ? -DIVIDER_NUDGE_PX
+          : event.key === "ArrowDown"
+            ? DIVIDER_NUDGE_PX
+            : 0;
+      if (step === 0) return;
+      // Or the page scrolls under the pane the press was meant to resize.
+      event.preventDefault();
+      setSurfaceHeight((height) => clampSurfaceHeight(height + step));
+    },
+    [clampSurfaceHeight],
+  );
+
   const handleDividerPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -3113,54 +3136,98 @@ export function WorkbenchSplitPane({
           aria-valuemin={MIN_SURFACE_HEIGHT}
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
-          // h-11 = DIVIDER_HEIGHT_PX: the whole box is the drag target, and it
-          // stays this height at every breakpoint. The visible band inside is
-          // smaller and centered, so the space either side of it reads as the
-          // gap between the preview and the timeline without being separate
-          // padding on each.
-          className="group relative block h-11 w-full cursor-row-resize bg-transparent transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          // 22px IN FLOW: the spec's 8px gap below the controls row, then the
+          // bin's 14px lip. It was 44 — a well tall enough to hold the
+          // transport, which used to ride on it. The transport is a row of its
+          // own now, so the divider goes back to being the size of the thing it
+          // actually draws.
+          //
+          // THE HIT TARGET IS NOT THIS BOX. A child below extends it 8px into
+          // the pane beneath, giving the 30px the spec asks for, straddling the
+          // edge so a pointer aimed at the gap between the panes still catches
+          // it. It does NOT reach upward: 8px above this box is the controls
+          // row, and a resize that starts on a button is the bug the old
+          // arrangement needed a `stopPropagation` on every control to avoid.
+          className="group relative block h-[22px] w-full cursor-ns-resize bg-transparent transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none focus-visible:outline-none"
           data-workbench-divider
+          data-divider-dragging={isDividerDragging ? "" : undefined}
+          // PUBLISHED, so the reach state is a fact a test can read directly
+          // rather than one it has to infer from a colour.
+          data-divider-reached={isDividerHovered ? "" : undefined}
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
           onPointerUp={handleDividerPointerUp}
           onPointerCancel={handleDividerPointerUp}
+          onPointerEnter={() => setIsDividerHovered(true)}
+          onPointerLeave={() => setIsDividerHovered(false)}
+          onFocus={() => setIsDividerHovered(true)}
+          onBlur={() => setIsDividerHovered(false)}
+          onDoubleClick={handleDividerReset}
+          onKeyDown={handleDividerKeyDown}
         >
-          {/* The band fades out across the transport group so no divider
-              colour shows behind its background-free icons.
-
-              THE WINDOW IS HALF THE GROUP'S WIDTH, and the numbers below are
-              that and nothing else: the group is `w-[13.75rem]`, so the clear
-              span reaches 6.875rem either side of centre and the fade adds
-              2rem beyond it. When the group was three buttons those numbers
-              were 4.125rem and 6.125rem — half of 8.25rem, the same rule.
-              Adding the two outer buttons widened the group to five wells and
-              left the window at three, so the jump-to-start and jump-to-end
-              glyphs sat in the fade with the line still running under them.
-              Kept in step by hand, because a CSS gradient cannot read the
-              sibling's width; if the count changes again, both numbers move.
-
-              CENTERED on DIVIDER_BAND_CENTER_PX rather than sized from the
-              box's top: 8px at desktop, and 12px below `md`, where it has to
-              stay tall enough to hold the grip icon. Because both heights
-              share one mid-line, the transport that rides on it never moves. */}
+          {/* THE ZONE — invisible, and the only part of this that takes a
+              pointer. Everything drawn below is `pointer-events-none`, so the
+              grip cannot swallow a press that the zone should have had. */}
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 h-3 rounded-sm bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_8.875rem),transparent_calc(50%_-_6.875rem),transparent_calc(50%_+_6.875rem),currentColor_calc(50%_+_8.875rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-700 group-active:text-zinc-600 md:h-2"
-            style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
-            data-divider-line
+            className="absolute inset-x-0 top-0"
+            style={{ bottom: -DIVIDER_ZONE_OVERHANG_PX }}
+            data-divider-zone
           />
-          {/* Coarse-pointer devices never see the hover brighten, so at tablet
-              width and below the band carries a standing grip instead. At the
-              band's far LEFT: the centre belongs to the transport and the right
-              end to the time readout, whose opaque pill can span half the
-              width — anything placed there is simply painted over. */}
+          {/* THE EDGE. Nothing at rest — the spec's whole point is that only
+              ONE bright horizontal line survives below the picture, and that
+              line is the scrubber. This one appears on hover to say the edge is
+              grabbable, and takes the accent while it is being dragged.
+              Inset 10px so it reads as the top of a card rather than a rule
+              across the window. */}
           <span
             aria-hidden="true"
-            data-divider-grip
-            className="pointer-events-none absolute left-2 text-zinc-500 md:hidden"
-            style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
+            className="pointer-events-none absolute right-[10px] left-[10px] h-px transition-colors duration-[120ms] motion-reduce:transition-none"
+            // TRANSPARENT AT REST is the spec's headline: exactly one bright
+            // horizontal line survives below the picture, and it is the
+            // scrubber. This edge only exists while someone reaches for it.
+            //
+            // INLINE rather than `bg-*` classes so the two states are one
+            // ternary next to the grip's, which has to agree with it exactly.
+            //
+            // DO NOT ASSERT THE COMPUTED COLOUR HERE. The fade below means a
+            // read taken after the state flips returns the value it is fading
+            // FROM, and it stayed there through a five-second poll — the shape
+            // recorded in `computed-style-reads-transition-start`. The reach
+            // state is published as `data-divider-reached` on the button for
+            // exactly that reason: it is the fact, and it is readable the
+            // instant it is true.
+            style={{
+              top: DIVIDER_LIP_TOP_PX,
+              backgroundColor: isDividerDragging
+                ? DIVIDER_ACCENT
+                : isDividerHovered
+                  ? "rgba(255, 255, 255, 0.25)"
+                  : "transparent",
+            }}
+            data-divider-edge
+          />
+          {/* THE LIP, and the grip pill centred in it. The pill is the resting
+              affordance — the one thing visible when nothing is hovered — and
+              it is a shape rather than a line, so it says "handle" without
+              adding a rule that competes with the scrubber. */}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 grid place-items-center"
+            style={{ top: DIVIDER_LIP_TOP_PX, height: DIVIDER_HEIGHT_PX - DIVIDER_LIP_TOP_PX }}
           >
-            <GripHorizontal className="h-3 w-3" strokeWidth={2.5} />
+            <span
+              className="block h-1 w-10 rounded-sm transition-colors duration-[120ms]"
+              // Inline for the same reason as the edge above.
+              style={{
+                backgroundColor: isDividerDragging
+                  ? DIVIDER_ACCENT
+                  : isDividerHovered
+                    ? "rgba(255, 255, 255, 0.55)"
+                    : "rgba(255, 255, 255, 0.2)",
+              }}
+              data-divider-grip
+            />
           </span>
         </button>
         </div>
