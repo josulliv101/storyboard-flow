@@ -1493,7 +1493,24 @@ function DetailsFilmstripModal({
       // against the bar. `TheTwoBarsAreAdjacent` caught precisely that, at 0
       // against its floor of 16. A flex gap applies either way, and the two
       // compose: the gap is the minimum, `my-auto` spends whatever is left
-      // over. 24px also lands where the design this follows sits, about 27.
+      // over.
+      //
+      // 12px, ASKED FOR. It was 24 — where the design this follows sits, about
+      // 27 — and this column has exactly three children, so that gap was being
+      // spent twice on the two places there was least to gain from it: above
+      // the cards, and between the cards and the film. Half of it goes back to
+      // the deck, which is the only child that can use height (`fit()` turns a
+      // taller deck into a wider card).
+      //
+      // THIS IS THE ONLY SPACING THERE. `.deck`'s own `margin:20px 0 4px` in
+      // `playbar-styles.ts` reads like it contributes and does not — `ClipDeck`
+      // zeroes both margins inline on every render, in both the fitted and the
+      // unfitted branch, so the flex gap is the whole story on both sides.
+      //
+      // The floor is `TheTwoBarsAreAdjacent`'s: the film and the cards may not
+      // touch, asserted at more than 8px. 12 clears it with room, and it is a
+      // gap rather than free space so it holds even when there is none to
+      // spend.
       // THE ROW FADES AT ITS EDGES RATHER THAN BEING CUT (PL15-030).
       //
       // `overflow-clip` alone ends a card mid-picture at the boundary, which
@@ -1524,7 +1541,7 @@ function DetailsFilmstripModal({
       // `auto`: the height above is a CEILING, and on a window too short for
       // even the smallest deck the scroll belongs INSIDE this view rather than
       // on the page, where it would carry the header and the bar away with it.
-      className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-x-clip"
+      className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-x-clip"
     >
       {/* THE BAR, above everything and spanning it: the cut's clock. Outside
           the strip because it must not travel with it — the row slides, and a

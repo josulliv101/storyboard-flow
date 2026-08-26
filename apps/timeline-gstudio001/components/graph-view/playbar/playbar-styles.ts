@@ -273,7 +273,7 @@ export const PLAYBAR_CSS = `.pb{
   border:4px solid transparent; border-top:none; border-bottom:5px solid var(--alarm);
 }
 .pb .deck{
-  position:relative; height:480px; margin:12px 0 4px;
+  position:relative; height:480px; margin:20px 0 4px;
   -webkit-mask-image:linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%);
           mask-image:linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%);
 }
