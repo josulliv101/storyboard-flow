@@ -245,27 +245,10 @@ export function SelectionIndicator({
         // because this was reachable outside it; now it only exists once the
         // mode is on, so arming would be a no-op restating the obvious.
       }}
-      // HALF STRENGTH UNTIL IT IS TICKED (PL16-012).
-      //
-      // Arming select mode puts one of these on EVERY card at once, and at full
-      // strength a screen of bright white rings competes with the artwork they
-      // are drawn over — which is the thing being chosen. Dimming the empty
-      // ones lets the eye go to the pictures and back to the controls, instead
-      // of to a grid of identical circles.
-      //
-      // A TICKED ONE STAYS FULL, deliberately. It is not decoration at that
-      // point, it is the answer to "what have I got" — the one piece of state
-      // select mode exists to show — and fading it would dim the signal along
-      // with the noise. So the contrast between chosen and not chosen goes UP
-      // rather than down.
-      //
-      // No "restore on exit" is needed and none is written: the checkbox is not
-      // rendered at all outside select mode (see the early return above), so
-      // there is no other state for it to be in.
       className={[
         "absolute right-2 bottom-2 z-20 grid size-[26px] cursor-pointer place-items-center",
-        "rounded-full border-2 backdrop-blur-sm motion-safe:transition-[colors,opacity]",
-        selected ? "border-blue-500 bg-blue-500 opacity-100" : "border-white/90 bg-black/35 opacity-50",
+        "rounded-full border-2 backdrop-blur-sm motion-safe:transition-colors",
+        selected ? "border-blue-500 bg-blue-500" : "border-white/90 bg-black/35",
       ].join(" ")}
     >
       <Check

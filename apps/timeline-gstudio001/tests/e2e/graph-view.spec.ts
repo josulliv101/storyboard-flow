@@ -8696,25 +8696,6 @@ test.describe("graph view E2E", () => {
       )
       .toBeGreaterThan(0);
 
-    // AND THE EMPTY ONES SIT BACK (PL16-012). Arming puts a checkbox on EVERY
-    // card at once; at full strength that is a grid of identical bright rings
-    // competing with the artwork being chosen. A TICKED one keeps full
-    // strength, because at that point it is not decoration — it is the answer
-    // to "what have I got", the one piece of state select mode exists to show.
-    //
-    // ASSERTED AS THE CONTRAST, not as two loose numbers: the chosen one must
-    // be strictly stronger than the unchosen. Dimming both, or neither, is the
-    // regression, and either would slip past a pair of independent checks.
-    const opacityOf = (which: "on" | "off") =>
-      surface
-        .locator(`[data-selection-indicator="${which}"]`)
-        .first()
-        .evaluate((element) => Number(getComputedStyle(element).opacity));
-    const chosen = await opacityOf("on");
-    const unchosen = await opacityOf("off");
-    expect(chosen).toBe(1);
-    expect(unchosen).toBe(0.5);
-    expect(chosen).toBeGreaterThan(unchosen);
 
     await selectionAction(page, /^Copy$/);
 
@@ -9068,20 +9049,27 @@ test.describe("graph view E2E", () => {
     await page.mouse.move(0, 0);
     await expect(boxes.first()).toBeVisible();
     await expect(boxes.first()).toHaveAttribute("data-selection-indicator-reveal", "armed");
-    // PAINTED WITHOUT A POINTER NEAR IT, which is this test's subject — it
-    // replaced a hover-reveal that could stick on the last-tapped card.
-    //
-    // 0.5, NOT 1 (PL16-012): an unpicked box sits back so a screen of them does
-    // not compete with the artwork. What matters here is that it is on screen
-    // at all with the pointer parked at the origin, so the assertion is against
-    // the armed resting value rather than against full strength.
     await expect
-      .poll(() => boxes.first().evaluate((el) => Number(getComputedStyle(el).opacity)))
-      .toBe(0.5);
+      .poll(() => boxes.first().evaluate((el) => getComputedStyle(el).opacity))
+      .toBe("1");
+
+    // AND A COLLECTION'S BADGE STANDS DOWN WHILE THE MODE IS ON (PL16-012).
+    //
+    // The badge names what the card IS, which is worth saying while browsing
+    // and beside the point while picking — and it is the loudest thing on a
+    // collection, sitting right where the eye is counting. Half strength hands
+    // that ground to the checkbox.
+    const badge = surface.locator("[data-collection-badge]").first();
+    const badgeOpacity = () =>
+      badge.evaluate((element) => Number(getComputedStyle(element).opacity));
+    await expect.poll(badgeOpacity, { timeout: 3000 }).toBe(0.5);
 
     // Leaving the mode takes them all away again.
     await page.locator("[data-select-mode-toggle]").click();
     await expect(surface.locator("[data-selection-indicator]")).toHaveCount(0);
+    // AND GIVES THE BADGE BACK. This is the half that cannot be checked from
+    // inside the mode, and the half a one-way dim would silently fail.
+    await expect.poll(badgeOpacity, { timeout: 3000 }).toBe(1);
   });
 
   test("clicking the checkbox toggles — on a collection, where the rest of the card drills", async ({
@@ -9140,11 +9128,9 @@ test.describe("graph view E2E", () => {
       await page.locator("[data-select-mode-toggle]").tap();
       const checkbox = card.locator("[data-selection-indicator]");
       await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
-      // 0.5 since PL16-012 — an unpicked box sits back. On screen is the point
-      // here, not full strength.
       await expect
-        .poll(() => checkbox.evaluate((el) => Number(getComputedStyle(el).opacity)))
-        .toBe(0.5);
+        .poll(() => checkbox.evaluate((el) => getComputedStyle(el).opacity))
+        .toBe("1");
     });
     test("touch gets 44px hit targets on every selection control", async ({ page }) => {
       await installGraphApi(page);

@@ -248,7 +248,28 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
                   A background-colour alpha, NOT `opacity` on the wrapper,
                   which would take the glyph down along with it (0.45 × its own
                   0.5). */}
-            <span className="rounded-full bg-black/45 p-2">
+            <span
+              data-collection-badge
+              // HALF STRENGTH WHILE SELECT MODE IS ON (PL16-012), back to full
+              // when it ends.
+              //
+              // The badge names what the card IS, which is worth saying while
+              // you are browsing and beside the point while you are picking —
+              // then the question is which cards, and the badge is the loudest
+              // thing on a collection sitting right where the eye is counting.
+              //
+              // ON THE WRAPPER, which the note above warns against — and the
+              // warning is about doing it by ACCIDENT. It says an opacity here
+              // "would take the glyph down along with it (0.45 x its own 0.5)",
+              // and taking the whole badge down together is exactly the intent:
+              // the disc is the glyph's ground, so fading one without the other
+              // leaves strokes floating on a ring or a ring around nothing.
+              // Compounding is the mechanism, not a side effect.
+              className={[
+                "rounded-full bg-black/45 p-2 motion-safe:transition-opacity motion-safe:duration-200",
+                selectMode ? "opacity-50" : "opacity-100",
+              ].join(" ")}
+            >
               <Layers
                 className="h-10 w-10 text-white opacity-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]"
                 strokeWidth={1.5}
