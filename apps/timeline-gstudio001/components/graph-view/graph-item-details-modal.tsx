@@ -101,19 +101,6 @@ import {
   type PlaybarThumbnails,
 } from "./graph-playbar-thumbnails";
 import {
-  PREVIEW_ANCHORS,
-  lastPreviewAnchor,
-  rememberPreviewAnchor,
-  type PreviewAnchor,
-} from "./graph-seam-preview-anchor";
-import {
-  LANE_SIZES,
-  laneHeightFor,
-  lastLaneSize,
-  rememberLaneSize,
-  type LaneSize,
-} from "./graph-seam-lane-size";
-import {
   BAR_REACHES,
   barReachLabel,
   barReachWindow,
@@ -451,10 +438,6 @@ function DetailsFilmstripModal({
   // panels are on screen: the row is what you are working on, the bar is how
   // much of the sequence you can get to without leaving it.
   const [reach, setReach] = useState<BarReach>(lastBarReach());
-  // HOW TALL THE FILM IS DRAWN (PL15-022). Remembered for the session like the
-  // reach and the view count, and for the same reason: a working posture, not
-  // a preference.
-  const [laneSize, setLaneSize] = useState<LaneSize>(lastLaneSize());
   // WHAT THE BOXES DRAW, kept beside the reach because it is the same kind of
   // question — how much this control shows you, and of what. Seeded from
   // module scope so it survives the modal being closed and reopened.
@@ -462,13 +445,6 @@ function DetailsFilmstripModal({
   const chooseFrames = useCallback((next: PlaybarThumbnails) => {
     rememberPlaybarThumbnails(next);
     setFrames(next);
-  }, []);
-  // WHERE THE HOVER CARD SITS, kept beside the other bar settings because it
-  // is the same kind of question — how this control behaves while you read it.
-  const [previewAnchor, setPreviewAnchor] = useState<PreviewAnchor>(lastPreviewAnchor());
-  const choosePreviewAnchor = useCallback((next: PreviewAnchor) => {
-    rememberPreviewAnchor(next);
-    setPreviewAnchor(next);
   }, []);
 
   const clipAt = useCallback(
@@ -1006,10 +982,6 @@ function DetailsFilmstripModal({
     setReach(next);
   }, []);
 
-  const chooseLaneSize = useCallback((next: LaneSize) => {
-    rememberLaneSize(next);
-    setLaneSize(next);
-  }, []);
 
   const chooseViewCount = useCallback((next: ViewCount) => {
     rememberViewCount(next);
