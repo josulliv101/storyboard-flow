@@ -8,7 +8,7 @@ import {
   mediaDurationSeconds,
   type CollectionsGraph,
   type NodeId,
-} from "../core/graph";
+} from "@storyboard/collections-core/graph";
 
 /**
  * A fully trimmed clip can derive a 0px width from its duration. The slot

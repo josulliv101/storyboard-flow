@@ -7,7 +7,7 @@ import {
   mediaDurationSeconds,
   type MediaNode,
   type NodeId,
-} from "../core/graph";
+} from "@storyboard/collections-core/graph";
 import { type CollectionItemContentProps } from "./collections-components";
 import { roundSecondsForDisplay } from "./duration-format";
 import { useLiveTrim } from "./live-trim";

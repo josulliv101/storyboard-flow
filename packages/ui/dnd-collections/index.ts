@@ -37,7 +37,7 @@ export {
   type NodeId,
   type Result,
   type VideoMediaNode,
-} from "./core/graph";
+} from "@storyboard/collections-core/graph";
 export {
   applyCommand,
   type AddNodesCommand,
@@ -48,8 +48,8 @@ export {
   type MoveNodesCommand,
   type SetNodePlacementCommand,
   type UpdateMediaCommand,
-} from "./core/commands";
-export { hydrateCollection, type HydrateRejection } from "./core/hydrate";
+} from "@storyboard/collections-core/commands";
+export { hydrateCollection, type HydrateRejection } from "@storyboard/collections-core/hydrate";
 export {
   applyPatch,
   invertPatch,
@@ -59,7 +59,7 @@ export {
   type NodeMove,
   type NodeUpdate,
   type ReplayRejection,
-} from "./core/patches";
+} from "@storyboard/collections-core/patches";
 export {
   decodeDropTarget,
   encodeDropTarget,
@@ -73,8 +73,8 @@ export {
   type IntentRejection,
   type PanelChildRect,
   type RectLike,
-} from "./core/intents";
-export { createHistory, type CollectionsHistory, type HistoryEntry } from "./core/history";
+} from "@storyboard/collections-core/intents";
+export { createHistory, type CollectionsHistory, type HistoryEntry } from "@storyboard/collections-core/history";
 export {
   resolveGridRowMoveCommand,
   resolveKeyboardCommand,
@@ -89,7 +89,7 @@ export {
   type KeyboardTrimRejection,
   type KeyboardWindowMoveAction,
   type KeyboardWindowMoveRejection,
-} from "./core/keyboard";
+} from "@storyboard/collections-core/keyboard";
 
 // React bindings (store + provider + default views)
 export {

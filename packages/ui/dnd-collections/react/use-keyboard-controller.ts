@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from "react";
 
-import { getChildren, mediaDurationSeconds, type NodeId } from "../core/graph";
+import { getChildren, mediaDurationSeconds, type NodeId } from "@storyboard/collections-core/graph";
 import {
   resolveGridRowMoveCommand,
   resolveKeyboardCommand,
@@ -23,7 +23,7 @@ import {
   type KeyboardTrimRejection,
   type KeyboardWindowMoveAction,
   type KeyboardWindowMoveRejection,
-} from "../core/keyboard";
+} from "@storyboard/collections-core/keyboard";
 import { type CollectionsStore } from "./collections-store";
 import { roundSecondsForDisplay } from "./duration-format";
 import { findNodeElement, focusNodeWhenMounted, isEditableKeyboardTarget } from "./node-dom";

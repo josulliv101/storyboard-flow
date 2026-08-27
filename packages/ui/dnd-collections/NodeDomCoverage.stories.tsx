@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, waitFor } from "storybook/test";
 
-import { parseNodeId } from "./core/graph";
+import { parseNodeId } from "@storyboard/collections-core/graph";
 import { findNodeElement, focusNodeWhenMounted } from "./react/node-dom";
 
 function FocusLifecycleHarness() {

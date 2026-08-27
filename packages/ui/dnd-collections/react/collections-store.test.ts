@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { buildGraph, getChildren, hasSourceWindow, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "../core/graph";
-import { applyCommand } from "../core/commands";
+import { buildGraph, getChildren, hasSourceWindow, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "@storyboard/collections-core/graph";
+import { applyCommand } from "@storyboard/collections-core/commands";
 import {
   InvalidInitialGraphError,
   createCollectionsStore,

@@ -4,9 +4,9 @@ import { memo, useCallback, useRef, type KeyboardEventHandler, type MouseEvent }
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { twMerge } from "tailwind-merge";
 
-import { getChildren, mediaDurationSeconds, type NodeId } from "../core/graph";
-import { encodeDropTarget } from "../core/intents";
-import { finitePositiveOrUndefined } from "../core/numeric";
+import { getChildren, mediaDurationSeconds, type NodeId } from "@storyboard/collections-core/graph";
+import { encodeDropTarget } from "@storyboard/collections-core/intents";
+import { finitePositiveOrUndefined } from "@storyboard/collections-core/numeric";
 import {
   useCollectionsComponents,
   type CollectionGhostContentProps,

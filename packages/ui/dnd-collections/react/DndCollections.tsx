@@ -30,12 +30,12 @@ import {
 } from "@dnd-kit/core";
 import { getEventCoordinates } from "@dnd-kit/utilities";
 
-import { getChildren, type CollectionItemNode, type CollectionsGraph, type NodeId } from "../core/graph";
+import { getChildren, type CollectionItemNode, type CollectionsGraph, type NodeId } from "@storyboard/collections-core/graph";
 import type {
   AddNodesCommand,
   MoveNodesCommand,
   SetNodePlacementCommand,
-} from "../core/commands";
+} from "@storyboard/collections-core/commands";
 import {
   decodeDropTarget,
   encodeDropTarget,
@@ -45,7 +45,7 @@ import {
   resolveDropIntent,
   type DropIntent,
   type PanelChildRect,
-} from "../core/intents";
+} from "@storyboard/collections-core/intents";
 import {
   CollectionsStoreProvider,
   createCollectionsStore,

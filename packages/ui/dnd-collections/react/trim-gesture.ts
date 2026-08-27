@@ -12,8 +12,8 @@ import {
   mediaDurationSeconds,
   type MediaNode,
   type VideoMediaNode,
-} from "../core/graph";
-import { type MediaUpdate } from "../core/commands";
+} from "@storyboard/collections-core/graph";
+import { type MediaUpdate } from "@storyboard/collections-core/commands";
 import { useCollectionsStore } from "./collections-store";
 import {
   HOLD_DRAG_TOLERANCE_PX,

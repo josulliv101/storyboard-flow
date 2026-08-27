@@ -18,12 +18,17 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 
 ## Invariants — do not break these
 
-- **`core/` stays pure.** No React, DOM, or dnd-kit imports. Anything that
-  needs them belongs in `react/`. The core's real home is the standalone
+- **The core stays pure, and it is NOT IN THIS PACKAGE.** It lives in
   `packages/collections-core` (`@storyboard/collections-core`) so domain and
-  server packages can depend on it without this UI package; the `core/*`
-  files here are one-line re-export shims — edit the engine THERE, and its
-  unit tests live there too (same `--project=unit` run).
+  server packages can depend on it without pulling in this UI package. Import
+  it by subpath — `@storyboard/collections-core/graph`, `/commands`,
+  `/intents`, `/keyboard`, `/patches`, `/history`, `/hydrate`, `/numeric` —
+  and edit the engine, and its unit tests, THERE (same `--project=unit` run).
+  No React, DOM, or dnd-kit imports in it; anything needing those belongs in
+  `react/`. There used to be a `core/` folder here holding one-line re-export
+  shims onto that package, so `./core/graph` also worked. **They are gone.**
+  Do not reintroduce one: two paths to the same module is how the engine
+  ended up looking like it lived in two places.
 - **The graph mutates only through `applyCommand`**, and `applyPatch` is the
   only code that rewrites children/parent indexes (forward apply, undo, and
   redo all share it). Never mutate the committed graph during a drag — the
@@ -80,7 +85,7 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 ## Testing rules
 
 New behavior gets coverage at the right layer: pure logic in
-`core/*.test.ts`, interaction in a story `play` function, and an
+`packages/collections-core/*.test.ts`, interaction in a story `play` function, and an
 `apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts` test when trusted
 pointer input matters (the package-dedicated `apps/web` e2e suite was
 removed along with that app — the graph-view suite drives this package

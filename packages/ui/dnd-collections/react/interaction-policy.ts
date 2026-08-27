@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useMemo } from "react";
 
-import type { CollectionItemNode, NodeId } from "../core/graph";
+import type { CollectionItemNode, NodeId } from "@storyboard/collections-core/graph";
 import type { CollectionsStore } from "./collections-store";
 
 // The plain-click interaction policy — what a REAL click on a card's

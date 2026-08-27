@@ -2,7 +2,7 @@
 
 import { useContext } from "react";
 
-import { type CollectionsCommand } from "../core/commands";
+import { type CollectionsCommand } from "@storyboard/collections-core/commands";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { CollectionsContainerContext } from "./container-context";
 

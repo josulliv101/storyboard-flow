@@ -5,7 +5,7 @@ import {
   type AudioMediaNode,
   type ImageMediaNode,
   type VideoMediaNode,
-} from "../core/graph";
+} from "@storyboard/collections-core/graph";
 import {
   MIN_TRIM_WINDOW_SECONDS,
   resolveMove,

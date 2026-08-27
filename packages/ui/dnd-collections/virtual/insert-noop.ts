@@ -1,4 +1,4 @@
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 
 /**
  * True when a live insert-at-index into a collection would drop a CONTIGUOUS

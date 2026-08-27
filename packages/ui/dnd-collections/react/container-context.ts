@@ -2,7 +2,7 @@
 
 import { createContext, useContext, type MutableRefObject, type RefObject } from "react";
 
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 
 // Instance-scoped plumbing the provider exposes to descendants:
 // - containerRef: the wrapper element (display: contents, layout-neutral),

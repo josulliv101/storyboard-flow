@@ -10,7 +10,7 @@ import {
   type GraphNodeSpec,
   type MediaNode,
   type NodeId,
-} from "./core/graph";
+} from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import {
   type CollectionGhostContentProps,

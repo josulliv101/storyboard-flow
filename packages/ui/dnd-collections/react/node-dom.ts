@@ -1,6 +1,6 @@
 "use client";
 
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 
 const DEFAULT_FOCUS_TIMEOUT_MS = 1000;
 

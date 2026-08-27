@@ -11,9 +11,15 @@ undo/redo — built for large graphs with frequent, localized updates.
 ## Package layout
 
 ```
-core/                       Pure, framework- and DOM-independent domain
-                            logic. No React, no dnd-kit types, no DOM. If a
-                            helper needs any of those, it belongs in react/.
+core/  → NOT IN THIS PACKAGE. Pure, framework- and DOM-independent domain
+                            logic, and it lives in its own package so domain
+                            and server code can depend on it without pulling
+                            in React: `@storyboard/collections-core`, imported
+                            by subpath (`@storyboard/collections-core/graph`).
+                            Listed here because it is half the architecture
+                            and the diagrams below name it. No React, no
+                            dnd-kit types, no DOM — if a helper needs any of
+                            those, it belongs in react/.
   graph.ts                  The source-of-truth model: normalized graph
                             (nodesById / childrenById / parentById /
                             rootIds), buildGraph, branded NodeId,
@@ -95,7 +101,9 @@ virtual/
 DndCollections.stories.tsx  Storybook stories; their play functions are the
                             interaction test suite (see "Testing strategy").
 stories-helpers.ts          Pointer-event simulation for play functions.
-core/*.test.ts              Unit tests, one file per core module.
+                            Its unit tests live with it, one file per module
+                            (`packages/collections-core/*.test.ts`), and run
+                            in the same `--project=unit` pass.
 ```
 
 E2E lives outside the package: `apps/web/tests/e2e/dnd-collections.spec.ts`
@@ -106,6 +114,13 @@ iframe.
 
 The committed graph is a normalized structure — `nodesById`, `childrenById`,
 `parentById`, `rootIds` — and there is exactly one way it changes:
+
+> `core/<name>.ts` below is a SHORT LABEL, kept because the full specifier
+> would not fit the diagram. Every one of them lives in the framework-free
+> `@storyboard/collections-core` package and is imported by subpath —
+> `@storyboard/collections-core/intents` for `core/intents.ts`, and so on.
+> There was once a `dnd-collections/core/` folder of re-export shims that made
+> the short form a real path; it is gone, and the package is the only route.
 
 ```
 pointer geometry                    keyboard action
@@ -481,7 +496,7 @@ handles. One shared grammar covers both card shells (`NodeCard` and the
   `onClick`), which is how keyboard users select and multi-select. The
   collision code path synthesizes a pointer from the moving rect's center so
   intents still resolve without a pointer.
-- The semantic layer (`core/keyboard.ts`) binds **Alt+Arrow/Home/End** on a
+- The semantic layer (`@storyboard/collections-core/keyboard`) binds **Alt+Arrow/Home/End** on a
   focused card — deliberately outside the sensor's grammar so the two never
   clash. It's wired by event delegation on one wrapper div (no per-card
   handlers), resolves to the same `move-nodes` command as pointer drags

@@ -6,7 +6,7 @@ import {
   finiteNonNegativeOr,
   finitePositiveOr,
   openUnitIntervalOr,
-} from "../core/numeric";
+} from "@storyboard/collections-core/numeric";
 import { PAN_START_SLOP_PX } from "./gesture-thresholds";
 
 // Pan-to-scroll with momentum for a scroll container: drag the surface to

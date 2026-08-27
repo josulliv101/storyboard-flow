@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildGraph, parseNodeId, type CollectionsGraph } from "../core/graph";
+import { buildGraph, parseNodeId, type CollectionsGraph } from "@storyboard/collections-core/graph";
 import {
   MIN_ITEM_WIDTH,
   createTimeToOffset,

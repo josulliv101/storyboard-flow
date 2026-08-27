@@ -1,4 +1,4 @@
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 
 // Droppable `data` contract between virtualized containers and the
 // provider's collision detection. A virtualized view can't be resolved

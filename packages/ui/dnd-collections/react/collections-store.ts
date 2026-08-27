@@ -9,16 +9,16 @@ import {
   type NodeId,
   type Result,
   validateGraph,
-} from "../core/graph";
-import { hydrateCollection, type HydrateRejection } from "../core/hydrate";
+} from "@storyboard/collections-core/graph";
+import { hydrateCollection, type HydrateRejection } from "@storyboard/collections-core/hydrate";
 import {
   applyCommand,
   type CollectionsCommand,
   type CommandRejection,
-} from "../core/commands";
-import { applyPatch, verifyPatchApplies, type CollectionsPatch } from "../core/patches";
-import { createHistory, type HistoryEntry } from "../core/history";
-import { isIntentInvalid, type DropIntent } from "../core/intents";
+} from "@storyboard/collections-core/commands";
+import { applyPatch, verifyPatchApplies, type CollectionsPatch } from "@storyboard/collections-core/patches";
+import { createHistory, type HistoryEntry } from "@storyboard/collections-core/history";
+import { isIntentInvalid, type DropIntent } from "@storyboard/collections-core/intents";
 
 // The store is the single source of truth. It owns the committed graph
 // (mutated ONLY by dispatching commands through the pure reducer) and the

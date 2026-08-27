@@ -10,7 +10,7 @@ import {
   type CSSProperties,
   type ReactElement,
 } from "react";
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 
 // The aria-live announcement channel: one `announce(message)` used by every

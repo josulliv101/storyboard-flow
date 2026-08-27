@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, waitFor } from "storybook/test";
 
-import { buildGraph, parseNodeId, type GraphNodeSpec } from "./core/graph";
+import { buildGraph, parseNodeId, type GraphNodeSpec } from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { CollectionPanels } from "./react/node-views";
 import { nodeCard, waitForLayout } from "./stories-helpers";

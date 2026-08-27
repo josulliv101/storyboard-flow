@@ -51,7 +51,7 @@ export function Board() {
 
 ---
 
-## Core: graph (`core/graph.ts`)
+## Core: graph (`@storyboard/collections-core/graph`)
 
 Pure model. No React, no DOM.
 
@@ -173,7 +173,7 @@ offending id(s)).
 
 ---
 
-## Core: commands (`core/commands.ts`)
+## Core: commands (`@storyboard/collections-core/commands`)
 
 ### `applyCommand(graph, command): Result<ApplyCommandSuccess, CommandRejection>`
 
@@ -258,7 +258,7 @@ reducer never produces — see `commandPolicy` below.
 
 ---
 
-## Core: patches (`core/patches.ts`)
+## Core: patches (`@storyboard/collections-core/patches`)
 
 Patches are the reversible, serializable record of every mutation — the
 same primitive backs undo/redo, the `onChange` feed, and persistence.
@@ -301,7 +301,7 @@ validate — apply patches only to the graph state they were produced against
 
 ---
 
-## Core: hydrate (`core/hydrate.ts`)
+## Core: hydrate (`@storyboard/collections-core/hydrate`)
 
 ### `hydrateCollection(graph, collectionId, children): Result<CollectionsGraph, HydrateRejection>`
 
@@ -333,7 +333,7 @@ store keeps it invisible to undo/redo and the change feed.
 
 ---
 
-## Core: intents (`core/intents.ts`)
+## Core: intents (`@storyboard/collections-core/intents`)
 
 Geometry → semantics, separate from legality (the reducer's job).
 
@@ -416,7 +416,7 @@ a move with an empty drag set — palette drops land anywhere a move can.
 
 ---
 
-## Core: history (`core/history.ts`)
+## Core: history (`@storyboard/collections-core/history`)
 
 ### `createHistory(options?): CollectionsHistory`
 
@@ -470,7 +470,7 @@ a custom combobox, a canvas editor, a third-party widget the selector cannot
 recognize. Apps adding their own key handlers over the views should call the
 same predicate rather than keeping a second copy of the rule.
 
-## Core: keyboard (`core/keyboard.ts`)
+## Core: keyboard (`@storyboard/collections-core/keyboard`)
 
 ### `resolveKeyboardCommand(graph, nodeId, action): Result<CollectionsCommand, KeyboardRejection>`
 
