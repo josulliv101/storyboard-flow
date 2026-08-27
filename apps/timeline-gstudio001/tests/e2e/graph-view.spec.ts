@@ -1762,12 +1762,13 @@ test.describe("graph view E2E", () => {
     await expect.poll(heightOf).toBeGreaterThan(0);
     const initial = await heightOf();
 
-    // 22px IN FLOW (PL16-007): the spec's 8px gap under the controls row, then
-    // the pane's 14px lip. It was 44 — a well tall enough to hold the
-    // transport, which used to ride on it and no longer does.
+    // 12px IN FLOW (PL16-011). It was 44 when it was a well tall enough to hold
+    // the transport, 22 when the transport left and it became the pane's lip,
+    // and 12 now that the grip sits ON the edge instead of floating in a lip
+    // above it — the band that used to hold the grip is space the pane got back.
     expect(
       await divider.evaluate((el) => Math.round(el.getBoundingClientRect().height)),
-    ).toBe(22);
+    ).toBe(12);
     // THE HIT TARGET IS BIGGER THAN THE BOX, and reaches DOWN only. It
     // straddles the edge so a pointer aimed at the gap between the panes still
     // catches it; reaching up would put it under the controls row.
@@ -1782,6 +1783,19 @@ test.describe("graph view E2E", () => {
     const gripBox = await grip.boundingBox();
     expect(Math.round(gripBox!.width)).toBe(40);
     expect(Math.round(gripBox!.height)).toBe(4);
+    // HALF ON, HALF OFF (PL16-011). The grip is centred on the boundary between
+    // the divider and the pane it drags, so it reads as attached to that pane
+    // rather than as a separate bar floating above it with a gap of its own to
+    // explain.
+    //
+    // MEASURED AGAINST THE DIVIDER'S OWN BOTTOM EDGE, not against the lower
+    // pane's box. They are the same line in flow, but the preview region is
+    // STICKY — once the page scrolls, the pane's box starts well above the
+    // divider while the divider is pinned, and the reading becomes about scroll
+    // position rather than about the grip.
+    const dividerBottom = dividerBoxForZone!.y + dividerBoxForZone!.height;
+    expect(Math.round(gripBox!.y + gripBox!.height / 2)).toBe(Math.round(dividerBottom));
+    expect(Math.round(gripBox!.y + gripBox!.height - dividerBottom)).toBe(2);
     const splitPane = page.getByTestId("workbench-split-pane");
     const displaySurface = page.getByTestId("workbench-display-surface");
     expect(
@@ -2784,7 +2798,7 @@ test.describe("graph view E2E", () => {
 
     // THE DIVIDER IS THE PANE'S EDGE. Its old band is gone entirely, and the
     // resting affordance is a grip pill rather than a rule.
-    expect(Math.round(dividerBox!.height)).toBe(22);
+    expect(Math.round(dividerBox!.height)).toBe(12);
     await expect(divider.locator("[data-divider-line]")).toHaveCount(0);
     const gripBox = (await divider.locator("[data-divider-grip]").boundingBox())!;
     expect(Math.round(gripBox.width)).toBe(40);

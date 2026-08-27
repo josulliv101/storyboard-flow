@@ -139,8 +139,9 @@ export const StickyPreview: Story = {
     expect(Math.round(buttonGroupBox.width)).toBe(168);
     expect(Math.round(buttonGroupBox.height)).toBe(36);
     expect(controls.querySelector("[data-transport-capsule]")).toBeNull();
-    // 22px: the spec's 8px gap under the row, then the pane's 14px lip.
-    expect(Math.round(dividerBox.height)).toBe(22);
+    // 12px (PL16-011): the grip sits ON the edge now rather than floating in a
+    // lip above it, so the band that used to hold it is space the pane got back.
+    expect(Math.round(dividerBox.height)).toBe(12);
     // THE GRIP IS THE RESTING AFFORDANCE now — a 40x4 pill, painted at every
     // width. It used to be a coarse-pointer-only mark, hidden at desktop.
     const grip = divider.querySelector<HTMLElement>("[data-divider-grip]");
@@ -148,6 +149,11 @@ export const StickyPreview: Story = {
     const gripBox = grip!.getBoundingClientRect();
     expect(Math.round(gripBox.width)).toBe(40);
     expect(Math.round(gripBox.height)).toBe(4);
+    // HALF ON, HALF OFF: centred on the divider's own bottom edge, which is the
+    // top of the pane it drags.
+    expect(Math.round(gripBox.y + gripBox.height / 2)).toBe(
+      Math.round(dividerBox.y + dividerBox.height),
+    );
     // A PILL, NOT A RULE — the distinction the redesign turns on.
     expect(gripBox.width).toBeLessThan(dividerBox.width / 4);
     // THE HIT TARGET STRADDLES THE EDGE: it reaches 8px past the box into the

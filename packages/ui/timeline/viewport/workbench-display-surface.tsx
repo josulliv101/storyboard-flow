@@ -232,27 +232,41 @@ const MIN_TIMELINE_SPACE = 260;
  * THE DIVIDER'S HEIGHT IN FLOW, and what `--workbench-preview-offset` is built
  * from, so anything pinned below the sticky stack follows it.
  *
- * 22, DOWN FROM 44. It used to be a well tall enough to hold the transport,
- * which rode on it; the transport is a row of its own now, so this is back to
- * the size of the thing it actually draws — the spec's 8px gap under the
- * controls row, then the pane's 14px lip.
+ * 12, DOWN FROM 22, DOWN FROM 44. It was 44 when it was a well tall enough to
+ * hold the transport; 22 when the transport left and it became the pane's lip.
+ * It is 12 now because the grip no longer needs a lip to sit IN — it sits ON
+ * the edge, half over the content below, so the band that used to hold it is
+ * space the pane gets back.
  *
- * IT IS NO LONGER THE HIT TARGET. The zone inside it reaches 8px further down,
- * into the pane below, for the 30px the spec asks for. It deliberately does not
- * reach UP: 8px above this box is the controls row, and a resize that starts on
- * a button is what the old arrangement needed a `stopPropagation` on every
+ * IT IS NO LONGER THE HIT TARGET. The zone inside it reaches further down, into
+ * the pane below, for the ~30px the spec asks for. It deliberately does not
+ * reach UP: just above this box is the controls row, and a resize that starts
+ * on a button is what the old arrangement needed a `stopPropagation` on every
  * control to prevent.
  */
-const DIVIDER_HEIGHT_PX = 22;
+const DIVIDER_HEIGHT_PX = 12;
+// KEPT IN STEP BY HAND with the `h-[12px]` on the button below, and it has to
+// be: Tailwind scans source text, so `h-[${DIVIDER_HEIGHT_PX}px]` compiles to
+// nothing and the divider collapses to zero height. Changing one and not the
+// other is a silent disagreement — the box is one size while every sticky
+// offset built from this constant assumes another — which is exactly what
+// happened on the first pass of this change.
 
-/** The gap between the controls row and the pane's lip, and therefore where the
- *  lip — and the edge line drawn along its top — begins inside the box. */
-const DIVIDER_LIP_TOP_PX = 8;
+/**
+ * HALF THE GRIP, so it can be centred ON the boundary rather than above it.
+ *
+ * The grip is drawn 4px tall at the divider's own bottom edge minus this, which
+ * puts two pixels inside the divider and two over the content below. That is
+ * the whole point of the placement: a handle that overlaps the thing it moves
+ * reads as attached to it, where one floating clear of it reads as a separate
+ * bar with a gap of its own to explain.
+ */
+const DIVIDER_GRIP_HALF_PX = 2;
 
-/** How far the invisible zone reaches PAST the box, into the pane below. 8 + 22
- *  is the spec's ~30px target, straddling the edge so a pointer aimed at the
- *  gap between the panes still catches it. */
-const DIVIDER_ZONE_OVERHANG_PX = 8;
+/** How far the invisible zone reaches PAST the box, into the pane below.
+ *  12 + 18 is the spec's ~30px target, straddling the edge so a pointer aimed
+ *  at the gap between the panes still catches it. */
+const DIVIDER_ZONE_OVERHANG_PX = 18;
 
 /** One arrow press. Big enough to be worth pressing, small enough to place an
  *  edge with. */
@@ -3148,7 +3162,7 @@ export function WorkbenchSplitPane({
           // it. It does NOT reach upward: 8px above this box is the controls
           // row, and a resize that starts on a button is the bug the old
           // arrangement needed a `stopPropagation` on every control to avoid.
-          className="group relative block h-[22px] w-full cursor-ns-resize bg-transparent transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none focus-visible:outline-none"
+          className="group relative block h-[12px] w-full cursor-ns-resize bg-transparent transition-opacity duration-300 ease-out [[data-preview-chrome='out']_&]:opacity-0 motion-reduce:transition-none focus-visible:outline-none"
           data-workbench-divider
           data-divider-dragging={isDividerDragging ? "" : undefined}
           // PUBLISHED, so the reach state is a fact a test can read directly
@@ -3198,7 +3212,9 @@ export function WorkbenchSplitPane({
             // exactly that reason: it is the fact, and it is readable the
             // instant it is true.
             style={{
-              top: DIVIDER_LIP_TOP_PX,
+              // ON THE EDGE ITSELF, not on a lip above it — this line IS the
+              // top of the content below.
+              bottom: 0,
               backgroundColor: isDividerDragging
                 ? DIVIDER_ACCENT
                 : isDividerHovered
@@ -3207,14 +3223,20 @@ export function WorkbenchSplitPane({
             }}
             data-divider-edge
           />
-          {/* THE LIP, and the grip pill centred in it. The pill is the resting
-              affordance — the one thing visible when nothing is hovered — and
-              it is a shape rather than a line, so it says "handle" without
-              adding a rule that competes with the scrubber. */}
+          {/* THE GRIP, STRADDLING THE EDGE — half over the divider, half over
+              the content it moves. The pill is the resting affordance, the one
+              thing visible when nothing is hovered, and it is a shape rather
+              than a line so it says "handle" without adding a rule that
+              competes with the scrubber.
+
+              IT USED TO FLOAT IN A LIP ABOVE THE CONTENT, which cost 10px of
+              band to hold it and read as a separate bar with its own gap to
+              explain. Sitting ON the edge is what makes it read as attached to
+              the thing it drags, and it is why the band could go. */}
           <span
             aria-hidden="true"
             className="pointer-events-none absolute inset-x-0 grid place-items-center"
-            style={{ top: DIVIDER_LIP_TOP_PX, height: DIVIDER_HEIGHT_PX - DIVIDER_LIP_TOP_PX }}
+            style={{ bottom: -DIVIDER_GRIP_HALF_PX, height: DIVIDER_GRIP_HALF_PX * 2 }}
           >
             <span
               className="block h-1 w-10 rounded-sm transition-colors duration-[120ms]"
