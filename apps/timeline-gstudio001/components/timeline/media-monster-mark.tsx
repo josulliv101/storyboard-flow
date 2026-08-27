@@ -1,5 +1,5 @@
 /**
- * The storyboard monster — the creature that sits in the "o" of "monster".
+ * The media monster — the creature that sits in the "o" of "monster".
  *
  * Ported from the logo design document's TURN 54, variant 48a ("antenna pair"),
  * its latest direction: the same one-eyed fuzzball, now with two stalks and
@@ -65,7 +65,7 @@ const PUPIL = "oklch(0.27 0.03 145)";
  * the source, two here on purpose: the antennae belong to the creature, the
  * word belongs to the product.
  */
-export const STORYBOARD_MONSTER_ACCENT = "oklch(0.707 0.165 254.624)";
+export const MEDIA_MONSTER_ACCENT = "oklch(0.707 0.165 254.624)";
 /**
  * The stalks.
  *
@@ -96,7 +96,7 @@ const ANTENNA_KNOB = "oklch(0.89 0.08 48)";
  * before this turn removed it — worth recording so nobody re-derives the dead
  * version. Denim was chosen when terracotta was also the WORD's colour, so
  * terracotta feet read as part of the letters rather than as part of the
- * creature. The word went blue (see `STORYBOARD_MONSTER_ACCENT`), and with it
+ * creature. The word went blue (see `MEDIA_MONSTER_ACCENT`), and with it
  * the only thing that clash was ever about.
  *
  * What the source's scheme buys instead is a BOOKEND: the same pale terracotta
@@ -378,7 +378,7 @@ function Antenna({ side }: Readonly<{ side: keyof typeof ANTENNA }>) {
   );
 }
 
-export function StoryboardMonsterMark({
+export function MediaMonsterMark({
   scale = 1,
   gaze = "ahead",
   antennae = true,
@@ -421,7 +421,7 @@ export function StoryboardMonsterMark({
   // from this ancestor.
   return (
     <span
-      data-storyboard-monster=""
+      data-media-monster=""
       data-monster-gaze={gaze}
       // The growth between rail states. Everything about the creature is sized
       // off its own font-size, so animating that one property scales the whole

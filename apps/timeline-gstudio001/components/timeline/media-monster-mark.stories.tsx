@@ -2,9 +2,9 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { expect, within } from "storybook/test";
 
 import {
-  StoryboardMonsterMark,
-  STORYBOARD_MONSTER_ACCENT,
-} from "./storyboard-monster-mark";
+  MediaMonsterMark,
+  MEDIA_MONSTER_ACCENT,
+} from "./media-monster-mark";
 
 // The creature in the rail's wordmark.
 //
@@ -76,8 +76,8 @@ function bodyPose(transform: string) {
 }
 
 const meta = {
-  title: "Timeline/StoryboardMonsterMark",
-  component: StoryboardMonsterMark,
+  title: "Timeline/MediaMonsterMark",
+  component: MediaMonsterMark,
   parameters: { layout: "centered" },
   decorators: [
     (Story) => (
@@ -89,7 +89,7 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof StoryboardMonsterMark>;
+} satisfies Meta<typeof MediaMonsterMark>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -115,12 +115,12 @@ export const NotNamedForViewTransitions: Story = {
   args: { scale: 1.6 },
   render: () => (
     <Plate label="no inline view-transition-name">
-      <StoryboardMonsterMark scale={1.6} gaze="breadcrumb" />
+      <MediaMonsterMark scale={1.6} gaze="breadcrumb" />
     </Plate>
   ),
   play: async ({ canvasElement }) => {
     const mark = canvasElement.querySelector<HTMLElement>(
-      "[data-storyboard-monster]",
+      "[data-media-monster]",
     );
     expect(mark).not.toBeNull();
     if (!mark) return;
@@ -141,16 +141,16 @@ export const RailSizes: Story = {
   render: () => (
     <>
       <Plate label="in the word (1.1, looking ahead)">
-        <StoryboardMonsterMark scale={1.1} gaze="ahead" />
+        <MediaMonsterMark scale={1.1} gaze="ahead" />
       </Plate>
       <Plate label="alone, collapsed (1.6, at the breadcrumb)">
-        <StoryboardMonsterMark scale={1.6} gaze="breadcrumb" />
+        <MediaMonsterMark scale={1.6} gaze="breadcrumb" />
       </Plate>
     </>
   ),
   play: async ({ canvasElement }) => {
     const marks = Array.from(
-      canvasElement.querySelectorAll("[data-storyboard-monster]"),
+      canvasElement.querySelectorAll("[data-media-monster]"),
     );
     expect(marks).toHaveLength(2);
     const [inWord, alone] = marks as [Element, Element];
@@ -189,7 +189,7 @@ export const BlownUp: Story = {
   render: () => (
     <Plate label="7x">
       <span className="text-[7em]">
-        <StoryboardMonsterMark scale={1} />
+        <MediaMonsterMark scale={1} />
       </span>
     </Plate>
   ),
@@ -209,19 +209,19 @@ export const InTheWordmark: Story = {
       className="flex items-center font-[family-name:var(--font-grandstander)] text-[19px] text-white"
       style={{ lineHeight: 1 }}
     >
-      storyboard&nbsp;
-      <span style={{ color: STORYBOARD_MONSTER_ACCENT }}>
+      media&nbsp;
+      <span style={{ color: MEDIA_MONSTER_ACCENT }}>
         m
-        <StoryboardMonsterMark scale={1.1} />
+        <MediaMonsterMark scale={1.1} />
         nster
       </span>
     </span>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByText(/storyboard/)).toBeTruthy();
+    expect(canvas.getByText(/media/)).toBeTruthy();
     expect(
-      canvasElement.querySelector("[data-storyboard-monster]"),
+      canvasElement.querySelector("[data-media-monster]"),
     ).toBeTruthy();
   },
 };
@@ -272,14 +272,14 @@ export const JumpPoses: Story = {
               bodyPose(body)(node);
             }}
           >
-            <StoryboardMonsterMark scale={1} />
+            <MediaMonsterMark scale={1} />
           </span>
         </Plate>
       ))}
     </>
   ),
   play: async ({ canvasElement }) => {
-    const marks = canvasElement.querySelectorAll("[data-storyboard-monster]");
+    const marks = canvasElement.querySelectorAll("[data-media-monster]");
     expect(marks).toHaveLength(4);
     const [restMark, flightMark, jamMark] = Array.from(marks) as [
       Element,
@@ -366,21 +366,21 @@ export const WithoutTheAntennae: Story = {
   render: () => (
     <>
       <Plate label="with antennae">
-        <StoryboardMonsterMark scale={1.6} />
+        <MediaMonsterMark scale={1.6} />
       </Plate>
       <Plate label="antennae={false}">
-        <StoryboardMonsterMark scale={1.6} antennae={false} />
+        <MediaMonsterMark scale={1.6} antennae={false} />
       </Plate>
       <Plate label="bare, blown up">
         <span className="text-[4em]">
-          <StoryboardMonsterMark scale={1} antennae={false} />
+          <MediaMonsterMark scale={1} antennae={false} />
         </span>
       </Plate>
     </>
   ),
   play: async ({ canvasElement }) => {
     const marks = Array.from(
-      canvasElement.querySelectorAll("[data-storyboard-monster]"),
+      canvasElement.querySelectorAll("[data-media-monster]"),
     );
     expect(marks).toHaveLength(3);
     const [withPair, without] = marks as [Element, Element];

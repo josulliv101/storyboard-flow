@@ -20,9 +20,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { flushSync } from "react-dom";
 import {
-  StoryboardMonsterMark,
-  STORYBOARD_MONSTER_ACCENT,
-} from "./storyboard-monster-mark";
+  MediaMonsterMark,
+  MEDIA_MONSTER_ACCENT,
+} from "./media-monster-mark";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
@@ -300,7 +300,7 @@ function writeRailExpanded(next: boolean): void {
   // It has to be an attribute set here rather than a keyframe in the hop,
   // because mid-flight the creature is a rasterised image and nothing inside it
   // can move. A pose can still be captured INTO that image; motion cannot.
-  const mark = document.querySelector("[data-storyboard-monster]");
+  const mark = document.querySelector("[data-media-monster]");
   mark?.setAttribute("data-aiming", "");
 
   // OPT INTO THE TRANSITION, and only this one. The `view-transition-name` that
@@ -1044,9 +1044,11 @@ export function TimelineSidebar({
           // it there costs nothing closed and is what lets the name grow to the
           // right rather than the whole mark sliding.
           // 22px, not `text-lg`. The wordmark used 186px of the rail's 239px
-          // at 18px, so there was room, and at 18px "storyboard monster" was
-          // hard to read against everything else in the rail. Measured after:
-          // see the note on the creature's scale for the other half of the fit.
+          // at 18px, so there was room, and at 18px the name was hard to read
+          // against everything else in the rail. Measured after: see the note
+          // on the creature's scale for the other half of the fit. The name is
+          // SHORTER since "media monster" became "media monster", so the
+          // fit only got easier — the number stands.
           // CAPRASIMO, the face the logo document is set in, and no
           // `font-bold`: it ships a single 400 weight, so asking for 700 buys a
           // synthesised bold on top of a face that is already heavy.
@@ -1073,7 +1075,7 @@ export function TimelineSidebar({
               keep participating in the link's own flex box. */}
           <span aria-hidden="true" className="contents">
             <RevealedLetters show={railExpanded}>
-              storyboard&nbsp;
+              media&nbsp;
             </RevealedLetters>
             {/* The creature takes the monogram's place: it is what survives the
                 collapse, exactly as "SW" did. The word rebuilds around it —
@@ -1085,7 +1087,7 @@ export function TimelineSidebar({
                 inherits through a `display: contents` box. */}
             <span
               className="contents"
-              style={{ color: STORYBOARD_MONSTER_ACCENT }}
+              style={{ color: MEDIA_MONSTER_ACCENT }}
             >
               <RevealedLetters show={railExpanded}>m</RevealedLetters>
               {/* SMALL IN THE WORD, BIG ALONE. Expanded it is the source's own
@@ -1107,7 +1109,7 @@ export function TimelineSidebar({
                   same alphabet. The antennae above and the feet below stay
                   outside that band on purpose — an ascender and a descender are
                   what a letter is allowed to have. */}
-              <StoryboardMonsterMark
+              <MediaMonsterMark
                 scale={railExpanded ? 0.97 : 1.6}
                 gaze={railExpanded ? "ahead" : "breadcrumb"}
               />

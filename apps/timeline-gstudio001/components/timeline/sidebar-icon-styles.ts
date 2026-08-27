@@ -28,15 +28,23 @@ export const RAIL_WIDTH_PX = 72;
  * width could ever be "enough" for them; they truncate, which degrades to an
  * ellipsis rather than shoving the rail's rhythm out of line.
  *
- * 240 -> 260, asked for directly. The wordmark is not what needed the room
- * this time — at Grandstander 700/21px its ink measures 208px against the 218
- * available, so it already fit. The extra 20px is breathing room around it and
- * for the collection names beside it, and it takes the wordmark's own slack
- * from 10px to 30px, which is the margin the note above wanted when it warned
- * that three pixels was "not enough to survive a font fallback rendering a
- * fraction wider".
+ * 232 -> 240 -> 260 -> 240. The last step is asked for directly, and it gives
+ * back exactly what the step before it bought.
+ *
+ * IT IS AFFORDABLE NOW IN A WAY IT WAS NOT THEN, because the wordmark got
+ * shorter in between: the creature is the MEDIA monster, not the storyboard
+ * one. At 260 the old mark's ink measured 208px against the 218 available —
+ * 10px of slack, which is what made 260 worth asking for. Measured again at
+ * 240 with the new name: the ink is 159px, starting 22px in, leaving 59px
+ * clear. The mark has more room at the narrower rail than it had at the wider
+ * one, so the warning further up — that three pixels was "not enough to
+ * survive a font fallback rendering a fraction wider" — is comfortably
+ * answered.
+ *
+ * Collection names are the other tenant and they truncate, so they lose 20px
+ * of visible name rather than pushing anything out of line.
  */
-export const RAIL_OPEN_WIDTH_PX = 260;
+export const RAIL_OPEN_WIDTH_PX = 240;
 
 /**
  * On the rail ALWAYS, open or closed — and the hook every tile style below
@@ -88,7 +96,7 @@ export const RAIL_OPEN_CLASS = "rail-open";
  */
 export const RAIL_WIDTH_CLASS = {
   collapsed: "w-[72px]",
-  open: "w-[260px]",
+  open: "w-[240px]",
 } as const;
 
 /**

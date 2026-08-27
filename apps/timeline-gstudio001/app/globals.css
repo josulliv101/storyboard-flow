@@ -469,7 +469,7 @@ html {
   }
 }
 
-/* ── The storyboard monster's hop ─────────────────────────────────────────────
+/* ── The media monster's hop ─────────────────────────────────────────────
    Collapsing the rail re-lays the creature out rather than moving it: inline in
    "m…nster" when open, alone and larger when closed. A view transition is what
    gives the browser two snapshots to interpolate; these rules turn that
@@ -519,7 +519,7 @@ html {
    `data-aiming`, and deliberately its own attribute: one means "the eye is
    pointed along the arc", this one means "this element is in a transition",
    and a later change to either should not silently rewire the other. */
-[data-storyboard-monster][data-hopping] {
+[data-media-monster][data-hopping] {
   view-transition-name: sw-monster;
 }
 
@@ -777,7 +777,7 @@ html {
    ellipse — so the silhouette between the feet and the head is a slant, not an
    arc. A second sage ellipse used to be leaned over the base to fake the curve;
    it broke the outline instead (see the note where it was, in
-   `storyboard-monster-mark.tsx`), and a straight lean from one honest shape
+   `media-monster-mark.tsx`), and a straight lean from one honest shape
    turned out to read better than a bend made of two.
 
    It peaks at the apex and reverses at the crouch and the landing, where the
@@ -955,7 +955,7 @@ html {
    It goes a couple of degrees PAST square before settling, the same
    follow-through the hat and the eye get. A body that stops exactly on zero has
    no weight in it. */
-[data-storyboard-monster][data-settling] {
+[data-media-monster][data-settling] {
   animation: sw-monster-untwist 520ms cubic-bezier(0.3, 0.72, 0.3, 1) both;
 }
 
@@ -1033,7 +1033,7 @@ html {
 
    The white can travel (0.98 - 0.64) / 2 = 0.17em before it reaches the body's
    edge, so 0.05em is well inside it and the eye stays an eye. */
-[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-eye] {
+[data-media-monster][data-aiming]:not([data-landing]) [data-monster-eye] {
   transform: translateX(calc(var(--sw-hop-dir, 1) * 0.06em));
 }
 
@@ -1049,7 +1049,7 @@ html {
    and not a tenth more. Push it and the leading edge of the pupil is shaved off
    for the whole flight, which at this size reads as a rendering fault rather
    than as a hard look. */
-[data-storyboard-monster][data-aiming]:not([data-landing]) [data-monster-pupil] {
+[data-media-monster][data-aiming]:not([data-landing]) [data-monster-pupil] {
   /* Re-declares the component's gaze property ON the pupil. It is set on the
      MARK there and inherits down, so a value declared directly on this element
      wins — which is how a stylesheet takes back a position an inline style
@@ -1057,7 +1057,7 @@ html {
   --monster-gaze-x: calc(var(--sw-hop-dir, 1) * 0.02em);
 }
 
-[data-storyboard-monster][data-aiming] [data-monster-pupil] {
+[data-media-monster][data-aiming] [data-monster-pupil] {
   /* THREE PROPERTIES, ONE POSE. `translate`, `scale` and `transform` are
      separate animatable properties that compose in that order, which is what
      lets the horizontal flick, the dilation and the vertical bump each run on
@@ -1092,7 +1092,7 @@ html {
    straight bar. Neither is a bend. What bends is the CHAIN each stalk is built
    from: three segments, each a child of the one below and each turned by this
    same angle, so the turns compound (b, 2b, 3b) and the chords approximate an
-   arc. See `SEG_BEND` in `storyboard-monster-mark.tsx`.
+   arc. See `SEG_BEND` in `media-monster-mark.tsx`.
 
    ONE DECLARATION MOVES ALL SIX SEGMENTS, because they read it by inheritance
    rather than being selected individually. That is also why it is set here on
@@ -1109,11 +1109,11 @@ html {
    stalk tore out of the skull. A segment turns about its own bottom edge, so
    the root is a FIXED POINT of the bend and no angle can detach it. If a louder
    version is ever wanted, it is safe to just raise this number. */
-[data-storyboard-monster][data-aiming] [data-monster-antennae] {
+[data-media-monster][data-aiming] [data-monster-antennae] {
   --sw-antenna-bend: calc(var(--sw-hop-dir, 1) * -10deg);
 }
 
-[data-storyboard-monster][data-settling] [data-monster-pupil] {
+[data-media-monster][data-settling] [data-monster-pupil] {
   /* The horizontal is a SACCADE and the vertical is a bump, so they cannot
      share a timing function — see the two keyframe blocks. `linear` on the
      saccade is deliberate: its stops carry the velocity profile, and an easing
@@ -1136,7 +1136,7 @@ html {
    Its near edge is the bottom of the pill and its heel is the far edge at the
    top. Anchoring at 50% 100% is therefore anchoring at the toe: it is the part
    that stays on the ground, so it is the part that must not move. */
-[data-storyboard-monster] [data-monster-foot] {
+[data-media-monster] [data-monster-foot] {
   transform-origin: 50% 100%;
 }
 
@@ -1184,19 +1184,19 @@ html {
 
    Set on the DEPARTURE capture only (`:not([data-landing])`), so the feet hang
    on the way up and are back under the body by the time it lands. */
-[data-storyboard-monster][data-aiming]:not([data-landing])
+[data-media-monster][data-aiming]:not([data-landing])
   [data-monster-foot="left"] {
   transform-origin: 100% 0;
   transform: rotate(-22deg);
 }
 
-[data-storyboard-monster][data-aiming]:not([data-landing])
+[data-media-monster][data-aiming]:not([data-landing])
   [data-monster-foot="right"] {
   transform-origin: 0 0;
   transform: rotate(22deg);
 }
 
-[data-storyboard-monster][data-settling] [data-monster-foot] {
+[data-media-monster][data-settling] [data-monster-foot] {
   /* NO ROLL ON LANDING any more. The foot used to arrive still angled off the
      toe and rotate flat under the creature, which is a lot of motion on a shape
      four pixels tall and read as the foot flailing rather than as weight. The
@@ -1230,7 +1230,7 @@ html {
    squash with the head the way an eye in a squashing head should; the antennae
    and the feet are siblings, so they are untouched. Splitting them any other
    way would have needed a wrapper. */
-[data-storyboard-monster][data-settling] [data-monster-body],
+[data-media-monster][data-settling] [data-monster-body],
 /* THE FUR RIDES THE SAME ANIMATION, and must. It is a sibling of the body, not
    a child, and its masked ring clears the body's silhouette by 0.0021em — a
    twentieth of a pixel at rail size. Squash the body without it and the head's
@@ -1238,11 +1238,11 @@ html {
    skull at the bottom of the squash. Same keyframes, same origin point
    (expressed as 50%/85.5% of its own larger box), so the margin holds at every
    frame instead of only at rest. */
-[data-storyboard-monster][data-settling] [data-monster-fur] {
+[data-media-monster][data-settling] [data-monster-fur] {
   animation: sw-body-settle 640ms cubic-bezier(0.3, 0.7, 0.28, 1) both;
 }
 
-[data-storyboard-monster][data-settling] [data-monster-antennae] {
+[data-media-monster][data-settling] [data-monster-antennae] {
   animation: sw-antennae-settle 640ms cubic-bezier(0.3, 0.7, 0.28, 1) both;
 }
 
@@ -1540,24 +1540,24 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-storyboard-monster][data-settling],
-  [data-storyboard-monster][data-settling] [data-monster-pupil],
-  [data-storyboard-monster][data-settling] [data-monster-foot],
-  [data-storyboard-monster][data-settling] [data-monster-body],
-  [data-storyboard-monster][data-settling] [data-monster-fur],
-  [data-storyboard-monster][data-settling] [data-monster-antennae] {
+  [data-media-monster][data-settling],
+  [data-media-monster][data-settling] [data-monster-pupil],
+  [data-media-monster][data-settling] [data-monster-foot],
+  [data-media-monster][data-settling] [data-monster-body],
+  [data-media-monster][data-settling] [data-monster-fur],
+  [data-media-monster][data-settling] [data-monster-antennae] {
     animation: none;
   }
 
-  [data-storyboard-monster][data-aiming] [data-monster-eye],
-  [data-storyboard-monster][data-aiming] [data-monster-foot] {
+  [data-media-monster][data-aiming] [data-monster-eye],
+  [data-media-monster][data-aiming] [data-monster-foot] {
     transform: none;
   }
 
   /* Rest for both is no transform: the pupil has none of its own, and the hat's
      tilt lives on an inner element that this never touches. */
-  [data-storyboard-monster][data-aiming] [data-monster-pupil],
-  [data-storyboard-monster][data-aiming] [data-monster-antennae] {
+  [data-media-monster][data-aiming] [data-monster-pupil],
+  [data-media-monster][data-aiming] [data-monster-antennae] {
     /* The bend is a property, not a transform, so `transform: none` would leave
        the chain arced with nothing animating it. */
     --sw-antenna-bend: 0deg;
@@ -1566,7 +1566,7 @@ html {
 
   /* The pupil's aim spends three properties; clearing one would leave it
      staring sideways, or stuck dilated. */
-  [data-storyboard-monster][data-aiming] [data-monster-pupil] {
+  [data-media-monster][data-aiming] [data-monster-pupil] {
     translate: none;
     scale: none;
   }
