@@ -472,7 +472,22 @@ type BuiltDocument<Ts extends readonly unknown[], S> = Readonly<{
 function buildDocument<Ts extends readonly unknown[], S>(
   raw: unknown,
   ctx: EngineContext<S>,
-  options: Readonly<{ rootsMustBeContainers: boolean }>,
+  options: Readonly<{
+    rootsMustBeContainers: boolean;
+    /**
+     * Nodes the destination graph ALREADY holds, which the incoming document's
+     * own count is added to before the ceiling is applied. Zero for a fresh
+     * `deserialize`; the live graph's size for a lazy load.
+     *
+     * The lazy door is why this exists. Bounding each payload on its own left
+     * the ceiling trivially walkable — two loads of eight nodes each, under a
+     * ceiling of ten, produced a graph of nineteen. That is the same shape
+     * `MAX_CLOSURE_DOCUMENTS` guards in the predecessor, where the thing that
+     * runs away is a closure walk accumulating documents and no single read is
+     * ever the one that is too big.
+     */
+    existingNodeCount?: number;
+  }>,
 ): Result<BuiltDocument<Ts, S>, StructuralError> {
   const parsed = parseSerializedDocument(raw);
   if (!parsed.ok) return parsed;
@@ -485,14 +500,19 @@ function buildDocument<Ts extends readonly unknown[], S>(
   // would be reporting a document too large from inside the allocation it was
   // supposed to prevent. `doc.nodes` is a flat array, so its length is known
   // without walking anything — the cheapest possible place to say no.
-  if (doc.nodes.length > ctx.maxNodes) {
+  const existing = options.existingNodeCount ?? 0;
+  const total = existing + doc.nodes.length;
+  if (total > ctx.maxNodes) {
     return fail({
       code: "document-too-large",
       message:
-        `Document presents ${doc.nodes.length} nodes, above the ${ctx.maxNodes} ceiling. ` +
-        `Raise EngineConfig.maxNodes if this document is legitimate.`,
+        existing === 0
+          ? `Document presents ${doc.nodes.length} nodes, above the ${ctx.maxNodes} ceiling. ` +
+            `Raise EngineConfig.maxNodes if this document is legitimate.`
+          : `Loading ${doc.nodes.length} nodes into a graph of ${existing} would reach ${total}, ` +
+            `above the ${ctx.maxNodes} ceiling. Raise EngineConfig.maxNodes if this is legitimate.`,
       limit: ctx.maxNodes,
-      actual: doc.nodes.length,
+      actual: total,
     });
   }
 
@@ -1152,6 +1172,7 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
 
   const built = buildDocument<Ts, S>(doc, ctx, {
     rootsMustBeContainers: false,
+    existingNodeCount: graph.nodesById.size,
   });
   if (!built.ok) {
     return loadRejection({

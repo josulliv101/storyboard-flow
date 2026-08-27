@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildRegistry, findInvariantViolation } from "./graph";
+import { childrenStateOf, buildRegistry, findInvariantViolation } from "./graph";
 import {
   DEFAULT_MAX_NODES,
   deserializeDocument,
@@ -1858,5 +1858,69 @@ describe("the depth bound", () => {
     expect(
       deserializeDocument<Types, Summary>(flatDoc(200), makeCtx({ maxDepth: 2 })).ok,
     ).toBe(true);
+  });
+});
+
+describe("the size bound across lazy loads", () => {
+  // `loadSimple` is 3 nodes: root -> [a (clip), sub (unloaded folder)].
+  const BASE_NODES = 3;
+
+  function clips(prefix: string, n: number): unknown {
+    return {
+      formatVersion: 1,
+      schemaVersions: { clip: 1 },
+      rootIds: Array.from({ length: n }, (_, i) => `${prefix}${i}`),
+      nodes: Array.from({ length: n }, (_, i) => ({
+        id: `${prefix}${i}`,
+        kind: "clip",
+        data: { name: `${prefix}${i}`, asset: null },
+      })),
+    };
+  }
+
+  it("bounds the GRAPH, not each payload on its own", () => {
+    // The bound's first version counted only the incoming document, and this is
+    // the shape that made it useless: no single load is ever the one that is too
+    // big. Measured before the fix — two 8-node loads under a ceiling of 10
+    // produced a graph of 19. It is the same failure `MAX_CLOSURE_DOCUMENTS`
+    // exists for in the predecessor, where what runs away is a closure walk
+    // accumulating documents one legitimate read at a time.
+    const ctx = makeCtx({ maxNodes: BASE_NODES + 1 });
+    const graph = loadSimple(ctx);
+    expect(graph.nodesById.size).toBe(BASE_NODES);
+
+    const error = expectErr(
+      loadChildrenInto<Types, Summary>(graph, id("sub"), clips("p", 2), ctx),
+    );
+    expect(error.code).toBe("malformed-document");
+    expect(error.cause?.code).toBe("document-too-large");
+    // The number reported is what the graph WOULD have reached, not the
+    // payload's own size — the payload is 2 and would never trip a ceiling of 4
+    // by itself.
+    expect(error.cause?.actual).toBe(BASE_NODES + 2);
+    expect(error.cause?.limit).toBe(BASE_NODES + 1);
+  });
+
+  it("admits a load that exactly fills the remaining budget", () => {
+    const ctx = makeCtx({ maxNodes: BASE_NODES + 2 });
+    const graph = loadSimple(ctx);
+    const next = expectOk(
+      loadChildrenInto<Types, Summary>(graph, id("sub"), clips("p", 2), ctx),
+    );
+    expect(next.nodesById.size).toBe(BASE_NODES + 2);
+    expect(findInvariantViolation(next, ctx.registry)).toBeNull();
+  });
+
+  it("refuses without touching the graph it refused to grow", () => {
+    // The lazy door is pure: a refusal must leave the caller exactly where it
+    // was, not half-loaded. A collection that gained some of its children and
+    // still claims `loaded` is the ambiguity the four states exist to remove.
+    const ctx = makeCtx({ maxNodes: BASE_NODES + 1 });
+    const graph = loadSimple(ctx);
+    expect(loadChildrenInto<Types, Summary>(graph, id("sub"), clips("p", 2), ctx).ok).toBe(
+      false,
+    );
+    expect(graph.nodesById.size).toBe(BASE_NODES);
+    expect(childrenStateOf(graph, id("sub"))?.status).toBe("unloaded");
   });
 });
