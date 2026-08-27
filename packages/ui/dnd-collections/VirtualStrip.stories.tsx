@@ -7,7 +7,7 @@ import {
   mediaDurationSeconds,
   parseNodeId,
   type GraphNodeSpec,
-} from "./core/graph";
+} from "@storyboard/collections-core/graph";
 import { useCollectionsSelector, useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { UndoRedoControls } from "./react/history-views";

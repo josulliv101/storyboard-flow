@@ -2,7 +2,7 @@
 
 import { memo, useState } from "react";
 
-import { mediaDurationSeconds, videoFrameCount, type MediaNode } from "../core/graph";
+import { mediaDurationSeconds, videoFrameCount, type MediaNode } from "@storyboard/collections-core/graph";
 
 // Media preview inside a NodeCard. An IMAGE shows its single `src`; a VIDEO
 // shows a SEQUENCE of poster frames (never a <video> element) — more frames

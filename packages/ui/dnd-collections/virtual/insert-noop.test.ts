@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseNodeId, type NodeId } from "../core/graph";
+import { parseNodeId, type NodeId } from "@storyboard/collections-core/graph";
 
 import { isContiguousReorderNoOp } from "./insert-noop";
 

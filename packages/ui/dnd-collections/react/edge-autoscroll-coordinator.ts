@@ -1,6 +1,6 @@
 "use client";
 
-import { finiteNonNegativeOr, finitePositiveOr } from "../core/numeric";
+import { finiteNonNegativeOr, finitePositiveOr } from "@storyboard/collections-core/numeric";
 import {
   AUTO_SCROLL_FRAME_MS,
   edgeScrollVelocity,

@@ -190,8 +190,10 @@ This is the axis the engine was built for, and it extends to the app views:
 1. **Domain package** (`@storyboard/timeline-domain` or similar, framework-
    free): the side-table + asset types, domain commands, invariant checks,
    and the storage adapter (stored document ⇄ collection node + details).
-   Engine imported via the pure `@storyboard/ui/dnd-collections/core` entry
-   point through a single seam file. *(The patch-composition machinery from
+   Engine imported from the pure `@storyboard/collections-core` package
+   through a single seam file. (This read `@storyboard/ui/dnd-collections/core`
+   while that was a shim entry point onto the same code; the shims are gone and
+   the package is the only path.) *(The patch-composition machinery from
    the superseded branch is reusable here; its invented scene/track/asset
    model is not.)*
 2. **One page end-to-end in the app:** one `<DndCollections>` provider, the

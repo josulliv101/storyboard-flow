@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useDroppable } from "@dnd-kit/core";
 
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 import { focusNodeWhenMounted, isEditableKeyboardTarget } from "../react/node-dom";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
 

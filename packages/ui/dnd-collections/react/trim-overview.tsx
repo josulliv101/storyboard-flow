@@ -2,7 +2,7 @@
 
 import { memo, useCallback, type PointerEvent as ReactPointerEvent } from "react";
 
-import { type VideoMediaNode } from "../core/graph";
+import { type VideoMediaNode } from "@storyboard/collections-core/graph";
 import {
   useCollectionsComponents,
   type CollectionTrimOverviewContentProps,

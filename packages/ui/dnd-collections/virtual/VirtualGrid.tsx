@@ -13,13 +13,13 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { twMerge } from "tailwind-merge";
 
-import { getChildren, type NodeId } from "../core/graph";
+import { getChildren, type NodeId } from "@storyboard/collections-core/graph";
 import {
   finiteNonNegativeOr,
   finitePositiveOr,
   nonNegativeIntegerOr,
   positiveIntegerOrUndefined,
-} from "../core/numeric";
+} from "@storyboard/collections-core/numeric";
 import {
   useCollectionsComponents,
   type CollectionItemContentComponent,

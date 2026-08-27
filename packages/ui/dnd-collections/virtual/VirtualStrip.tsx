@@ -23,13 +23,13 @@ import {
   type CollectionItemNode,
   type CollectionsGraph,
   type NodeId,
-} from "../core/graph";
+} from "@storyboard/collections-core/graph";
 import {
   finiteNonNegativeOr,
   finitePositiveOr,
   finitePositiveOrUndefined,
   nonNegativeIntegerOr,
-} from "../core/numeric";
+} from "@storyboard/collections-core/numeric";
 import { isContiguousReorderNoOp } from "./insert-noop";
 import {
   useCollectionsComponents,

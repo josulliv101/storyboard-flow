@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, waitFor } from "storybook/test";
 
-import { buildGraph, mediaDurationSeconds, parseNodeId } from "./core/graph";
+import { buildGraph, mediaDurationSeconds, parseNodeId } from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { useCollectionsSelector } from "./react/collections-store";
 import { NodeCard } from "./react/node-views";

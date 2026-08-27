@@ -6,7 +6,7 @@ import {
   mediaDurationSeconds,
   parseNodeId,
   type GraphNodeSpec,
-} from "./core/graph";
+} from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { VirtualStrip } from "./virtual/VirtualStrip";
 import {

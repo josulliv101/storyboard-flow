@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor } from "storybook/test";
 
-import { buildGraph, getChildren, parseNodeId, type NodeId } from "./core/graph";
+import { buildGraph, getChildren, parseNodeId, type NodeId } from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { useCollectionsSelector } from "./react/collections-store";
 import { NodeCard } from "./react/node-views";

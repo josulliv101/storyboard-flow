@@ -8,7 +8,7 @@ import {
   mediaDurationSeconds,
   parseNodeId,
   type NodeId,
-} from "./core/graph";
+} from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { CollectionItem, useCollectionItemState } from "./react/collection-item";
 import { useCollectionsSelector } from "./react/collections-store";

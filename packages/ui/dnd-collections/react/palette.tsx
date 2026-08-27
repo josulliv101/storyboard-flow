@@ -3,7 +3,7 @@
 import { useContext } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { twMerge } from "tailwind-merge";
-import { type CollectionItemNode } from "../core/graph";
+import { type CollectionItemNode } from "@storyboard/collections-core/graph";
 import { CollectionsContainerContext } from "./container-context";
 
 // External palette drag source: a draggable that creates a BRAND-NEW node

@@ -2,7 +2,7 @@ import { useDroppable } from "@dnd-kit/core";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, waitFor } from "storybook/test";
 
-import { buildGraph, parseNodeId, type GraphNodeSpec, type NodeId } from "./core/graph";
+import { buildGraph, parseNodeId, type GraphNodeSpec, type NodeId } from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { CollectionPanels } from "./react/node-views";
 import { VIRTUAL_INSERT_DATA_KEY } from "./react/virtual-droppable";

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 import { type LiveTrim } from "./trim-preview-context";
 
 // Live trim values for CONSUMER content — delivered over a ref-backed

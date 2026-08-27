@@ -2,8 +2,8 @@
 
 import { useEffect } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { getChildren, type NodeId } from "../core/graph";
-import { encodeDropTarget } from "../core/intents";
+import { getChildren, type NodeId } from "@storyboard/collections-core/graph";
+import { encodeDropTarget } from "@storyboard/collections-core/intents";
 import { useCollectionsSelector } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
 

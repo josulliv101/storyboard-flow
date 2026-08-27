@@ -14,7 +14,7 @@ import {
   type MediaNode,
   type NodeId,
   type VideoMediaNode,
-} from "../core/graph";
+} from "@storyboard/collections-core/graph";
 
 // The consumer-content seam: dnd-collections owns BEHAVIOR and GEOMETRY
 // (drag wiring, selection, trim gestures, aria, measurement, indicators);

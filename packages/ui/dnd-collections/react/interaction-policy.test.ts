@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { buildGraph, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "../core/graph";
+import { buildGraph, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "@storyboard/collections-core/graph";
 import { createCollectionsStore } from "./collections-store";
 import {
   cancelPendingSelection,

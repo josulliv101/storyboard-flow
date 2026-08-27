@@ -3,7 +3,7 @@
 import { memo, useCallback, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
-  hasSourceWindow, type MediaNode } from "../core/graph";
+  hasSourceWindow, type MediaNode } from "@storyboard/collections-core/graph";
 import {
   useCollectionsComponents,
   type CollectionTrimHandleContentProps,

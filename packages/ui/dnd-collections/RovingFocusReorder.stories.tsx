@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor } from "storybook/test";
 
-import { buildGraph, parseNodeId, type GraphNodeSpec } from "./core/graph";
+import { buildGraph, parseNodeId, type GraphNodeSpec } from "@storyboard/collections-core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { useCollectionsStore } from "./react/collections-store";
 import { VirtualStrip } from "./virtual/VirtualStrip";

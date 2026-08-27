@@ -3,9 +3,9 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { type DragStartEvent } from "@dnd-kit/core";
 
-import { parseCollectionItemNode, type CollectionItemNode, type CollectionsGraph } from "../core/graph";
-import type { AddNodesCommand } from "../core/commands";
-import { resolveAddCommandFromIntent, type DropIntent } from "../core/intents";
+import { parseCollectionItemNode, type CollectionItemNode, type CollectionsGraph } from "@storyboard/collections-core/graph";
+import type { AddNodesCommand } from "@storyboard/collections-core/commands";
+import { resolveAddCommandFromIntent, type DropIntent } from "@storyboard/collections-core/intents";
 import { type CollectionsStore } from "./collections-store";
 import { PALETTE_DATA_KEY } from "./palette";
 

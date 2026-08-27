@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import { type NodeId } from "../core/graph";
+import { type NodeId } from "@storyboard/collections-core/graph";
 
 // A view (VirtualStrip) provides this so trim handles can preview a media
 // item's new duration LIVE — resizing its card as the handle drags — WITHOUT
