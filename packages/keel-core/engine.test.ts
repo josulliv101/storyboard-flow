@@ -419,3 +419,153 @@ describe("ingress bound configuration", () => {
     expect(refused.error.code).toBe("document-too-deep");
   });
 });
+
+// ---------------------------------------------------------------------------
+// The predecessor's two replay corruptions, driven end to end
+// ---------------------------------------------------------------------------
+//
+// `collections-core/patches.ts` carries a guard whose comment names two
+// corruptions that BOTH REPRODUCED before it existed. History had assumed every
+// dormant patch stays applicable — true under pure linear history, and false
+// the moment loading grows the graph while entries sleep on a stack:
+//
+//   - REDO an add whose id was meanwhile hydrated in: the apply overwrote
+//     `nodesById` and inserted the id into a second children array, leaving one
+//     node in two collections with `parentById` naming one.
+//   - UNDO an add of a collection that was hydrated AFTER being added: the
+//     apply deleted it children-and-all, orphaning the hydrated children.
+//
+// keel-core has the equivalent checks in `verifyInserted` / `verifyRemoved`,
+// and there are unit tests over those functions. These tests are deliberately
+// NOT those: they go through the store, with a real `load` landing between the
+// command and its replay, because the failure mode being ported is not "the
+// check is wrong" — it is "nothing called the check". A guard that exists and
+// is not wired looks exactly like a guard that works, right up until it
+// doesn't.
+
+describe("dormant patches across a load", () => {
+  it("refuses to redo an insert whose id arrived by loading", () => {
+    const engine = makeEngine();
+    const loaded = engine.deserialize(doc);
+    if (!loaded.ok) throw new Error("fixture failed to load");
+    const store = engine.createStore(loaded.value.graph);
+
+    // 1. Insert a node, then undo it. The insert is now dormant on the redo
+    //    stack, holding the id it minted.
+    const inserted = store.dispatch({
+      type: "insert-nodes",
+      seeds: [{ kind: "clip", data: { title: "B", seconds: 7 } }],
+      toParentId: rootId,
+      toIndex: 0,
+    });
+    if (!inserted.ok) throw new Error("insert failed");
+    const mintedId =
+      inserted.value.type === "inserted" ? inserted.value.placements[0]?.node.id : undefined;
+    if (mintedId === undefined) throw new Error("no minted id");
+    expect(store.undo().ok).toBe(true);
+
+    // 2. A load brings that very id into the graph from somewhere else. This is
+    //    the interleaving: nothing about the load is illegal — the id is free,
+    //    because the undo removed it.
+    const load = store.load(subId, {
+      formatVersion: 1,
+      schemaVersions: { clip: 1 },
+      rootIds: [String(mintedId)],
+      nodes: [{ id: String(mintedId), kind: "clip", data: { title: "S", seconds: 9 } }],
+    });
+    expect(load.ok).toBe(true);
+
+    // 3. Redo must refuse. Applying it would put one id in two children arrays.
+    const redone = store.redo();
+    expect(redone.ok).toBe(false);
+    if (redone.ok) return;
+    expect(redone.error.code).toBe("node-exists");
+
+    // The graph is untouched by the refusal, and still a forest.
+    expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
+    expect(store.getGraph().childrenById.get(subId)).toHaveLength(1);
+  });
+
+  it("refuses to redo a removal whose subtree grew while it slept", () => {
+    // The predecessor's SECOND corruption, in the shape this engine can
+    // actually reach. Insert-then-hydrate cannot produce it here: a `Seed` has
+    // no way to say "unloaded", so every inserted container is `loaded`, and
+    // `load` is a no-op on a loaded collection. The hole is closed by the type
+    // rather than guarded. What IS reachable is the same shape one step over —
+    // a removal patch that recorded an unloaded placeholder, undone, and then
+    // hydrated before the redo.
+    const engine = makeEngine();
+    const loaded = engine.deserialize(doc);
+    if (!loaded.ok) throw new Error("fixture failed to load");
+    const store = engine.createStore(loaded.value.graph);
+
+    // 1. Remove the unloaded collection. The patch records the placeholder and
+    //    its summary — there is no subtree to record, which is the whole point.
+    const removed = store.dispatch({
+      type: "remove-nodes",
+      nodeIds: [subId],
+      allowUnloaded: true,
+    });
+    expect(removed.ok).toBe(true);
+
+    // 2. Undo brings it back, still unloaded.
+    expect(store.undo().ok).toBe(true);
+    expect(store.getGraph().nodesById.has(subId)).toBe(true);
+
+    // 3. Now it gets hydrated. Two children exist that the sleeping removal
+    //    patch has never heard of.
+    const load = store.load(subId, {
+      formatVersion: 1,
+      schemaVersions: { clip: 1 },
+      rootIds: ["s1", "s2"],
+      nodes: [
+        { id: "s1", kind: "clip", data: { title: "S1", seconds: 1 } },
+        { id: "s2", kind: "clip", data: { title: "S2", seconds: 2 } },
+      ],
+    });
+    expect(load.ok).toBe(true);
+
+    // 4. Redo must refuse. Applying it would delete `sub` and strand s1 and s2
+    //    — parentless nodes in a graph whose one hard rule is that nothing is.
+    const redone = store.redo();
+    expect(redone.ok).toBe(false);
+    if (redone.ok) return;
+    expect(redone.error.code).toBe("node-not-empty");
+
+    expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
+    expect(store.getGraph().nodesById.has(parseNodeId("s1"))).toBe(true);
+    expect(store.getGraph().nodesById.has(parseNodeId("s2"))).toBe(true);
+  });
+
+  it("leaves the stacks usable after refusing, rather than wedging history", () => {
+    // The half of "refuse" that is easy to get wrong: a refusal must not
+    // consume the entry it refused, or one stale patch permanently ends undo
+    // for the session. The predecessor's guard returns a Result for exactly
+    // this reason — it is a decision, not an exception.
+    const engine = makeEngine();
+    const loaded = engine.deserialize(doc);
+    if (!loaded.ok) throw new Error("fixture failed to load");
+    const store = engine.createStore(loaded.value.graph);
+
+    const removed = store.dispatch({
+      type: "remove-nodes",
+      nodeIds: [subId],
+      allowUnloaded: true,
+    });
+    expect(removed.ok).toBe(true);
+    expect(store.undo().ok).toBe(true);
+    store.load(subId, {
+      formatVersion: 1,
+      schemaVersions: { clip: 1 },
+      rootIds: ["s1"],
+      nodes: [{ id: "s1", kind: "clip", data: { title: "S1", seconds: 1 } }],
+    });
+
+    expect(store.redo().ok).toBe(false);
+    // Still offered, and still refused the same way — the refusal is a property
+    // of the graph, not a one-shot that clears itself by firing.
+    expect(store.canRedo()).toBe(true);
+    expect(store.redo().ok).toBe(false);
+    expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
+  });
+});
