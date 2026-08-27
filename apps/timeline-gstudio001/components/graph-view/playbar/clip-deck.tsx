@@ -622,7 +622,24 @@ export function ClipDeck({
     if (deck === null || standalone) return;
 
     const fit = () => {
-      const card = cardRefs.current.find((candidate) => candidate !== null);
+      // `!= null`, LOOSELY, AND THE LOOSENESS IS THE WHOLE FIX.
+      //
+      // `cardRefs.current` is keyed by the clip's own index while only a WINDOW
+      // of cards is built, so opening an item part-way down a collection leaves
+      // real HOLES below the window — indices that were never assigned at all.
+      // `Array.prototype.find` walks holes and hands the predicate `undefined`,
+      // and `undefined !== null` is true, so the search stopped at the first
+      // hole and returned it. `fit()` then failed its own `card == null` guard
+      // and returned having published NOTHING: no `--deck-need` for the view to
+      // budget against, no `--clip-w` for the cards to take.
+      //
+      // It did not look like a bug, it looked like a design: the cards fell
+      // back to the stylesheet's `clamp(300px, 30vw, 440px)` and were merely a
+      // different size. So the deck's card size depended on whether the item
+      // you opened happened to sit near the START of its collection — open the
+      // third item and the window covered index 0 and it fitted; open the
+      // eighth and it did not, and the cards silently changed size.
+      const card = cardRefs.current.find((candidate) => candidate != null);
       const picture = card?.querySelector<HTMLElement>(".c-view");
       if (card == null || picture == null) return;
       const pictureHeight = picture.offsetHeight;
