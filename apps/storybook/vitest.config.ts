@@ -55,6 +55,7 @@ export default defineConfig({
             "../../packages/ui/**/*.test.tsx",
             "../../packages/timeline-domain/**/*.test.ts",
             "../../packages/collections-core/**/*.test.ts",
+            "../../packages/keel-core/**/*.test.ts",
             "../../packages/timeline-model/**/*.test.ts",
             "../../packages/timeline-widget/**/*.test.ts",
           ],

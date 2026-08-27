@@ -1,0 +1,1682 @@
+// KEEL — the guided tour.
+//
+// This file is DOCUMENTATION FIRST and a test suite second. Each story teaches
+// exactly one thing, in the order you would learn it: declare kinds, nest them,
+// move them, edit them, undo that, roll them up, meet a subtree nobody has read
+// yet, and finally meet data this build does not understand at all.
+//
+// It is also the interaction suite for the React bindings — this repo's
+// convention is that stories ARE the tests, so every story that claims a
+// behaviour proves it in a `play` function running in real headless Chromium.
+//
+// READING ORDER: the section marked "THE LIBRARY, WIRED UP" below is the part
+// you would copy into your own app. Everything after it is story chrome.
+
+import { useCallback, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import type { Meta, StoryObj } from "@storybook/react";
+import { expect, userEvent, within } from "storybook/test";
+
+import {
+  createEngine,
+  defineNodeType,
+  folded,
+  foldedExact,
+  foldMonoid,
+  parseNodeId,
+  summaryFrom,
+  weakestCertainty,
+  type Certainty,
+  type ChildrenState,
+  type Fold,
+  type Folded,
+  type Issue,
+  type NodeId,
+  type SerializedDocument,
+  type SerializedNode,
+  type SummaryCodec,
+} from "@storyboard/keel-core";
+
+import { createReactBindings } from "./index";
+
+// ===========================================================================
+// THE LIBRARY, WIRED UP
+// ===========================================================================
+//
+// Six steps, and they are the whole integration:
+//   1. a `Data` and an `Edit` type per kind
+//   2. `defineNodeType<Data, Edit>()({ ... })` — the codec for that kind
+//   3. a summary codec — the stored rollup a not-yet-loaded collection carries
+//   4. folds — the questions you want answered about a subtree
+//   5. `createEngine({ types, summary, folds })` — PURE, callable from a route
+//      handler; it must not be created inside a `"use client"` module
+//   6. `createReactBindings(engine)` — the React half, in a client module
+//
+// ---------------------------------------------------------------------------
+// 1 + 2. Three kinds, and two of them are leaves that share nothing
+// ---------------------------------------------------------------------------
+
+/** A filmed shot. Contributes duration. */
+type Shot = Readonly<{ slug: string; seconds: number; camera: string }>;
+
+/**
+ * Two edits, not one. `Edit` is per kind AND per intent, so a view dispatching
+ * `{ type: "retime", seconds: -3 }` at a note is a compile error rather than a
+ * runtime surprise.
+ */
+type ShotEdit =
+  | Readonly<{ type: "rename"; slug: string }>
+  | Readonly<{ type: "retime"; seconds: number }>;
+
+/** A production note. Genuinely different shape — no duration, no camera. */
+type Note = Readonly<{ text: string; author: string }>;
+type NoteEdit = Readonly<{ type: "retext"; text: string }>;
+
+/** The container kind. `container: true` is KIND-LEVEL and immutable. */
+type Sequence = Readonly<{ name: string }>;
+type SequenceEdit = Readonly<{ type: "rename"; name: string }>;
+
+/**
+ * Narrow `unknown` to something indexable without reaching for `any`.
+ *
+ * Every `parse` starts here because `raw` really is unknown: it came off a
+ * wire, and the only honest thing to do with it is check one field at a time.
+ */
+function asRecord(raw: unknown): Readonly<Record<string, unknown>> | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  return raw as Readonly<Record<string, unknown>>;
+}
+
+function issue(path: string, message: string): readonly Issue[] {
+  return [{ path, message }];
+}
+
+/**
+ * `defineNodeType` is CURRIED — `defineNodeType<Shot, ShotEdit>()({ ... })`.
+ *
+ * That is not decoration. `Edit` has exactly one inference site (`applyEdit`'s
+ * second parameter), so an uncurried factory lets a codec whose `applyEdit`
+ * ignores its edit argument silently infer `Edit = unknown`, at which point
+ * every dispatched edit for that kind typechecks and the per-kind edit typing
+ * is dead. Making `Data` and `Edit` explicit closes that; `K` still infers as
+ * the string literal `"shot"` from the object below.
+ */
+const shotType = defineNodeType<Shot, ShotEdit>()({
+  kind: "shot",
+  container: false,
+  schemaVersion: 1,
+
+  /**
+   * CONSTRUCT a fresh value — never `return { ok: true, value: raw as Shot }`.
+   * The engine stores exactly what this returns and never rebuilds a node's
+   * data field by field, which is what makes `Data` a real type parameter
+   * instead of a whitelist the engine has to be taught.
+   */
+  parse(raw, ctx) {
+    const record = asRecord(raw);
+    if (record === null) {
+      return { ok: false, error: issue("$", "shot data must be an object") };
+    }
+
+    const slug = record["slug"];
+    if (typeof slug !== "string" || slug.trim() === "") {
+      return {
+        ok: false,
+        error: issue("$.slug", "slug must be a non-empty string"),
+      };
+    }
+
+    const seconds = record["seconds"];
+    if (typeof seconds !== "number" || !Number.isFinite(seconds)) {
+      return {
+        ok: false,
+        error: issue("$.seconds", "seconds must be a finite number"),
+      };
+    }
+
+    const camera = record["camera"];
+    if (typeof camera !== "string") {
+      // A WARNING, not a failure. `ctx.warn` lands in the `LoadReport` and the
+      // node still loads; reserve a rejection for data you cannot represent.
+      ctx.warn({ path: "$.camera", message: "no camera recorded" });
+    }
+
+    return {
+      ok: true,
+      value: {
+        slug,
+        seconds,
+        camera: typeof camera === "string" ? camera : "unspecified",
+      },
+    };
+  },
+
+  serialize(data) {
+    return { ...data };
+  },
+
+  /**
+   * Returns a `Result`, never throws. A refusal here is relayed to the caller
+   * verbatim as `Rejection.editRejection` — see the "Editing" story, which
+   * shows one being rejected and printed instead of swallowed.
+   */
+  applyEdit(data, edit) {
+    if (edit.type === "rename") {
+      if (edit.slug.trim() === "") {
+        return {
+          ok: false,
+          error: { code: "empty-slug", message: "A shot needs a name." },
+        };
+      }
+      return { ok: true, value: { ...data, slug: edit.slug } };
+    }
+    if (edit.seconds <= 0) {
+      return {
+        ok: false,
+        error: {
+          code: "non-positive-duration",
+          message: "A shot has to last longer than zero seconds.",
+        },
+      };
+    }
+    return { ok: true, value: { ...data, seconds: edit.seconds } };
+  },
+});
+
+const noteType = defineNodeType<Note, NoteEdit>()({
+  kind: "note",
+  container: false,
+  schemaVersion: 1,
+  parse(raw) {
+    const record = asRecord(raw);
+    if (record === null) {
+      return { ok: false, error: issue("$", "note data must be an object") };
+    }
+    const text = record["text"];
+    if (typeof text !== "string") {
+      return { ok: false, error: issue("$.text", "text must be a string") };
+    }
+    const author = record["author"];
+    return {
+      ok: true,
+      value: { text, author: typeof author === "string" ? author : "anon" },
+    };
+  },
+  serialize(data) {
+    return { ...data };
+  },
+  applyEdit(data, edit) {
+    return { ok: true, value: { ...data, text: edit.text } };
+  },
+});
+
+const sequenceType = defineNodeType<Sequence, SequenceEdit>()({
+  kind: "sequence",
+  // KIND-LEVEL, never a predicate over data. A kind that is sometimes a
+  // container cannot have its children invariants checked, and "does this node
+  // have children" would become a question about content.
+  container: true,
+  schemaVersion: 1,
+  parse(raw) {
+    const record = asRecord(raw);
+    if (record === null) {
+      return { ok: false, error: issue("$", "sequence data must be an object") };
+    }
+    const name = record["name"];
+    if (typeof name !== "string" || name.trim() === "") {
+      return {
+        ok: false,
+        error: issue("$.name", "name must be a non-empty string"),
+      };
+    }
+    return { ok: true, value: { name } };
+  },
+  serialize(data) {
+    return { ...data };
+  },
+  applyEdit(data, edit) {
+    return { ok: true, value: { ...data, name: edit.name } };
+  },
+});
+
+/**
+ * The registry tuple, named once so the folds below can be written against it.
+ * It has to be a TUPLE (not `SomeNodeType[]`) — that is what makes
+ * `node.kind === "shot"` narrow `node.data` to `Shot` downstream.
+ */
+type Types = readonly [typeof shotType, typeof noteType, typeof sequenceType];
+
+// ---------------------------------------------------------------------------
+// 3. The summary codec — what a collection remembers about children it has not
+//    loaded yet
+// ---------------------------------------------------------------------------
+
+type Summary = Readonly<{ seconds: number; shots: number }>;
+
+const summaryCodec: SummaryCodec<Summary> = {
+  parse(raw) {
+    const record = asRecord(raw);
+    if (record === null) {
+      return { ok: false, error: issue("$", "summary must be an object") };
+    }
+    const seconds = record["seconds"];
+    const shots = record["shots"];
+    if (typeof seconds !== "number" || typeof shots !== "number") {
+      return {
+        ok: false,
+        error: issue("$", "summary needs numeric `seconds` and `shots`"),
+      };
+    }
+    return { ok: true, value: { seconds, shots } };
+  },
+  serialize(summary) {
+    return { ...summary };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 4. Folds — one registered fold per question
+// ---------------------------------------------------------------------------
+
+/**
+ * Total duration, via `foldMonoid` — the ergonomic path for sums and counts.
+ *
+ * `placeholder` is what makes the "Lazy loading" story honest: a collection
+ * nobody has read reports its STORED number at certainty `"estimated"`, and one
+ * with no stored number at all reports `0` at `"partial"`. Neither pretends to
+ * be a measurement.
+ */
+const secondsFold = foldMonoid<Types, Summary, number>({
+  key: "seconds",
+  empty: 0,
+  leaf(node) {
+    // The collection is genuinely heterogeneous, so the fold has to say what
+    // each kind contributes. A note has no duration; it contributes nothing,
+    // and it says so here rather than by accident.
+    return node.kind === "shot" ? node.data.seconds : 0;
+  },
+  concat(a, b) {
+    return a + b;
+  },
+  placeholder(node) {
+    // `undefined` is the declared sentinel for "nothing stored", which
+    // foldMonoid turns into `empty` at `"partial"`.
+    return node.summary === null ? undefined : node.summary.seconds;
+  },
+});
+
+/**
+ * How many shots are in this subtree — written OUT BY HAND rather than with
+ * `foldMonoid`, because seeing all five hooks once is worth more than saving
+ * fifteen lines.
+ *
+ * `collection` is GRAPH-BLIND on purpose: it gets its own node and its
+ * children's already-folded values, and nothing else. That blindness is what
+ * makes "invalidate the changed nodes and their ancestor chains" provably
+ * sufficient; a fold handed the graph could read anything, and then the only
+ * correct invalidation would be "drop everything".
+ *
+ * Reach for a hand-written `Fold` when you need something a monoid cannot
+ * express: a subtree veto (a container's own flag dropping everything under
+ * it), an empty-collection floor (`children.length === 0` is visible here and
+ * is NOT the same as the monoid identity), or position-sensitive certainty.
+ */
+const shotsFold: Fold<Types, Summary, number> = {
+  key: "shots",
+
+  leaf(node) {
+    return node.kind === "shot" ? 1 : 0;
+  },
+
+  collection(_node, children) {
+    let total = 0;
+    const certainties: Certainty[] = [];
+    for (const child of children) {
+      total += child.value;
+      certainties.push(child.certainty);
+    }
+    // Weakest-wins is right for a COUNT. It is not right in general, which is
+    // exactly why `collection` returns `Folded<A>` and not `A` — a fold whose
+    // answer stops depending on the holes is free to keep reporting "exact".
+    return folded(total, weakestCertainty(certainties));
+  },
+
+  placeholder(node) {
+    if (node.summary === null) return folded(0, "partial");
+    return folded(node.summary.shots, "estimated");
+  },
+
+  // MUST be "exact". Confirmed-gone is knowledge, not a gap: a subtree whose
+  // only holes are `missing` is fully known to be empty.
+  missing() {
+    return foldedExact(0);
+  },
+
+  // REQUIRED — there is no default. Data this build cannot parse has to be
+  // answered for, and "partial" is the honest answer.
+  quarantined() {
+    return folded(0, "partial");
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 5. The engine — PURE. No React below this line reaches it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic ids, because stories are tests here and a random id in a
+ * snapshot is a flake waiting to happen. A real app omits `mintId` and takes
+ * the built-in generator.
+ */
+let mintCounter = 0;
+function mintId(): string {
+  mintCounter += 1;
+  return `minted-${mintCounter}`;
+}
+
+const engine = createEngine({
+  types: [shotType, noteType, sequenceType] as const,
+  summary: summaryCodec,
+  folds: { seconds: secondsFold, shots: shotsFold },
+  mintId,
+  // Deterministic `HistoryEntry.at`, same reasoning as `mintId`.
+  now: () => 0,
+  // Runs the affordable-in-dev checks: a `parse(serialize(d))` round-trip,
+  // deep-freezing parsed values, and an invariant audit after every commit.
+  // Leave this ON in stories — a story that corrupts the graph should say so.
+  devChecks: true,
+});
+
+// ---------------------------------------------------------------------------
+// 6. The React bindings
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE call, at module scope, and everything React-shaped comes out of it.
+ *
+ * It is a factory rather than a set of module exports because `createContext`
+ * cannot be generic: a module-scope `createContext<Store<Ts, S, F> | null>` has
+ * nowhere to get `Ts` from, so `useNode` would hand back an erased node and
+ * every `switch (node.kind)` would have nothing to switch on. Creating the
+ * contexts INSIDE a call where `Ts` is already bound is what keeps the type
+ * parameter alive all the way to `data.slug` in a view.
+ */
+const ui = createReactBindings(engine);
+
+// ===========================================================================
+// PER-KIND VIEWS
+// ===========================================================================
+//
+// Registered at MODULE SCOPE, before the first render. The registry is read
+// during render, so a late registration does not re-render mounted slots — the
+// bindings log an error if you try.
+//
+// Each view is an ORDINARY non-generic component. `NodeSlot` takes `{ id }` and
+// nothing else and dispatches by kind, so there is no render prop for a
+// parent's re-render to hand in fresh and no generic signature for `memo` to
+// erase.
+
+ui.defineNodeView("shot", function ShotView({ id, data }) {
+  const dispatch = ui.useDispatch();
+  const move = useMoveWithinParent();
+
+  return (
+    <div data-testid={`node-${id}`} style={styles.row}>
+      <Tag>SHOT</Tag>
+      <span data-testid={`slug-${id}`} style={styles.title}>
+        {data.slug}
+      </span>
+      <span style={styles.muted}>
+        {data.seconds}s · cam {data.camera}
+      </span>
+      <span style={styles.spacer} />
+      <NudgeButtons id={id} move={move} />
+      <Button
+        testId={`rename-${id}`}
+        onClick={() =>
+          // ONE gesture = ONE command = ONE patch = ONE history entry. Renaming
+          // every placement of an asset would be a single `edit-nodes` over all
+          // of them, which is what keeps Ctrl-Z matching what the user did.
+          dispatch({
+            type: "edit-nodes",
+            edits: [
+              {
+                nodeId: id,
+                kind: "shot",
+                edit: { type: "rename", slug: `${data.slug} (v2)` },
+              },
+            ],
+          })
+        }
+      >
+        Rename
+      </Button>
+    </div>
+  );
+});
+
+ui.defineNodeView("note", function NoteView({ id, data }) {
+  const move = useMoveWithinParent();
+
+  return (
+    <div data-testid={`node-${id}`} style={styles.row}>
+      <Tag>NOTE</Tag>
+      <span data-testid={`text-${id}`} style={styles.title}>
+        {data.text}
+      </span>
+      <span style={styles.muted}>— {data.author}</span>
+      <span style={styles.spacer} />
+      <NudgeButtons id={id} move={move} />
+    </div>
+  );
+});
+
+ui.defineNodeView("sequence", function SequenceView({ id, data }) {
+  const childIds = ui.useChildren(id);
+  const state = useChildrenState(id);
+  const move = useMoveWithinParent();
+
+  return (
+    <section data-testid={`node-${id}`} style={styles.collection}>
+      <header style={styles.row}>
+        <Tag>SEQ</Tag>
+        <span style={styles.title}>{data.name}</span>
+        <Rollup id={id} />
+        <span style={styles.spacer} />
+        <NudgeButtons id={id} move={move} />
+      </header>
+
+      {state !== undefined && state.status === "loaded" ? (
+        <div style={styles.children}>
+          {childIds.length === 0 ? (
+            // KNOWN to be empty — the four-state `ChildrenState` is what lets
+            // this sentence be written at all. A three-state model cannot tell
+            // "empty" from "not read yet".
+            <p style={styles.muted}>Empty, and known to be empty.</p>
+          ) : (
+            childIds.map((childId) => (
+              <ui.NodeSlot key={childId} id={childId} />
+            ))
+          )}
+        </div>
+      ) : (
+        <PlaceholderBody id={id} state={state} />
+      )}
+    </section>
+  );
+});
+
+/**
+ * The fallback for data this build does not understand.
+ *
+ * Registering one is optional; without it a quarantined node renders nothing.
+ * The engine keeps it movable, removable and re-emitted byte-exact either way —
+ * what it looks like is a product decision keel cannot make for you.
+ */
+ui.defineQuarantinedView(function QuarantinedView({ id, node }) {
+  const move = useMoveWithinParent();
+  const firstIssue = node.issues[0];
+
+  return (
+    <div data-testid={`node-${id}`} style={{ ...styles.row, ...styles.warn }}>
+      <Tag>?</Tag>
+      <span style={styles.title}>
+        kind {node.kind} — {node.reason}
+      </span>
+      <span data-testid={`why-${id}`} style={styles.muted}>
+        {/* The engine always attaches at least one Issue, for both quarantine
+            reasons — but `issues` is a readonly array and this repo types
+            `arr[0]` as possibly undefined, so the empty case is answered rather
+            than asserted away. */}
+        {firstIssue === undefined ? "(no detail)" : firstIssue.message}
+      </span>
+      <span style={styles.spacer} />
+      {/* Still movable. That is the point: quarantine is not a tombstone. */}
+      <NudgeButtons id={id} move={move} />
+    </div>
+  );
+});
+
+// ===========================================================================
+// SHARED HOOKS AND CHROME
+// ===========================================================================
+
+/**
+ * Move one node one slot within its own parent.
+ *
+ * THE LESSON IS THE INDEX. `resolveDrop` takes what the VIEW measured —
+ * PRE-removal coordinates, the only coordinates a view can see — and is the one
+ * place in the whole system that converts it to the post-removal index a
+ * `move-nodes` command carries.
+ *
+ * Note the asymmetry, which is exactly why that conversion lives in the engine:
+ *   up   -> `from - 1`  (the gap before the previous sibling)
+ *   down -> `from + 2`, NOT `from + 1`, because the node itself still occupies
+ *           `from` while the view is looking, so `from + 1` is the gap it is
+ *           already in. `resolveDrop` correctly rejects that as `empty-command`.
+ */
+function useMoveWithinParent(): (id: NodeId, direction: -1 | 1) => void {
+  const store = ui.useStore();
+
+  return useCallback(
+    (id, direction) => {
+      // Read the graph AT CLICK TIME, not at render time. `store` is stable for
+      // its lifetime, so this closure can never go stale.
+      const graph = store.getGraph();
+      const parentId = graph.parentById.get(id);
+      if (parentId === undefined || parentId === null) return;
+
+      const siblings = graph.childrenById.get(parentId);
+      if (siblings === undefined) return;
+
+      const from = siblings.indexOf(id);
+      if (from < 0) return;
+
+      const toIndexBefore = direction === -1 ? from - 1 : from + 2;
+      if (toIndexBefore < 0 || toIndexBefore > siblings.length) return;
+
+      const command = store.resolveDrop({
+        type: "move",
+        nodeIds: [id],
+        toParentId: parentId,
+        toIndexBefore,
+      });
+      // Rejections are RETURNED, never thrown. A no-op drop is one of them.
+      if (!command.ok) return;
+      store.dispatch(command.value);
+    },
+    [store],
+  );
+}
+
+/** Append a node to the end of another collection. */
+function useMoveToCollection(): (id: NodeId, toParentId: NodeId) => void {
+  const store = ui.useStore();
+
+  return useCallback(
+    (id, toParentId) => {
+      const graph = store.getGraph();
+      // No `childrenById` entry means the target is not a LOADED collection,
+      // and the engine would refuse the drop with `target-not-loaded` anyway: a
+      // post-removal index into children you have never seen has no honest
+      // value.
+      const target = graph.childrenById.get(toParentId);
+      if (target === undefined) return;
+
+      const command = store.resolveDrop({
+        type: "move",
+        nodeIds: [id],
+        toParentId,
+        toIndexBefore: target.length,
+      });
+      if (!command.ok) return;
+      store.dispatch(command.value);
+    },
+    [store],
+  );
+}
+
+/**
+ * A collection's load state, or `undefined` for anything that is not one.
+ *
+ * DISCRIMINATE ON `quarantined` FIRST. `container` cannot do it: on the
+ * quarantined arm it is a plain `boolean` read off the wire, so it is not
+ * disjoint from the literal `true` / `false` on the other two arms.
+ */
+function useChildrenState(id: NodeId): ChildrenState | undefined {
+  const node = ui.useNode(id);
+  if (node === undefined) return undefined;
+  if (node.quarantined) return node.children ?? undefined;
+  if (!node.container) return undefined;
+  return node.children;
+}
+
+/** What a not-loaded collection says about itself, and how to fill it. */
+function PlaceholderBody({
+  id,
+  state,
+}: Readonly<{ id: NodeId; state: ChildrenState | undefined }>) {
+  const store = ui.useStore();
+  const [problem, setProblem] = useState<string | null>(null);
+
+  if (state === undefined) return null;
+
+  if (state.status === "reference") {
+    return (
+      <p data-testid={`state-${id}`} style={styles.muted}>
+        reference — another placement owns these children, and this one is
+        structurally childless forever.
+      </p>
+    );
+  }
+
+  if (state.status === "missing") {
+    return (
+      <p data-testid={`state-${id}`} style={styles.muted}>
+        missing ({state.reason}) — confirmed gone, so the rollup above is EXACT.
+      </p>
+    );
+  }
+
+  const payload = LAZY_PAYLOADS.get(id);
+
+  return (
+    <div style={styles.children}>
+      <p data-testid={`state-${id}`} style={styles.muted}>
+        unloaded — nobody has read these children, so the rollup above is a
+        guess and says so.
+      </p>
+      {payload !== undefined ? (
+        <Button
+          testId={`load-${id}`}
+          onClick={() => {
+            // `load` takes a full SerializedDocument, not a bare children
+            // array, so MIGRATIONS RUN ON LAZY PAYLOADS TOO. It produces no
+            // patch, no history entry and no change-feed event — it is IO
+            // landing, not something the user did.
+            const result = store.load(id, payload);
+            setProblem(result.ok ? null : result.error.message);
+          }}
+        >
+          Load children
+        </Button>
+      ) : (
+        <p style={styles.muted}>No payload registered for this one.</p>
+      )}
+      {problem !== null ? <p style={styles.muted}>{problem}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Both registered folds, with their certainty ALWAYS printed.
+ *
+ * Printing it is the whole point of `Folded<A>`. A UI that shows the number and
+ * hides the certainty is the exact bug the type exists to prevent: the reader
+ * cannot tell a measurement from a remembered guess, and neither can the code
+ * that later persists it.
+ */
+function Rollup({ id }: Readonly<{ id: NodeId }>) {
+  const seconds = ui.useFold("seconds", id);
+  const shots = ui.useFold("shots", id);
+
+  return (
+    <span data-testid={`rollup-${id}`} style={styles.rollup}>
+      {formatFolded(seconds, "s")} · {formatFolded(shots, " shots")}
+    </span>
+  );
+}
+
+function formatFolded(
+  value: Folded<number> | undefined,
+  unit: string,
+): string {
+  // `undefined` means the node is gone. Routine in React, where a card outlives
+  // its node by a frame on every removal.
+  if (value === undefined) return "—";
+  return `${value.value}${unit} (${value.certainty})`;
+}
+
+/**
+ * The persistence gate, demonstrated.
+ *
+ * `summaryFrom` accepts ONLY the `"exact"` member of `Folded<A>` — the TYPE
+ * refuses an estimate, not a runtime check a caller can forget. The failure it
+ * is aimed at is measured: a duration accumulator starting at zero persisted
+ * `0` for every empty collection, the write path persisted documents through
+ * that projection, and every reader downstream then had to defend forever
+ * against a number that was never a measurement.
+ */
+function PersistPanel({ id }: Readonly<{ id: NodeId }>) {
+  const seconds = ui.useFold("seconds", id);
+  const shots = ui.useFold("shots", id);
+  const [written, setWritten] = useState<string>("nothing written yet");
+
+  return (
+    <div style={styles.panel}>
+      <Button
+        testId="persist"
+        onClick={() => {
+          if (seconds === undefined || shots === undefined) return;
+          if (seconds.certainty !== "exact" || shots.certainty !== "exact") {
+            setWritten("refused: only an exact rollup may be stored");
+            return;
+          }
+          // Both are narrowed to the "exact" member here, so `summaryFrom`
+          // compiles. Delete either check above and it stops compiling.
+          const summary: Summary = {
+            seconds: summaryFrom(seconds),
+            shots: summaryFrom(shots),
+          };
+          setWritten(JSON.stringify(summary));
+        }}
+      >
+        Write rollup to the stored summary
+      </Button>
+      <code data-testid="persist-result" style={styles.code}>
+        {written}
+      </code>
+    </div>
+  );
+}
+
+/** Undo/redo, with the buttons disabled from the store rather than guessed. */
+function HistoryBar() {
+  const { canUndo, canRedo, undo, redo } = ui.useHistory();
+
+  return (
+    <div style={styles.panel}>
+      <Button testId="undo" disabled={!canUndo} onClick={() => void undo()}>
+        Undo
+      </Button>
+      <Button testId="redo" disabled={!canRedo} onClick={() => void redo()}>
+        Redo
+      </Button>
+      <span style={styles.muted}>
+        undo={String(canUndo)} redo={String(canRedo)}
+      </span>
+    </div>
+  );
+}
+
+/** The literal children array, so the move stories can be read at a glance. */
+function ChildOrder({
+  id,
+  label,
+}: Readonly<{ id: NodeId; label: string }>) {
+  const childIds = ui.useChildren(id);
+  return (
+    <p data-testid={`order-${id}`} style={styles.code}>
+      {label}: {childIds.length === 0 ? "(empty)" : childIds.join(", ")}
+    </p>
+  );
+}
+
+/**
+ * What this node looks like on the wire RIGHT NOW.
+ *
+ * Used by the quarantine story to show that a node whose kind this build has
+ * never heard of is re-emitted byte-exact — nothing is dropped, nothing is
+ * normalized, and a round-trip through an old client cannot destroy it.
+ */
+function ReEmittedNode({ id }: Readonly<{ id: NodeId }>) {
+  const graph = ui.useGraph();
+  const wire: SerializedNode | undefined = engine
+    .serialize(graph)
+    .nodes.find((node) => node.id === id);
+
+  return (
+    <code data-testid={`wire-${id}`} style={styles.code}>
+      {JSON.stringify(wire?.data ?? null)}
+    </code>
+  );
+}
+
+function NudgeButtons({
+  id,
+  move,
+}: Readonly<{ id: NodeId; move: (id: NodeId, direction: -1 | 1) => void }>) {
+  return (
+    <>
+      <Button testId={`up-${id}`} onClick={() => move(id, -1)}>
+        up
+      </Button>
+      <Button testId={`down-${id}`} onClick={() => move(id, 1)}>
+        down
+      </Button>
+    </>
+  );
+}
+
+/** Mounts one document as a fresh store. Every story gets its own. */
+function Stage({
+  doc,
+  children,
+}: Readonly<{ doc: SerializedDocument; children?: ReactNode }>) {
+  // A lazy initializer, so the store survives re-renders and is built once.
+  const [store] = useState(() => {
+    const loaded = engine.deserialize(doc);
+    // `deserialize` is Result-shaped. A fixture that fails is a story bug, and
+    // throwing surfaces it as a broken story instead of an empty box.
+    if (!loaded.ok) {
+      throw new Error(`fixture did not load: ${loaded.error.message}`);
+    }
+    return engine.createStore(loaded.value.graph);
+  });
+
+  return (
+    <ui.Provider store={store}>
+      <div style={styles.stage}>{children}</div>
+    </ui.Provider>
+  );
+}
+
+/** Every root, rendered through the kind registry. */
+function Roots() {
+  const rootIds = ui.useRoots();
+  return (
+    <>
+      {rootIds.map((id) => (
+        <ui.NodeSlot key={id} id={id} />
+      ))}
+    </>
+  );
+}
+
+function Lesson({
+  title,
+  children,
+}: Readonly<{ title: string; children: ReactNode }>) {
+  return (
+    <div style={styles.lesson}>
+      <h3 style={styles.lessonTitle}>{title}</h3>
+      <p style={styles.muted}>{children}</p>
+    </div>
+  );
+}
+
+function Tag({ children }: Readonly<{ children: ReactNode }>) {
+  return <span style={styles.tag}>{children}</span>;
+}
+
+function Button({
+  testId,
+  onClick,
+  disabled,
+  children,
+}: Readonly<{
+  testId: string;
+  onClick(): void;
+  disabled?: boolean;
+  children: ReactNode;
+}>) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      disabled={disabled === true}
+      style={disabled === true ? styles.buttonOff : styles.button}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * INLINE STYLES, NOT TAILWIND CLASSES, and that is deliberate.
+ *
+ * The storybook workspace's Tailwind entry declares
+ * `@source "../../../packages/ui/**"` and nothing else, so a class name written
+ * in packages/keel-react compiles to no CSS at all — the story would render
+ * unstyled and nothing would say why. Everything below is also expressed in
+ * `currentColor` and translucent greys so it reads in both the light and the
+ * dark Storybook theme without importing a token.
+ */
+const styles: Readonly<Record<string, CSSProperties>> = {
+  stage: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    fontFamily: "ui-sans-serif, system-ui, sans-serif",
+    fontSize: 14,
+    lineHeight: 1.5,
+  },
+  lesson: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 640 },
+  lessonTitle: { margin: 0, fontSize: 15, fontWeight: 600 },
+  collection: {
+    border: "1px solid rgba(128,128,128,0.45)",
+    borderRadius: 8,
+    padding: 8,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  children: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    paddingLeft: 16,
+    borderLeft: "2px solid rgba(128,128,128,0.3)",
+  },
+  row: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "4px 6px",
+    borderRadius: 6,
+    background: "rgba(128,128,128,0.08)",
+  },
+  warn: { background: "rgba(200,120,0,0.16)" },
+  title: { fontWeight: 600 },
+  muted: { opacity: 0.7, margin: 0 },
+  spacer: { flex: 1 },
+  tag: {
+    fontSize: 10,
+    letterSpacing: 0.6,
+    padding: "2px 5px",
+    borderRadius: 4,
+    border: "1px solid rgba(128,128,128,0.6)",
+  },
+  rollup: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: 12,
+    opacity: 0.85,
+  },
+  panel: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  code: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: 12,
+    opacity: 0.85,
+    margin: 0,
+  },
+  button: {
+    font: "inherit",
+    fontSize: 12,
+    padding: "3px 8px",
+    borderRadius: 5,
+    border: "1px solid rgba(128,128,128,0.6)",
+    background: "transparent",
+    color: "inherit",
+    cursor: "pointer",
+  },
+  buttonOff: {
+    font: "inherit",
+    fontSize: 12,
+    padding: "3px 8px",
+    borderRadius: 5,
+    border: "1px solid rgba(128,128,128,0.3)",
+    background: "transparent",
+    color: "inherit",
+    opacity: 0.4,
+    cursor: "not-allowed",
+  },
+};
+
+// ===========================================================================
+// FIXTURES — deterministic, nothing fetches
+// ===========================================================================
+
+/**
+ * PER KIND, because one number cannot advance three independent schemas.
+ * `sticker` is declared even though this build has no codec for it: a document
+ * is allowed to carry kinds you do not understand, and saying so is what lets
+ * quarantine round-trip.
+ */
+const SCHEMA_VERSIONS: Readonly<Record<string, number>> = {
+  shot: 1,
+  note: 1,
+  sequence: 1,
+  sticker: 1,
+};
+
+function wireShot(
+  id: string,
+  slug: string,
+  seconds: number,
+  camera: string,
+): SerializedNode {
+  return { id, kind: "shot", data: { slug, seconds, camera } };
+}
+
+function wireNote(id: string, text: string, author: string): SerializedNode {
+  return { id, kind: "note", data: { text, author } };
+}
+
+/** `children` PRESENT is what makes a collection `loaded` on the wire. */
+function wireSequence(
+  id: string,
+  name: string,
+  children: readonly string[],
+): SerializedNode {
+  return { id, kind: "sequence", children, data: { name } };
+}
+
+/** `children` ABSENT plus an explicit tag. `summary: null` means "nothing stored". */
+function wireUnloaded(
+  id: string,
+  name: string,
+  summary: Summary | null,
+): SerializedNode {
+  return {
+    id,
+    kind: "sequence",
+    childrenState: "unloaded",
+    summary,
+    data: { name },
+  };
+}
+
+/** A FLAT node list — no recursion, no depth limit, every node addressable. */
+function wireDocument(
+  rootIds: readonly string[],
+  nodes: readonly SerializedNode[],
+): SerializedDocument {
+  return { formatVersion: 1, schemaVersions: SCHEMA_VERSIONS, rootIds, nodes };
+}
+
+const IDS = {
+  actOne: parseNodeId("act-one"),
+  reelA: parseNodeId("reel-a"),
+  reelB: parseNodeId("reel-b"),
+  sceneTwo: parseNodeId("scene-two"),
+  sceneThree: parseNodeId("scene-three"),
+  shotBridge: parseNodeId("shot-bridge"),
+  sticker: parseNodeId("sticker-slate"),
+} as const;
+
+/** One collection, two different leaf kinds. 6s + 0s + 4s = 10s, 2 shots. */
+const heterogeneousDoc = wireDocument(
+  ["act-one"],
+  [
+    wireSequence("act-one", "Act One", [
+      "shot-bridge",
+      "note-lighting",
+      "shot-reveal",
+    ]),
+    wireShot("shot-bridge", "Bridge, wide", 6, "A"),
+    wireNote("note-lighting", "Match the 4pm key from the last setup.", "Joe"),
+    wireShot("shot-reveal", "Reveal, push in", 4, "B"),
+  ],
+);
+
+/** A sequence inside a sequence. 6 + (4 + 3) = 13s, 3 shots. */
+const nestedDoc = wireDocument(
+  ["act-one"],
+  [
+    wireSequence("act-one", "Act One", [
+      "shot-bridge",
+      "scene-two",
+      "note-lighting",
+    ]),
+    wireShot("shot-bridge", "Bridge, wide", 6, "A"),
+    wireSequence("scene-two", "Scene Two", ["shot-door", "shot-hands"]),
+    wireShot("shot-door", "Door, medium", 4, "A"),
+    wireShot("shot-hands", "Hands on the latch", 3, "C"),
+    wireNote("note-lighting", "Match the 4pm key from the last setup.", "Joe"),
+  ],
+);
+
+/** Two sibling roots, so a node can move from one collection to another. */
+const twoReelsDoc = wireDocument(
+  ["reel-a", "reel-b"],
+  [
+    wireSequence("reel-a", "Reel A", [
+      "shot-bridge",
+      "note-lighting",
+      "shot-reveal",
+    ]),
+    wireSequence("reel-b", "Reel B", ["shot-door"]),
+    wireShot("shot-bridge", "Bridge, wide", 6, "A"),
+    wireNote("note-lighting", "Match the 4pm key from the last setup.", "Joe"),
+    wireShot("shot-reveal", "Reveal, push in", 4, "B"),
+    wireShot("shot-door", "Door, medium", 4, "A"),
+  ],
+);
+
+/**
+ * One unloaded collection WITH a stored summary and one WITHOUT.
+ *
+ * The stored summary deliberately says 12s where the real payload below totals
+ * 11s. That gap is the entire lesson: an estimate is an estimate, and the only
+ * thing that makes the discrepancy survivable is that it was labelled.
+ */
+const lazyDoc = wireDocument(
+  ["act-one"],
+  [
+    wireSequence("act-one", "Act One", [
+      "shot-bridge",
+      "scene-two",
+      "scene-three",
+    ]),
+    wireShot("shot-bridge", "Bridge, wide", 6, "A"),
+    wireUnloaded("scene-two", "Scene Two", { seconds: 12, shots: 3 }),
+    wireUnloaded("scene-three", "Scene Three", null),
+  ],
+);
+
+/**
+ * What an app would fetch for an unloaded subtree. In a sub-document `rootIds`
+ * names the nodes that become the target's children, and — unlike a top-level
+ * document's roots — those need not be containers.
+ */
+const sceneTwoPayload = wireDocument(
+  ["shot-door", "shot-hands", "shot-tilt"],
+  [
+    wireShot("shot-door", "Door, medium", 4, "A"),
+    wireShot("shot-hands", "Hands on the latch", 3, "C"),
+    wireShot("shot-tilt", "Tilt to the sky", 4, "A"),
+  ],
+);
+
+const LAZY_PAYLOADS: ReadonlyMap<NodeId, SerializedDocument> = new Map([
+  [IDS.sceneTwo, sceneTwoPayload],
+]);
+
+/**
+ * Two ways to be un-parseable, side by side.
+ *
+ *  - `sticker-slate` is an UNKNOWN KIND — no codec is registered for it.
+ *  - `shot-broken` is a KNOWN kind whose data fails its own `parse` (empty
+ *    slug, non-numeric seconds).
+ *
+ * Both quarantine rather than killing the document, and that default exists
+ * because the alternative shipped: one refused stored clip made a whole
+ * document unwritable forever, and since the trash bin is rewritten on every
+ * delete, deleting anything at all became impossible.
+ */
+const quarantineDoc = wireDocument(
+  ["act-one"],
+  [
+    wireSequence("act-one", "Act One", [
+      "shot-bridge",
+      "sticker-slate",
+      "shot-reveal",
+      "shot-broken",
+    ]),
+    wireShot("shot-bridge", "Bridge, wide", 6, "A"),
+    {
+      id: "sticker-slate",
+      kind: "sticker",
+      data: { glyph: "clapper", label: "SLATE", addedBy: "a newer build" },
+    },
+    wireShot("shot-reveal", "Reveal, push in", 4, "B"),
+    { id: "shot-broken", kind: "shot", data: { slug: "", seconds: "six" } },
+  ],
+);
+
+// ===========================================================================
+// STORIES
+// ===========================================================================
+
+const meta = {
+  title: "KEEL/Tour",
+  decorators: [
+    (Story) => (
+      <div style={{ padding: 24, color: "inherit" }}>
+        <Story />
+      </div>
+    ),
+  ],
+} satisfies Meta;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+/**
+ * 1. A collection holding two DIFFERENT kinds.
+ *
+ * `shot` and `note` share no fields, no edit type and no view. The registry
+ * tuple is what keeps them apart all the way down: `NodeSlot` dispatches on the
+ * same `kind` the engine parsed the node with, and inside `ShotView` the `data`
+ * prop is a `Shot` — not a union, not `unknown`.
+ */
+export const HeterogeneousCollection: Story = {
+  render: () => (
+    <Stage doc={heterogeneousDoc}>
+      <Lesson title="One collection, two kinds">
+        Every kind brings its own data type, its own edit type and its own view.
+        The fold has to say what each kind contributes — a note has no duration,
+        so it contributes nothing, and it says so explicitly.
+      </Lesson>
+      <Roots />
+      <ChildOrder id={IDS.actOne} label="act-one children" />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Both kinds render, side by side, from one children array.
+    await expect(canvas.getByTestId("node-shot-bridge")).toBeInTheDocument();
+    await expect(canvas.getByTestId("node-note-lighting")).toBeInTheDocument();
+
+    // 6s + 0s (the note) + 4s = 10s over 2 shots, and nothing is uncertain.
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "10s (exact)",
+    );
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "2 shots (exact)",
+    );
+  },
+};
+
+/**
+ * 2. Nesting.
+ *
+ * A container is just another kind. `SequenceView` renders `NodeSlot` for each
+ * child, so nesting is recursion through the registry rather than anything the
+ * engine has to be told about — and the rollup composes bottom-up for free.
+ */
+export const Nesting: Story = {
+  render: () => (
+    <Stage doc={nestedDoc}>
+      <Lesson title="Containers are kinds too">
+        A sequence renders a NodeSlot per child, and a child may be another
+        sequence. Folds compose bottom-up: Scene Two totals itself, Act One adds
+        that total to its own leaves.
+      </Lesson>
+      <Roots />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The inner sequence knows its own total...
+    await expect(canvas.getByTestId("rollup-scene-two")).toHaveTextContent(
+      "7s (exact)",
+    );
+    // ...and the outer one adds it to its own leaf.
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "13s (exact)",
+    );
+  },
+};
+
+/**
+ * 3. Reordering, and moving between collections.
+ *
+ * Both are the same command. The only hard part is the index, and it is hard
+ * exactly once, in `resolveDrop` — see `useMoveWithinParent` above for why
+ * "down" is `from + 2` and not `from + 1`.
+ */
+export const ReorderAndMove: Story = {
+  render: () => {
+    return (
+      <Stage doc={twoReelsDoc}>
+        <Lesson title="One command, one index rule">
+          Views measure PRE-removal positions, commands carry POST-removal ones,
+          and resolveDrop is the only place that converts. Moving between
+          collections is the same command with a different parent.
+        </Lesson>
+        <ReelToolbar />
+        <Roots />
+        <ChildOrder id={IDS.reelA} label="reel-a children" />
+        <ChildOrder id={IDS.reelB} label="reel-b children" />
+      </Stage>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await userEvent.click(canvas.getByTestId("down-shot-bridge"));
+    await expect(canvas.getByTestId("order-reel-a")).toHaveTextContent(
+      "note-lighting, shot-bridge, shot-reveal",
+    );
+
+    await userEvent.click(canvas.getByTestId("send-to-reel-b"));
+    await expect(canvas.getByTestId("order-reel-a")).toHaveTextContent(
+      "note-lighting, shot-reveal",
+    );
+    await expect(canvas.getByTestId("order-reel-b")).toHaveTextContent(
+      "shot-door, shot-bridge",
+    );
+  },
+};
+
+function ReelToolbar() {
+  const moveTo = useMoveToCollection();
+  return (
+    <div style={styles.panel}>
+      <Button
+        testId="send-to-reel-b"
+        onClick={() => moveTo(IDS.shotBridge, IDS.reelB)}
+      >
+        Send Bridge to Reel B
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * 4. Editing content.
+ *
+ * `edit-nodes` is the ONE door into a node's data that the user drives. The
+ * codec's `applyEdit` decides, and its refusal comes back as a value — the
+ * button below asks for a zero-second shot and prints the rejection instead of
+ * throwing it.
+ */
+export const EditingContent: Story = {
+  render: () => (
+    <Stage doc={heterogeneousDoc}>
+      <Lesson title="Edits go through the codec">
+        The engine never interprets a node data field. It hands the edit to that
+        kind&apos;s applyEdit and stores whatever comes back — including
+        &quot;no&quot;.
+      </Lesson>
+      <RejectedEditPanel />
+      <Roots />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await userEvent.click(canvas.getByTestId("rename-shot-bridge"));
+    await expect(canvas.getByTestId("slug-shot-bridge")).toHaveTextContent(
+      "Bridge, wide (v2)",
+    );
+
+    // A refusal is a Result, not an exception, and it names the codec's code.
+    await userEvent.click(canvas.getByTestId("bad-edit"));
+    await expect(canvas.getByTestId("edit-result")).toHaveTextContent(
+      "edit-rejected",
+    );
+    await expect(canvas.getByTestId("edit-result")).toHaveTextContent(
+      "non-positive-duration",
+    );
+  },
+};
+
+function RejectedEditPanel() {
+  const dispatch = ui.useDispatch();
+  const [message, setMessage] = useState<string>("no edit attempted yet");
+
+  return (
+    <div style={styles.panel}>
+      <Button
+        testId="bad-edit"
+        onClick={() => {
+          const result = dispatch({
+            type: "edit-nodes",
+            edits: [
+              {
+                nodeId: IDS.shotBridge,
+                kind: "shot",
+                edit: { type: "retime", seconds: 0 },
+              },
+            ],
+          });
+          setMessage(
+            result.ok
+              ? "accepted"
+              : `${result.error.code}: ${
+                  result.error.editRejection?.code ?? result.error.message
+                }`,
+          );
+        }}
+      >
+        Try to set Bridge to 0s
+      </Button>
+      <code data-testid="edit-result" style={styles.code}>
+        {message}
+      </code>
+    </div>
+  );
+}
+
+/**
+ * 5. Undo and redo, including undo of a CONTENT edit.
+ *
+ * Undo of content works from a whole-value before/after pair, so the engine
+ * needs zero knowledge of what a `Shot` is and the pair CANNOT be wrong. Delta
+ * inverses are opt-in per kind and off by default, because a wrong inverse
+ * corrupts silently N undos later and is undetectable in production.
+ *
+ * Structural undo is the same machinery: an insert records the placements it
+ * made, and inverting flips `inserted` to `removed` with the array order
+ * preserved.
+ */
+export const UndoAndRedo: Story = {
+  render: () => (
+    <Stage doc={heterogeneousDoc}>
+      <Lesson title="One gesture, one history entry">
+        A content edit and a structural insert produce the same kind of
+        reversible record. Undo replays the inverse; redo replays the original
+        patch AS RECORDED, ids included, so nothing that pointed at the node
+        loses it.
+      </Lesson>
+      <HistoryBar />
+      <AddNoteButton />
+      <Roots />
+      <ChildOrder id={IDS.actOne} label="act-one children" />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // --- undo of a CONTENT edit ---
+    await userEvent.click(canvas.getByTestId("rename-shot-bridge"));
+    await expect(canvas.getByTestId("slug-shot-bridge")).toHaveTextContent(
+      "Bridge, wide (v2)",
+    );
+
+    await userEvent.click(canvas.getByTestId("undo"));
+    await expect(canvas.getByTestId("slug-shot-bridge")).toHaveTextContent(
+      "Bridge, wide",
+    );
+
+    await userEvent.click(canvas.getByTestId("redo"));
+    await expect(canvas.getByTestId("slug-shot-bridge")).toHaveTextContent(
+      "Bridge, wide (v2)",
+    );
+
+    // --- undo of a STRUCTURAL change ---
+    await userEvent.click(canvas.getByTestId("add-note"));
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "2 shots (exact)",
+    );
+    await expect(canvas.getByTestId("order-act-one")).toHaveTextContent(
+      "minted-",
+    );
+
+    await userEvent.click(canvas.getByTestId("undo"));
+    await expect(canvas.getByTestId("order-act-one")).not.toHaveTextContent(
+      "minted-",
+    );
+  },
+};
+
+function AddNoteButton() {
+  const store = ui.useStore();
+  return (
+    <div style={styles.panel}>
+      <Button
+        testId="add-note"
+        onClick={() => {
+          const children = store.getGraph().childrenById.get(IDS.actOne);
+          if (children === undefined) return;
+          store.dispatch({
+            type: "insert-nodes",
+            // A SEED carries a VALUE and never an id — the engine mints the id,
+            // so a consumer cannot collide with a node it never saw, and "an
+            // insert is undoable" is true by construction rather than by
+            // convention. The data still goes through `parse`.
+            seeds: [
+              {
+                kind: "note",
+                data: { text: "Continuity: the mug moves.", author: "Joe" },
+              },
+            ],
+            toParentId: IDS.actOne,
+            toIndex: children.length,
+          });
+        }}
+      >
+        Add a note
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * 6. A rollup, and its certainty.
+ *
+ * Folds live in a memo table beside the store — never in the graph, never in a
+ * patch, never persisted from a non-exact value. A rollup inside a patch is a
+ * lie the moment anything moves.
+ */
+export const RollupWithCertainty: Story = {
+  render: () => (
+    <Stage doc={nestedDoc}>
+      <Lesson title="Every aggregate carries how much it is worth">
+        Two folds are registered here, seconds and shots. Both are cached by
+        (foldKey, nodeId, subtreeRev), so a stale entry is unreachable rather
+        than wrong — and only an exact one may be written back to storage.
+      </Lesson>
+      <PersistPanel id={IDS.actOne} />
+      <Roots />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "13s (exact)",
+    );
+
+    // Nothing is unloaded and nothing is quarantined, so the gate opens.
+    await userEvent.click(canvas.getByTestId("persist"));
+    await expect(canvas.getByTestId("persist-result")).toHaveTextContent(
+      '{"seconds":13,"shots":3}',
+    );
+  },
+};
+
+/**
+ * 7. A collection nobody has read yet, and what its rollup honestly reports.
+ *
+ * FOUR children states, not three and not a boolean:
+ *   loaded    — there is a children array, possibly empty
+ *   unloaded  — this placement owns a subtree nobody has read
+ *   reference — another placement owns it; childless forever
+ *   missing   — storage CONFIRMED gone, so exactly empty, so EXACT
+ *
+ * Collapsing "empty" and "not read yet" is the ambiguity every downstream
+ * compensation in the predecessor was scar tissue for. Watch the numbers: 18s
+ * partial becomes 17s exact, because the stored summary said 12 and the truth
+ * was 11.
+ */
+export const UnloadedCollection: Story = {
+  render: () => (
+    <Stage doc={lazyDoc}>
+      <Lesson title="Honesty is contagious, and that is the feature">
+        Scene Two is unloaded but carries a stored summary, so it reports an
+        estimate. Scene Three is unloaded with nothing stored, so it reports
+        partial. Either one drags the whole ancestor chain down to the weakest
+        answer, which is what stops a guess being saved as a measurement.
+      </Lesson>
+      <MissingToolbar />
+      <PersistPanel id={IDS.actOne} />
+      <Roots />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // A remembered number, labelled as remembered.
+    await expect(canvas.getByTestId("rollup-scene-two")).toHaveTextContent(
+      "12s (estimated)",
+    );
+    // Nothing stored at all: zero, and honest about it.
+    await expect(canvas.getByTestId("rollup-scene-three")).toHaveTextContent(
+      "0s (partial)",
+    );
+    // 6 + 12 + 0, and the weakest child wins the certainty.
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "18s (partial)",
+    );
+
+    // The gate refuses to store a guess.
+    await userEvent.click(canvas.getByTestId("persist"));
+    await expect(canvas.getByTestId("persist-result")).toHaveTextContent(
+      "refused",
+    );
+
+    // Load the real children: 4 + 3 + 4 = 11, not the 12 that was remembered.
+    await userEvent.click(canvas.getByTestId("load-scene-two"));
+    await expect(canvas.getByTestId("rollup-scene-two")).toHaveTextContent(
+      "11s (exact)",
+    );
+
+    // Confirming a subtree is gone is KNOWLEDGE, so it folds to exact — which
+    // is what finally makes the whole document persistable.
+    await userEvent.click(canvas.getByTestId("mark-missing"));
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "17s (exact)",
+    );
+
+    await userEvent.click(canvas.getByTestId("persist"));
+    await expect(canvas.getByTestId("persist-result")).toHaveTextContent(
+      '{"seconds":17,"shots":4}',
+    );
+  },
+};
+
+function MissingToolbar() {
+  const store = ui.useStore();
+  return (
+    <div style={styles.panel}>
+      <Button
+        testId="mark-missing"
+        onClick={() =>
+          // IO landing, like `load`: no patch, no history entry, no change-feed
+          // event. The consumer performed the lookup and already knows.
+          store.markMissing(IDS.sceneThree, "deleted upstream")
+        }
+      >
+        Confirm Scene Three is gone
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * 8. Quarantine — data this build cannot understand.
+ *
+ * A node whose kind is unregistered, or whose data fails its own parse, becomes
+ * a `QuarantinedNode`. It keeps its id, its position and its children. It is
+ * movable, removable and undoable. It is NOT editable. It poisons its
+ * ancestors' folds to "partial". And it re-emits byte-exact, so a round-trip
+ * through this build cannot destroy what a newer one wrote.
+ *
+ * `QuarantinedNode` is a member of the READ type on purpose: an exhaustive
+ * switch over `AnyNode` does not compile until forward-incompatible data is
+ * handled.
+ */
+export const Quarantine: Story = {
+  render: () => (
+    <Stage doc={quarantineDoc}>
+      <Lesson title="Survive the data you do not understand">
+        Two failures here: a kind with no codec, and a known kind whose data is
+        invalid. Neither kills the document. Rejecting instead is what once made
+        a document unwritable forever — and since the trash bin is rewritten on
+        every delete, that made deleting anything impossible.
+      </Lesson>
+      <Roots />
+      <ChildOrder id={IDS.actOne} label="act-one children" />
+      <p style={styles.muted}>Re-emitted wire data for the unknown node:</p>
+      <ReEmittedNode id={IDS.sticker} />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // It survived the load, both ways, and each node carries the engine's own
+    // explanation of why it could not be built.
+    await expect(canvas.getByTestId("node-sticker-slate")).toHaveTextContent(
+      "unknown-kind",
+    );
+    await expect(canvas.getByTestId("why-sticker-slate")).toHaveTextContent(
+      'No node type is registered for kind "sticker"',
+    );
+    await expect(canvas.getByTestId("node-shot-broken")).toHaveTextContent(
+      "parse-failed",
+    );
+
+    // And it is honest about the cost: the ancestor rollup cannot be trusted.
+    await expect(canvas.getByTestId("rollup-act-one")).toHaveTextContent(
+      "(partial)",
+    );
+
+    // Still movable — quarantine is not a tombstone.
+    await userEvent.click(canvas.getByTestId("down-sticker-slate"));
+    await expect(canvas.getByTestId("order-act-one")).toHaveTextContent(
+      "shot-bridge, shot-reveal, sticker-slate, shot-broken",
+    );
+
+    // Still byte-exact on the way back out: nothing dropped, nothing
+    // normalized, including the field this build has never heard of.
+    await expect(canvas.getByTestId("wire-sticker-slate")).toHaveTextContent(
+      '"addedBy":"a newer build"',
+    );
+  },
+};

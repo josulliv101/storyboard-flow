@@ -1,0 +1,879 @@
+// KEEL — graph structure, queries, derived indexes and invariants.
+//
+// PURE. Imports `./types` and nothing else — not even a sibling keel module.
+// This is the bottom of the dependency order: patches, commands, folds and
+// serialize all sit on top of it, so anything imported here is imported by
+// every one of them.
+//
+// Three things live here and nowhere else:
+//
+//   1. The QUERIES. Every one is TOTAL — an unknown id yields an empty/neutral
+//      answer, never a throw. React reads the graph, and in React a card can
+//      outlive its node by a frame; a query that throws on that turns a routine
+//      race into a crashed subtree.
+//   2. The DERIVED INDEXES (`placementsByContentKey`, `ownerBySourceKey`) and
+//      the subtree-revision bump. `rebuildDerivedIndexes` is the one definition
+//      of what those maps contain, so `applyPatch` and `findInvariantViolation`
+//      cannot hold two different opinions.
+//   3. `findInvariantViolation`, the structural audit. It is the executable
+//      form of the rules the rest of the engine assumes without re-checking.
+
+import type {
+  AnyNode,
+  ChildrenState,
+  CollectionNode,
+  Graph,
+  NodeId,
+  NodeTypeRegistry,
+  QuarantinedNode,
+  SomeNodeType,
+  Violation,
+} from "./types";
+
+// ---------------------------------------------------------------------------
+// Shared empties
+// ---------------------------------------------------------------------------
+//
+// Frozen module-level constants rather than a fresh `[]` / `new Map()` per
+// call. `getChildren` is called once per rendered row per frame, and a fresh
+// array each time defeats every `useMemo` / `Object.is` comparison downstream —
+// the caller sees a new identity and re-renders even though nothing changed.
+
+const NO_IDS: readonly NodeId[] = Object.freeze([]);
+const NO_PLACEMENTS: ReadonlyMap<string, readonly NodeId[]> = new Map();
+const NO_OWNERS: ReadonlyMap<string, NodeId> = new Map();
+
+// ---------------------------------------------------------------------------
+// Registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the kind -> codec map.
+ *
+ * THROWS on a duplicate kind, and this is the only function in keel-core that
+ * throws. It is a module-init programmer error, not a recoverable condition:
+ * two codecs claiming one kind means one of them silently wins at the trust
+ * boundary, so `switch (node.kind)` narrows `data` to a type the node does not
+ * hold and the whole discriminated union is quietly a lie. There is no
+ * partial-success answer worth returning — the consumer's module graph is
+ * wrong, and it is wrong before any data has been read.
+ */
+export function buildRegistry(types: readonly SomeNodeType[]): NodeTypeRegistry {
+  const registry = new Map<string, SomeNodeType>();
+  for (const type of types) {
+    if (registry.has(type.kind)) {
+      throw new Error(
+        `keel: duplicate node kind ${JSON.stringify(type.kind)} in ` +
+          `createEngine({ types }). Each kind may be claimed by exactly one codec.`,
+      );
+    }
+    registry.set(type.kind, type);
+  }
+  return registry;
+}
+
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
+
+export function emptyGraph<Ts extends readonly unknown[], S>(
+  engineId: symbol,
+): Graph<Ts, S> {
+  return {
+    engineId,
+    nodesById: new Map(),
+    childrenById: new Map(),
+    parentById: new Map(),
+    rootIds: NO_IDS,
+    subtreeRevById: new Map(),
+    placementsByContentKey: NO_PLACEMENTS,
+    ownerBySourceKey: NO_OWNERS,
+  };
+}
+
+/**
+ * Assemble a graph from an already-parsed node set.
+ *
+ * Not part of the cross-module signature contract — `deserializeDocument`,
+ * `loadChildrenInto` and the tests are the callers. It exists so the two
+ * derived facts every ingress path has to get right — `parentById` TOTAL over
+ * `nodesById`, and both derived indexes consistent with the node set — are
+ * computed in one place instead of being re-derived per ingress. The
+ * predecessor re-derived them per path and they drifted.
+ *
+ * It does NOT validate. `findInvariantViolation` is the audit, and running it
+ * here would make every ingress pay for a check the caller may want once at the
+ * end, or only under `devChecks`.
+ *
+ * `subtreeRevs` carries revisions forward when a graph is rebuilt around
+ * existing nodes; a node with no carried revision starts at 0.
+ */
+export function buildGraph<Ts extends readonly unknown[], S>(
+  args: Readonly<{
+    engineId: symbol;
+    nodesById: ReadonlyMap<NodeId, AnyNode<Ts, S>>;
+    childrenById: ReadonlyMap<NodeId, readonly NodeId[]>;
+    rootIds: readonly NodeId[];
+    registry: NodeTypeRegistry;
+    subtreeRevs?: ReadonlyMap<NodeId, number>;
+  }>,
+): Graph<Ts, S> {
+  const parentById = new Map<NodeId, NodeId | null>();
+  for (const [parentId, childIds] of args.childrenById) {
+    for (const childId of childIds) parentById.set(childId, parentId);
+  }
+  // TOTAL over `nodesById`: anything not claimed as a child is a root, and a
+  // root's entry is an explicit `null` rather than an absent key. `has()` and
+  // `get()` therefore answer different questions, and check 5 of
+  // `findInvariantViolation` is written against the first one.
+  const subtreeRevById = new Map<NodeId, number>();
+  for (const id of args.nodesById.keys()) {
+    if (!parentById.has(id)) parentById.set(id, null);
+    subtreeRevById.set(id, args.subtreeRevs?.get(id) ?? 0);
+  }
+
+  const skeleton: Graph<Ts, S> = {
+    engineId: args.engineId,
+    nodesById: args.nodesById,
+    childrenById: args.childrenById,
+    parentById,
+    rootIds: args.rootIds,
+    subtreeRevById,
+    placementsByContentKey: NO_PLACEMENTS,
+    ownerBySourceKey: NO_OWNERS,
+  };
+  // The indexes are derived from a walk, so they need a walkable graph — the
+  // skeleton is exactly that, and the two placeholder maps it carries are never
+  // read by `rebuildDerivedIndexes`.
+  return { ...skeleton, ...rebuildDerivedIndexes(skeleton, args.registry) };
+}
+
+// ---------------------------------------------------------------------------
+// Queries — all TOTAL, none throw
+// ---------------------------------------------------------------------------
+
+export function getNode<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): AnyNode<Ts, S> | undefined {
+  return graph.nodesById.get(id);
+}
+
+/**
+ * The children of a `loaded` collection, `[]` for everything else.
+ *
+ * CALLERS MUST NOT READ THIS TO DECIDE "IS IT EMPTY". An unloaded collection
+ * and a genuinely empty one both answer `[]`, and collapsing those two is the
+ * exact ambiguity this engine exists to remove — the predecessor confesses it
+ * in its own source, and every downstream uncertainty flag it grew is scar
+ * tissue from that one missing bit. Use `childrenStateOf`.
+ */
+export function getChildren<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): readonly NodeId[] {
+  return graph.childrenById.get(id) ?? NO_IDS;
+}
+
+export function getParent<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): NodeId | null {
+  return graph.parentById.get(id) ?? null;
+}
+
+/** 0 for an unknown node, so a subscriber comparing revisions across a removal
+ *  sees a change rather than an exception. */
+export function getSubtreeRev<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): number {
+  return graph.subtreeRevById.get(id) ?? 0;
+}
+
+/** `null` for a leaf, an unknown node, or a QUARANTINED leaf — the three cases
+ *  where "what is this subtree's load state" has no answer, because there is no
+ *  subtree. */
+export function childrenStateOf<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): ChildrenState | null {
+  const node = graph.nodesById.get(id);
+  if (node === undefined) return null;
+  // Discriminate on `quarantined` FIRST: `container` is a plain `boolean` on
+  // the quarantined arm (it comes off the wire), so it is not disjoint from the
+  // literal `true` / `false` on the other two and cannot discriminate alone.
+  if (node.quarantined) return node.children;
+  if (node.container) return node.children;
+  return null;
+}
+
+/**
+ * True for every collection AND every quarantined node.
+ *
+ * The quarantined half looks over-broad until you check the alternative. The
+ * declared predicate narrows the FALSE branch to `LeafNode`, so returning
+ * `node.container` alone would let a quarantined node whose wire `container`
+ * was `false` land in that branch and be read as a parsed leaf — with a `data`
+ * field it does not have. `quarantined || container` is the only implementation
+ * sound in both branches, and it reads as "may own children", which is what
+ * every call site actually wants to know.
+ */
+export function isCollection<Ts extends readonly unknown[], S>(
+  node: AnyNode<Ts, S>,
+): node is CollectionNode<Ts, S> | QuarantinedNode {
+  return node.quarantined || node.container;
+}
+
+export function isLoaded<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): boolean {
+  return childrenStateOf(graph, id)?.status === "loaded";
+}
+
+/**
+ * Does this placement own the subtree beneath it?
+ *
+ * `loaded`, `unloaded` and `missing` all own it — `missing` included, because
+ * confirmed-gone is knowledge about a subtree you own, not a handoff to someone
+ * else. Only `reference` disclaims ownership, and that single fact is what
+ * makes the placement forest a genuine tree: a reference is structurally
+ * childless forever, so no walk can descend through one into a cycle.
+ */
+export function ownsSubtree(state: ChildrenState): boolean {
+  return state.status !== "reference";
+}
+
+/**
+ * Parent-first up to the root, EXCLUDING `id`. `[]` for a root or an unknown
+ * node.
+ *
+ * No visiting set. In a valid graph one is unnecessary — references are leaves,
+ * so the placement forest is a forest and a chain cannot revisit; the
+ * predecessor's three `visiting` guards existed only because following a
+ * duplicate's pointer could re-enter a node already on the stack. The step
+ * budget below is not that guard under another name: it is a TERMINATION guard
+ * for a graph that is already corrupt, so a bad `parentById` fails finitely
+ * instead of hanging a render loop. `findInvariantViolation` is what names the
+ * corruption.
+ */
+export function ancestorChain<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): readonly NodeId[] {
+  if (!graph.nodesById.has(id)) return NO_IDS;
+  const budget = graph.nodesById.size;
+  const chain: NodeId[] = [];
+  let current = graph.parentById.get(id) ?? null;
+  while (current !== null && chain.length < budget) {
+    chain.push(current);
+    current = graph.parentById.get(current) ?? null;
+  }
+  return chain;
+}
+
+/**
+ * Backs the cycle check on `move-nodes`: moving a node into itself or into one
+ * of its own descendants is the one structural mutation that can break the
+ * forest.
+ *
+ * Deliberately does NOT check that either id exists. Equality is equality, and
+ * the caller has already resolved both nodes by the time it asks — adding a
+ * lookup here would only make an unknown id answer "no relation", which is the
+ * more dangerous answer for a cycle test to give.
+ */
+export function isSameOrAncestor<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  maybeAncestorId: NodeId,
+  id: NodeId,
+): boolean {
+  if (maybeAncestorId === id) return true;
+  const budget = graph.nodesById.size;
+  let steps = 0;
+  let current = graph.parentById.get(id) ?? null;
+  while (current !== null && steps < budget) {
+    if (current === maybeAncestorId) return true;
+    current = graph.parentById.get(current) ?? null;
+    steps += 1;
+  }
+  return false;
+}
+
+/**
+ * Pre-order walk from `roots`, children in array order.
+ *
+ * EXPLICIT STACK, never recursion: depth is hostile input — a document is a
+ * flat node list off the wire, so nothing bounds nesting except whoever wrote
+ * the document.
+ *
+ * The `budget` is the same termination guard as `ancestorChain`'s. In a valid
+ * graph it is never reached: every reachable id is a node and each is reached
+ * once, so the walk length is exactly the number of reachable nodes. It bounds
+ * the damage when the graph is not valid.
+ */
+function walkPreOrder<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  roots: readonly NodeId[],
+): NodeId[] {
+  const out: NodeId[] = [];
+  const budget = graph.nodesById.size;
+  const stack: NodeId[] = [];
+  // Pushed in reverse so the first root pops first.
+  for (let i = roots.length - 1; i >= 0; i -= 1) {
+    const rootId = roots[i];
+    if (rootId !== undefined) stack.push(rootId);
+  }
+  while (stack.length > 0 && out.length < budget) {
+    const current = stack.pop();
+    if (current === undefined) break;
+    out.push(current);
+    const childIds = graph.childrenById.get(current);
+    if (childIds === undefined) continue;
+    for (let i = childIds.length - 1; i >= 0; i -= 1) {
+      const childId = childIds[i];
+      if (childId !== undefined) stack.push(childId);
+    }
+  }
+  return out;
+}
+
+/** Pre-order, INCLUDES `id`. `[]` for an unknown node — an id the graph does
+ *  not hold has no subtree, not a one-element one. */
+export function subtreeIds<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): readonly NodeId[] {
+  if (!graph.nodesById.has(id)) return NO_IDS;
+  return walkPreOrder(graph, [id]);
+}
+
+/** Pre-order across every root, in `rootIds` order. Backs `selectRange`, which
+ *  is inclusive in DOCUMENT order — the reason selection is engine-owned rather
+ *  than a consumer concern. */
+export function documentOrder<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+): readonly NodeId[] {
+  return walkPreOrder(graph, graph.rootIds);
+}
+
+// ---------------------------------------------------------------------------
+// Identity keys
+// ---------------------------------------------------------------------------
+//
+// Both return `null` for a quarantined node, and that is not a shortcut. A
+// quarantined node holds `raw`, not parsed `Data`; no codec is willing to vouch
+// for it, so handing `raw` to `contentKey` would ask a function typed against
+// `Data` to read something that failed to become `Data`. A node whose content
+// could not be understood has no content identity.
+//
+// Neither wraps the codec call in try/catch. A throwing `contentKey` is a
+// consumer bug, and swallowing it into `null` would silently disable the
+// single-owner rule — the invariant that stops two placements from both
+// claiming one stored subtree, which is the condition the predecessor's server
+// had to answer with a 409 because nothing upstream enforced it.
+
+export function contentKeyOf<Ts extends readonly unknown[], S>(
+  registry: NodeTypeRegistry,
+  node: AnyNode<Ts, S>,
+): string | null {
+  if (node.quarantined) return null;
+  const type = registry.get(node.kind);
+  if (type === undefined || type.contentKey === undefined) return null;
+  return type.contentKey(node.data);
+}
+
+export function sourceKeyOf<Ts extends readonly unknown[], S>(
+  registry: NodeTypeRegistry,
+  node: AnyNode<Ts, S>,
+): string | null {
+  if (node.quarantined) return null;
+  const type = registry.get(node.kind);
+  if (type === undefined || type.sourceKey === undefined) return null;
+  return type.sourceKey(node.data);
+}
+
+/**
+ * Is this node the OWNING placement for its `sourceKey`?
+ *
+ * A leaf (and a quarantined leaf) has no `ChildrenState` at all, and a
+ * placement that cannot be a reference is an owner by default — the `reference`
+ * state exists to disclaim a subtree, and a node with no subtree has nothing to
+ * disclaim.
+ */
+function isOwningPlacement<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): boolean {
+  const state = childrenStateOf(graph, id);
+  return state === null || ownsSubtree(state);
+}
+
+// ---------------------------------------------------------------------------
+// Derived state
+// ---------------------------------------------------------------------------
+
+/**
+ * Bump `id` AND every ancestor of it, for each id in `fromIds`.
+ *
+ * THE TRAP, and it has already been paid for once: `graph` supplies the
+ * `parentById` the chain is read from, and A MOVE HAS TWO CHAINS. The source
+ * chain exists only in the PRE-state graph. `applyPatch` must therefore call
+ * this TWICE for a `"moved"` patch — once against the pre-state graph with
+ * `move.fromParentId`, once against the post-state graph with
+ * `move.toParentId`. Getting it wrong is invisible in every test that watches
+ * the moved node: the node updates, and the OLD ancestors' rollups silently
+ * never re-render again.
+ *
+ * Ids absent from `graph` are bumped anyway, with no chain. That is deliberate:
+ * filtering them would turn "caller passed the wrong-state graph" into a
+ * SILENTLY DROPPED NOTIFICATION, which is precisely the failure mode above. A
+ * stray revision entry for an id that no longer exists is inert by comparison —
+ * nothing reads a revision for a node it cannot find.
+ */
+export function bumpSubtreeRevs<Ts extends readonly unknown[], S>(
+  revs: ReadonlyMap<NodeId, number>,
+  graph: Graph<Ts, S>,
+  fromIds: readonly NodeId[],
+): ReadonlyMap<NodeId, number> {
+  // Identity is preserved on a no-op so a caller can compare maps to decide
+  // whether to notify at all.
+  if (fromIds.length === 0) return revs;
+
+  const targets = new Set<NodeId>();
+  for (const id of fromIds) {
+    if (targets.has(id)) continue;
+    targets.add(id);
+    for (const ancestorId of ancestorChain(graph, id)) {
+      // Ancestor chains are prefix-closed upward: if this one is already
+      // collected then so is everything above it, so stopping here is an exact
+      // short-circuit rather than an approximation.
+      if (targets.has(ancestorId)) break;
+      targets.add(ancestorId);
+    }
+  }
+
+  const next = new Map(revs);
+  for (const id of targets) next.set(id, (next.get(id) ?? 0) + 1);
+  return next;
+}
+
+/**
+ * Recompute both derived indexes from scratch, in DOCUMENT order.
+ *
+ * Cheap and total beats incremental and clever here: an incremental update has
+ * to know whose `contentKey` changed, and one `edit-nodes` command can change
+ * it on any node in the batch. A stale placement index is invisible until a
+ * rename-everywhere silently misses a placement.
+ *
+ * Only REACHABLE nodes are indexed. In a valid graph that is every node; in an
+ * invalid one, indexing an orphan would give a detached subtree a vote on
+ * ownership.
+ */
+export function rebuildDerivedIndexes<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+): Pick<Graph<Ts, S>, "placementsByContentKey" | "ownerBySourceKey"> {
+  const placementsByContentKey = new Map<string, NodeId[]>();
+  const ownerBySourceKey = new Map<string, NodeId>();
+
+  for (const id of documentOrder(graph)) {
+    const node = graph.nodesById.get(id);
+    if (node === undefined) continue;
+
+    const contentKey = contentKeyOf(registry, node);
+    if (contentKey !== null) {
+      const bucket = placementsByContentKey.get(contentKey);
+      if (bucket === undefined) placementsByContentKey.set(contentKey, [id]);
+      else bucket.push(id);
+    }
+
+    const sourceKey = sourceKeyOf(registry, node);
+    if (sourceKey === null) continue;
+    if (!isOwningPlacement(graph, id)) continue;
+    // FIRST owner in document order wins, deterministically. A second one is a
+    // violation, but saying so is `findInvariantViolation`'s job — this
+    // function runs on every mutation and must not have an opinion it could
+    // impose mid-command.
+    if (!ownerBySourceKey.has(sourceKey)) ownerBySourceKey.set(sourceKey, id);
+  }
+
+  return { placementsByContentKey, ownerBySourceKey };
+}
+
+/**
+ * IO landing for "storage says this subtree is gone".
+ *
+ * TOTAL and NO-OP SAFE, because it races real structure changes: the fetch that
+ * 404'd was issued a while ago, and the node may have moved, been removed or
+ * been loaded since. Returning `graph` unchanged is always a correct response
+ * to a stale answer.
+ *
+ * The no-op cases, each for its own reason:
+ *   - unknown id              — the node is already gone.
+ *   - leaf / quarantined leaf — no subtree to be missing.
+ *   - `reference`             — this placement never owned the subtree; the
+ *                               owner is the one entitled to hear a 404 about
+ *                               it.
+ *   - `loaded`                — LOADING IS MONOTONE IN V1. Demoting a loaded
+ *                               collection to `missing` is an unload: it would
+ *                               discard resident nodes with no patch, and break
+ *                               the property `verifyPatchApplies` rests on —
+ *                               that a surviving node is the node the dormant
+ *                               patch was recorded against.
+ *   - `missing`, same reason  — already said.
+ *
+ * Produces NO patch, NO history entry and NO change-feed event; the consumer
+ * performed the IO and already knows. It DOES bump `subtreeRev` along the
+ * chain, because every ancestor's rollup just changed meaning.
+ */
+export function markMissing<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+  reason: string,
+): Graph<Ts, S> {
+  const node = graph.nodesById.get(id);
+  if (node === undefined) return graph;
+
+  const state = childrenStateOf(graph, id);
+  if (state === null) return graph;
+  if (state.status === "reference" || state.status === "loaded") return graph;
+  if (state.status === "missing" && state.reason === reason) return graph;
+
+  const children: ChildrenState = { status: "missing", reason };
+  // A spread, not one of the boundary constructors: nothing here came out of
+  // the erased registry, so no cast is warranted, and a spread cannot silently
+  // drop a field the node type grows later.
+  const next: AnyNode<Ts, S> = node.quarantined
+    ? { ...node, children }
+    : { ...node, children };
+
+  const nodesById = new Map(graph.nodesById);
+  nodesById.set(id, next);
+
+  return {
+    ...graph,
+    nodesById,
+    // The node keeps its `ChildrenState` slot and keeps owning its subtree
+    // (`unloaded` and `missing` both own), and its `data` is untouched — so
+    // neither derived index can have changed, and neither is rebuilt.
+    subtreeRevById: bumpSubtreeRevs(graph.subtreeRevById, graph, [id]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Invariants
+// ---------------------------------------------------------------------------
+
+/**
+ * The first structural violation, or `null`.
+ *
+ * ORDER MATTERS, cheapest-and-most-fundamental first: every later check assumes
+ * the earlier ones passed, which is what lets the reachability walk be a plain
+ * stack with no defensive re-resolution. The audit is:
+ *
+ *   1. `nodesById` keys agree with the nodes they hold, and are non-empty.
+ *   2. every `childrenById` entry belongs to a `loaded` collection, every child
+ *      id resolves, and no id appears twice as a child — across arrays or
+ *      within one.
+ *   3. every `loaded` collection HAS an entry — the other direction of (2), so
+ *      `ChildrenState` and `childrenById` cannot drift apart.
+ *   4. roots resolve, are containers, are listed once, and are nobody's child.
+ *   5. `parentById` is total and agrees with `childrenById`.
+ *   6. `subtreeRevById` is total.
+ *   7. every node is reachable from a root.
+ *   8. at most one non-`reference` placement per `sourceKey`.
+ *   9. both derived indexes match a fresh rebuild.
+ *
+ * ACYCLICITY IS NOT A SEPARATE WALK. The graph is a flat node list, and "each
+ * id appears at most once as a child, and a root appears as none" IS the forest
+ * condition — checks 2, 4 and 7 together make a cycle unrepresentable, because
+ * any cycle either duplicates a child (2), makes a root a child (4), or
+ * detaches its members from every root (7). The `"cycle"` code is emitted only
+ * by the reachability walk's re-visit guard, which in a graph that passed 2 and
+ * 4 is unreachable, and which exists to TERMINATE rather than to detect.
+ */
+export function findInvariantViolation<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+): Violation | null {
+  const { nodesById, childrenById, parentById, rootIds, subtreeRevById } = graph;
+
+  // --- 1. ids -------------------------------------------------------------
+  for (const [key, node] of nodesById) {
+    if (key.trim() === "") {
+      return { code: "empty-node-id", message: "nodesById holds an empty id" };
+    }
+    if (node.id !== key) {
+      // Not merely untidy: the key and the node's own id are both used as "the"
+      // id by different modules, so a disagreement means one node reachable
+      // under two identities — the duplicate-id failure wearing a disguise.
+      return {
+        code: "duplicate-node-id",
+        message:
+          `nodesById key ${JSON.stringify(key)} holds a node whose own id is ` +
+          `${JSON.stringify(node.id)}`,
+        nodeId: node.id,
+        otherNodeId: key,
+      };
+    }
+  }
+
+  // --- 2. children arrays -------------------------------------------------
+  // `parentOfChild` is built here and reused by checks 4 and 5, so "who is this
+  // node's parent" has exactly one answer for the whole audit.
+  const parentOfChild = new Map<NodeId, NodeId>();
+  for (const [parentId, childIds] of childrenById) {
+    if (!nodesById.has(parentId)) {
+      // There is no `unknown-parent` violation code; `dangling-child` is the
+      // code for "an id reference that resolves to nothing", and the message
+      // names which side dangled.
+      return {
+        code: "dangling-child",
+        message: "childrenById holds an entry keyed by an id that is not a node",
+        parentId,
+      };
+    }
+    const state = childrenStateOf(graph, parentId);
+    if (state === null) {
+      return {
+        code: "leaf-with-children",
+        message: "a node with no ChildrenState has a childrenById entry",
+        nodeId: parentId,
+      };
+    }
+    if (state.status !== "loaded") {
+      return {
+        code: "unloaded-collection-with-children",
+        message:
+          `a collection in state ${JSON.stringify(state.status)} has a ` +
+          `childrenById entry; only "loaded" may have one`,
+        nodeId: parentId,
+      };
+    }
+    for (const childId of childIds) {
+      if (!nodesById.has(childId)) {
+        return {
+          code: "dangling-child",
+          message: "a children array names an id that is not a node",
+          nodeId: childId,
+          parentId,
+        };
+      }
+      const priorParentId = parentOfChild.get(childId);
+      if (priorParentId !== undefined) {
+        return {
+          code: "multi-parent",
+          message: "an id appears as a child in two places",
+          nodeId: childId,
+          parentId,
+          otherNodeId: priorParentId,
+        };
+      }
+      parentOfChild.set(childId, parentId);
+    }
+  }
+
+  // --- 3. loaded => has an entry (the other direction of 2) ---------------
+  for (const id of nodesById.keys()) {
+    const state = childrenStateOf(graph, id);
+    if (state === null) continue;
+    if (state.status === "loaded" && !childrenById.has(id)) {
+      return {
+        code: "loaded-collection-missing-children-entry",
+        message: 'a collection in state "loaded" has no childrenById entry',
+        nodeId: id,
+      };
+    }
+  }
+
+  // --- 4. roots -----------------------------------------------------------
+  const seenRootIds = new Set<NodeId>();
+  for (const rootId of rootIds) {
+    const node = nodesById.get(rootId);
+    if (node === undefined) {
+      return {
+        code: "dangling-child",
+        message: "rootIds names an id that is not a node",
+        nodeId: rootId,
+      };
+    }
+    if (seenRootIds.has(rootId)) {
+      return {
+        code: "duplicate-node-id",
+        message: "rootIds lists the same id twice",
+        nodeId: rootId,
+      };
+    }
+    seenRootIds.add(rootId);
+    // Read straight off the node, not through `isCollection`: a quarantined
+    // root is judged by the `container` flag its document declared, which is
+    // the only evidence there is when no codec would parse it.
+    if (!node.container) {
+      return {
+        code: "root-not-container",
+        message: "a root is not a container",
+        nodeId: rootId,
+      };
+    }
+    const claimedBy = parentOfChild.get(rootId);
+    if (claimedBy !== undefined) {
+      return {
+        code: "root-is-child",
+        message: "a root also appears in a children array",
+        nodeId: rootId,
+        parentId: claimedBy,
+      };
+    }
+  }
+
+  // --- 5. parentById ------------------------------------------------------
+  for (const id of nodesById.keys()) {
+    // `has`, not `get`: a root's entry is an explicit `null`, so an absent key
+    // and a root are indistinguishable through `get` alone.
+    if (!parentById.has(id)) {
+      return {
+        code: "missing-parent-entry",
+        message: "parentById has no entry for a node",
+        nodeId: id,
+      };
+    }
+    const recorded = parentById.get(id) ?? null;
+    const actual = parentOfChild.get(id) ?? null;
+    if (recorded !== actual) {
+      const violation: Violation = {
+        code: "parent-index-disagrees",
+        message:
+          `parentById records ${JSON.stringify(recorded)} but childrenById ` +
+          `says ${JSON.stringify(actual)}`,
+        nodeId: id,
+      };
+      return actual === null ? violation : { ...violation, parentId: actual };
+    }
+  }
+
+  // --- 6. subtreeRevById --------------------------------------------------
+  for (const id of nodesById.keys()) {
+    if (!subtreeRevById.has(id)) {
+      return {
+        code: "missing-subtree-rev",
+        message: "subtreeRevById has no entry for a node",
+        nodeId: id,
+      };
+    }
+  }
+
+  // --- 7. reachability, with an EXPLICIT STACK ----------------------------
+  const reached = new Set<NodeId>();
+  const stack: NodeId[] = [...rootIds];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === undefined) break;
+    if (reached.has(current)) {
+      // Unreachable given checks 2 and 4 — a re-visit means an id was reached
+      // by two paths, which is a duplicated child or a re-listed root, both
+      // already refused. Kept because it is the only thing standing between a
+      // corrupt graph and an infinite loop, and because reordering the checks
+      // above must not silently reintroduce that hang.
+      return {
+        code: "cycle",
+        message: "the children graph reaches one node twice",
+        nodeId: current,
+      };
+    }
+    reached.add(current);
+    const childIds = childrenById.get(current);
+    if (childIds === undefined) continue;
+    for (const childId of childIds) stack.push(childId);
+  }
+  if (reached.size !== nodesById.size) {
+    for (const id of nodesById.keys()) {
+      if (!reached.has(id)) {
+        return {
+          code: "unreachable-node",
+          message: "a node is not reachable from any root",
+          nodeId: id,
+        };
+      }
+    }
+  }
+
+  // --- 8. single owner per sourceKey --------------------------------------
+  const owners = new Map<string, NodeId>();
+  for (const id of documentOrder(graph)) {
+    const node = nodesById.get(id);
+    if (node === undefined) continue;
+    const sourceKey = sourceKeyOf(registry, node);
+    if (sourceKey === null) continue;
+    if (!isOwningPlacement(graph, id)) continue;
+    const ownerId = owners.get(sourceKey);
+    if (ownerId !== undefined) {
+      return {
+        code: "duplicate-owner",
+        message:
+          "two non-reference placements claim one sourceKey; the second must " +
+          "be a reference",
+        nodeId: id,
+        otherNodeId: ownerId,
+        sourceKey,
+      };
+    }
+    owners.set(sourceKey, id);
+  }
+
+  // --- 9. derived indexes are not stale -----------------------------------
+  return findStaleDerivedIndex(graph, rebuildDerivedIndexes(graph, registry));
+}
+
+/** Split out only so `findInvariantViolation` stays readable; it is check 9. */
+function findStaleDerivedIndex<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  fresh: Pick<Graph<Ts, S>, "placementsByContentKey" | "ownerBySourceKey">,
+): Violation | null {
+  const placements = graph.placementsByContentKey;
+  if (placements.size !== fresh.placementsByContentKey.size) {
+    return {
+      code: "derived-index-stale",
+      message: "placementsByContentKey has the wrong number of keys",
+    };
+  }
+  for (const [contentKey, freshIds] of fresh.placementsByContentKey) {
+    const storedIds = placements.get(contentKey);
+    if (storedIds === undefined || storedIds.length !== freshIds.length) {
+      return {
+        code: "derived-index-stale",
+        message: `placementsByContentKey disagrees for ${JSON.stringify(contentKey)}`,
+      };
+    }
+    for (let i = 0; i < freshIds.length; i += 1) {
+      // ORDER is part of the index's contract — placements are in document
+      // order, and a consumer rendering "3 of 7" reads position from here.
+      if (storedIds[i] !== freshIds[i]) {
+        return {
+          code: "derived-index-stale",
+          message: `placementsByContentKey is out of order for ${JSON.stringify(contentKey)}`,
+        };
+      }
+    }
+  }
+
+  const owners = graph.ownerBySourceKey;
+  if (owners.size !== fresh.ownerBySourceKey.size) {
+    return {
+      code: "derived-index-stale",
+      message: "ownerBySourceKey has the wrong number of keys",
+    };
+  }
+  for (const [sourceKey, freshOwnerId] of fresh.ownerBySourceKey) {
+    if (owners.get(sourceKey) !== freshOwnerId) {
+      return {
+        code: "derived-index-stale",
+        message: `ownerBySourceKey disagrees for ${JSON.stringify(sourceKey)}`,
+        nodeId: freshOwnerId,
+        sourceKey,
+      };
+    }
+  }
+
+  return null;
+}
