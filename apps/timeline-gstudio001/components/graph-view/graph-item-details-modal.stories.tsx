@@ -1553,12 +1553,41 @@ export const ChangingTheCountResizesTheSamePanels: Story = {
       return neighbour.getBoundingClientRect().height;
     };
     expect(heightsBefore.length).toBeGreaterThan(0);
-    expect(neighbourHeight()).toBeCloseTo(Math.min(...heightsBefore), 0);
+
+    try {
+      // A BUDGET, NOT AN EXACT MATCH, and the number is chosen rather than
+      // inherited. This was `toBeCloseTo(…, 0)`, whose tolerance is 0.5px —
+      // never a stated design tolerance, just what precision 0 happens to mean.
+      //
+      // The height DOES move with the count, by about a pixel, and the
+      // mechanism is in `clip-deck.tsx`'s `fit()`: a card's WIDTH is derived
+      // from the deck's available HEIGHT and rounded to an integer px, and the
+      // card's height follows from that width. Changing the count changes what
+      // is drawn, which perturbs `deck.clientHeight`, which refits to a
+      // slightly different width. Measured at ~1px in CI and ~3px locally,
+      // where the viewport differs — so 0.5px sat exactly on the boundary and
+      // decided runs by rounding. It broke CI three times in one day, once on
+      // a docs-only PR.
+      //
+      // 8px keeps the assertion doing its job. The regression it was written
+      // for was a container query on the panel's own WIDTH: a neighbour went
+      // 490px to 314px on a count change — 176px, twenty times this budget. A
+      // deck that resized its cards per count still fails here.
+      const drift = Math.abs(neighbourHeight() - Math.min(...heightsBefore));
+      expect(drift).toBeLessThanOrEqual(8);
+    } finally {
+      // IN A `finally`, because a failure here used to take the NEXT story
+      // down with it. `viewCount` is module-scope session state: an assertion
+      // that threw before this line left the count at 5, and
+      // `TheSubjectIsWiderThanItsNeighbours` then rendered five panels and
+      // failed `toBe(3)` — one bug reported as two, the second one looking
+      // unrelated to the first.
+      await press("3");
+      await waitFor(() => expect(panels().length).toBe(before.length));
+    }
 
     // Back again, and every panel that remains was one of the originals — the
     // return trip is a resize too, not a fresh set.
-    await press("3");
-    await waitFor(() => expect(panels().length).toBe(before.length));
     for (const panel of panels()) {
       expect(before).toContain(panel);
     }
