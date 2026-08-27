@@ -41,9 +41,22 @@ import { cn } from "@/lib/utils";
 // menu opens, and choosing one is a single click rather than a hover, a
 // submenu, and a second aim.
 //
-// Literal zinc/blue rather than token classes, matching its neighbours in this
-// menu — see the note in graph-layer-frame-picker.tsx for the way tokens fail
-// silently in a portaled surface, which this one is.
+// LITERAL ZINC/BLUE RATHER THAN TOKEN CLASSES, and this is load-bearing rather
+// than a style preference.
+//
+// The design tokens are declared only under `.graph-view-theme` (see
+// app/globals.css, which says so and explains why: defining them globally would
+// repaint the legacy views). This menu is PORTALED TO document.body, which is
+// outside that element — so inside it `--gv-primary` does not resolve,
+// `bg-primary/30` computes to `rgba(0,0,0,0)` and `border-primary` falls back
+// to `currentColor`. Measured, not guessed: the layer frame picker's first
+// version marked its selection with a transparent fill and a white border, and
+// looked almost identical to the unselected state.
+//
+// (That picker carried this note until PL16-015 deleted it — it had been
+// unreachable from the app since the details panel that rendered it went, and
+// only its own story still imported it. The note outlived the file because the
+// trap did.)
 
 const RATIO_TOLERANCE = 0.01;
 
