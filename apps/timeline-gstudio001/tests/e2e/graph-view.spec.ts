@@ -2758,8 +2758,8 @@ test.describe("graph view E2E", () => {
     expect(
       Math.abs(groupBox!.x + groupBox!.width / 2 - (surfaceBox!.x + surfaceBox!.width / 2)),
     ).toBeLessThanOrEqual(1);
-    // Four 30px ghosts, a 36px play disc, and its 6px margins.
-    expect(Math.round(groupBox!.width)).toBe(168);
+    // Four 30px ghosts, a 32px play disc, and its 6px margins.
+    expect(Math.round(groupBox!.width)).toBe(164);
     expect(await controls.locator("[data-transport-capsule]").count()).toBe(0);
 
     // `m:ss.d`, the same function the scrubber's tooltip spends — the spec
@@ -2961,6 +2961,56 @@ test.describe("graph view E2E", () => {
     await expect.poll(hintOpacity).toBe(0);
   });
 
+  test("the pause mark says its piece and dissolves", async ({ page }) => {
+    // PL16-013. The mark over the picture is an INVITATION while paused and an
+    // ANSWER while playing, and an answer only needs saying once. It used to
+    // sit there for as long as the pointer did — a pause glyph parked over a
+    // running shot, which is a thing in the shot, and the one thing this
+    // overlay exists to avoid.
+    const api = await installGraphApi(page);
+    // The fixture's "video" is a data-URI image, so the first clip is made an
+    // image here to get a real playback surface without reaching the network.
+    api.documents.get(PROJECT_ID)!.clips[0]!.kind = "image";
+    api.documents.get(PROJECT_ID)!.clips[0]!.startTime = 0;
+    await openGraph(page);
+    await previewToggle(page).click();
+
+    const canvas = page.getByTestId("workbench-display-canvas");
+    await expect(canvas).toHaveAttribute("data-preview-playback-surface-ready", "true");
+    const hint = page.getByTestId("workbench-hover-transport-hint");
+    const opacity = () => hint.evaluate((element) => Number(getComputedStyle(element).opacity));
+    const box = (await canvas.boundingBox())!;
+    const centre = { x: box.width / 2, y: box.height / 2 };
+
+    // PAUSED, IT STAYS. Nothing else says the whole picture is a play target,
+    // so the invitation holds for as long as the pointer does.
+    await canvas.hover({ position: centre });
+    await expect.poll(opacity, { timeout: 3000 }).toBeGreaterThan(0);
+    await expect(hint).toHaveAttribute("data-hint", "play");
+    await page.waitForTimeout(1500);
+    expect(await opacity()).toBeGreaterThan(0);
+
+    // PLAYING, IT ANSWERS AND GOES. The pointer does NOT move for the rest of
+    // this — which is the whole point. A hover-driven overlay would still be up.
+    await canvas.click({ position: centre });
+    await expect(page.getByTestId("workbench-display-surface")).toHaveAttribute(
+      "data-preview-playing",
+      "true",
+    );
+    await expect(hint).toHaveAttribute("data-hint", "pause");
+    await expect.poll(opacity, { timeout: 3000 }).toBe(0);
+
+    // AND IT COMES BACK WHEN IT HAS SOMETHING TO SAY AGAIN. Pausing makes the
+    // mark an invitation once more, so it returns and stays.
+    await canvas.click({ position: centre });
+    await expect(page.getByTestId("workbench-display-surface")).toHaveAttribute(
+      "data-preview-playing",
+      "false",
+    );
+    await expect.poll(opacity, { timeout: 3000 }).toBeGreaterThan(0);
+    await expect(hint).toHaveAttribute("data-hint", "play");
+  });
+
   test("preview audio: mute and volume survive a pane toggle", async ({ page }) => {
     const api = await installGraphApi(page);
     api.documents.get(PROJECT_ID)!.clips[0]!.kind = "image";
@@ -3035,9 +3085,9 @@ test.describe("graph view E2E", () => {
       .poll(() =>
         buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
       )
-      // 4 × 30px ghost wells + a 36px play disc + its 6px margins (PL16-007).
+      // 4 × 30px ghost wells + a 32px play disc + its 6px margins.
       // It was 220 — five 44px wells — while the row rode the divider.
-      .toBe(168);
+      .toBe(164);
     await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
     // The whole point of this test is TOUCH reach, so the two new edge buttons
@@ -3078,7 +3128,7 @@ test.describe("graph view E2E", () => {
       .poll(() =>
         buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
       )
-      .toBe(168);
+      .toBe(164);
     await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
     await expect(
@@ -8646,6 +8696,26 @@ test.describe("graph view E2E", () => {
       )
       .toBeGreaterThan(0);
 
+    // AND THE EMPTY ONES SIT BACK (PL16-012). Arming puts a checkbox on EVERY
+    // card at once; at full strength that is a grid of identical bright rings
+    // competing with the artwork being chosen. A TICKED one keeps full
+    // strength, because at that point it is not decoration — it is the answer
+    // to "what have I got", the one piece of state select mode exists to show.
+    //
+    // ASSERTED AS THE CONTRAST, not as two loose numbers: the chosen one must
+    // be strictly stronger than the unchosen. Dimming both, or neither, is the
+    // regression, and either would slip past a pair of independent checks.
+    const opacityOf = (which: "on" | "off") =>
+      surface
+        .locator(`[data-selection-indicator="${which}"]`)
+        .first()
+        .evaluate((element) => Number(getComputedStyle(element).opacity));
+    const chosen = await opacityOf("on");
+    const unchosen = await opacityOf("off");
+    expect(chosen).toBe(1);
+    expect(unchosen).toBe(0.5);
+    expect(chosen).toBeGreaterThan(unchosen);
+
     await selectionAction(page, /^Copy$/);
 
     // The checkboxes go — the mode is over as far as the CARDS are concerned.
@@ -8998,9 +9068,16 @@ test.describe("graph view E2E", () => {
     await page.mouse.move(0, 0);
     await expect(boxes.first()).toBeVisible();
     await expect(boxes.first()).toHaveAttribute("data-selection-indicator-reveal", "armed");
+    // PAINTED WITHOUT A POINTER NEAR IT, which is this test's subject — it
+    // replaced a hover-reveal that could stick on the last-tapped card.
+    //
+    // 0.5, NOT 1 (PL16-012): an unpicked box sits back so a screen of them does
+    // not compete with the artwork. What matters here is that it is on screen
+    // at all with the pointer parked at the origin, so the assertion is against
+    // the armed resting value rather than against full strength.
     await expect
-      .poll(() => boxes.first().evaluate((el) => getComputedStyle(el).opacity))
-      .toBe("1");
+      .poll(() => boxes.first().evaluate((el) => Number(getComputedStyle(el).opacity)))
+      .toBe(0.5);
 
     // Leaving the mode takes them all away again.
     await page.locator("[data-select-mode-toggle]").click();
@@ -9063,9 +9140,11 @@ test.describe("graph view E2E", () => {
       await page.locator("[data-select-mode-toggle]").tap();
       const checkbox = card.locator("[data-selection-indicator]");
       await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
+      // 0.5 since PL16-012 — an unpicked box sits back. On screen is the point
+      // here, not full strength.
       await expect
-        .poll(() => checkbox.evaluate((el) => getComputedStyle(el).opacity))
-        .toBe("1");
+        .poll(() => checkbox.evaluate((el) => Number(getComputedStyle(el).opacity)))
+        .toBe(0.5);
     });
     test("touch gets 44px hit targets on every selection control", async ({ page }) => {
       await installGraphApi(page);

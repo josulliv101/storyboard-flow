@@ -133,11 +133,11 @@ export const StickyPreview: Story = {
     const dividerBox = divider.getBoundingClientRect();
     // THE OLD BAND IS GONE, not restyled.
     expect(divider.querySelector("[data-divider-line]")).toBeNull();
-    // Four 30px ghost wells, a 36px play disc, and its 6px side margins. Pinned
+    // Four 30px ghost wells, a 32px play disc, and its 6px side margins. Pinned
     // rather than derived: it is the number the row's centre column is, and a
     // hard value is what makes a change to the control set fail loudly.
-    expect(Math.round(buttonGroupBox.width)).toBe(168);
-    expect(Math.round(buttonGroupBox.height)).toBe(36);
+    expect(Math.round(buttonGroupBox.width)).toBe(164);
+    expect(Math.round(buttonGroupBox.height)).toBe(32);
     expect(controls.querySelector("[data-transport-capsule]")).toBeNull();
     // 12px (PL16-011): the grip sits ON the edge now rather than floating in a
     // lip above it, so the band that used to hold it is space the pane got back.
