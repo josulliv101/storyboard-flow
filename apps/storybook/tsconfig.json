@@ -15,8 +15,6 @@
     "baseUrl": ".",
     "paths": {
       "@gstudio/*": ["../timeline-gstudio001/*"],
-      "@storyboard/db": ["../../packages/db"],
-      "@storyboard/db/*": ["../../packages/db/*"],
       "@storyboard/ui": ["../../packages/ui"],
       "@storyboard/ui/*": ["../../packages/ui/*"]
     }
