@@ -1,9 +1,14 @@
 // The framework-free graph engine, as its own package: node-safe, no React,
 // no dnd-kit, no "use client". Non-UI consumers (the timeline-domain
 // adapter, server code) depend on THIS package and stay dependency-light;
-// the UI package (`@storyboard/ui/dnd-collections`) builds its React views
-// on top and re-exports every symbol here through its barrel and its
-// `core/*` shims — one engine, two entry heights, not a second surface.
+// the UI package (`@storyboard/ui/dnd-collections`) builds its React views on
+// top and re-exports the symbols its consumers need through its own barrel.
+//
+// THIS PACKAGE IS THE ONLY PATH TO THE ENGINE. There used to be a second one:
+// `dnd-collections/core/*` held a re-export shim per module, so `./core/graph`
+// resolved too. PL16-016 deleted them and repointed all 75 imports here,
+// because two names for one module is how an engine starts looking like it
+// lives in two places. Import by subpath — `@storyboard/collections-core/graph`.
 
 export {
   buildGraph,
