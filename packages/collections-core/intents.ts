@@ -77,9 +77,12 @@ export type RectLike = Readonly<{ left: number; top: number; width: number; heig
 /** A panel child's card rect, for gap resolution inside panel drops. */
 export type PanelChildRect = Readonly<{ id: NodeId; rect: RectLike }>;
 
-/** Central band of a collection card that means "nest inside" rather than "insert next to". */
-export const NEST_HOTSPOT_MIN = 0.25;
-export const NEST_HOTSPOT_MAX = 0.75;
+/** Central band of a collection card that means "nest inside" rather than "insert next to".
+ *  Module-private: nothing outside this file has ever read them, and an export
+ *  is a promise to keep a name. The band is still a tuning knob — it is just
+ *  tuned HERE, next to the arithmetic that spends it. */
+const NEST_HOTSPOT_MIN = 0.25;
+const NEST_HOTSPOT_MAX = 0.75;
 
 function isFinitePoint(point: Readonly<{ x: number; y: number }>): boolean {
   return Number.isFinite(point.x) && Number.isFinite(point.y);

@@ -6,7 +6,6 @@ import {
   finitePositiveOrUndefined,
   nonNegativeIntegerOr,
   openUnitIntervalOr,
-  positiveIntegerOr,
   positiveIntegerOrUndefined,
 } from "./numeric";
 
@@ -29,11 +28,8 @@ describe("numeric option normalization", () => {
   });
 
   test("integer helpers enforce their lower bounds", () => {
-    expect(positiveIntegerOr(3, 7)).toBe(3);
     expect(positiveIntegerOrUndefined(3)).toBe(3);
-    expect(positiveIntegerOr(0, 7)).toBe(7);
     expect(positiveIntegerOrUndefined(0)).toBeUndefined();
-    expect(positiveIntegerOr(1.5, 7)).toBe(7);
     expect(positiveIntegerOrUndefined(Number.NaN)).toBeUndefined();
     expect(nonNegativeIntegerOr(0, 7)).toBe(0);
     expect(nonNegativeIntegerOr(-1, 7)).toBe(7);
