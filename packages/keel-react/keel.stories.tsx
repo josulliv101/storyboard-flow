@@ -12,7 +12,7 @@
 // READING ORDER: the section marked "THE LIBRARY, WIRED UP" below is the part
 // you would copy into your own app. Everything after it is story chrome.
 
-import { useCallback, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, within } from "storybook/test";
@@ -1680,3 +1680,381 @@ export const Quarantine: Story = {
     );
   },
 };
+
+// ===========================================================================
+// 9. Drag and drop — the one seam the engine gives a pointer
+// ===========================================================================
+//
+// KEEL SHIPS NO DRAG-AND-DROP, ON PURPOSE. It has no sensors, no collision
+// detection, no overlay and no opinion about pixels. Its entire contract with a
+// pointer is `store.resolveDrop(intent)`, and everything below is ordinary
+// pointer handling that a consumer writes — or that dnd-kit, Pragmatic DnD or
+// the native HTML5 API writes for them.
+//
+// That is the lesson: this story is not showing a KEEL feature, it is showing
+// the integration point, and the integration point is one call.
+//
+// WHY `toIndexBefore` IS THE WHOLE POINT. The view knows where the pointer is
+// in the list it is CURRENTLY DRAWING — the moved node still occupies its slot.
+// The reducer needs the index AFTER that node is taken out. Those two numbers
+// differ whenever you drag something downward inside its own parent, and
+// getting it wrong is the most re-derived bug in a DnD engine (the predecessor
+// silently appended on cut+paste for exactly this reason). `resolveDrop`
+// converts one to the other in exactly one place, and this story prints both
+// numbers so you can watch them disagree.
+
+type DragApi = Readonly<{
+  dragId: NodeId | null;
+  begin: (id: NodeId) => void;
+  dropAt: (parentId: NodeId, indexBefore: number) => void;
+}>;
+
+const DragContext = createContext<DragApi | null>(null);
+
+function useDragApi(): DragApi {
+  const api = useContext(DragContext);
+  if (api === null) throw new Error("useDragApi used outside a DragBoard");
+  return api;
+}
+
+/**
+ * The integration, in full. Everything else in this section is chrome.
+ *
+ * A REFUSED DROP IS A VALUE, NOT AN EXCEPTION. `resolveDrop` returns a Result,
+ * so an illegal gesture — a collection into its own descendant, anything into a
+ * subtree nobody has read — comes back as a code you can put on screen. The
+ * graph is untouched and no history entry is written.
+ */
+function DragBoard({ children }: Readonly<{ children: ReactNode }>) {
+  const store = ui.useStore();
+  const dispatch = ui.useDispatch();
+  const [dragId, setDragId] = useState<NodeId | null>(null);
+  const [outcome, setOutcome] = useState("Drag a row's grip onto a gap.");
+
+  const dropAt = useCallback(
+    (toParentId: NodeId, toIndexBefore: number) => {
+      if (dragId === null) return;
+      setDragId(null);
+
+      const resolved = store.resolveDrop({
+        type: "move",
+        nodeIds: [dragId],
+        toParentId,
+        toIndexBefore,
+      });
+      if (!resolved.ok) {
+        setOutcome("refused · " + resolved.error.code);
+        return;
+      }
+
+      const command = resolved.value;
+      // Only a move carries the converted index. Reading it here is what lets
+      // this story SHOW the conversion rather than assert it.
+      const toIndex =
+        command.type === "move-nodes" ? command.toIndex : toIndexBefore;
+      const committed = dispatch(command);
+      setOutcome(
+        committed.ok
+          ? "moved · dropped at " + toIndexBefore + " · committed at " + toIndex
+          : "rejected · " + committed.error.code,
+      );
+    },
+    [dragId, dispatch, store],
+  );
+
+  const begin = useCallback((id: NodeId) => setDragId(id), []);
+
+  return (
+    <DragContext.Provider value={{ dragId, begin, dropAt }}>
+      <div data-testid="dnd-outcome" style={dndStyles.outcome}>
+        {outcome}
+      </div>
+      {children}
+    </DragContext.Provider>
+  );
+}
+
+/** The gap between two rows. Its `indexBefore` is what the view can see. */
+function Gap({
+  parentId,
+  indexBefore,
+}: Readonly<{ parentId: NodeId; indexBefore: number }>) {
+  const { dragId, dropAt } = useDragApi();
+  return (
+    <div
+      data-testid={"gap-" + parentId + "-" + indexBefore}
+      onPointerUp={() => dropAt(parentId, indexBefore)}
+      style={{
+        ...dndStyles.gap,
+        ...(dragId === null ? null : dndStyles.gapArmed),
+      }}
+    >
+      {indexBefore}
+    </div>
+  );
+}
+
+/** A draggable row. The grip is the handle, so the label stays selectable. */
+function DragRow({ id }: Readonly<{ id: NodeId }>) {
+  const node = ui.useNode(id);
+  const { dragId, begin } = useDragApi();
+  if (node === undefined) return null;
+
+  const label = node.quarantined
+    ? "(unreadable " + node.kind + ")"
+    : node.kind === "shot"
+      ? node.data.slug
+      : node.kind === "note"
+        ? node.data.text
+        : node.data.name;
+
+  return (
+    <div
+      style={{
+        ...dndStyles.row,
+        ...(dragId === id ? dndStyles.rowDragging : null),
+      }}
+    >
+      <span
+        data-testid={"grip-" + id}
+        // POINTER EVENTS, NOT HTML5 DRAG. `dragstart` cannot be simulated
+        // faithfully in a play function and gives no control over the drop
+        // index.
+        //
+        // A real sensor library would also demand `isPrimary: true` on every
+        // synthesised event — dnd-kit's PointerSensor silently ignores an
+        // entire sequence without it, a trap this repo has already paid for.
+        onPointerDown={() => begin(id)}
+        style={dndStyles.grip}
+      >
+        ::
+      </span>
+      <span style={dndStyles.rowLabel}>{label}</span>
+      <span style={dndStyles.rowKind}>
+        {node.quarantined ? "?" : node.kind}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * A collection as a drop container.
+ *
+ * An UNLOADED collection still draws a landing zone, and dropping on it is
+ * refused with `target-not-loaded` rather than silently appending. A
+ * post-removal index into children nobody has read has no honest value, so this
+ * is a graph-level truth rather than an app-level policy.
+ */
+function DragCollection({
+  id,
+  depth = 0,
+}: Readonly<{ id: NodeId; depth?: number }>) {
+  const node = ui.useNode(id);
+  const children = ui.useChildren(id);
+  const { dropAt } = useDragApi();
+  if (node === undefined || node.quarantined || !node.container) return null;
+
+  const loaded = node.children.status === "loaded";
+  const name = node.kind === "sequence" ? node.data.name : String(id);
+
+  return (
+    <div style={{ ...dndStyles.collection, marginLeft: depth * 18 }}>
+      <div style={dndStyles.collectionHead}>
+        <strong>{name}</strong>
+        <span style={dndStyles.rowKind}>{node.children.status}</span>
+      </div>
+
+      {!loaded ? (
+        <div
+          data-testid={"gap-" + id + "-0"}
+          onPointerUp={() => dropAt(id, 0)}
+          style={{ ...dndStyles.gap, ...dndStyles.gapClosed }}
+        >
+          nobody has read these children
+        </div>
+      ) : (
+        <>
+          <Gap parentId={id} indexBefore={0} />
+          {children.map((childId, index) => (
+            <Fragment key={childId}>
+              <ChildRow id={childId} depth={depth} />
+              <Gap parentId={id} indexBefore={index + 1} />
+            </Fragment>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A child is either another container (recurse) or a leaf row. */
+function ChildRow({ id, depth }: Readonly<{ id: NodeId; depth: number }>) {
+  const node = ui.useNode(id);
+  if (node === undefined) return null;
+  if (!node.quarantined && node.container) {
+    return (
+      <div>
+        <DragRow id={id} />
+        <DragCollection id={id} depth={depth + 1} />
+      </div>
+    );
+  }
+  return <DragRow id={id} />;
+}
+
+const dndStyles: Readonly<Record<string, CSSProperties>> = {
+  outcome: {
+    fontFamily: "ui-monospace, monospace",
+    fontSize: 12,
+    padding: "6px 10px",
+    borderRadius: 4,
+    background: "rgba(127,127,127,.12)",
+    marginBottom: 10,
+  },
+  collection: {
+    border: "1px solid rgba(127,127,127,.35)",
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 10,
+  },
+  collectionHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: 13,
+    marginBottom: 6,
+  },
+  row: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "5px 8px",
+    borderRadius: 4,
+    background: "rgba(127,127,127,.10)",
+  },
+  rowDragging: { opacity: 0.45 },
+  rowLabel: { flex: 1, fontSize: 13 },
+  rowKind: {
+    fontSize: 11,
+    opacity: 0.6,
+    fontFamily: "ui-monospace, monospace",
+  },
+  grip: {
+    cursor: "grab",
+    userSelect: "none",
+    opacity: 0.55,
+    letterSpacing: -1,
+  },
+  gap: {
+    height: 16,
+    display: "flex",
+    alignItems: "center",
+    paddingLeft: 6,
+    fontSize: 10,
+    opacity: 0.35,
+    fontFamily: "ui-monospace, monospace",
+  },
+  gapArmed: { outline: "1px dashed rgba(127,127,127,.6)", opacity: 0.8 },
+  gapClosed: {
+    height: "auto",
+    padding: 6,
+    opacity: 0.5,
+    fontStyle: "italic",
+  },
+};
+
+/**
+ * 9. Drag and drop, and the index conversion nobody should re-derive.
+ */
+export const DragAndDrop: Story = {
+  render: () => (
+    <Stage doc={dndDoc}>
+      <Lesson title="The engine's only contact with a pointer">
+        The view knows where you dropped in the list it is drawing now; the
+        reducer needs the index after the moved node is taken out.{" "}
+        <code>resolveDrop</code> converts one to the other in exactly one place.
+        Drag downward inside one reel and the two numbers differ; drag across
+        reels and they agree.
+      </Lesson>
+      <DragBoard>
+        <DragCollection id={IDS.reelA} />
+        <DragCollection id={IDS.reelB} />
+      </DragBoard>
+      <ChildOrder id={IDS.reelA} label="reel-a children" />
+      <ChildOrder id={IDS.reelB} label="reel-b children" />
+      <HistoryBar />
+    </Stage>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const drag = async (grip: string, gap: string) => {
+      await userEvent.pointer([
+        { keys: "[MouseLeft>]", target: canvas.getByTestId(grip) },
+        { target: canvas.getByTestId(gap) },
+        { keys: "[/MouseLeft]" },
+      ]);
+    };
+
+    // --- 1. downward inside one parent: the indices DISAGREE --------------
+    await expect(canvas.getByTestId("order-reel-a")).toHaveTextContent(
+      "shot-bridge, scene-two, shot-reveal",
+    );
+    await drag("grip-shot-bridge", "gap-reel-a-2");
+    await expect(canvas.getByTestId("dnd-outcome")).toHaveTextContent(
+      "dropped at 2 · committed at 1",
+    );
+    await expect(canvas.getByTestId("order-reel-a")).toHaveTextContent(
+      "scene-two, shot-bridge, shot-reveal",
+    );
+
+    // --- 2. across parents: the indices AGREE -----------------------------
+    await drag("grip-shot-reveal", "gap-reel-b-0");
+    await expect(canvas.getByTestId("dnd-outcome")).toHaveTextContent(
+      "dropped at 0 · committed at 0",
+    );
+    await expect(canvas.getByTestId("order-reel-b")).toHaveTextContent(
+      "shot-reveal",
+    );
+
+    // --- 3. a collection into its own descendant: refused, nothing moves ---
+    await drag("grip-scene-two", "gap-scene-two-0");
+    await expect(canvas.getByTestId("dnd-outcome")).toHaveTextContent(
+      "would-create-cycle",
+    );
+    await expect(canvas.getByTestId("order-reel-a")).toHaveTextContent(
+      "scene-two, shot-bridge",
+    );
+
+    // --- 4. into a subtree nobody has read: refused honestly ---------------
+    await drag("grip-shot-bridge", "gap-scene-locked-0");
+    await expect(canvas.getByTestId("dnd-outcome")).toHaveTextContent(
+      "target-not-loaded",
+    );
+
+    // --- 5. one gesture, one history entry --------------------------------
+    await userEvent.click(canvas.getByTestId("undo"));
+    await expect(canvas.getByTestId("order-reel-b")).not.toHaveTextContent(
+      "shot-reveal",
+    );
+  },
+};
+
+/**
+ * Two reels, a nested sequence so a collection can be dropped into itself, and
+ * one unloaded collection to be refused by.
+ */
+const dndDoc = wireDocument(
+  ["reel-a", "reel-b"],
+  [
+    wireSequence("reel-a", "Reel A", [
+      "shot-bridge",
+      "scene-two",
+      "shot-reveal",
+    ]),
+    wireShot("shot-bridge", "Bridge, wide", 6, "A"),
+    wireSequence("scene-two", "Scene Two", ["shot-door"]),
+    wireShot("shot-door", "Door, medium", 4, "A"),
+    wireShot("shot-reveal", "Reveal, push in", 4, "B"),
+    wireSequence("reel-b", "Reel B", ["scene-locked"]),
+    wireUnloaded("scene-locked", "Scene Locked", { seconds: 9, shots: 2 }),
+  ],
+);
