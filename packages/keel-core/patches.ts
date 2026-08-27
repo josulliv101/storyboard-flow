@@ -61,6 +61,7 @@ import {
   insertLeavesDerivedIndexesIntact,
   rebuildDerivedIndexes,
   rebuildPlacementIndex,
+  reindexPlacementsAcrossMove,
   reindexPlacementsWithinSubtree,
   type DerivedIndexes,
 } from "./graph";
@@ -302,12 +303,16 @@ function spliceOut(
  * The one parent every move stays inside, or `null` when the batch reparents or
  * spans parents.
  *
- * The scoped placement reindex needs a subtree it can prove the permutation is
- * confined to, and this is the only shape that yields one CHEAPLY. A
- * cross-parent drag's scope would be the lowest common ancestor of the two
- * parents, which in the shape this engine is built for — root, collections,
- * items — is the root itself, so scoping would walk the whole graph and buy
- * nothing. Those fall back to a placements-only rebuild.
+ * `reindexPlacementsWithinSubtree` needs a subtree it can prove the permutation
+ * is confined to, and this is the only shape that yields one cheaply.
+ *
+ * It is NOT, however, the only shape with a cheap answer, and this comment used
+ * to claim it was: a cross-parent scope would be the lowest common ancestor of
+ * the two parents — the root, in the shape this engine is built for — so
+ * scoping was said to buy nothing, and every cross-parent drag rebuilt the
+ * whole index. The LCA reasoning is correct and the conclusion did not follow.
+ * A move's scope is what MOVED, and `reindexPlacementsAcrossMove` takes that
+ * path for everything this function declines.
  */
 function soleReorderParent(moves: readonly Move[]): NodeId | null {
   const first = moves[0];
@@ -341,6 +346,20 @@ function placementsAfterMove<Ts extends readonly unknown[], S>(
     // previous index disagreeing with the graph and refused to guess.
     if (scoped !== null) return scoped;
   }
+
+  // A cross-parent move — or a scoped reorder that declined. Reposition what
+  // travelled instead of rediscovering what did not: the scope of a move is the
+  // moved subtrees, and every node outside them holds its relative order. See
+  // `reindexPlacementsAcrossMove` for why that is true rather than merely
+  // plausible.
+  const repositioned = reindexPlacementsAcrossMove(
+    post,
+    registry,
+    previous,
+    moves.map((move) => move.nodeId),
+  );
+  if (repositioned !== null) return repositioned;
+
   return rebuildPlacementIndex(post, registry);
 }
 

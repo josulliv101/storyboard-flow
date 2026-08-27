@@ -735,6 +735,229 @@ export function reindexPlacementsWithinSubtree<Ts extends readonly unknown[], S>
 }
 
 /**
+ * Compare two ids by document order, amortised across many comparisons.
+ *
+ * Returns `null` for "cannot say" rather than a guess: a node absent from its
+ * own parent's children means `parentById` and `childrenById` disagree, and the
+ * one thing an ordering primitive must never do in that state is invent an
+ * answer that reads as authoritative. Callers decline and rebuild.
+ *
+ * Two caches, both scoped to one call. Paths are built once per id — the
+ * comparison itself allocates nothing — and slot maps once per parent, which is
+ * what keeps a merge over a bucket from turning into `indexOf` per comparison
+ * over a wide collection. The slot maps are the honest bound here: a bucket
+ * whose members are spread across many parents pays each parent's width once,
+ * so the pathological shape — one content key placed in EVERY collection —
+ * costs the same order as the rebuild it replaces. It is never worse than the
+ * rebuild, and for every realistic bucket it is not close.
+ */
+function documentOrderComparator<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+): (a: NodeId, b: NodeId) => number | null {
+  const pathCache = new Map<NodeId, readonly NodeId[]>();
+  // Keyed by parent, with `null` standing for the root list — roots are ordered
+  // by `rootIds` and have no parent to be looked up in.
+  const slotCache = new Map<NodeId | null, ReadonlyMap<NodeId, number>>();
+
+  const pathOf = (id: NodeId): readonly NodeId[] => {
+    const cached = pathCache.get(id);
+    if (cached !== undefined) return cached;
+    // `ancestorChain` is parent-first and excludes `id`; a document-order
+    // comparison wants root-first and inclusive, so this reverses and appends.
+    const chain = ancestorChain(graph, id);
+    const path: NodeId[] = [];
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
+      const ancestor = chain[i];
+      if (ancestor !== undefined) path.push(ancestor);
+    }
+    path.push(id);
+    pathCache.set(id, path);
+    return path;
+  };
+
+  const slotsIn = (parentId: NodeId | null): ReadonlyMap<NodeId, number> => {
+    const cached = slotCache.get(parentId);
+    if (cached !== undefined) return cached;
+    const siblings =
+      parentId === null ? graph.rootIds : (graph.childrenById.get(parentId) ?? NO_IDS);
+    const slots = new Map<NodeId, number>();
+    for (let i = 0; i < siblings.length; i += 1) {
+      const sibling = siblings[i];
+      if (sibling !== undefined) slots.set(sibling, i);
+    }
+    slotCache.set(parentId, slots);
+    return slots;
+  };
+
+  return (a, b) => {
+    if (a === b) return 0;
+    const pathA = pathOf(a);
+    const pathB = pathOf(b);
+    const shared = Math.min(pathA.length, pathB.length);
+    let depth = 0;
+    while (depth < shared && pathA[depth] === pathB[depth]) depth += 1;
+    // One path is a prefix of the other, so one node is an ancestor of the
+    // other, and pre-order puts an ancestor first: the shorter path wins.
+    if (depth === shared) return pathA.length - pathB.length;
+    const parentId = depth === 0 ? null : (pathA[depth - 1] ?? null);
+    const slots = slotsIn(parentId);
+    const branchA = pathA[depth];
+    const branchB = pathB[depth];
+    if (branchA === undefined || branchB === undefined) return null;
+    const slotA = slots.get(branchA);
+    const slotB = slots.get(branchB);
+    if (slotA === undefined || slotB === undefined) return null;
+    return slotA - slotB;
+  };
+}
+
+/**
+ * The placement index after a move, repositioning only what travelled.
+ *
+ * The scope of a move is the MOVED SUBTREES, never a subtree containing both
+ * parents. That distinction is the whole function: an earlier version of this
+ * file reasoned that a cross-parent scope would have to be the lowest common
+ * ancestor of the two parents — the root, in the shape this engine is built for
+ * — and concluded that scoping therefore bought nothing, so every cross-parent
+ * drag rebuilt the whole index. The reasoning was sound about the LCA and wrong
+ * about the scope.
+ *
+ * WHY THE MOVED SET IS THE RIGHT ONE. Take any two nodes, neither of them in a
+ * moved subtree. Their relative document order is decided where their
+ * root-paths diverge, by the sibling slots of two branches under one common
+ * parent. A move relinks only the moved node and rewrites only the source and
+ * destination child arrays — and the moved node is a CHILD of the source, never
+ * a sibling of it, so no ancestor's own slot moves. Neither branch slot can
+ * change, so their order cannot. `derivedIndexesAfterRemoval` already states
+ * the removal half of this argument; this is the same argument carried through
+ * the reinsertion.
+ *
+ * So the survivors in every bucket are still in order, and the complete update
+ * is to lift out the ids that travelled and merge them back at their new
+ * positions. A bucket holding nothing that moved cannot change at all — which
+ * is why the common shape, a content key placed exactly once so that every
+ * bucket holds one id, settles in a handful of codec calls and no comparisons
+ * at all, against a full document walk before.
+ *
+ * Returns `previous` BY IDENTITY when nothing reordered, and `null` for
+ * "declined" — never for "invalid" — on the same terms as
+ * `reindexPlacementsWithinSubtree`: if `previous` disagrees with the graph it
+ * was supposedly built from, this refuses to guess and the caller rebuilds.
+ */
+export function reindexPlacementsAcrossMove<Ts extends readonly unknown[], S>(
+  post: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+  previous: ReadonlyMap<string, readonly NodeId[]>,
+  movedIds: readonly NodeId[],
+): ReadonlyMap<string, readonly NodeId[]> | null {
+  // A move carries whole subtrees, so a descendant travelled exactly as far as
+  // the node the patch names. POST-state, because that is where the moved node
+  // now lives and its subtree membership is what the move left behind.
+  const travelled = new Set<NodeId>();
+  for (const id of movedIds) {
+    if (!post.nodesById.has(id)) return null;
+    for (const descendant of subtreeIds(post, id)) travelled.add(descendant);
+  }
+  if (travelled.size === 0) return previous;
+
+  // The ONLY codec calls this function makes: one per node that actually
+  // travelled. Every other node's key is not merely unchanged but irrelevant —
+  // `contentKey` reads `data`, and a move does not touch `data`.
+  const moversByKey = new Map<string, NodeId[]>();
+  for (const id of travelled) {
+    const node = post.nodesById.get(id);
+    if (node === undefined) return null;
+    const contentKey = contentKeyOf(registry, node);
+    if (contentKey === null) continue;
+    const movers = moversByKey.get(contentKey);
+    if (movers === undefined) moversByKey.set(contentKey, [id]);
+    else movers.push(id);
+  }
+  if (moversByKey.size === 0) return previous;
+
+  const compare = documentOrderComparator(post);
+  const rewritten = new Map<string, readonly NodeId[]>();
+
+  for (const [contentKey, movers] of moversByKey) {
+    const bucket = previous.get(contentKey);
+    // The graph holds a node with this key and `previous` has no bucket for it:
+    // `previous` was not built from this node set. Decline.
+    if (bucket === undefined) return null;
+    // A bucket of one cannot be out of order with itself. Worth its own line
+    // rather than falling out of the merge below, because it is the common case
+    // — a content key names an asset, and most assets are placed once — and
+    // this is the line where that case costs nothing at all.
+    if (bucket.length <= 1) continue;
+
+    const moved = new Set(movers);
+    const survivors: NodeId[] = [];
+    let found = 0;
+    for (const id of bucket) {
+      if (moved.has(id)) found += 1;
+      else survivors.push(id);
+    }
+    // Fewer of this key's movers in the bucket than the graph holds: the same
+    // disagreement as above, and the same answer.
+    if (found !== movers.length) return null;
+
+    // Survivors are already in order and stay that way; the movers are sorted
+    // among themselves and merged back in. Both facts come from the argument
+    // above, and a batch that moves several subtrees is why the movers need
+    // sorting at all rather than being appended in walk order.
+    let declined = false;
+    const ordered = movers.slice().sort((a, b) => {
+      const verdict = compare(a, b);
+      if (verdict === null) {
+        declined = true;
+        return 0;
+      }
+      return verdict;
+    });
+    if (declined) return null;
+
+    const merged: NodeId[] = [];
+    let left = 0;
+    let right = 0;
+    while (left < survivors.length && right < ordered.length) {
+      const survivor = survivors[left];
+      const mover = ordered[right];
+      if (survivor === undefined || mover === undefined) return null;
+      const verdict = compare(survivor, mover);
+      if (verdict === null) return null;
+      if (verdict <= 0) {
+        merged.push(survivor);
+        left += 1;
+      } else {
+        merged.push(mover);
+        right += 1;
+      }
+    }
+    for (; left < survivors.length; left += 1) {
+      const survivor = survivors[left];
+      if (survivor !== undefined) merged.push(survivor);
+    }
+    for (; right < ordered.length; right += 1) {
+      const mover = ordered[right];
+      if (mover !== undefined) merged.push(mover);
+    }
+
+    let differs = merged.length !== bucket.length;
+    for (let i = 0; !differs && i < merged.length; i += 1) {
+      if (merged[i] !== bucket[i]) differs = true;
+    }
+    if (differs) rewritten.set(contentKey, merged);
+  }
+
+  // Nothing reordered. Hand the map back by reference rather than allocating a
+  // copy of the whole key space to say so.
+  if (rewritten.size === 0) return previous;
+
+  const next = new Map(previous);
+  for (const [contentKey, bucket] of rewritten) next.set(contentKey, bucket);
+  return next;
+}
+
+/**
  * Both indexes after a removal, updated rather than rebuilt.
  *
  * Sound because a removal cannot REORDER anything: dropping ids leaves every

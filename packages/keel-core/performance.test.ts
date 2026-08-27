@@ -845,6 +845,18 @@ function reorderIntent(fx: WideFixture): DropIntent<Types, Summary> {
   };
 }
 
+/**
+ * How many nodes `crossParentMoveCommand` actually relocates: it names one clip,
+ * and a clip is a leaf, so the subtree that travels is that one node.
+ *
+ * Named rather than written as a bare `1` at the assertion, because it is the
+ * quantity the cross-parent re-index is allowed to be proportional to. If this
+ * fixture ever moves a folder instead, this constant is what changes — and the
+ * assertion stays a statement about the moved subtree rather than becoming a
+ * magic number that has to be re-derived from scratch.
+ */
+const CROSS_PARENT_MOVED_SUBTREE = 1;
+
 function crossParentMoveCommand(fx: WideFixture): Command<Types, Summary> {
   const clips = firstFolderClips(fx);
   return {
@@ -1105,8 +1117,9 @@ describe("mutations", () => {
     expectSubQuadratic(resolvePerOp, "resolveDrop (same parent)");
   }, 120_000);
 
-  it("a cross-parent move costs one rebuild and two ancestor-chain bumps", () => {
+  it("a cross-parent move re-indexes what travelled, not the document", () => {
     const perOp = new Map<string, number>();
+    const reindexed = new Map<string, number>();
 
     for (const fx of wideSizes) {
       const command = crossParentMoveCommand(fx);
@@ -1116,16 +1129,21 @@ describe("mutations", () => {
         engine.applyCommand(fx.graph, command);
       });
 
-      // THE OTHER HALF OF THE STORY, and it is not the same as the reorder
-      // above. The scoped re-index applies only when every move stays inside
-      // ONE parent; the moment a node changes parents there is no single
-      // subtree whose document order is the only thing that moved, and the
-      // index is rebuilt over the whole graph. So this count IS the node count.
+      // THE OTHER HALF OF THE STORY, and it used to be a much worse half. This
+      // bound was `<= fx.nodeCount` — a whole-document rebuild — on the
+      // reasoning that a cross-parent move has no single subtree its
+      // permutation is confined to, since the lowest common ancestor of two
+      // collections is the root. True about the LCA, and the wrong scope: the
+      // scope of a move is what MOVED. Two nodes that both stayed put cannot
+      // have changed order relative to each other, so only buckets holding
+      // something that travelled can need touching.
       //
-      // An UPPER BOUND, not equality: it must fail if the rebuild ever runs
-      // twice for one command, and must NOT fail the day somebody scopes this
-      // path the way the same-parent one is scoped.
-      expect(
+      // So the count is the moved subtree, and here that is one clip. It is the
+      // same number at 100 nodes and at 10,000, which is the claim; the bound
+      // below is what says the constant is the right one rather than a
+      // coincidence that happens to be flat.
+      reindexed.set(
+        fx.label,
         noteCount(
           "move (cross parent)",
           fx.label,
@@ -1133,7 +1151,7 @@ describe("mutations", () => {
           "contentKey",
           counts.contentKey,
         ),
-      ).toBeLessThanOrEqual(fx.nodeCount);
+      );
       expect(counts.parse).toBe(0);
 
       perOp.set(
@@ -1143,6 +1161,16 @@ describe("mutations", () => {
         }),
       );
     }
+
+    const perMove = expectIndependentOfGraphSize(
+      reindexed,
+      "cross-parent move content-key lookups",
+    );
+    // The command moves ONE leaf clip, so one key is the whole cost. Written as
+    // the moved subtree size rather than a bare 1 so that the day this fixture
+    // moves a folder instead, the number that changes is the fixture's and not
+    // a magic constant nobody can source.
+    expect(perMove).toBeLessThanOrEqual(CROSS_PARENT_MOVED_SUBTREE);
 
     expectSubQuadratic(perOp, "cross-parent move");
   }, 120_000);

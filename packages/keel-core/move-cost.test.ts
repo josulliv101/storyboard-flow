@@ -321,6 +321,30 @@ function reorderWithin(parentId: string, nodeId: string, from: number, to: numbe
   } as const;
 }
 
+/** The cross-parent twin of `reorderWithin`. Separate rather than a parameter
+ *  on that one, because "same parent" and "different parent" take different
+ *  paths through `placementsAfterMove` and a test should name which it drives. */
+function moveAcross(
+  fromParentId: string,
+  toParentId: string,
+  nodeId: string,
+  from: number,
+  to: number,
+) {
+  return {
+    type: "moved",
+    moves: [
+      {
+        nodeId: nid(nodeId),
+        fromParentId: nid(fromParentId),
+        fromIndex: from,
+        toParentId: nid(toParentId),
+        toIndex: to,
+      },
+    ],
+  } as const;
+}
+
 /** Which node ids' revisions actually moved — the touched-chain measurement. */
 function bumpedIds(before: TestGraph, after: TestGraph): readonly string[] {
   const out: string[] = [];
@@ -633,7 +657,7 @@ describe("derived index cost", () => {
     );
   });
 
-  it("falls back to a correct rebuild for a cross-parent move", () => {
+  it("keeps a shared bucket right when a cross-parent move cannot reorder it", () => {
     const graph = buildGraph([
       {
         tag: "folder",
@@ -668,6 +692,195 @@ describe("derived index cost", () => {
       "b",
       "z",
     ]);
+    expect(next.placementsByContentKey).toEqual(
+      rebuildDerivedIndexes(next, keyedRegistry).placementsByContentKey,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Cross-parent moves — the scope is what MOVED, not the LCA of the endpoints
+  // -------------------------------------------------------------------------
+
+  it("does not walk the document when a clip changes parents", () => {
+    const graph = wideGraph(20, 20); // 400 clips, one asset each
+    resetCodecCounters();
+    const next = commit(graph, moveAcross("c0", "c1", "c0-m0", 0, 0));
+    // ONE key: the clip that travelled. The old path rebuilt the index from a
+    // full document walk and asked all 400. Nothing else in the graph moved
+    // relative to anything else, so nothing else has an opinion.
+    expect(contentKeyCalls).toBe(1);
+    expect(sourceKeyCalls).toBe(0);
+    // Every bucket holds one id, so no bucket's ORDER changed. Saying so must
+    // not allocate a map the size of the key space.
+    expect(next.placementsByContentKey).toBe(graph.placementsByContentKey);
+  });
+
+  it("asks once per node that travelled, not once per node that exists", () => {
+    // The moved node is a FOLDER, so its whole subtree travels with it and the
+    // cost is that subtree — the distinction the bare `1` above cannot make.
+    const graph = buildGraph([
+      {
+        tag: "folder",
+        id: "root",
+        children: [
+          {
+            tag: "folder",
+            id: "c0",
+            children: [
+              {
+                tag: "folder",
+                id: "nested",
+                children: [
+                  { tag: "clip", id: "n0", asset: "a0" },
+                  { tag: "clip", id: "n1", asset: "a1" },
+                ],
+              },
+              { tag: "clip", id: "stay", asset: "a2" },
+            ],
+          },
+          { tag: "folder", id: "c1", children: [{ tag: "clip", id: "far", asset: "a3" }] },
+        ],
+      },
+    ]);
+    resetCodecCounters();
+    commit(graph, moveAcross("c0", "c1", "nested", 0, 0));
+    // `nested` itself is a folder and has no content key, so the two clips
+    // inside it are the whole bill. `stay` and `far` are never asked.
+    expect(contentKeyCalls).toBe(2);
+  });
+
+  it("repositions a moved placement in a shared bucket exactly as a rebuild would", () => {
+    // One asset placed four times across two collections. Moving the LAST
+    // placement to the front of the FIRST collection is the case a slot-rewrite
+    // cannot express: the id has to cross other members of its own bucket.
+    const graph = buildGraph([
+      {
+        tag: "folder",
+        id: "root",
+        children: [
+          {
+            tag: "folder",
+            id: "c0",
+            children: [
+              { tag: "clip", id: "a", asset: "shared" },
+              { tag: "clip", id: "b", asset: "shared" },
+            ],
+          },
+          {
+            tag: "folder",
+            id: "c1",
+            children: [
+              { tag: "clip", id: "c", asset: "shared" },
+              { tag: "clip", id: "d", asset: "shared" },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(graph.placementsByContentKey.get("shared")?.map(String)).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+    ]);
+
+    const next = commit(graph, moveAcross("c1", "c0", "d", 1, 0));
+    expect(next.placementsByContentKey.get("shared")?.map(String)).toEqual([
+      "d",
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(next.placementsByContentKey).toEqual(
+      rebuildDerivedIndexes(next, keyedRegistry).placementsByContentKey,
+    );
+  });
+
+  it("agrees with a rebuild for a move into the MIDDLE of a shared bucket", () => {
+    // The merge's real work: the mover lands neither first nor last, so both
+    // sides of the merge have to advance. Landing it at either end would pass
+    // even if the merge only ever appended.
+    const graph = buildGraph([
+      {
+        tag: "folder",
+        id: "root",
+        children: [
+          {
+            tag: "folder",
+            id: "c0",
+            children: [
+              { tag: "clip", id: "a", asset: "shared" },
+              { tag: "clip", id: "b", asset: "shared" },
+              { tag: "clip", id: "c", asset: "shared" },
+            ],
+          },
+          { tag: "folder", id: "c1", children: [{ tag: "clip", id: "d", asset: "shared" }] },
+        ],
+      },
+    ]);
+
+    const next = commit(graph, moveAcross("c1", "c0", "d", 0, 2));
+    expect(next.placementsByContentKey.get("shared")?.map(String)).toEqual([
+      "a",
+      "b",
+      "d",
+      "c",
+    ]);
+    expect(next.placementsByContentKey).toEqual(
+      rebuildDerivedIndexes(next, keyedRegistry).placementsByContentKey,
+    );
+  });
+
+  it("carries ownerBySourceKey through a cross-parent move by reference", () => {
+    // Ownership is a property of the node, not of where it sits, so a move
+    // cannot transfer it — and must not allocate a map to say so.
+    const graph = wideGraph(20, 20);
+    const next = commit(graph, moveAcross("c0", "c1", "c0-m0", 0, 0));
+    expect(next.ownerBySourceKey).toBe(graph.ownerBySourceKey);
+  });
+
+  it("reorders correctly when a batch moves subtrees to two different parents", () => {
+    // Movers from separate moves can land out of walk order relative to each
+    // other, which is why they are sorted before the merge rather than appended
+    // in the order the walk happened to find them.
+    const graph = buildGraph([
+      {
+        tag: "folder",
+        id: "root",
+        children: [
+          {
+            tag: "folder",
+            id: "c0",
+            children: [
+              { tag: "clip", id: "a", asset: "shared" },
+              { tag: "clip", id: "b", asset: "shared" },
+            ],
+          },
+          { tag: "folder", id: "c1", children: [{ tag: "clip", id: "keep", asset: "shared" }] },
+        ],
+      },
+    ]);
+
+    const next = commit(graph, {
+      type: "moved",
+      moves: [
+        {
+          nodeId: nid("b"),
+          fromParentId: nid("c0"),
+          fromIndex: 1,
+          toParentId: nid("c1"),
+          toIndex: 0,
+        },
+        {
+          nodeId: nid("a"),
+          fromParentId: nid("c0"),
+          fromIndex: 0,
+          toParentId: nid("c1"),
+          toIndex: 1,
+        },
+      ],
+    } as const);
+
     expect(next.placementsByContentKey).toEqual(
       rebuildDerivedIndexes(next, keyedRegistry).placementsByContentKey,
     );
