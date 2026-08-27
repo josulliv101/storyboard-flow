@@ -7,6 +7,21 @@ that has never seen the code.
 Entry point: `components/graph-view/graph-item-details-modal.tsx` in
 `apps/timeline-gstudio001`.
 
+> **§2, §7 and §8 describe the play bar PL15-030 removed, and have not been
+> re-written for the strip that replaced it.** They name `SeamStripBar`,
+> `SeamLane`, `SeamRuler` and `SeamMinimap`, and the anatomy diagram in §2
+> draws a ruler, a minimap and a controls row carrying `frames` and `reach`.
+> None of those exist: PL16-013 and PL16-014 deleted every one of those
+> modules after finding they had no importers. The play bar is now
+> `FilmStrip` (`playbar/film-strip.tsx`) with `ClipDeck`
+> (`playbar/clip-deck.tsx`) below it.
+>
+> Much of the BEHAVIOUR in §7 (pan the film, click to centre, wheel to pan,
+> ⌘-wheel to zoom, the keyboard table) was ported across and is believed to
+> hold, but it has not been re-verified line by line against `film-strip.tsx`
+> — so treat those sections as a description of intent, not of the code, until
+> they are rewritten. §13 IS current.
+
 ---
 
 ## 1. What it is
@@ -481,21 +496,26 @@ this one to the middle"; the swipe is the same instruction, held.
 
 ## 13. Settings, and where they live
 
-All three are **module-scope, deliberately not persisted**. They are a working
-posture for a session, not preferences — a board reopened tomorrow should start
-close in. Module scope rather than component state so that closing the modal
-and opening another clip does not reset them.
+**One setting is left**, and it is **module-scope, deliberately not
+persisted**. It is a working posture for a session, not a preference — a board
+reopened tomorrow should start close in. Module scope rather than component
+state so that closing the modal and opening another clip does not reset it.
 
 | Setting | Values | Default | Module |
 |---|---|---|---|
 | View count | 3, 5 | 3 | `graph-item-details-view-count.ts` |
-| Bar reach | 5, 10, 20, All | 10 | `graph-item-details-bar-reach.ts` |
-| Frames | off/on × cover/filmstrip | off, cover | `graph-playbar-thumbnails.tsx` |
 
-Frames reach the lane through a **context**, not props — the consumer is
-several layers down inside a portalled dialog and the value changes rarely.
-It defaults to off with no provider, so a bar rendered in a story behaves like
-the shipped default.
+**Bar reach and Frames are gone**, and this table listed them for a while
+after they went. Both controls lived in `SeamStripBar`'s controls row, which
+PL15-030 removed along with the rest of the bar — an explicit call, not a
+casualty: the ported strip PANS across every clip at once, so reach had
+nothing left to do, and the strip draws its own frames. Their state stayed
+behind in the modal, written by choosers nothing called, until PL16-014
+removed it with the modules (`graph-item-details-bar-reach.ts`,
+`graph-playbar-thumbnails.tsx`).
+
+If either is ever wanted again it is a NEW control on the strip, not a
+revival: there is no longer a controls row to put it back on.
 
 ---
 

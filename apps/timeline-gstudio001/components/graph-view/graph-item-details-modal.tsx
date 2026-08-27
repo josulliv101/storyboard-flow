@@ -9,50 +9,28 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AudioLines, Pause, Play, SkipBack, SkipForward, Redo2, Undo2, X } from "lucide-react";
+import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 
 import { createPortal } from "react-dom";
 
 import { MediaPreviewSurface } from "./media-preview-surface";
 
 import {
-  TrimOverviewStrip,
   hasSourceWindow,
-  isEditableKeyboardTarget,
   mediaDurationSeconds,
   parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
-  useLiveTrim,
-  type AudioMediaNode,
   type CollectionItemNode,
   type MediaNode,
-  type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
-import { useDialogFocus } from "@/hooks/use-dialog-focus";
-import {
-  DETAILS_HERO_FILL_CLASS,
-  DETAILS_PANEL_HEIGHT_CLASS,
-  DETAILS_ROW_FLOOR_CLASS,
-} from "./graph-view-config";
-import { useSeekedVideo } from "@/hooks/use-seeked-video";
-import { cloudinaryScrubProxySrc } from "@/lib/cloudinary-scrub-proxy";
-import { useFrameCrossfade } from "@/hooks/use-frame-crossfade";
-import { formatSeconds } from "@/lib/format-duration";
-import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
-import { useClipDetail } from "./graph-details-context";
-import { LayerFramePicker } from "./graph-layer-frame-picker";
-import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
-import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
-import { DETAILS_STEP_MS, detailsStepTransition } from "./graph-details-motion";
 import { SegmentedControl } from "./graph-details-segmented";
 import { withViewTransition } from "@/lib/view-transition";
 import { detailsWindow, flatOrderRootId } from "./graph-details-neighbours";
 import { useSeamTransport } from "./graph-seam-bar";
-import type { SeamBarClip } from "./graph-seam-bar-layout";
 import { CLIP_DECK_STRIP_CELLS, ClipDeck } from "./playbar/clip-deck";
 import { monitorPosterUrl, videoFrameUrls } from "@/lib/video-frame-url";
 
@@ -68,46 +46,24 @@ import {
   seamAt,
   seamSecondsAt,
   type SeamPosition,
-  seamSpanFor,
-  seamStripProgress,
   type SeamClip,
 } from "./graph-seam-scrub";
-import { swipeIntent, swipeOffset } from "./graph-strip-swipe";
-import { DetailsPanel } from "./graph-item-details-panel";
 import { ItemDetailsHeader } from "./graph-item-details-header";
 import {
   HERO,
   HERO_ATTRIBUTE,
-  PANEL_GAP,
   heroElement,
   parkBoardScroll,
   restoreBoardScroll,
 } from "./graph-item-details-shared";
 import { useScopedHistory } from "./graph-item-details-history";
-import { TrimNumbers } from "./graph-item-details-trim-fields";
 import {
   VIEW_COUNTS,
   lastViewCount,
   DETAILS_BASIS_VAR,
-  panelWidthsFor,
   rememberViewCount,
   type ViewCount,
 } from "./graph-item-details-view-count";
-import {
-  PLAYBAR_THUMBNAIL_STYLES,
-  PlaybarThumbnailsProvider,
-  lastPlaybarThumbnails,
-  rememberPlaybarThumbnails,
-  type PlaybarThumbnails,
-} from "./graph-playbar-thumbnails";
-import {
-  BAR_REACHES,
-  barReachLabel,
-  barReachWindow,
-  lastBarReach,
-  rememberBarReach,
-  type BarReach,
-} from "./graph-item-details-bar-reach";
 
 /** The row's edges fade rather than cutting a card in half — see the note on
  *  the view's own element. */
@@ -423,41 +379,12 @@ function DetailsFilmstripModal({
   const [swapping, setSwapping] = useState(false);
   const swapRef = useRef(false);
   const [playing, setPlaying] = useState(false);
-  // THE HOVER CARD IS UP. The row goes back for it — see the strip's own
-  // className. A separate flag from `scrubbing` because the two are different
-  // moments: a scrub is a gesture with the pointer down and the card hidden,
-  // this is a pointer resting on the bar with a picture open under it.
-  const [previewing, setPreviewing] = useState(false);
   // HOW MANY CLIPS ARE ON SCREEN. Remembered for the session rather than the
   // page: it is a way of working — reading one cut closely, or scanning a
   // sequence — and having it snap back to three every time you open a clip
   // would make the wider views something you re-choose rather than something
   // you use.
   const [viewCount, setViewCount] = useState<ViewCount>(lastViewCount());
-  // HOW FAR THE BAR REACHES, which is a different question from how many
-  // panels are on screen: the row is what you are working on, the bar is how
-  // much of the sequence you can get to without leaving it.
-  const [reach, setReach] = useState<BarReach>(lastBarReach());
-  // WHAT THE BOXES DRAW, kept beside the reach because it is the same kind of
-  // question — how much this control shows you, and of what. Seeded from
-  // module scope so it survives the modal being closed and reopened.
-  const [frames, setFrames] = useState<PlaybarThumbnails>(lastPlaybarThumbnails());
-  const chooseFrames = useCallback((next: PlaybarThumbnails) => {
-    rememberPlaybarThumbnails(next);
-    setFrames(next);
-  }, []);
-
-  const clipAt = useCallback(
-    (index: number): MediaNode | null => {
-      const id = ids[index];
-      if (id === undefined) return null;
-      const found = graph.nodesById.get(parseNodeId(id));
-      return found && found.kind === "media" && (found as MediaNode).src
-        ? (found as MediaNode)
-        : null;
-    },
-    [ids, graph],
-  );
 
   // A clip as the seam clock sees it: what PLAYS, and separately what the trim
   // strip DRAWS. `mediaDurationSeconds` is already the trimmed length, so the
@@ -492,64 +419,6 @@ function DetailsFilmstripModal({
   // rule gives seven at nine.
   const half = Math.floor(viewCount / 2);
 
-  // THE PANEL THAT IS LEAVING STAYS A PANEL UNTIL IT HAS LEFT.
-  //
-  // Whether a panel draws its contents or renders as an empty box of the
-  // right width was read straight off the CURRENT centre — so the moment a
-  // step changed it, the far card fell outside the window and blanked. It
-  // was still on screen for the whole 420ms slide, in full view, sliding out
-  // as an empty rectangle: a black hole opening on one side of the row for
-  // the entire transition, which is the most visible thing wrong with the
-  // step and reads as a rendering fault rather than as motion.
-  //
-  // It is NOT a mounting problem — `MOUNTED_RADIUS` already keeps a spare
-  // pair built either side, so the card exists throughout. It was only ever
-  // being told it was off screen a third of a second too early.
-  //
-  // So the window is the UNION of where it was and where it is going, held
-  // for as long as the slide takes. The card leaves with its picture on.
-  const [leavingCentre, setLeavingCentre] = useState<number | null>(null);
-  const centreWas = useRef(centre);
-  // BEFORE PAINT, NOT AFTER. As `useEffect` this ran one frame too late: the
-  // render that changed `centre` painted with no union yet, so the outgoing
-  // card was briefly outside BOTH windows and blinked out for a single frame
-  // before the union brought it back. On a slowed recording that is a card
-  // vanishing between two frames — a hard blink, no fade — which is worse than
-  // the bug the union was added to fix.
-  useLayoutEffect(() => {
-    if (centreWas.current === centre) return;
-    setLeavingCentre(centreWas.current);
-    centreWas.current = centre;
-    // The slide's own clock, plus a frame — releasing on the same tick can
-    // blank the card on its last painted frame, which is the bug in
-    // miniature.
-    const timer = setTimeout(() => setLeavingCentre(null), DETAILS_STEP_MS + 40);
-    return () => clearTimeout(timer);
-  }, [centre]);
-
-  /** Off screen for BOTH the centre it left and the one it is arriving at. */
-  const isSpare = useCallback(
-    (index: number) =>
-      Math.abs(index - centre) > half &&
-      (leavingCentre === null || Math.abs(index - leavingCentre) > half),
-    [centre, half, leavingCentre],
-  );
-  const wholeClips = useMemo(() => {
-    const clips: MediaNode[] = [];
-    for (let index = centre - half + 1; index <= centre + half - 1; index += 1) {
-      const found = clipAt(index);
-      if (found !== null) clips.push(found);
-    }
-    return clips;
-  }, [clipAt, centre, half]);
-  const edgeBefore = clipAt(centre - half);
-  const edgeAfter = clipAt(centre + half);
-  const centreClip = clipAt(centre);
-  // Where the subject sits among the whole clips — the bar rests there.
-  const subjectIndex = wholeClips.findIndex(
-    (clip) => centreClip !== null && clip.id === centreClip.id,
-  );
-
   // ── THE CLOCK COVERS THE WHOLE COLLECTION ────────────────────────────────
   //
   // It used to cover the three clips on screen plus a two-second lead into
@@ -563,14 +432,6 @@ function DetailsFilmstripModal({
   // got the approach to the cut and no more. With every clip present in full
   // there is no partial neighbour to lead into; the run-up to any cut is just
   // the clip before it, which is now on the bar in its entirety.
-  // THE SLICE THE BAR ACTUALLY COVERS. `ids` is the whole flat order and the
-  // ROW still walks all of it; this is only how far the clock reaches, so the
-  // two can disagree and the row can be scrolled past the end of the bar by
-  // stepping. Everything the bar is built from comes through here, so the
-  // track, the ruler, the strip and the minimap cannot end up describing
-  // different stretches of time.
-  const barWindow = useMemo(() => barReachWindow(ids, centre, reach), [ids, centre, reach]);
-
   // THE WHOLE SEQUENCE, not the reach window (PL15-030).
   //
   // This was `barWindow.ids` because the bar could only ever show a window, so
@@ -895,73 +756,6 @@ function DetailsFilmstripModal({
       meta: `${(trimSkim === null ? (skimAt?.clipSeconds ?? 0) : skimSourceTime).toFixed(2)}s / ${total.toFixed(2)}s`,
     };
   }, [skimTaken, deckPreviewing, skimNode, skimAt, skimSourceTime, skimPosterBase, trimSkim]);
-  // ANY clip the bar covers, not just the three it used to. With nine panels
-  // the playhead can be inside a clip four along, and the monitor still has to
-  // be able to paint it.
-  // WHATEVER THE PLAYHEAD IS ON, mounted or not.
-  //
-  // This used to search the panels on screen, which was the same window the
-  // clock covered — so it could never be asked for anything else. Now the bar
-  // reaches the whole collection, and scrubbing onto a shot that is four cards
-  // away has to show you that shot: that is what "preview items that aren't
-  // even displayed" means. The row does NOT follow; the monitor does the
-  // travelling, which is the cheap half and the half you asked for.
-  const monitorNode = (() => {
-    if (position === null) return null;
-    const found = graph.nodesById.get(parseNodeId(position.clipId));
-    return found && found.kind === "media" ? (found as MediaNode) : null;
-  })();
-
-  // TWO WIDTHS NOW: the clip being worked on, and everything else. The row's
-  // step is the NEIGHBOUR width — see `panelWidthsFor` for why the centre's
-  // extra width cancels out of the centring arithmetic entirely.
-  const panelWidths = panelWidthsFor(viewCount);
-  const panelWidth = panelWidths.neighbour;
-
-  // ONE PANEL FURTHER THAN CAN BE SEEN, on each side.
-  //
-  // Mounting only what is visible would mean the arriving panel is CREATED at
-  // the moment the strip starts moving — a video element and a trim strip being
-  // built while the row animates, which lands as a blank frame sliding in and
-  // filling itself. The spare pair keeps the next one either way already
-  // rendered and waiting off screen, so a click moves a panel that already
-  // exists and the only work is one new panel at the far edge, out of sight and
-  // with a whole slide's worth of time to do it.
-  //
-  // It stops there rather than growing: beyond this the panels are neither seen
-  // nor about to be, and a full panel is a video element, a trim strip and a
-  // tag editor. Everything else in the row is an empty box of the right width,
-  // which is all the row needs from it — the geometry that keeps the step
-  // honest.
-  const MOUNTED_RADIUS = Math.floor(viewCount / 2) + 1;
-
-  /**
-   * The clips actually ON SCREEN as panels — the two or three you are looking
-   * at, not the spares built one either side of them.
-   *
-   * The bar draws these as pictures even with frames switched off. Grey boxes
-   * are for reading RHYTHM — width is duration, and a run of even grey shows
-   * where the cuts fall and where the pace changes, which pictures destroy
-   * because the eye reads pictures whatever else is there. That argument is
-   * about the RUN of the bar. It says nothing about the two or three clips
-   * whose frames are already filling the screen below, and drawing those as
-   * anonymous grey while their pictures sit underneath is the bar declining to
-   * answer a question it is not being asked.
-   *
-   * `MOUNTED_RADIUS` is deliberately not reused: it is one wider, so the row
-   * has a built panel to slide to, and those spares are never seen. Marking
-   * them would put a picture on the bar for a clip that is not on the screen.
-   */
-  const panelClipIds = useMemo(() => {
-    const radius = Math.floor(viewCount / 2);
-    const onScreen = new Set<string>();
-    for (let index = centre - radius; index <= centre + radius; index += 1) {
-      const id = ids[index];
-      if (id !== undefined) onScreen.add(id);
-    }
-    return onScreen;
-  }, [centre, ids, viewCount]);
-
   // HOW A LANDING FROM THE BAR ARRIVES: IT DOES NOT TRAVEL.
   //
   // Stepping and letting go of the bar look like the same event and are not.
@@ -977,165 +771,11 @@ function DetailsFilmstripModal({
   // with their new contents. What changes is what changes.
   const SWAP_MS = 300;
 
-  const chooseReach = useCallback((next: BarReach) => {
-    rememberBarReach(next);
-    setReach(next);
-  }, []);
-
 
   const chooseViewCount = useCallback((next: ViewCount) => {
     rememberViewCount(next);
     setViewCount(next);
   }, []);
-  // THE BAR'S OWN LAYOUT, over the WHOLE playback order — every clip the row
-  // can reach, in the order it plays, collection boundaries included. The row
-  // already walks straight through them; a bar that stopped at the current
-  // collection could not show you what was coming next, which is most of what
-  // a bar is for. Which collection a clip belongs to is said in COLOUR
-  // instead (see `collectionTintOf`), so the grouping survives without the
-  // scope shrinking to match it.
-  // Durations come straight from the graph, so this costs a map lookup per
-  // clip and no media at all — the boxes are geometry, not pictures.
-  // WHAT COLOUR EACH CLIP'S BOX IS, derived from WHERE its collection sits.
-  //
-  // The first version gave every collection the next tint from a flat palette
-  // and drew the ancestors as bars across the top of the box. Both halves were
-  // wrong in the same way: a flat palette makes a nested collection look like
-  // an unrelated one, and the bars were a second channel spent explaining what
-  // the first channel had failed to say.
-  //
-  // Nesting is in the COLOUR now. A collection directly under the root takes a
-  // hue far from its neighbours — those are the big divisions and they should
-  // not be confusable. Every level below shifts a little from its parent and
-  // lifts, so a collection inside an orange one is a near-orange: obviously
-  // its own thing, obviously that thing's child. Depth reads as a family, and
-  // the top level reads as a difference.
-  const clipColourOf = useMemo(() => {
-    const rootId = flatOrderRootId(graph);
-
-    // Ordered so that CONSECUTIVE assignments are far apart, and so that no
-    // two are closer than 45 degrees. Both matter: the first is what makes the
-    // top-level divisions read as different at a glance, and the second is
-    // what keeps two families from meeting in the middle once their children
-    // have spread either side of them. An earlier set had 28 and 340 in it —
-    // 48 degrees apart — and with children ranging 14 degrees each way the
-    // orange family's reds and the pink family's reds became the same colour.
-    const TOP_HUES = [30, 210, 120, 300, 165, 345, 75, 255];
-    type Tone = { hue: number; saturation: number; lightness: number };
-    const toneOf = new Map<string, Tone>();
-    const childCount = new Map<string, number>();
-    let topLevelSeen = 0;
-
-    const toneFor = (collectionId: string, parentId: string | null): Tone => {
-      const existing = toneOf.get(collectionId);
-      if (existing !== undefined) return existing;
-      const parentTone = parentId === null ? null : toneOf.get(parentId) ?? null;
-      let tone: Tone;
-      if (parentTone === null) {
-        tone = {
-          hue: TOP_HUES[topLevelSeen % TOP_HUES.length]!,
-          saturation: 52,
-          lightness: 34,
-        };
-        topLevelSeen += 1;
-      } else {
-        // Which child of its parent this is, so siblings separate a little
-        // while staying inside the family.
-        const key = parentId ?? "";
-        const order = childCount.get(key) ?? 0;
-        childCount.set(key, order + 1);
-        // SIBLINGS BARELY MOVE THE HUE. The first version added 13 degrees
-        // per sibling, which accumulated: eight collections under one parent
-        // walked a hundred degrees of the wheel, so the last of them was a
-        // different colour from its own parent rather than a shade of it —
-        // exactly the relationship this is supposed to show. Centred and
-        // cycled instead, so a run of children sits within a few degrees
-        // either side of the family hue.
-        //
-        // DEPTH IS CARRIED BY LIGHTNESS, not hue, for the same reason: it can
-        // go many levels without ever leaving the colour it started from.
-        tone = {
-          hue: parentTone.hue + ((order % 5) - 2) * 5,
-          saturation: Math.max(24, parentTone.saturation - 7),
-          lightness: Math.min(66, parentTone.lightness + 10),
-        };
-      }
-      toneOf.set(collectionId, tone);
-      return tone;
-    };
-
-    const colours = new Map<string, string>();
-    for (const id of ids) {
-      // The chain from just under the root down to the clip's own collection.
-      const chain: string[] = [];
-      let cursor: string | null =
-        (graph.parentById.get(parseNodeId(id)) as string | null | undefined) ?? null;
-      while (cursor !== null && cursor !== rootId) {
-        chain.unshift(cursor);
-        cursor = (graph.parentById.get(parseNodeId(cursor)) as string | null | undefined) ?? null;
-      }
-      // Walk DOWN it so each level's tone is derived from a parent that
-      // already has one.
-      let tone: Tone | null = null;
-      chain.forEach((collectionId, depth) => {
-        tone = toneFor(collectionId, depth === 0 ? null : chain[depth - 1]!);
-      });
-      const resolved: Tone = tone ?? { hue: 220, saturation: 8, lightness: 34 };
-      colours.set(
-        id,
-        `hsl(${resolved.hue % 360} ${resolved.saturation}% ${resolved.lightness}%)`,
-      );
-    }
-    return colours;
-  }, [ids, graph]);
-
-  // EVERY CLIP THE BAR CAN REACH, with the two things the bar cannot work out
-  // for itself: what a clip is called, and which collection it belongs to.
-  //
-  // The names are for the hover preview — a box is otherwise anonymous, and
-  // "which shot is that" is the question a bar of coloured rectangles is worst
-  // at. The collection is what the dividers and the ruler's labels are drawn
-  // from: the row walks the whole project in playback order and crosses
-  // collection edges on purpose, so those edges are the only landmarks on it.
-  //
-  // The bar owns the SCALE now, so it also owns the layout — this hands it
-  // clips, not pixels.
-  const barClips = useMemo<readonly SeamBarClip[]>(() => {
-    return barWindow.ids.map((id) => {
-      const found = graph.nodesById.get(parseNodeId(id));
-      const media = found && found.kind === "media" ? (found as MediaNode) : null;
-      const parentId = graph.parentById.get(parseNodeId(id)) ?? null;
-      const parent = parentId === null ? undefined : graph.nodesById.get(parentId);
-      return {
-        id,
-        name: found?.name ?? id,
-        showingSeconds: media === null ? 0 : mediaDurationSeconds(media),
-        collectionId: parentId === null ? null : (parentId as string),
-        collectionName: parent?.name ?? null,
-        // SKIPPED AT PLAY TIME, said on the bar. The flag was on the node all
-        // along and the bar had never been told, so the one control that shows
-        // you the shape of playback was silent about a clip playback steps
-        // over. It changes how the box is PAINTED and never how wide it is.
-        ...(media?.disabled === true ? { disabled: true } : {}),
-        ...(media === null ? {} : { posterSrc: seamClipOf(media)?.posterSrc }),
-        // ONLY A VIDEO GETS THE FULL SET. A still's single image sampled at
-        // ten intervals is ten copies of itself, which is a filmstrip saying
-        // nothing happens — worse than the one frame it is made of. Leaving
-        // these off is what makes the bar fall back to `cover` for it.
-        ...(media !== null && media.mediaKind === "video" && media.posterSrcs !== undefined
-          ? {
-              posterSrcs: media.posterSrcs,
-              trimInSeconds: seamClipOf(media)?.trimInSeconds ?? 0,
-              // For handing a skimmed frame to the preview pane (PL15-030).
-              // Carried on the same branch as the posters because it answers
-              // the same question for the same clips: a still has no timeline
-              // to skim along.
-              ...(media.src === undefined ? {} : { src: media.src }),
-            }
-          : {}),
-      };
-    });
-  }, [barWindow, graph]);
 
   /**
    * THE SAME CLIPS, SHAPED FOR THE PORTED STRIP (PL15-030).
@@ -1337,150 +977,6 @@ function DetailsFilmstripModal({
     return () => clearTimeout(timer);
   }, [SWAP_MS, swapping]);
 
-  const offset = centre < 0 ? 0 : centre - (ids.length - 1) / 2;
-
-  // SWIPING THE STRIP. The same instruction as clicking a neighbour, held:
-  // drag the film and it follows the hand, let go past a threshold and it
-  // lands on the next clip. Pointer events rather than touch events, so one
-  // implementation serves a finger, a trackpad and a mouse — the gesture is
-  // the same shape on all three and only ever felt on the first.
-  const hasPrevious = centre > 0;
-  const hasNext = centre >= 0 && centre < ids.length - 1;
-  /**
-   * THE DRAG OFFSET IS NOT REACT STATE (PL15-016), and the ref beside it
-   * explains why it should never have been.
-   *
-   * That ref's own comment already said it: "this changes on nearly every
-   * pointer move and only the ROW's transform cares. A re-render per move to
-   * store a start coordinate would re-render three live panels — video
-   * elements included — sixty times a second for the duration of a swipe."
-   * Exactly right, and then the OFFSET was `useState` and did the very thing
-   * one level up — `setDragPx` per move, read by `rowTransform`, which is
-   * built in this component's render. So every pointer move re-rendered the
-   * whole modal, which mounts up to `MOUNTED_RADIUS * 2 + 1` panels, each a
-   * video element, a trim strip and a tag editor.
-   *
-   * A CSS VARIABLE, WRITTEN STRAIGHT TO THE ELEMENT. The transform reads
-   * `var(--drag-px, 0px)`, and the move handler sets that property on the row
-   * itself — so a pan touches one style property on one element and React is
-   * not involved at all. A custom property also survives an unrelated
-   * re-render: React only writes the style keys it manages, so a playhead tick
-   * mid-swipe cannot clobber the offset the way rebuilding `transform` from
-   * state would.
-   *
-   * `dragging` stays state because the ROW's transition is keyed to it, and
-   * that flips exactly twice per gesture rather than sixty times a second.
-   */
-  const [dragging, setDragging] = useState(false);
-  // Written to `stripRef` — the row element itself, which already has a ref
-  // for the landing effect. A second ref on the same node would be two names
-  // for one thing and an invitation to attach one of them and not the other.
-  const setDragOffset = useCallback((px: number) => {
-    stripRef.current?.style.setProperty("--drag-px", `${px}px`);
-  }, []);
-  // Not state: this changes on nearly every pointer move and only the ROW's
-  // transform cares. A re-render per move to store a start coordinate would
-  // re-render three live panels — video elements included — sixty times a
-  // second for the duration of a swipe.
-  const dragRef = useRef<{
-    pointerId: number;
-    x: number;
-    y: number;
-    at: number;
-    width: number;
-    committed: boolean;
-  } | null>(null);
-  // Set once a drag has been recognised, and read by the click guard below.
-  const swipedRef = useRef(false);
-
-  const swipe = useMemo<React.ComponentProps<"div">>(
-    () => ({
-      onPointerDown: (event) => {
-        if (!event.isPrimary || event.button !== 0) return;
-        swipedRef.current = false;
-        dragRef.current = {
-          pointerId: event.pointerId,
-          x: event.clientX,
-          y: event.clientY,
-          at: performance.now(),
-          // The picture's own width stands in for the panel's, so the
-          // distance rule scales with the layout without measuring anything
-          // else.
-          width: event.currentTarget.getBoundingClientRect().width,
-          committed: false,
-        };
-      },
-      onPointerMove: (event) => {
-        const drag = dragRef.current;
-        if (drag === null || event.pointerId !== drag.pointerId) return;
-        const dx = event.clientX - drag.x;
-        const dy = event.clientY - drag.y;
-        if (!drag.committed) {
-          // NOT A SWIPE UNTIL IT IS MOSTLY SIDEWAYS AND HAS TRAVELLED. Taking
-          // the gesture on the first pixel would steal every tap that wobbles
-          // and every vertical scroll that starts on a picture.
-          if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(dy)) return;
-          drag.committed = true;
-          swipedRef.current = true;
-          // ONE render for the whole gesture: the row drops its transition
-          // here and takes it back on release.
-          setDragging(true);
-          try {
-            event.currentTarget.setPointerCapture(drag.pointerId);
-          } catch {
-            /* untrusted pointer — moves over the picture still arrive */
-          }
-        }
-        setDragOffset(swipeOffset(dx, hasPrevious, hasNext));
-      },
-      onPointerUp: (event) => {
-        const drag = dragRef.current;
-        dragRef.current = null;
-        setDragOffset(0);
-        setDragging(false);
-        if (drag === null || event.pointerId !== drag.pointerId || !drag.committed) return;
-        const intent = swipeIntent({
-          dx: event.clientX - drag.x,
-          dy: event.clientY - drag.y,
-          elapsedMs: performance.now() - drag.at,
-          panelWidth: drag.width,
-          hasPrevious,
-          hasNext,
-        });
-        if (intent === "next") onOpenNeighbour(ids[centre + 1]!);
-        else if (intent === "previous") onOpenNeighbour(ids[centre - 1]!);
-      },
-      onPointerCancel: () => {
-        dragRef.current = null;
-        setDragOffset(0);
-        setDragging(false);
-      },
-      // A SWIPE MUST NOT ALSO COUNT AS A TAP. The picture's click brings a
-      // neighbour to the middle, and a swipe that ended on a neighbour would
-      // otherwise advance twice — once for the gesture, once for the click
-      // the browser sends afterwards. Capture, so it is stopped before the
-      // element's own handler sees it.
-      onClickCapture: (event) => {
-        if (!swipedRef.current) return;
-        swipedRef.current = false;
-        event.stopPropagation();
-        event.preventDefault();
-      },
-    }),
-    [centre, hasNext, hasPrevious, ids, onOpenNeighbour, setDragOffset],
-  );
-
-  // WHERE THE PLAYHEAD IS, read across from the clock. The clock says "this
-  // clip, this far in"; the strip says where that clip begins. Neither has to
-  // know the other's coordinates, and there is still only one answer.
-  const playheadAt = (() => {
-    const at =
-      position ??
-      (centreClip === null ? null : { clipId: centreClip.id as string, clipSeconds: 0 });
-    if (at === null) return null;
-    return { clipId: at.clipId, secondsIntoClip: at.clipSeconds };
-  })();
-
   // THE VIEW'S OWN WIDTH, PUBLISHED FOR THE PANEL ARITHMETIC.
   //
   // A ResizeObserver rather than a CSS unit, because the sizes it feeds are
@@ -1635,9 +1131,6 @@ function DetailsFilmstripModal({
       window.removeEventListener("resize", publish);
     };
   }, [previewOpen]);
-
-  const rowTransform =
-    `translateX(calc(-1 * ${offset} * (${panelWidth} + ${PANEL_GAP}) + var(--drag-px, 0px)))`;
 
   /**
    * COVER MODE PORTALS OUT, and no z-index could have replaced this.
@@ -2008,7 +1501,6 @@ function DetailsFilmstripModal({
               one panel. Sharing the edge costs the bar nothing — it only
               ever gets wider. */}
           <div className="mx-auto w-full">
-            <PlaybarThumbnailsProvider shown={frames.shown} style={frames.style}>
             {/* THE PORTED STRIP, IN PLACE OF THE WHOLE BAR (PL15-030).
                 The reference's film strip replaces the ruler, the boxes, the
                 playhead and the minimap — and the controls row goes with them,
@@ -2040,7 +1532,6 @@ function DetailsFilmstripModal({
               onTogglePlay={() => setPlaying((was) => !was)}
               onSelect={(clipId) => landOn(clipId, position)}
             />
-            </PlaybarThumbnailsProvider>
           </div>
         </div>
       )}
