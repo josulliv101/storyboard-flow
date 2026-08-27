@@ -272,6 +272,11 @@ const DIVIDER_ZONE_OVERHANG_PX = 18;
  *  edge with. */
 const DIVIDER_NUDGE_PX = 8;
 
+/** How long the pause mark stays up after playback starts before dissolving.
+ *  Long enough to be read, short enough that it is gone before it becomes part
+ *  of the shot. */
+const PLAY_HINT_LINGER_MS = 900;
+
 /** The accent the grip and the edge line both take while the split is being
  *  dragged. ONE constant so the two cannot drift apart mid-gesture, and
  *  `sky-400` — the accent this file's focus rings already use — rather than the
@@ -477,7 +482,12 @@ function WorkbenchTransportRow({
           <SkipBack className="size-[17px] fill-current" />
         </button>
 
-        {/* WHITE AT REST, not on hover. The old control was background-free
+        {/* 32px, DOWN FROM THE SPEC'S 36. The disc is the only filled shape in
+            the row and the only white one, so it carries weight out of
+            proportion to its size — a step down still reads as the primary
+            control while sitting closer to the 30px ghosts either side of it.
+
+            WHITE AT REST, not on hover. The old control was background-free
             until the preview or the button was hovered and then inverted to a
             white disc; the spec makes the disc the resting state, because play
             is the one thing in this row you look for without hunting. There is
@@ -487,18 +497,18 @@ function WorkbenchTransportRow({
           type="button"
           onClick={onTogglePlaying}
           disabled={!canPlay}
-          className="mx-1.5 grid size-9 shrink-0 place-items-center rounded-full bg-white text-zinc-950 transition-colors hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:cursor-not-allowed disabled:opacity-40"
+          className="mx-1.5 grid size-8 shrink-0 place-items-center rounded-full bg-white text-zinc-950 transition-colors hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={isPlaying ? "Pause workbench preview" : "Play workbench preview"}
           title={isPlaying ? "Pause" : "Play"}
           data-transport-primary-control
         >
           {isPlaying ? (
-            <Pause className="size-[15px] fill-current" />
+            <Pause className="size-[14px] fill-current" />
           ) : (
             // Nudged right: a triangle's visual centre is left of its bounding
             // box, so a geometrically centred play glyph reads as sitting back
             // in its disc.
-            <Play className="ml-0.5 size-[15px] fill-current" />
+            <Play className="ml-0.5 size-[14px] fill-current" />
           )}
         </button>
 
@@ -916,6 +926,7 @@ export function WorkbenchDisplaySurface({
   const isControlledPlayback = playing !== undefined;
   const [uncontrolledPlaying, setUncontrolledPlaying] = useState(false);
   const [previewHovered, setPreviewHovered] = useState(false);
+
   const isPlaying = playing ?? uncontrolledPlaying;
   const setPlaying = useCallback(
     (next: boolean) => {
@@ -2093,6 +2104,33 @@ export function WorkbenchDisplaySurface({
   }, [activeMuted, activeVolume, applyGain, getMixer]);
 
   const canPlay = duration > 0 && sortedClips.length > 0;
+
+  /**
+   * THE PLAY/PAUSE MARK OVER THE PICTURE — up only while it is saying something.
+   *
+   * PAUSED, it is an invitation and it stays for as long as the pointer does:
+   * the whole picture is a play target and nothing else says so.
+   *
+   * PLAYING, it is an ANSWER, and an answer only needs saying once. It used to
+   * sit there for as long as the pointer did — a pause glyph parked over a
+   * running shot, which is a thing in the shot, and the one thing this overlay
+   * exists to avoid. So it shows for a moment and dissolves.
+   *
+   * RE-ARMED BY THE POINTER ARRIVING, not only by playback starting, so someone
+   * who leaves and comes back still gets told what a click will do. What it
+   * will not do is stay.
+   */
+  const [playHintShown, setPlayHintShown] = useState(false);
+  useEffect(() => {
+    if (!canPlay || !previewHovered) {
+      setPlayHintShown(false);
+      return;
+    }
+    setPlayHintShown(true);
+    if (!isPlaying) return;
+    const timer = window.setTimeout(() => setPlayHintShown(false), PLAY_HINT_LINGER_MS);
+    return () => window.clearTimeout(timer);
+  }, [canPlay, isPlaying, previewHovered]);
   const canSeekPrevious = sortedClips.length > 0 && currentTime > 0;
   const canSeekNext = sortedClips.length > 0 && activeClipIndex < sortedClips.length - 1;
   // The EDGE pair asks a different question from the stepper pair above:
@@ -2205,8 +2243,12 @@ export function WorkbenchDisplaySurface({
           data-hint={isPlaying ? "pause" : "play"}
           className={cn(
             "pointer-events-none absolute inset-0 grid place-items-center",
-            "transition-opacity duration-200 ease-out motion-reduce:transition-none",
-            canPlay && previewHovered ? "opacity-[0.10]" : "opacity-0",
+            // A SLOWER FADE WHILE PLAYING, because that one is a dissolve the
+            // eye is meant to follow out rather than a hover state snapping
+            // off. Paused, the mark tracks the pointer and wants to be quick.
+            isPlaying ? "transition-opacity duration-[600ms]" : "transition-opacity duration-200",
+            "ease-out motion-reduce:transition-none",
+            playHintShown ? "opacity-[0.10]" : "opacity-0",
           )}
         >
           {isPlaying ? (
