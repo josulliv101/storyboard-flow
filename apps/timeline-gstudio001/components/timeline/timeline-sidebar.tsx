@@ -1038,7 +1038,7 @@ export function TimelineSidebar({
       >
         <Link
           href="/"
-          aria-label="Storyboard Workbench home"
+          aria-label="Media Monster home"
           // LEADING, at the glyph column's inset, in both states. Centring "SW"
           // in the 72px rail already put it within a pixel of 22px, so pinning
           // it there costs nothing closed and is what lets the name grow to the
@@ -1054,22 +1054,27 @@ export function TimelineSidebar({
           // synthesised bold on top of a face that is already heavy.
           className="flex h-[72px] w-full items-center justify-start overflow-hidden whitespace-nowrap pl-[22px] font-[family-name:var(--font-grandstander)] font-bold text-[21px] text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
         >
-          {/* THE INITIALS NEVER LEAVE. The rest of each word collapses to
-              nothing, so closing slides the S and the W together into "SW"
-              rather than swapping one piece of text for another. The letters
-              you keep are the same letters throughout — same size, same font,
-              same position — which is the whole reason this reads as the mark
-              contracting instead of a label being replaced by an abbreviation.
+          {/* THE CREATURE NEVER LEAVES. The letters around it collapse to
+              nothing, so closing contracts the word onto the one thing that
+              stays — same size, same font, same position throughout — which is
+              why this reads as the mark contracting rather than a label being
+              swapped for an abbreviation. It used to be "SW" that survived, and
+              the creature inherited that job.
 
-              The accessible name comes from `aria-label` on the link, so the
-              split spans are never read out letter by letter.
+              HIDDEN FROM ASSISTIVE TECH. The word is split into per-letter
+              spans so it can be revealed a letter at a time, and exposed spans
+              like that risk being read out one letter at a time. The
+              `aria-label` on the link carries the whole name instead.
 
-              HIDDEN FROM ASSISTIVE TECH, for the same reason. Collapsed, the
-              mark reads "SW", which is not contained in "Storyboard Workbench
-              home" — Lighthouse flags that as `label-content-name-mismatch`
-              (WCAG 2.5.3 "Label in Name"): someone driving by voice says what
-              they see and matches nothing. The mark is branding, not a label,
-              so the label carries the name and the letters carry none.
+              AND THE TWO NAMES AGREE NOW, which they did not before. The label
+              was "Storyboard Workbench home" while the mark read "storyboard
+              monster" — a visible name not contained in the accessible one,
+              which is `label-content-name-mismatch` (WCAG 2.5.3 "Label in
+              Name"): someone driving by voice says what they see and matches
+              nothing. With the label reading "Media Monster home" over a mark
+              that reads "media monster", what you say is what is there. The
+              letters stay hidden regardless — that is about how they are
+              split, not about what they spell.
 
               `display: contents` so hiding them costs no layout — the letters
               keep participating in the link's own flex box. */}

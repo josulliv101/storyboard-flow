@@ -186,6 +186,32 @@ export const Expanded: Story = {
     await waitFor(() => {
       expect(document.cookie).toContain("sw_rail_expanded=true");
     });
+
+    // WHAT YOU SEE IS IN WHAT YOU SAY (WCAG 2.5.3, "Label in Name").
+    //
+    // The mark's letters are split into per-letter spans for the reveal and
+    // hidden from assistive tech, so the link's whole accessible name comes
+    // from its `aria-label`. That leaves a pairing nothing else checks: the
+    // word on screen has to be CONTAINED in that label, or someone driving by
+    // voice says what they can see and matches nothing.
+    //
+    // The two used to disagree — the label read "Storyboard Workbench home"
+    // over a mark that read "storyboard monster" — and the disagreement was
+    // invisible precisely because the letters are hidden. Asserted as a
+    // RELATIONSHIP rather than as two literals, so renaming the product in one
+    // place and not the other fails here rather than shipping.
+    //
+    // The creature stands in for the "o", so it is added back before the
+    // comparison: the DOM says "media mnster" and the eye reads "media
+    // monster".
+    // The link that CONTAINS THE CREATURE, so this can never drift onto some
+    // other labelled link in the rail and compare the wrong pair.
+    const home = canvasElement.querySelector<HTMLElement>("a:has([data-media-monster])")!;
+    expect(home).not.toBeNull();
+    const label = home.getAttribute("aria-label") ?? "";
+    const seen = (home.textContent ?? "").replace(/\s+/g, " ").trim().replace("mnster", "monster");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(label.toLowerCase()).toContain(seen.toLowerCase());
   },
 };
 
