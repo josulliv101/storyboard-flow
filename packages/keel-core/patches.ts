@@ -45,13 +45,25 @@ import {
   type Graph,
   type Move,
   type NodeId,
+  type NodeTypeRegistry,
   type Patch,
   type Placement,
   type ReplayRejection,
   type ReplayRejectionCode,
   type Result,
 } from "./types";
-import { bumpSubtreeRevs, rebuildDerivedIndexes } from "./graph";
+import {
+  bumpSubtreeRevs,
+  bumpSubtreeRevsInto,
+  dataChangeLeavesDerivedIndexesIntact,
+  derivedIndexNeed,
+  derivedIndexesAfterRemoval,
+  insertLeavesDerivedIndexesIntact,
+  rebuildDerivedIndexes,
+  rebuildPlacementIndex,
+  reindexPlacementsWithinSubtree,
+  type DerivedIndexes,
+} from "./graph";
 
 /** Shared empty array. Frozen because it is handed out from several readers and
  *  a caller mutating it would corrupt every other reader's view. */
@@ -267,11 +279,69 @@ function spliceOut(
   children.set(parentId, next);
 }
 
-function withDerivedIndexes<Ts extends readonly unknown[], S>(
-  graph: Graph<Ts, S>,
-  ctx: EngineContext<S>,
-): Graph<Ts, S> {
-  return { ...graph, ...rebuildDerivedIndexes(graph, ctx.registry) };
+// ---------------------------------------------------------------------------
+// The commit cost rules, stated once because all four arms obey them
+// ---------------------------------------------------------------------------
+//
+// A commit must not do whole-graph work to express a local change. Every arm
+// below therefore SHARES what the patch provably did not touch, and the sharing
+// is pinned structurally in ./move-cost.test.ts — a comment is not a guarantee.
+//
+//   - `nodesById`   — per NODE. Untouched by moves entirely.
+//   - `parentById`  — per NODE. Untouched by a same-parent reorder, which is the
+//                     commonest drag there is (an item along its own strip), so
+//                     it is shared by reference unless something is reparented.
+//   - `childrenById`— per COLLECTION, and genuinely rewritten. Copied, but the
+//                     untouched collections' ARRAYS are shared.
+//   - `subtreeRevById` — per NODE. Copied exactly ONCE per commit; every bump
+//                     writes into that one copy via `bumpSubtreeRevsInto`.
+//   - the derived indexes — rebuilt only when the patch's shape cannot prove
+//                     what stayed put. See ./graph.ts for each argument.
+
+/**
+ * The one parent every move stays inside, or `null` when the batch reparents or
+ * spans parents.
+ *
+ * The scoped placement reindex needs a subtree it can prove the permutation is
+ * confined to, and this is the only shape that yields one CHEAPLY. A
+ * cross-parent drag's scope would be the lowest common ancestor of the two
+ * parents, which in the shape this engine is built for — root, collections,
+ * items — is the root itself, so scoping would walk the whole graph and buy
+ * nothing. Those fall back to a placements-only rebuild.
+ */
+function soleReorderParent(moves: readonly Move[]): NodeId | null {
+  const first = moves[0];
+  if (first === undefined) return null;
+  const parentId = first.fromParentId;
+  for (const move of moves) {
+    if (move.fromParentId !== parentId) return null;
+    if (move.toParentId !== parentId) return null;
+  }
+  return parentId;
+}
+
+function placementsAfterMove<Ts extends readonly unknown[], S>(
+  post: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+  previous: ReadonlyMap<string, readonly NodeId[]>,
+  moves: readonly Move[],
+): ReadonlyMap<string, readonly NodeId[]> {
+  // No registered codec defines `contentKey`, so the index is permanently empty
+  // and the walk that would rediscover that is pure waste.
+  if (!derivedIndexNeed(registry).content) return previous;
+  // A patch that moves nothing reorders nothing. Worth stating, because
+  // `soleReorderParent` has no parent to name for an empty batch and would
+  // otherwise send the emptiest possible patch down the most expensive path.
+  if (moves.length === 0) return previous;
+
+  const scopeRootId = soleReorderParent(moves);
+  if (scopeRootId !== null) {
+    const scoped = reindexPlacementsWithinSubtree(post, registry, previous, scopeRootId);
+    // `null` is "declined", not "invalid" — the incremental path found the
+    // previous index disagreeing with the graph and refused to guess.
+    if (scoped !== null) return scoped;
+  }
+  return rebuildPlacementIndex(post, registry);
 }
 
 function applyMoved<Ts extends readonly unknown[], S>(
@@ -281,25 +351,52 @@ function applyMoved<Ts extends readonly unknown[], S>(
 ): Graph<Ts, S> {
   // A move carries NO content and NO rollups, so `nodesById` is untouched —
   // every node object keeps its identity, which is what lets a selector store
-  // skip re-rendering uninvolved cards.
+  // skip re-rendering uninvolved cards. It is handed through by the spread
+  // below, never copied.
   const children = new Map<NodeId, readonly NodeId[]>(graph.childrenById);
-  const parents = new Map<NodeId, NodeId | null>(graph.parentById);
+
+  // A REORDER within one parent leaves every parent link untouched, so
+  // `parentById` is shared instead of copied. It holds an entry per NODE, and
+  // copying it made the commonest drag in an app — dragging an item along its
+  // own strip — allocate a map the size of the whole graph to record that
+  // nothing was reparented. `childrenById` is per-COLLECTION and genuinely
+  // rewritten, so it is still copied.
+  //
+  // `null` when nothing is reparented, so the TYPES make it impossible to write
+  // through to the shared map by accident.
+  const reparents = moves.some((move) => move.fromParentId !== move.toParentId);
+  const mutableParents = reparents
+    ? new Map<NodeId, NodeId | null>(graph.parentById)
+    : null;
 
   // Remove ALL, then insert ALL. `toIndex` is a POST-REMOVAL index, so the two
   // phases cannot be interleaved.
   for (const move of moves) spliceOut(children, move.fromParentId, move.nodeId);
   for (const move of moves) {
     spliceIn(children, move.toParentId, move.toIndex, move.nodeId);
-    parents.set(move.nodeId, move.toParentId);
+    // Only write when the link actually changes. In the shared-map case there
+    // is nothing to write, and writing anyway — even the value it already
+    // holds — would be mutating a map the PREVIOUS graph still references.
+    if (mutableParents !== null && move.fromParentId !== move.toParentId) {
+      mutableParents.set(move.nodeId, move.toParentId);
+    }
   }
+  const parents = mutableParents ?? graph.parentById;
+
+  // ONE rev map allocation, bumped twice into. `revs` is private to this call
+  // until the returned graph publishes it, so writing into it after `relocated`
+  // is built mutates nothing anyone can observe: `relocated` is a scaffold whose
+  // only job is to supply the POST-state `parentById` to the second walk, and
+  // the graph that escapes carries this very map in its final state.
+  const revs = new Map<NodeId, number>(graph.subtreeRevById);
 
   // THE TRAP THIS FUNCTION EXISTS TO AVOID: a move has TWO ancestor chains, and
   // the SOURCE chain exists only in the PRE-state `parentById`. Bumping once,
   // against the post-state graph, updates the destination's rollups and leaves
   // the source's silently stale — the node re-renders, the old ancestors never
-  // do. Hence two calls against two different graphs.
-  const afterSourceBump = bumpSubtreeRevs(
-    graph.subtreeRevById,
+  // do. Hence two walks against two different graphs.
+  bumpSubtreeRevsInto(
+    revs,
     graph,
     moves.map((move) => move.fromParentId),
   );
@@ -307,20 +404,29 @@ function applyMoved<Ts extends readonly unknown[], S>(
     ...graph,
     childrenById: children,
     parentById: parents,
-    subtreeRevById: afterSourceBump,
+    subtreeRevById: revs,
   };
-  const afterTargetBump = bumpSubtreeRevs(
-    afterSourceBump,
+  bumpSubtreeRevsInto(
+    revs,
     relocated,
     moves.map((move) => move.toParentId),
   );
 
-  // `placementsByContentKey` is in DOCUMENT order, so a pure reorder changes it
-  // even though no data did.
-  return withDerivedIndexes(
-    { ...relocated, subtreeRevById: afterTargetBump },
-    ctx,
-  );
+  return {
+    ...relocated,
+    // `ownerBySourceKey` cannot have moved — see `rebuildPlacementIndex` in
+    // ./graph.ts for the argument, which turns on the single-owner invariant
+    // that check 8 of the audit enforces ahead of check 9.
+    ownerBySourceKey: graph.ownerBySourceKey,
+    // `placementsByContentKey` IS in document order, so a pure reorder moves it
+    // even though no data did.
+    placementsByContentKey: placementsAfterMove(
+      relocated,
+      ctx.registry,
+      graph.placementsByContentKey,
+      moves,
+    ),
+  };
 }
 
 function applyInserted<Ts extends readonly unknown[], S>(
@@ -369,13 +475,31 @@ function applyInserted<Ts extends readonly unknown[], S>(
   // that id at a low rev is therefore reachable again. It only bites when the
   // same id is edited, removed, and restored — the fold cache is per-store and
   // cleared on `destroy`, so the blast radius is one session.
-  const bumped = bumpSubtreeRevs(
+  //
+  // Written INTO the copy made above rather than through the copying form: the
+  // map is private to this call until `grown` escapes, and the alternative
+  // copied `subtreeRevById` twice for one insert.
+  bumpSubtreeRevsInto(
     revs,
     grown,
     placements.map((placement) => placement.node.id),
   );
 
-  return withDerivedIndexes({ ...grown, subtreeRevById: bumped }, ctx);
+  // An insert never reorders what was already there, so when the arriving nodes
+  // contribute no key of their own, BOTH indexes are exactly the maps the
+  // previous graph published.
+  const insertedNodes = placements.map((placement) => placement.node);
+  const derived: DerivedIndexes<Ts, S> = insertLeavesDerivedIndexesIntact(
+    ctx.registry,
+    insertedNodes,
+  )
+    ? {
+        placementsByContentKey: graph.placementsByContentKey,
+        ownerBySourceKey: graph.ownerBySourceKey,
+      }
+    : rebuildDerivedIndexes(grown, ctx.registry);
+
+  return { ...grown, ...derived };
 }
 
 function applyRemoved<Ts extends readonly unknown[], S>(
@@ -383,21 +507,23 @@ function applyRemoved<Ts extends readonly unknown[], S>(
   placements: readonly Placement<Ts, S>[],
   ctx: EngineContext<S>,
 ): Graph<Ts, S> {
+  const nodes = new Map<NodeId, AnyNode<Ts, S>>(graph.nodesById);
+  const children = new Map<NodeId, readonly NodeId[]>(graph.childrenById);
+  const parents = new Map<NodeId, NodeId | null>(graph.parentById);
+  const revs = new Map<NodeId, number>(graph.subtreeRevById);
+
   // Bump BEFORE the structural edit and against the PRE-state graph: a nested
   // placement's parent is itself being removed, so its ancestor chain exists
   // only here. Redundant bumps of soon-to-be-deleted ids are harmless; their
-  // entries are dropped below.
-  const bumped = bumpSubtreeRevs(
-    graph.subtreeRevById,
+  // entries are dropped below. One copy of the rev map, written into — the
+  // copying form would have made a second.
+  bumpSubtreeRevsInto(
+    revs,
     graph,
     placements.map((placement) => placement.parentId),
   );
 
-  const nodes = new Map<NodeId, AnyNode<Ts, S>>(graph.nodesById);
-  const children = new Map<NodeId, readonly NodeId[]>(graph.childrenById);
-  const parents = new Map<NodeId, NodeId | null>(graph.parentById);
-  const revs = new Map<NodeId, number>(bumped);
-
+  const removedIds: NodeId[] = [];
   // BACKWARD walk: children leave before parents, and a later sibling's splice
   // cannot invalidate an earlier one's recorded index.
   for (let i = placements.length - 1; i >= 0; i--) {
@@ -406,6 +532,7 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     // this unreachable; TypeScript cannot see that and neither should a reader.
     if (placement === undefined) continue;
     const id = placement.node.id;
+    removedIds.push(id);
     spliceOut(children, placement.parentId, id);
     nodes.delete(id);
     parents.delete(id);
@@ -413,16 +540,19 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     revs.delete(id);
   }
 
-  return withDerivedIndexes(
-    {
-      ...graph,
-      nodesById: nodes,
-      childrenById: children,
-      parentById: parents,
-      subtreeRevById: revs,
-    },
-    ctx,
-  );
+  // Updated, not rebuilt: a removal cannot REORDER a survivor, so each affected
+  // bucket only needs its dead ids filtered out. Read against the PRE-state
+  // graph, which is the only state that still holds the removed nodes.
+  const derived = derivedIndexesAfterRemoval(graph, ctx.registry, removedIds);
+
+  return {
+    ...graph,
+    nodesById: nodes,
+    childrenById: children,
+    parentById: parents,
+    subtreeRevById: revs,
+    ...derived,
+  };
 }
 
 function applyDataChanged<Ts extends readonly unknown[], S>(
@@ -455,18 +585,36 @@ function applyDataChanged<Ts extends readonly unknown[], S>(
     );
   }
 
+  // The copying form is the right one here: `graph.subtreeRevById` is published,
+  // so this call must not write into it, and this arm makes no other copy.
   const bumped = bumpSubtreeRevs(
     graph.subtreeRevById,
     graph,
     changes.map((change) => change.nodeId),
   );
 
+  const changed: Graph<Ts, S> = {
+    ...graph,
+    nodesById: nodes,
+    subtreeRevById: bumped,
+  };
+
   // `contentKey` and `sourceKey` are read off `data`, so both derived indexes
-  // can move under a pure content edit.
-  return withDerivedIndexes(
-    { ...graph, nodesById: nodes, subtreeRevById: bumped },
-    ctx,
+  // CAN move under a pure content edit — but usually do not. The keys a codec
+  // exposes are identity ("which asset is this"), and the fields a user edits
+  // are not. Asking the codec whether either key actually moved costs two calls
+  // per change; rebuilding costs a document-order DFS plus two calls per NODE.
+  const movesAKey = changes.some(
+    (change) =>
+      !dataChangeLeavesDerivedIndexesIntact(
+        ctx.registry,
+        change.kind,
+        change.before,
+        change.after,
+      ),
   );
+  if (!movesAKey) return changed;
+  return { ...changed, ...rebuildDerivedIndexes(changed, ctx.registry) };
 }
 
 // ---------------------------------------------------------------------------

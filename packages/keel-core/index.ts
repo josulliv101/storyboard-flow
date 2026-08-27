@@ -154,6 +154,13 @@ export {
   foldedExact,
   summaryFrom,
   weakestCertainty,
+  // `createFoldCache` RETURNS an `ObservableFoldCache`, and `stats()` returns a
+  // `FoldCacheStats`. Leaving both unnamed here is the curation rule misfiring:
+  // a consumer sizing `EngineConfig.foldCacheLimit` off the eviction counter
+  // could call the function but could not write down the type of what it handed
+  // back, and would have to reach past the barrel into ./folds to do it.
+  type FoldCacheStats,
+  type ObservableFoldCache,
 } from "./folds";
 
 // ---------------------------------------------------------------------------

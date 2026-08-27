@@ -12,9 +12,15 @@
 //      outlive its node by a frame; a query that throws on that turns a routine
 //      race into a crashed subtree.
 //   2. The DERIVED INDEXES (`placementsByContentKey`, `ownerBySourceKey`) and
-//      the subtree-revision bump. `rebuildDerivedIndexes` is the one definition
-//      of what those maps contain, so `applyPatch` and `findInvariantViolation`
-//      cannot hold two different opinions.
+//      the subtree-revision bump. `walkDerivedIndexes` is the one definition of
+//      what those maps contain, so `applyPatch` and `findInvariantViolation`
+//      cannot hold two different opinions. The incremental updaters
+//      (`reindexPlacementsWithinSubtree`, `derivedIndexesAfterRemoval`, and the
+//      two `...LeavesDerivedIndexesIntact` predicates) live HERE, beside that
+//      definition, for the same reason: an incremental update that drifts from
+//      the rebuild is a stale index nothing detects until check 9 fires in a
+//      dev build, or a rename-everywhere silently misses a placement in a
+//      production one.
 //   3. `findInvariantViolation`, the structural audit. It is the executable
 //      form of the rules the rest of the engine assumes without re-checking.
 
@@ -439,55 +445,136 @@ export function bumpSubtreeRevs<Ts extends readonly unknown[], S>(
   // Identity is preserved on a no-op so a caller can compare maps to decide
   // whether to notify at all.
   if (fromIds.length === 0) return revs;
-
-  const targets = new Set<NodeId>();
-  for (const id of fromIds) {
-    if (targets.has(id)) continue;
-    targets.add(id);
-    for (const ancestorId of ancestorChain(graph, id)) {
-      // Ancestor chains are prefix-closed upward: if this one is already
-      // collected then so is everything above it, so stopping here is an exact
-      // short-circuit rather than an approximation.
-      if (targets.has(ancestorId)) break;
-      targets.add(ancestorId);
-    }
-  }
-
   const next = new Map(revs);
-  for (const id of targets) next.set(id, (next.get(id) ?? 0) + 1);
+  bumpSubtreeRevsInto(next, graph, fromIds);
   return next;
 }
 
 /**
- * Recompute both derived indexes from scratch, in DOCUMENT order.
+ * The same bump, written into a map the caller PRIVATELY OWNS.
  *
- * Cheap and total beats incremental and clever here: an incremental update has
- * to know whose `contentKey` changed, and one `edit-nodes` command can change
- * it on any node in the batch. A stale placement index is invisible until a
- * rename-everywhere silently misses a placement.
+ * Same contract as `bumpSubtreeRevs` in every other respect — it is the single
+ * implementation, and the copying form above is a two-line wrapper over it, so
+ * the two cannot drift.
+ *
+ * It exists because `applyPatch` was paying for the rev map TWICE per commit:
+ * every arm cloned `subtreeRevById` to edit it and then handed the clone to
+ * `bumpSubtreeRevs`, which cloned it again. A move paid three whole-graph map
+ * copies before this split (children, parents, revs x2). The caller must not
+ * pass a map that any surviving graph still references — writing into one would
+ * retroactively change a value the PREVIOUS graph published, which is the
+ * mutation the immutable-graph contract exists to forbid.
+ *
+ * The walk is INLINE rather than through `ancestorChain`, and that is the second
+ * half of the fix: `ancestorChain` materialises the whole chain to the root
+ * before the caller can look at it, so a batch of N siblings walked to the root
+ * N times and allocated N arrays to discover that all but the first walk was
+ * redundant. Breaking at the first already-bumped id makes the cost proportional
+ * to the NEW part of each chain.
+ */
+export function bumpSubtreeRevsInto<Ts extends readonly unknown[], S>(
+  revs: Map<NodeId, number>,
+  graph: Graph<Ts, S>,
+  fromIds: readonly NodeId[],
+): void {
+  if (fromIds.length === 0) return;
+
+  // Scoped to THIS call: `revs` already holds values, so it cannot answer
+  // "did I bump this one already". The set is proportional to the touched
+  // chains, never to the graph.
+  const bumped = new Set<NodeId>();
+  const budget = graph.nodesById.size;
+
+  for (const startId of fromIds) {
+    let current: NodeId | null = startId;
+    let steps = 0;
+    while (current !== null) {
+      // Ancestor chains are prefix-closed upward: if this one is already
+      // collected then so is everything above it, so stopping here is an exact
+      // short-circuit rather than an approximation.
+      if (bumped.has(current)) break;
+      bumped.add(current);
+      revs.set(current, (revs.get(current) ?? 0) + 1);
+      // The same TERMINATION guard `ancestorChain` carries — a corrupt
+      // `parentById` must fail finitely rather than hang a render loop.
+      if (steps >= budget) break;
+      steps += 1;
+      current = graph.parentById.get(current) ?? null;
+    }
+  }
+}
+
+/** The derived pair, as `applyPatch` splices it onto a graph. */
+export type DerivedIndexes<Ts extends readonly unknown[], S> = Pick<
+  Graph<Ts, S>,
+  "placementsByContentKey" | "ownerBySourceKey"
+>;
+
+/** Which halves of the derived pair the registered codecs can populate AT ALL. */
+export type DerivedIndexNeed = Readonly<{ content: boolean; source: boolean }>;
+
+/**
+ * Ask the REGISTRY, once per commit, whether either index can hold anything.
+ *
+ * `contentKey` and `sourceKey` are both optional on `NodeType`, so a consumer
+ * that opts into neither has two permanently empty maps — and used to pay a
+ * full document-order DFS, plus a registry lookup per node, to rediscover that
+ * on every single mutation. The cost of asking is proportional to the number of
+ * registered KINDS, which is a handful; the cost it replaces is proportional to
+ * the graph.
+ */
+export function derivedIndexNeed(registry: NodeTypeRegistry): DerivedIndexNeed {
+  let content = false;
+  let source = false;
+  for (const type of registry.values()) {
+    if (type.contentKey !== undefined) content = true;
+    if (type.sourceKey !== undefined) source = true;
+    if (content && source) break;
+  }
+  return { content, source };
+}
+
+/**
+ * The one walk both rebuild entry points share, so "what is in these indexes"
+ * still has exactly one definition.
+ *
+ * `want` narrows the work, never the meaning: a half that is not wanted comes
+ * back as the SHARED empty map, so a caller that carries the other half forward
+ * by reference is splicing in a value that is both correct and identity-stable.
  *
  * Only REACHABLE nodes are indexed. In a valid graph that is every node; in an
  * invalid one, indexing an orphan would give a detached subtree a vote on
  * ownership.
  */
-export function rebuildDerivedIndexes<Ts extends readonly unknown[], S>(
+function walkDerivedIndexes<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
-): Pick<Graph<Ts, S>, "placementsByContentKey" | "ownerBySourceKey"> {
-  const placementsByContentKey = new Map<string, NodeId[]>();
-  const ownerBySourceKey = new Map<string, NodeId>();
+  want: DerivedIndexNeed,
+): DerivedIndexes<Ts, S> {
+  if (!want.content && !want.source) {
+    // The whole DFS is dead work. Returning the shared empties (rather than two
+    // fresh Maps) also keeps the graph's derived fields reference-stable across
+    // commits, so a consumer memoising on them sees no churn.
+    return { placementsByContentKey: NO_PLACEMENTS, ownerBySourceKey: NO_OWNERS };
+  }
+
+  const placementsByContentKey = want.content ? new Map<string, NodeId[]>() : null;
+  const ownerBySourceKey = want.source ? new Map<string, NodeId>() : null;
 
   for (const id of documentOrder(graph)) {
     const node = graph.nodesById.get(id);
     if (node === undefined) continue;
 
-    const contentKey = contentKeyOf(registry, node);
-    if (contentKey !== null) {
-      const bucket = placementsByContentKey.get(contentKey);
-      if (bucket === undefined) placementsByContentKey.set(contentKey, [id]);
-      else bucket.push(id);
+    if (placementsByContentKey !== null) {
+      const contentKey = contentKeyOf(registry, node);
+      if (contentKey !== null) {
+        const bucket = placementsByContentKey.get(contentKey);
+        if (bucket === undefined) placementsByContentKey.set(contentKey, [id]);
+        else bucket.push(id);
+      }
     }
 
+    if (ownerBySourceKey === null) continue;
     const sourceKey = sourceKeyOf(registry, node);
     if (sourceKey === null) continue;
     if (!isOwningPlacement(graph, id)) continue;
@@ -498,7 +585,276 @@ export function rebuildDerivedIndexes<Ts extends readonly unknown[], S>(
     if (!ownerBySourceKey.has(sourceKey)) ownerBySourceKey.set(sourceKey, id);
   }
 
+  return {
+    placementsByContentKey: placementsByContentKey ?? NO_PLACEMENTS,
+    ownerBySourceKey: ownerBySourceKey ?? NO_OWNERS,
+  };
+}
+
+/**
+ * Recompute both derived indexes from scratch, in DOCUMENT order.
+ *
+ * The fallback, not the default path. `applyPatch` reaches for it only when the
+ * cheaper answers below decline — an insert or an edit that really can move a
+ * key, or a move too general to scope. Every ingress (`buildGraph`,
+ * `deserializeDocument`) still uses it, because there is no previous index to
+ * update from.
+ *
+ * Incremental IS possible for the arms that update instead, and each one carries
+ * the argument for why. What is NOT possible is incremental in general: one
+ * `edit-nodes` command can change `contentKey` on any node in the batch, and a
+ * stale placement index is invisible until a rename-everywhere silently misses a
+ * placement. So the rule is: update only where the patch's own shape PROVES what
+ * cannot have moved, and rebuild otherwise.
+ */
+export function rebuildDerivedIndexes<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+): DerivedIndexes<Ts, S> {
+  return walkDerivedIndexes(graph, registry, derivedIndexNeed(registry));
+}
+
+/**
+ * `placementsByContentKey` alone, from scratch — the fallback for a move.
+ *
+ * WHY A MOVE NEEDS ONLY THIS HALF. A move rewrites `childrenById` and
+ * `parentById` and NOTHING else: no node's `data` changes, so no node's
+ * `sourceKey` changes; no node's `ChildrenState` changes, so `isOwningPlacement`
+ * is identical for every node; and no node leaves the forest, so the reachable
+ * set is identical. The SET of owning placements per key is therefore the set it
+ * already was, and `applyPatch` hands `ownerBySourceKey` straight through.
+ *
+ * Only the tie-break could differ — a rebuild awards a key to the FIRST owner in
+ * document order — and a key with two owners to choose between is
+ * `duplicate-owner`, which `findInvariantViolation` refuses at check 8, BEFORE
+ * check 9 ever compares this index. So on any graph where carrying the map
+ * forward could disagree with a rebuild, the audit already names the real defect
+ * rather than a derived-index-stale symptom of it.
+ *
+ * `placementsByContentKey` gets no such reprieve: its values are in DOCUMENT
+ * order, so a pure reorder moves it even though no data did.
+ */
+export function rebuildPlacementIndex<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+): ReadonlyMap<string, readonly NodeId[]> {
+  const need = derivedIndexNeed(registry);
+  return walkDerivedIndexes(graph, registry, { content: need.content, source: false })
+    .placementsByContentKey;
+}
+
+/**
+ * Reorder `previous` for a permutation confined to ONE subtree, without walking
+ * the graph.
+ *
+ * PRECONDITION, and the whole reason this is sound: the caller has established
+ * that the mutation only permuted nodes INSIDE `subtree(scopeRootId)` — same
+ * membership, same `data`, same reachability. Then for any node inside the scope
+ * and any node outside it, their relative document order is what it was, so the
+ * SLOTS a bucket devotes to scope members are exactly the slots it devoted
+ * before. Rewriting those slots in the new intra-scope order is the complete
+ * update; every other entry, and every other bucket, is untouched.
+ *
+ * Returns `previous` BY IDENTITY when no bucket actually reordered — the common
+ * case when content keys are per-node unique, where a drag changes the index not
+ * at all and must not allocate a map the size of the key space to say so.
+ *
+ * Returns `null` for "no incremental answer", not for "invalid": if the counts
+ * disagree with `previous`, this function's precondition did not hold and it
+ * refuses to guess. The caller rebuilds. It is deliberately NOT `Result`-shaped
+ * — nothing here is a rejection the engine reports; it is an optimisation
+ * declining to apply.
+ */
+export function reindexPlacementsWithinSubtree<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+  previous: ReadonlyMap<string, readonly NodeId[]>,
+  scopeRootId: NodeId,
+): ReadonlyMap<string, readonly NodeId[]> | null {
+  if (!graph.nodesById.has(scopeRootId)) return null;
+
+  const scopeIds = new Set<NodeId>();
+  const runByKey = new Map<string, NodeId[]>();
+  // POST-state pre-order of the scope: `subtreeIds` includes the root itself,
+  // which is correct — a pre-order root precedes all of its descendants before
+  // and after, so its slot is stable and it belongs in its own run.
+  for (const id of subtreeIds(graph, scopeRootId)) {
+    scopeIds.add(id);
+    const node = graph.nodesById.get(id);
+    if (node === undefined) continue;
+    const contentKey = contentKeyOf(registry, node);
+    if (contentKey === null) continue;
+    const run = runByKey.get(contentKey);
+    if (run === undefined) runByKey.set(contentKey, [id]);
+    else run.push(id);
+  }
+  if (runByKey.size === 0) return previous;
+
+  const rewritten = new Map<string, readonly NodeId[]>();
+  for (const [contentKey, run] of runByKey) {
+    const bucket = previous.get(contentKey);
+    // The scope holds a node with this key but `previous` has no bucket for it:
+    // `previous` was not built from this node set. Decline.
+    if (bucket === undefined) return null;
+
+    let cursor = 0;
+    let differs = false;
+    for (const id of bucket) {
+      if (!scopeIds.has(id)) continue;
+      const replacement = run[cursor];
+      cursor += 1;
+      if (replacement === undefined) return null;
+      if (replacement !== id) differs = true;
+    }
+    // Fewer scope members in the bucket than the walk found: same conclusion.
+    if (cursor !== run.length) return null;
+    if (!differs) continue;
+
+    const nextBucket = bucket.slice();
+    let write = 0;
+    for (let i = 0; i < nextBucket.length; i += 1) {
+      const id = nextBucket[i];
+      // `noUncheckedIndexedAccess` — a real check, not a `!`. The loop bounds
+      // make this unreachable; TypeScript cannot see that and neither should a
+      // reader.
+      if (id === undefined || !scopeIds.has(id)) continue;
+      const replacement = run[write];
+      write += 1;
+      if (replacement !== undefined) nextBucket[i] = replacement;
+    }
+    rewritten.set(contentKey, nextBucket);
+  }
+
+  // Nothing moved. Hand the map back by reference rather than allocating a copy
+  // of the whole key space to express "no change".
+  if (rewritten.size === 0) return previous;
+
+  const next = new Map(previous);
+  for (const [contentKey, bucket] of rewritten) next.set(contentKey, bucket);
+  return next;
+}
+
+/**
+ * Both indexes after a removal, updated rather than rebuilt.
+ *
+ * Sound because a removal cannot REORDER anything: dropping ids leaves every
+ * survivor's document position relative to every other survivor exactly as it
+ * was, so each affected bucket only needs its dead ids filtered out. Ownership
+ * transfers are impossible for the same reason moves cannot change ownership —
+ * a key with a second owner waiting to inherit is `duplicate-owner`, refused by
+ * check 8.
+ *
+ * Takes the PRE-state graph and reads each key off the LIVE node, never off the
+ * patch's recorded copy: `applyIngest` is a non-undoable content write, so a
+ * dormant removal patch can carry a `node` whose `data` — and therefore whose
+ * `contentKey` — is no longer what the graph holds. Deleting under the recorded
+ * key would leave the real bucket holding a dead id.
+ */
+export function derivedIndexesAfterRemoval<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+  removedIds: readonly NodeId[],
+): DerivedIndexes<Ts, S> {
+  const previous: DerivedIndexes<Ts, S> = {
+    placementsByContentKey: graph.placementsByContentKey,
+    ownerBySourceKey: graph.ownerBySourceKey,
+  };
+  if (removedIds.length === 0) return previous;
+
+  const removed = new Set<NodeId>(removedIds);
+  const touchedContentKeys = new Set<string>();
+  const orphanedSourceKeys = new Set<string>();
+  for (const id of removed) {
+    const node = graph.nodesById.get(id);
+    if (node === undefined) continue;
+    const contentKey = contentKeyOf(registry, node);
+    if (contentKey !== null) touchedContentKeys.add(contentKey);
+    const sourceKey = sourceKeyOf(registry, node);
+    // Only the node that actually HOLDS the key vacates it. A `reference`
+    // placement of the same key never owned it and its removal changes nothing.
+    if (sourceKey !== null && graph.ownerBySourceKey.get(sourceKey) === id) {
+      orphanedSourceKeys.add(sourceKey);
+    }
+  }
+  if (touchedContentKeys.size === 0 && orphanedSourceKeys.size === 0) {
+    return previous;
+  }
+
+  let placementsByContentKey = graph.placementsByContentKey;
+  if (touchedContentKeys.size > 0) {
+    const next = new Map(graph.placementsByContentKey);
+    for (const contentKey of touchedContentKeys) {
+      const bucket = next.get(contentKey);
+      if (bucket === undefined) continue;
+      const kept = bucket.filter((id) => !removed.has(id));
+      if (kept.length === bucket.length) continue;
+      // An emptied bucket must be DELETED, not left as `[]` — check 9 compares
+      // key COUNTS against a fresh rebuild, and a rebuild never mints an empty
+      // one.
+      if (kept.length === 0) next.delete(contentKey);
+      else next.set(contentKey, kept);
+    }
+    placementsByContentKey = next;
+  }
+
+  let ownerBySourceKey = graph.ownerBySourceKey;
+  if (orphanedSourceKeys.size > 0) {
+    const next = new Map(graph.ownerBySourceKey);
+    for (const sourceKey of orphanedSourceKeys) next.delete(sourceKey);
+    ownerBySourceKey = next;
+  }
+
   return { placementsByContentKey, ownerBySourceKey };
+}
+
+/**
+ * True when inserting exactly these nodes cannot move EITHER derived index.
+ *
+ * An insert never reorders anything that was already there — splicing an id into
+ * a children array shifts later siblings within the document order but preserves
+ * the relative order of every pre-existing node — so the only entries a new node
+ * can disturb are the ones it would contribute itself. A batch that contributes
+ * no key at all (a new folder, in a registry where only clips carry keys) leaves
+ * both maps exactly as they were, and both can be handed on by reference.
+ */
+export function insertLeavesDerivedIndexesIntact<Ts extends readonly unknown[], S>(
+  registry: NodeTypeRegistry,
+  nodes: readonly AnyNode<Ts, S>[],
+): boolean {
+  for (const node of nodes) {
+    if (contentKeyOf(registry, node) !== null) return false;
+    if (sourceKeyOf(registry, node) !== null) return false;
+  }
+  return true;
+}
+
+/**
+ * True when one node's data change cannot move EITHER derived index.
+ *
+ * Asks the codec rather than the registry shape, because the high-value case is
+ * a kind that DOES define `contentKey` and whose key does not depend on the
+ * field being edited — retitling a clip whose `contentKey` is its asset id. The
+ * cheap structural case (a kind defining neither function) falls out of the same
+ * two calls, both of which return `null` for it.
+ *
+ * `data-changed` cannot move a node, so document order is untouched and equal
+ * keys really do mean an untouched index.
+ */
+export function dataChangeLeavesDerivedIndexesIntact(
+  registry: NodeTypeRegistry,
+  kind: string,
+  before: unknown,
+  after: unknown,
+): boolean {
+  const type = registry.get(kind);
+  if (type === undefined) return true;
+  if (type.contentKey !== undefined && type.contentKey(before) !== type.contentKey(after)) {
+    return false;
+  }
+  if (type.sourceKey !== undefined && type.sourceKey(before) !== type.sourceKey(after)) {
+    return false;
+  }
+  return true;
 }
 
 /**

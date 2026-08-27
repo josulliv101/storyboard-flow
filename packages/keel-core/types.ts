@@ -1127,6 +1127,59 @@ export type EngineConfig<
   /** Injectable so tests get deterministic `HistoryEntry.at`. Defaults to `Date.now`. */
   now?(): number;
   historyLimit?: number;
+  /**
+   * Ceiling on EACH STORE's fold memo table. Defaults to
+   * `DEFAULT_FOLD_CACHE_LIMIT`.
+   *
+   * The number that matters is `registered folds x nodes folded over`, not a
+   * round one: `computeFold` commits an entry per node it walks, and every fold
+   * in the registry shares its store's single cache. Below that product the LRU
+   * inverts — the last fold's walk evicts the first fold's entries, and every
+   * mounted card refolds its subtree from scratch, which is the un-memoized
+   * behaviour the table exists to beat. Raise this when `onFoldCacheStats`
+   * shows evictions climbing while hits do not.
+   *
+   * `0` or less disables memoization entirely (every write is a no-op) — what a
+   * shadow-refold check that must not be answered from cache wants. Non-finite
+   * falls back to the default rather than growing without bound.
+   *
+   * Safe to expose at all only because the cache key carries `subtreeRev`: an
+   * evicted entry costs a recomputation and can never change an answer.
+   */
+  foldCacheLimit?: number;
+  /**
+   * Called ONCE per `createStore`, synchronously, with a reader for THAT
+   * store's cache counters.
+   *
+   * Per store because the caches are per store — two divergent lineages must
+   * never share one — so there is no engine-wide number to hand out instead.
+   *
+   * A reader, not the cache: a consumer that could WRITE to the table is the
+   * one way to make a rev-keyed slot wrong rather than merely stale, and
+   * observability does not need that power. It exists because a memo table that
+   * has silently stopped helping is indistinguishable from one that never
+   * helped — same answers, more work — so an undersized `foldCacheLimit` has no
+   * other symptom.
+   *
+   * The parameter shape is spelled out here instead of importing
+   * `FoldCacheStats` from ./folds: this module is the base of the package and
+   * imports nothing, so a types -> folds edge would be a cycle. The two are
+   * structurally identical and must stay so.
+   */
+  onFoldCacheStats?(
+    readStats: () => Readonly<{
+      /** Lifetime reads answered from the table. */
+      hits: number;
+      /** Lifetime reads that had to fold. */
+      misses: number;
+      /** Entries dropped FOR CAPACITY only — never by `clear()`. */
+      evictions: number;
+      /** Entries held right now. */
+      size: number;
+      /** The effective ceiling, after flooring and the non-finite fallback. */
+      limit: number;
+    }>,
+  ): void;
   devChecks?: boolean;
 }>;
 

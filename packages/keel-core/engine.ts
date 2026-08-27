@@ -135,7 +135,8 @@ function nothingToReplay(direction: "undo" | "redo"): ReplayRejection {
  *
  * Defaults: `onUnknownKind` and `onParseFailure` quarantine, `mintId` a
  * counter-plus-random id, `now` `Date.now`, `historyLimit` unbounded,
- * `devChecks` off.
+ * `foldCacheLimit` `DEFAULT_FOLD_CACHE_LIMIT` (a folds x nodes product — see
+ * ./folds), `devChecks` off.
  */
 export function createEngine<
   const Ts extends readonly SomeNodeType[],
@@ -225,8 +226,18 @@ export function createEngine<
      * revision only ever increases. Across two graphs from one engine it does
      * not: two divergent lineages both bump the same node 0 -> 1 with different
      * content, and a shared cache would hand one lineage the other's answer.
+     *
+     * The limit comes from the config rather than the module default, because
+     * the only defensible number is `registered folds x nodes` and this package
+     * cannot know either factor. Left unreachable, a consumer past the default's
+     * product gets a table that thrashes without saying so.
      */
-    const cache = createFoldCache();
+    const cache = createFoldCache(config.foldCacheLimit);
+
+    // Handed out here, before the store exists and before any fold can run, so
+    // a consumer that wants the counters has them from the first `aggregate`
+    // rather than from whenever it next remembered to ask.
+    config.onFoldCacheStats?.(() => cache.stats());
 
     const nodeListeners = new Map<NodeId, Set<() => void>>();
     const graphListeners = new Set<() => void>();

@@ -192,7 +192,89 @@ export function foldMonoid<Ts extends readonly unknown[], S, A>(
 // 4. The memo table
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_FOLD_CACHE_LIMIT = 2048;
+/**
+ * The default ceiling, written as FOLDS x NODES because that is the shape of
+ * the working set. A round number is how the first version of this got it
+ * wrong: 2048 reads as "plenty" and is one fold over 2k nodes.
+ *
+ * `computeFold` commits an entry for EVERY node it walks, so one root-level
+ * read of ONE fold over an n-node document occupies n slots, and the k folds a
+ * consumer registered all share their store's single cache — k x n at steady
+ * state. Below that product the LRU does not degrade gracefully, it INVERTS:
+ * fold k's walk evicts fold 1's entries, fold 1's next read misses at the root,
+ * and every mounted card refolds its whole subtree from scratch. That is
+ * precisely the un-memoized behaviour this table exists to beat, so the cap
+ * being too low does not cost a little speed — it costs the entire mechanism,
+ * silently, at exactly the graph size it was built for. `stats()` exists
+ * because that failure has no other symptom.
+ *
+ * 8 x 16384. Eight is a realistic registry (duration, first frame, child count,
+ * byte size, a disabled rollup, a missing rollup, and room for two more).
+ * 16384 nodes is chosen to clear a ten-thousand-node document — the size this
+ * package's own performance fixtures treat as realistic — with headroom, so
+ * that what a consumer meets first is their graph's memory cost, not this
+ * ceiling silently turning their memo table off.
+ *
+ * A generous ceiling is cheap because the Map is DEMAND-FILLED: a 200-node
+ * document holds 200 x k entries no matter what this number says. The limit
+ * only decides when eviction starts. MEASURED on node 22 with `--expose-gc`
+ * (200k entries, this module's own `cacheKey`, a `Folded` wrapping a number):
+ * ~232 bytes an entry, stable to the byte across three runs, so a table at FULL
+ * occupancy is ~30 MB — reachable only by a 16k-node graph that is itself the
+ * same order of magnitude in memory.
+ *
+ * Read that as a FLOOR, not a total. The entry is the key plus the `Folded`,
+ * and `Folded<A>`'s `A` is whatever the consumer's fold returns — a duration is
+ * a number, a preview-items rollup is an array of objects, and this package
+ * cannot know which. A consumer whose folds accumulate anything larger than a
+ * scalar should size `foldCacheLimit` against their own `A`, not against this.
+ *
+ * Still not a universal answer, which is why it is not the only door:
+ * `EngineConfig.foldCacheLimit` is how a consumer with 40 folds or 100k nodes
+ * raises it without editing this package.
+ */
+export const DEFAULT_FOLD_CACHE_LIMIT = 8 * 16384;
+
+/**
+ * Counters for the one question a cache cannot answer by working: IS it
+ * working? A memo table that has silently stopped helping behaves exactly like
+ * one that never helped — same answers, more work — so an undersized `limit`
+ * has no symptom a consumer can see from the outside. `evictions` climbing
+ * while `hits` stays flat is that symptom, and it is the signal to raise
+ * `EngineConfig.foldCacheLimit`.
+ *
+ * `hits` / `misses` / `evictions` are LIFETIME counts and survive `clear()`;
+ * `size` is current occupancy.
+ *
+ * Structurally duplicated by `EngineConfig.onFoldCacheStats`'s parameter in
+ * ./types — that module is the base of the package and imports nothing, so a
+ * types -> folds edge would be a cycle. The two must stay identical.
+ */
+export type FoldCacheStats = Readonly<{
+  /** Lifetime `get` calls answered from the table. */
+  hits: number;
+  /** Lifetime `get` calls that had to fold. */
+  misses: number;
+  /**
+   * Entries dropped FOR CAPACITY, and only for capacity. `clear()` is not
+   * counted: conflating a deliberate reset with cache pressure would destroy
+   * the only number that says the limit is too low.
+   */
+  evictions: number;
+  /** Entries held right now. */
+  size: number;
+  /** The EFFECTIVE ceiling after flooring and the non-finite fallback, not the
+   *  raw constructor argument. */
+  limit: number;
+}>;
+
+/**
+ * A `FoldCache` that can also be measured. `createFoldCache` always returns
+ * one; the plain `FoldCache` in ./types stays the parameter type everywhere a
+ * cache is CONSUMED, because `computeFold` has no business reading counters.
+ */
+export type ObservableFoldCache = FoldCache &
+  Readonly<{ stats(): FoldCacheStats }>;
 
 /**
  * Length-prefixed, NOT `[foldKey, nodeId, rev].join(":")`.
@@ -219,13 +301,28 @@ function cacheKey(foldKey: string, nodeId: NodeId, subtreeRev: number): string {
  * `limit` of zero or less disables caching entirely (every `set` is a no-op),
  * which is what a cold shadow-refold check wants; a non-finite `limit` falls
  * back to the default rather than growing without bound.
+ *
+ * Because the key carries the rev, the limit is a COST dial and nothing else —
+ * evicting an entry can only make the next read do work it already did, never
+ * change what it answers. That is the property `EngineConfig.foldCacheLimit`
+ * relies on to be safe to expose, and it is covered by test rather than left as
+ * an assertion.
  */
-export function createFoldCache(limit: number = DEFAULT_FOLD_CACHE_LIMIT): FoldCache {
+export function createFoldCache(
+  limit: number = DEFAULT_FOLD_CACHE_LIMIT,
+): ObservableFoldCache {
   const max = Number.isFinite(limit) ? Math.floor(limit) : DEFAULT_FOLD_CACHE_LIMIT;
   // Map iteration order is insertion order, which is the whole LRU mechanism:
   // re-inserting on read moves an entry to the back, so the front is the least
   // recently used.
   const entries = new Map<string, unknown>();
+
+  // Lifetime counters, deliberately NOT reset by `clear()` — a consumer that
+  // clears on every document swap would otherwise see a permanently healthy
+  // cache no matter how badly the limit was thrashing between swaps.
+  let hits = 0;
+  let misses = 0;
+  let evictions = 0;
 
   return {
     get(foldKey, nodeId, subtreeRev) {
@@ -233,13 +330,20 @@ export function createFoldCache(limit: number = DEFAULT_FOLD_CACHE_LIMIT): FoldC
       // `has`, not `get() !== undefined`. The hit/miss union exists precisely
       // so a legitimately cached `undefined` is a hit; testing the value would
       // throw that away and silently recompute forever.
-      if (!entries.has(key)) return { hit: false };
+      if (!entries.has(key)) {
+        misses += 1;
+        return { hit: false };
+      }
       const value = entries.get(key);
       entries.delete(key);
       entries.set(key, value);
+      hits += 1;
       return { hit: true, value };
     },
     set(foldKey, nodeId, subtreeRev, value) {
+      // A disabled cache records no eviction: nothing was ever admitted, and
+      // counting these would read as capacity pressure a bigger limit fixes.
+      // `stats().limit` is what explains a zero hit rate here.
       if (max <= 0) return;
       const key = cacheKey(foldKey, nodeId, subtreeRev);
       entries.delete(key);
@@ -251,6 +355,7 @@ export function createFoldCache(limit: number = DEFAULT_FOLD_CACHE_LIMIT): FoldC
         // but it is what keeps the loop provably terminating without a `!`.
         if (oldestKey === undefined) break;
         entries.delete(oldestKey);
+        evictions += 1;
       }
     },
     clear() {
@@ -258,6 +363,9 @@ export function createFoldCache(limit: number = DEFAULT_FOLD_CACHE_LIMIT): FoldC
     },
     size() {
       return entries.size;
+    },
+    stats() {
+      return { hits, misses, evictions, size: entries.size, limit: max };
     },
   };
 }
