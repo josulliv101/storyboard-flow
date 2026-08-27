@@ -5721,6 +5721,100 @@ test.describe("graph view E2E", () => {
     expect(await thumbX()).toBeLessThan(movedX);
   });
 
+  test("the three-item view is the same size wherever you opened it", async ({ page }) => {
+    // PL16-010. The deck's cards changed size depending on WHERE in the
+    // collection the opened item sat: open the third and they were one size,
+    // open the eighth and they were another.
+    //
+    // `cardRefs` is keyed by the clip's own index while only a window of cards
+    // is built, so opening an item part-way down leaves real HOLES below the
+    // window. `Array.find` walks holes as `undefined`, `undefined !== null`
+    // passed, and the deck's `fit()` bailed on its own null guard having
+    // published nothing — no `--deck-need`, no `--clip-w`. The cards fell back
+    // to the stylesheet's own `clamp()` and were merely a different size, which
+    // is why it read as a design rather than as a fault.
+    //
+    // TWELVE CLIPS, because the bug needs the window to START PAST ZERO and a
+    // four-clip fixture never gets there.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const api = await installGraphApi(page);
+    const project = api.documents.get(PROJECT_ID)!;
+    const first = project.clips[0]!;
+    project.clips = Array.from({ length: 12 }, (_, index) => ({
+      ...first,
+      // `alpha` keeps its id: `openGraph` waits on it.
+      id: index === 0 ? "alpha" : `shot-${index + 1}`,
+      alt: `Shot ${index + 1}`,
+      index,
+      kind: "image" as const,
+      startTime: index * 4,
+      duration: 4,
+      sourceDuration: 4,
+      trimIn: 0,
+      trimOut: 0,
+    }));
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    const widthAfterOpening = async (id: string): Promise<number> => {
+      await surface.locator(`[data-node-id="${id}"]`).click();
+      await expect(page.locator("[data-item-details]")).toBeVisible();
+      // The deck fits on a ResizeObserver, so the answer is polled rather than
+      // read once — a single read races the fit and would pass on the old code.
+      const width = await expect
+        .poll(
+          async () =>
+            page.evaluate(() => {
+              const card = document.querySelector(".deck .clip.active") as HTMLElement | null;
+              return card === null ? 0 : Math.round(card.offsetWidth);
+            }),
+          { timeout: 5000 },
+        )
+        .toBeGreaterThan(0)
+        .then(() =>
+          page.evaluate(() => {
+            const card = document.querySelector(".deck .clip.active") as HTMLElement;
+            return Math.round(card.offsetWidth);
+          }),
+        );
+      await page.keyboard.press("Escape");
+      await expect(page.locator("[data-item-details]")).toHaveCount(0);
+      return width;
+    };
+
+    // NEAR THE START, where the window has always covered index 0 and the fit
+    // therefore always worked.
+    const third = await widthAfterOpening("shot-3");
+    // AND WELL PAST IT, which is the case that silently fell back.
+    const eighth = await widthAfterOpening("shot-8");
+
+    // AND THE DECK ACTUALLY PUBLISHED ITS REQUIREMENT for the deeper item —
+    // the single fact the bug destroyed. Re-opened, because the helper closes
+    // the view behind it and the custom property lives on the deck.
+    await surface.locator('[data-node-id="shot-8"]').click();
+    await expect(page.locator("[data-item-details]")).toBeVisible();
+    await expect
+      .poll(async () =>
+        page.evaluate(() => {
+          const deck = document.querySelector(".deck") as HTMLElement | null;
+          return deck === null
+            ? ""
+            : getComputedStyle(deck).getPropertyValue("--deck-need").trim();
+        }),
+      )
+      .not.toBe("");
+
+    expect(third).toBeGreaterThan(0);
+    // THE ASSERTION IS THAT THEY AGREE. The exact number is the design's own
+    // maximum here and is checked below, but what broke was the two DIFFERING,
+    // and that is what must not come back.
+    expect(eighth).toBe(third);
+    // NOT PINNED TO A LITERAL. Which regime is correct depends on the deck's
+    // height, and that depends on the viewport — a number here would assert the
+    // runner's window rather than the behaviour. What was broken is the two
+    // DISAGREEING.
+  });
+
   test("the scrubber cuts its bar at the cuts, and answers the cursor", async ({ page }) => {
     // PL16-007, the transport-bar spec's scrubber.
     //
