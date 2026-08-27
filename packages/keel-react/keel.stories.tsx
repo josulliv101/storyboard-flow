@@ -1826,8 +1826,11 @@ function DragRow({ id }: Readonly<{ id: NodeId }>) {
         // entire sequence without it, a trap this repo has already paid for.
         onPointerDown={() => begin(id)}
         style={dndStyles.grip}
+        aria-label={"Drag " + String(id)}
+        role="button"
+        tabIndex={0}
       >
-        ::
+        {"⠿"}
       </span>
       <span style={dndStyles.rowLabel}>{label}</span>
       <span style={dndStyles.rowKind}>
@@ -1939,10 +1942,27 @@ const dndStyles: Readonly<Record<string, CSSProperties>> = {
     fontFamily: "ui-monospace, monospace",
   },
   grip: {
+    // A REAL HIT TARGET. The handle is the only thing on the row you are meant
+    // to press, so it gets the size of a control rather than the size of its
+    // glyph — 32px square, which clears the 24px minimum for a pointer target
+    // with room to spare and stays comfortable on a trackpad.
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 32,
+    height: 32,
+    flex: "0 0 auto",
+    fontSize: 17,
+    lineHeight: 1,
+    borderRadius: 5,
+    border: "1px solid rgba(127,127,127,.35)",
+    background: "rgba(127,127,127,.12)",
     cursor: "grab",
     userSelect: "none",
-    opacity: 0.55,
-    letterSpacing: -1,
+    opacity: 0.75,
+    // Without this a touch drag scrolls the page instead of moving the row:
+    // the browser claims the gesture before the pointer handlers see it.
+    touchAction: "none",
   },
   gap: {
     height: 16,
