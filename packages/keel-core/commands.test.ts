@@ -42,6 +42,7 @@ import {
 import { applyPatch, invertPatch } from "./patches";
 import { createHistory } from "./history";
 import { applyCommand, applyIngestEdits, resolveDrop } from "./commands";
+import { DEFAULT_MAX_NODES } from "./serialize";
 
 // ---------------------------------------------------------------------------
 // Fixture node types
@@ -360,6 +361,8 @@ function makeHarness(
     summary: summaryCodec,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
+    maxNodes: DEFAULT_MAX_NODES,
+    maxDepth: null,
     mintId:
       overrides?.mintId ??
       ((): string => {

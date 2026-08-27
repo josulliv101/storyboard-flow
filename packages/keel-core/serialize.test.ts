@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildRegistry, findInvariantViolation } from "./graph";
 import {
+  DEFAULT_MAX_NODES,
   deserializeDocument,
   loadChildrenInto,
   parseNodeData,
@@ -221,6 +222,8 @@ function makeCtx(
     summary: summaryCodec,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
+    maxNodes: DEFAULT_MAX_NODES,
+    maxDepth: null,
     mintId: () => "minted",
     now: () => 0,
     devChecks: false,
@@ -1708,5 +1711,152 @@ describe("loadChildrenInto", () => {
     expect(wire.nodes).toHaveLength(5);
     const reloaded = expectOk(deserializeDocument<Types, Summary>(wire, ctx)).graph;
     expect(findInvariantViolation(reloaded, ctx.registry)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ingress bounds — the size and depth a document is allowed to be
+// ---------------------------------------------------------------------------
+//
+// Ported from the predecessor, where the same two bounds are `MAX_CLOSURE_
+// DOCUMENTS` (500) and `BOARD_OPEN_MAX_DEPTH` (1) and both exist because an
+// unbounded read had already gone wrong in production: a preview compile that
+// walked `depth x breadth` sequential round trips could run past the platform's
+// execution limit, and a board open billed 150 reads to correct four numbers.
+// The shapes do not transfer — this engine reads one in-memory payload, not a
+// document tree over the network — but the rule does, and it is stated in that
+// package as plainly as it can be: refusing loudly beats running until
+// something else kills you.
+
+/** A chain `n0 -> n1 -> ... ` of `depth` containers, one root. */
+function chainDoc(depth: number): unknown {
+  const nodes: SerializedNode[] = [];
+  for (let i = 0; i < depth; i += 1) {
+    nodes.push({
+      id: `n${i}`,
+      kind: "folder",
+      data: { title: `n${i}` },
+      ...(i + 1 < depth ? { children: [`n${i + 1}`] } : { children: [] }),
+    });
+  }
+  return { formatVersion: 1, rootIds: ["n0"], nodes };
+}
+
+/** One root folder with `count - 1` clip children. */
+function flatDoc(count: number): unknown {
+  const kids = Array.from({ length: count - 1 }, (_, i) => `c${i}`);
+  const nodes: SerializedNode[] = [
+    { id: "root", kind: "folder", data: { title: "root" }, children: kids },
+  ];
+  for (const kid of kids) {
+    nodes.push({ id: kid, kind: "clip", data: { name: kid, asset: null } });
+  }
+  return { formatVersion: 1, rootIds: ["root"], nodes };
+}
+
+describe("the size bound", () => {
+  it("refuses a document above the ceiling, reporting both numbers", () => {
+    const error = expectErr(
+      deserializeDocument<Types, Summary>(flatDoc(50), makeCtx({ maxNodes: 10 })),
+    );
+    expect(error.code).toBe("document-too-large");
+    // Both numbers, structured. A consumer telling a person why their document
+    // was refused should not have to parse them back out of the message.
+    expect(error.limit).toBe(10);
+    expect(error.actual).toBe(50);
+  });
+
+  it("accepts a document exactly AT the ceiling", () => {
+    // The boundary in the direction that matters: a ceiling that refused the
+    // document it was sized for would be off by one in the expensive
+    // direction, and nothing else in this file would notice.
+    const loaded = expectOk(
+      deserializeDocument<Types, Summary>(flatDoc(10), makeCtx({ maxNodes: 10 })),
+    );
+    expect(loaded.report.nodeCount).toBe(10);
+  });
+
+  it("checks size BEFORE anything else it could fail on", () => {
+    // The document is too large AND names a duplicate id. Size must win: a
+    // check that ran after Pass A would be reporting a document too large from
+    // inside the map it was supposed to stop being built. The only externally
+    // visible proof of ordering is which error comes back.
+    const doc = flatDoc(50) as { nodes: SerializedNode[] };
+    doc.nodes.push({ id: "c0", kind: "clip", data: { name: "dup", asset: null } });
+    const error = expectErr(
+      deserializeDocument<Types, Summary>(doc, makeCtx({ maxNodes: 10 })),
+    );
+    expect(error.code).toBe("document-too-large");
+  });
+
+  it("refuses whole, never returning a truncated graph", () => {
+    // The property the predecessor's comment is really about. A loader that
+    // trimmed to the ceiling would hand back collections tagged `loaded` that
+    // are missing children — which is exactly the "empty or unread?" ambiguity
+    // the four-state `ChildrenState` exists to abolish, reintroduced by the
+    // safety mechanism.
+    const result = deserializeDocument<Types, Summary>(
+      flatDoc(50),
+      makeCtx({ maxNodes: 10 }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("defaults to a ceiling no realistic document meets", () => {
+    // Guards the coherence claim in `DEFAULT_MAX_NODES`: it must sit above the
+    // fold cache's own sizing, or a document could load and then be too big for
+    // the memo table that is supposed to serve it — two ceilings quietly
+    // disagreeing, which is worse than either being wrong alone.
+    expect(DEFAULT_MAX_NODES).toBeGreaterThan(16_384);
+  });
+});
+
+describe("the depth bound", () => {
+  it("is unbounded by default, and a deep document loads", () => {
+    // Depth is opt-in precisely because this is true: every walk here uses an
+    // explicit stack, so depth is a cost and not a crash, and a default
+    // ceiling would refuse documents that work.
+    const loaded = expectOk(
+      deserializeDocument<Types, Summary>(chainDoc(500), makeCtx()),
+    );
+    expect(loaded.report.nodeCount).toBe(500);
+  });
+
+  it("refuses past the ceiling, naming the node it stopped at", () => {
+    const error = expectErr(
+      deserializeDocument<Types, Summary>(chainDoc(20), makeCtx({ maxDepth: 5 })),
+    );
+    expect(error.code).toBe("document-too-deep");
+    expect(error.limit).toBe(5);
+    expect(String(error.nodeId)).toBe("n5");
+  });
+
+  it("stops AT the ceiling rather than measuring the whole document first", () => {
+    // `actual` is the ceiling plus one, not the document's true depth. That
+    // difference IS the early exit: a version that walked the document and
+    // then compared would report 5000 here, and would have paid for the walk
+    // that the bound exists to avoid.
+    const error = expectErr(
+      deserializeDocument<Types, Summary>(chainDoc(5_000), makeCtx({ maxDepth: 5 })),
+    );
+    expect(error.actual).toBe(6);
+  });
+
+  it("counts a root as depth 1, so maxDepth 1 admits only roots", () => {
+    expect(
+      deserializeDocument<Types, Summary>(chainDoc(1), makeCtx({ maxDepth: 1 })).ok,
+    ).toBe(true);
+    expect(
+      deserializeDocument<Types, Summary>(chainDoc(2), makeCtx({ maxDepth: 1 })).ok,
+    ).toBe(false);
+  });
+
+  it("measures nesting, not node count — a wide document is depth 2", () => {
+    // The two bounds must not be each other in disguise. 200 nodes under one
+    // root passes a depth ceiling of 2 and would fail any bound that had
+    // quietly become a size check.
+    expect(
+      deserializeDocument<Types, Summary>(flatDoc(200), makeCtx({ maxDepth: 2 })).ok,
+    ).toBe(true);
   });
 });

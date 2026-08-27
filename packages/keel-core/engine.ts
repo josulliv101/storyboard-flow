@@ -60,6 +60,7 @@ import {
 } from "./commands";
 import { computeFold, createFoldCache } from "./folds";
 import {
+  DEFAULT_MAX_NODES,
   deserializeDocument,
   loadChildrenInto,
   serializeGraph,
@@ -157,6 +158,14 @@ export function createEngine<
     summary: config.summary,
     onUnknownKind: config.onUnknownKind ?? "quarantine",
     onParseFailure: config.onParseFailure ?? "quarantine",
+    // `?? DEFAULT_MAX_NODES` and not `Math.min` with it: a consumer who names a
+    // ceiling has named THE ceiling, including one above the default. The
+    // default is what applies when nobody chose, not a cap on choosing.
+    maxNodes: config.maxNodes ?? DEFAULT_MAX_NODES,
+    // `null` is unbounded and is the DEFAULT, so `?? null` rather than a
+    // number — see `EngineConfig.maxDepth` for why depth is the consumer's
+    // ceiling to set and not this package's to invent.
+    maxDepth: config.maxDepth ?? null,
     mintId: config.mintId ?? defaultMintId,
     now: config.now ?? Date.now,
     devChecks: config.devChecks ?? false,

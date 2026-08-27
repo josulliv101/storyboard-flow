@@ -103,6 +103,26 @@ function isWireChildrenState(value: unknown): value is WireChildrenState {
   return value === "unloaded" || value === "reference" || value === "missing";
 }
 
+/**
+ * The default ceiling on nodes in one document.
+ *
+ * Sized from what this engine COSTS, not from a round number — the same
+ * mistake `DEFAULT_FOLD_CACHE_LIMIT` was originally made of. Deserialize
+ * measures at roughly a microsecond a node on the performance fixtures
+ * (9.57 ms for 10,000), so 100,000 is where one document crosses ~100 ms of
+ * blocking parse and becomes a visible hitch rather than a load. That is an
+ * order of magnitude above the 10,000-node document those fixtures treat as
+ * realistic, and above the 16,384 the fold cache is sized to hold, so the two
+ * ceilings cannot contradict each other: no document that loads is one the
+ * memo table then silently refuses to serve.
+ *
+ * A ceiling, not a target. It exists so that an unbounded payload cannot
+ * decide this process's memory, and it should never fire on real data — a
+ * consumer meeting it should raise `EngineConfig.maxNodes` and know what they
+ * are buying, which is the whole reason it refuses loudly instead of trimming.
+ */
+export const DEFAULT_MAX_NODES = 100_000;
+
 function fail(error: StructuralError): Result<never, StructuralError> {
   return { ok: false, error };
 }
@@ -458,6 +478,24 @@ function buildDocument<Ts extends readonly unknown[], S>(
   if (!parsed.ok) return parsed;
   const doc = parsed.value;
 
+  // --- The size bound, before anything is allocated -------------------------
+  //
+  // FIRST, and it has to be first to be worth having. Every pass below builds
+  // a map sized by `doc.nodes`, so a check that ran after even one of them
+  // would be reporting a document too large from inside the allocation it was
+  // supposed to prevent. `doc.nodes` is a flat array, so its length is known
+  // without walking anything — the cheapest possible place to say no.
+  if (doc.nodes.length > ctx.maxNodes) {
+    return fail({
+      code: "document-too-large",
+      message:
+        `Document presents ${doc.nodes.length} nodes, above the ${ctx.maxNodes} ceiling. ` +
+        `Raise EngineConfig.maxNodes if this document is legitimate.`,
+      limit: ctx.maxNodes,
+      actual: doc.nodes.length,
+    });
+  }
+
   // --- Pass A: adopt the wire's ids -----------------------------------------
   const wireById = new Map<NodeId, SerializedNode>();
   for (const node of doc.nodes) {
@@ -636,14 +674,36 @@ function buildDocument<Ts extends readonly unknown[], S>(
   const order: NodeId[] = [];
   const seen = new Set<NodeId>();
   const stack: NodeId[] = [];
+  // A parallel array rather than pushing `{ id, depth }` objects: this walk
+  // visits every node in the document, and one allocation per node to carry a
+  // number is a cost the bound is supposed to be cheap enough to justify.
+  const depths: number[] = [];
   for (let i = rootIds.length - 1; i >= 0; i -= 1) {
     const root = rootIds[i];
-    if (root !== undefined) stack.push(root);
+    if (root !== undefined) {
+      stack.push(root);
+      depths.push(1);
+    }
   }
   while (stack.length > 0) {
     const id = stack.pop();
-    if (id === undefined) break;
+    const depth = depths.pop();
+    if (id === undefined || depth === undefined) break;
     if (seen.has(id)) continue;
+    // Checked as the walk descends rather than by measuring afterwards, so a
+    // document nested past the ceiling stops costing at the ceiling instead of
+    // being fully walked and then refused.
+    if (ctx.maxDepth !== null && depth > ctx.maxDepth) {
+      return fail({
+        code: "document-too-deep",
+        message:
+          `Document nests at least ${depth} levels, above the ${ctx.maxDepth} ceiling. ` +
+          `Raise or clear EngineConfig.maxDepth if this document is legitimate.`,
+        nodeId: id,
+        limit: ctx.maxDepth,
+        actual: depth,
+      });
+    }
     seen.add(id);
     order.push(id);
     const kids = childrenById.get(id);
@@ -651,7 +711,10 @@ function buildDocument<Ts extends readonly unknown[], S>(
     // Pushed in reverse so they pop in document order.
     for (let i = kids.length - 1; i >= 0; i -= 1) {
       const kid = kids[i];
-      if (kid !== undefined) stack.push(kid);
+      if (kid !== undefined) {
+        stack.push(kid);
+        depths.push(depth + 1);
+      }
     }
   }
   if (seen.size !== wireById.size) {

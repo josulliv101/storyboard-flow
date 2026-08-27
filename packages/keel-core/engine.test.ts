@@ -21,6 +21,7 @@ import {
 } from "./types";
 import { foldMonoid } from "./folds";
 import { createEngine } from "./engine";
+import { DEFAULT_MAX_NODES } from "./serialize";
 
 type Clip = Readonly<{ title: string; seconds: number }>;
 type ClipEdit = Readonly<{ title?: string; seconds?: number }>;
@@ -316,5 +317,105 @@ describe("createEngine end to end", () => {
       certainty: "exact",
     });
     expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Config resolution for the ingress bounds
+// ---------------------------------------------------------------------------
+//
+// These live HERE, against `createEngine`, and not beside the other bound tests
+// in serialize.test.ts, because of a mistake worth recording: the first version
+// of the "a consumer may raise the ceiling" test built an `EngineContext` by
+// hand and asserted on the object it had just written. Replacing
+// `config.maxNodes ?? DEFAULT_MAX_NODES` with a `Math.min` against the default
+// — a silent cap, the precise bug the test was named after — did not fail it,
+// or anything else in the package. Only a test that goes through the config
+// resolution can see the config resolution.
+
+/** `count` nodes: one root folder and `count - 1` clips. Minimal content,
+ *  because what is under test is the SIZE, and every field would be paid for
+ *  per node. */
+function bulkDoc(count: number): unknown {
+  const kids = Array.from({ length: count - 1 }, (_, i) => `c${i}`);
+  const nodes: unknown[] = [
+    { id: "root", kind: "folder", data: { name: "Root" }, children: kids },
+  ];
+  for (const kid of kids) {
+    nodes.push({ id: kid, kind: "clip", data: { title: kid, seconds: 1 } });
+  }
+  return { formatVersion: 1, rootIds: ["root"], nodes };
+}
+
+describe("ingress bound configuration", () => {
+  it("refuses a document past the DEFAULT ceiling when the consumer set none", () => {
+    const engine = createEngine<Types, Summary, typeof folds>({
+      types,
+      summary,
+      folds,
+      now: () => 1234,
+    });
+    const result = engine.deserialize(bulkDoc(DEFAULT_MAX_NODES + 1));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("document-too-large");
+    expect(result.error.limit).toBe(DEFAULT_MAX_NODES);
+  });
+
+  it("honours a ceiling ABOVE the default rather than capping it", () => {
+    // THE non-vacuous form. The document is past the default and inside the
+    // consumer's own ceiling, so the two answers differ: `??` loads it, a
+    // `Math.min` refuses it. Deliberately the heaviest test in this file —
+    // there is no smaller document that can tell the two apart.
+    const engine = createEngine<Types, Summary, typeof folds>({
+      types,
+      summary,
+      folds,
+      now: () => 1234,
+      maxNodes: DEFAULT_MAX_NODES * 2,
+    });
+    const result = engine.deserialize(bulkDoc(DEFAULT_MAX_NODES + 1));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.report.nodeCount).toBe(DEFAULT_MAX_NODES + 1);
+  }, 30_000);
+
+  it("honours a ceiling below the default", () => {
+    const engine = createEngine<Types, Summary, typeof folds>({
+      types,
+      summary,
+      folds,
+      now: () => 1234,
+      maxNodes: 3,
+    });
+    const result = engine.deserialize(bulkDoc(10));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.limit).toBe(3);
+    expect(result.error.actual).toBe(10);
+  });
+
+  it("leaves depth unbounded unless the consumer asks for a ceiling", () => {
+    const engine = createEngine<Types, Summary, typeof folds>({
+      types,
+      summary,
+      folds,
+      now: () => 1234,
+    });
+    // The same 3-node fixture the rest of this file uses, which nests two
+    // levels: it must load with no depth ceiling in force.
+    expect(engine.deserialize(doc).ok).toBe(true);
+
+    const bounded = createEngine<Types, Summary, typeof folds>({
+      types,
+      summary,
+      folds,
+      now: () => 1234,
+      maxDepth: 1,
+    });
+    const refused = bounded.deserialize(doc);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error.code).toBe("document-too-deep");
   });
 });

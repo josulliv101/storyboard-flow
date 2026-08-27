@@ -21,6 +21,7 @@ import {
   type SomeNodeType,
   type SummaryCodec,
 } from "./types";
+import { DEFAULT_MAX_NODES } from "./serialize";
 
 // A single commit used to do FIVE pieces of whole-graph work for a change that
 // touched one children array: a clone of `parentById` (one entry per node), two
@@ -172,6 +173,8 @@ function makeCtx(registry: ReadonlyMap<string, SomeNodeType>): EngineContext<Sum
     summary: summaryCodec,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
+    maxNodes: DEFAULT_MAX_NODES,
+    maxDepth: null,
     mintId: () => "minted",
     now: () => 0,
     devChecks: false,

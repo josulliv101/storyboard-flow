@@ -168,6 +168,10 @@ export {
 // ---------------------------------------------------------------------------
 
 export {
+  // Named here for the same reason `DEFAULT_FOLD_CACHE_LIMIT` is: a consumer
+  // deciding whether to raise `EngineConfig.maxNodes` needs to be able to see
+  // what they are raising it FROM without reaching past the barrel.
+  DEFAULT_MAX_NODES,
   deserializeDocument,
   loadChildrenInto,
   parseNodeData,

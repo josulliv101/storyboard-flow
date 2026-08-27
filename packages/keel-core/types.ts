@@ -693,7 +693,11 @@ export type StructuralErrorCode =
   | "duplicate-owner"
   | "summary-parse-failed"
   /** `onUnknownKind` / `onParseFailure` was set to `"reject"`. */
-  | "ingress-rejected";
+  | "ingress-rejected"
+  /** More nodes than `EngineConfig.maxNodes`. See `DEFAULT_MAX_NODES`. */
+  | "document-too-large"
+  /** Nested deeper than `EngineConfig.maxDepth`, which is opt-in. */
+  | "document-too-deep";
 
 export type StructuralError = Readonly<{
   code: StructuralErrorCode;
@@ -704,6 +708,12 @@ export type StructuralError = Readonly<{
   issues?: readonly Issue[];
   /** Present on `"ingress-rejected"`. */
   ingress?: readonly IngressError[];
+  /** Present on the two bound refusals: the ceiling that was in force, and
+   *  what the document actually presented. A consumer telling a person why
+   *  their document was refused needs both, and parsing them back out of
+   *  `message` is not an interface. */
+  limit?: number;
+  actual?: number;
 }>;
 
 /**
@@ -813,6 +823,11 @@ export type EngineContext<S> = Readonly<{
   summary: SummaryCodec<S>;
   onUnknownKind: "quarantine" | "reject";
   onParseFailure: "quarantine" | "reject";
+  /** Ceiling on nodes in one document. See `EngineConfig.maxNodes`. */
+  maxNodes: number;
+  /** Ceiling on nesting depth, or `null` for unbounded. See
+   *  `EngineConfig.maxDepth`. */
+  maxDepth: number | null;
   mintId(): string;
   now(): number;
   /**
@@ -1127,6 +1142,35 @@ export type EngineConfig<
   /** Injectable so tests get deterministic `HistoryEntry.at`. Defaults to `Date.now`. */
   now?(): number;
   historyLimit?: number;
+  /**
+   * Ceiling on how many nodes ONE document may present to `deserialize`.
+   * Defaults to `DEFAULT_MAX_NODES`.
+   *
+   * A payload arrives from storage or from the wire, which makes its size
+   * hostile input rather than a known quantity, and every pass below builds
+   * maps sized by it. Unbounded, a single malformed or malicious document
+   * decides how much memory this process allocates.
+   *
+   * REFUSES, never truncates. A document half-loaded is a document with
+   * silently missing children, and the whole point of the four-state
+   * `ChildrenState` is that "we have not looked" is a state the engine can
+   * name — a truncating loader would produce collections that claim to be
+   * `loaded` and are not, which is the exact ambiguity that cost the
+   * predecessor 40-second duration errors.
+   */
+  maxNodes?: number;
+  /**
+   * Ceiling on nesting depth. Defaults to UNBOUNDED, deliberately.
+   *
+   * Depth is not a correctness risk here and a default would be a fiction:
+   * every walk in this package uses an explicit stack, and the performance
+   * suite loads, folds, moves, undoes and redoes a 10,000-level chain without
+   * overflowing. What depth costs is ancestor-chain work, which is linear in
+   * it — a real cost, but the consumer's to price, not this package's to
+   * guess. Set it when your shape has a known ceiling and a deeper document
+   * means corrupt data rather than unusual data.
+   */
+  maxDepth?: number;
   /**
    * Ceiling on EACH STORE's fold memo table. Defaults to
    * `DEFAULT_FOLD_CACHE_LIMIT`.

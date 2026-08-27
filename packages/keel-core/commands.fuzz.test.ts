@@ -68,7 +68,8 @@ import {
 import { applyCommand } from "./commands";
 import { applyPatch, invertPatch, verifyPatchApplies } from "./patches";
 import { canRedo, canUndo, commitRedo, commitUndo, createHistory, pushHistory } from "./history";
-import { deserializeDocument, loadChildrenInto, serializeGraph } from "./serialize";
+import {
+  DEFAULT_MAX_NODES, deserializeDocument, loadChildrenInto, serializeGraph } from "./serialize";
 
 // ---------------------------------------------------------------------------
 // Seeded PRNG
@@ -278,6 +279,8 @@ function makeCtx(): Ctx {
     summary: summaryCodec,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
+    maxNodes: DEFAULT_MAX_NODES,
+    maxDepth: null,
     mintId: () => {
       minted += 1;
       // Never reused, and disjoint from every generated document id — so a

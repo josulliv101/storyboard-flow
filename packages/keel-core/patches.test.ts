@@ -28,6 +28,7 @@ import {
   type SomeNodeType,
   type SummaryCodec,
 } from "./types";
+import { DEFAULT_MAX_NODES } from "./serialize";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -130,6 +131,8 @@ function makeCtx(engineId: symbol = ENGINE_ID): EngineContext<Summary> {
     summary: summaryCodec,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
+    maxNodes: DEFAULT_MAX_NODES,
+    maxDepth: null,
     mintId: () => "minted",
     now: () => 0,
     devChecks: false,
