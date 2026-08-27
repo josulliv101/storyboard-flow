@@ -1702,11 +1702,35 @@ export const Quarantine: Story = {
 // silently appended on cut+paste for exactly this reason). `resolveDrop`
 // converts one to the other in exactly one place, and this story prints both
 // numbers so you can watch them disagree.
+//
+// ---------------------------------------------------------------------------
+// HOW THE GESTURE IS WIRED, and why it is not the obvious way
+// ---------------------------------------------------------------------------
+//
+// The obvious wiring puts `onPointerUp` on each drop target. That works right
+// up until you add POINTER CAPTURE — and capture is not optional, because
+// without it a pointer that leaves the window mid-drag never delivers its
+// `pointerup` and the drag stays armed forever.
+//
+// Capture RETARGETS every subsequent event to the capturing element, so the
+// drop target's own handler stops firing. The fix is to stop asking "what did
+// the event land on" and start asking "what is under the pointer":
+//
+//   - `pointerdown` on a ROW captures the pointer and records the drag.
+//   - `pointermove` / `pointerup` are handled ONCE, on the board. Captured
+//     events retarget into the board and bubble; synthesised events dispatched
+//     straight at a target bubble too. Both paths arrive at the same handler.
+//   - the target is resolved from the COORDINATES with `elementFromPoint`.
+//
+// That last step is also what lets a row be a drop target: the pointer's Y
+// against the row's midpoint says whether you meant before it or after it.
+
+type DropSpot = Readonly<{ parentId: NodeId; indexBefore: number }>;
 
 type DragApi = Readonly<{
   dragId: NodeId | null;
-  begin: (id: NodeId) => void;
-  dropAt: (parentId: NodeId, indexBefore: number) => void;
+  hover: DropSpot | null;
+  begin: (id: NodeId, event: React.PointerEvent<HTMLElement>) => void;
 }>;
 
 const DragContext = createContext<DragApi | null>(null);
@@ -1715,6 +1739,67 @@ function useDragApi(): DragApi {
   const api = useContext(DragContext);
   if (api === null) throw new Error("useDragApi used outside a DragBoard");
   return api;
+}
+
+/** Is this spot the one currently under the pointer? */
+function isHovered(hover: DropSpot | null, parentId: NodeId, index: number): boolean {
+  return hover !== null && hover.parentId === parentId && hover.indexBefore === index;
+}
+
+/**
+ * Resolve the pointer position to a drop spot.
+ *
+ * A GAP names its index outright. A ROW is split at its midpoint — above means
+ * "before me", below means "after me" — which turns a 16px target into a 42px
+ * one and is what every real DnD implementation does.
+ */
+function spotAt(x: number, y: number): DropSpot | null {
+  const under = document.elementFromPoint(x, y);
+  return under === null ? null : spotIn(under, y);
+}
+
+/**
+ * Where the pointer is, from the two signals an event carries — and it needs
+ * both.
+ *
+ * COORDINATES FIRST, because under pointer capture the event's `target` is the
+ * CAPTURING element (the row being dragged), not the thing under the cursor.
+ * Trusting the target there would resolve every drop onto the dragged row's own
+ * slot.
+ *
+ * TARGET AS THE FALLBACK, because a SYNTHESISED pointer — a play function, a
+ * test — frequently carries no coordinates at all, and `elementFromPoint(0, 0)`
+ * is not a drop target. This is not defensive padding: the first version of
+ * this handler read coordinates only, and every assertion in the play function
+ * came back "dropped on nothing".
+ */
+function spotFrom(event: React.PointerEvent<HTMLElement>): DropSpot | null {
+  const byPoint = spotAt(event.clientX, event.clientY);
+  if (byPoint !== null) return byPoint;
+  const target = event.target;
+  return target instanceof Element ? spotIn(target, event.clientY) : null;
+}
+
+function spotIn(under: Element, y: number): DropSpot | null {
+  const gap = under.closest<HTMLElement>("[data-drop-parent]");
+  if (gap !== null) {
+    const parent = gap.dataset.dropParent;
+    const index = Number(gap.dataset.dropIndex);
+    if (parent === undefined || Number.isNaN(index)) return null;
+    return { parentId: parseNodeId(parent), indexBefore: index };
+  }
+
+  const row = under.closest<HTMLElement>("[data-row-parent]");
+  if (row !== null) {
+    const parent = row.dataset.rowParent;
+    const index = Number(row.dataset.rowIndex);
+    if (parent === undefined || Number.isNaN(index)) return null;
+    const box = row.getBoundingClientRect();
+    const after = y > box.top + box.height / 2;
+    return { parentId: parseNodeId(parent), indexBefore: index + (after ? 1 : 0) };
+  }
+
+  return null;
 }
 
 /**
@@ -1729,75 +1814,132 @@ function DragBoard({ children }: Readonly<{ children: ReactNode }>) {
   const store = ui.useStore();
   const dispatch = ui.useDispatch();
   const [dragId, setDragId] = useState<NodeId | null>(null);
-  const [outcome, setOutcome] = useState("Drag a row's grip onto a gap.");
+  const [hover, setHover] = useState<DropSpot | null>(null);
+  const [outcome, setOutcome] = useState("Drag a row onto a gap or another row.");
 
-  const dropAt = useCallback(
-    (toParentId: NodeId, toIndexBefore: number) => {
+  const begin = useCallback((id: NodeId, event: React.PointerEvent<HTMLElement>) => {
+    setDragId(id);
+    setHover(null);
+    // CAPTURE IS AN ENHANCEMENT, NOT A REQUIREMENT. It keeps the gesture alive
+    // when the pointer leaves the element — without it, releasing outside the
+    // window never delivers `pointerup` and the drag stays armed forever. But a
+    // browser that refuses it, or a synthesised pointer that has no capture to
+    // take, must still be able to drag: a failure here cannot abort the
+    // gesture, so it is swallowed rather than thrown.
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // No capture; the board's own handlers still see the drag through.
+    }
+  }, []);
+
+  const track = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
       if (dragId === null) return;
-      setDragId(null);
+      setHover(spotFrom(event));
+    },
+    [dragId],
+  );
 
+  const finish = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (dragId === null) return;
+      const spot = spotFrom(event) ?? hover;
+      setDragId(null);
+      setHover(null);
+      if (spot === null) {
+        setOutcome("dropped on nothing");
+        return;
+      }
+
+      // ---- THE FOUR LINES THAT ARE ACTUALLY ABOUT KEEL ------------------
       const resolved = store.resolveDrop({
         type: "move",
         nodeIds: [dragId],
-        toParentId,
-        toIndexBefore,
+        toParentId: spot.parentId,
+        toIndexBefore: spot.indexBefore,
       });
       if (!resolved.ok) {
         setOutcome("refused · " + resolved.error.code);
         return;
       }
-
       const command = resolved.value;
+      const committed = dispatch(command);
+      // -------------------------------------------------------------------
+
       // Only a move carries the converted index. Reading it here is what lets
       // this story SHOW the conversion rather than assert it.
       const toIndex =
-        command.type === "move-nodes" ? command.toIndex : toIndexBefore;
-      const committed = dispatch(command);
+        command.type === "move-nodes" ? command.toIndex : spot.indexBefore;
       setOutcome(
         committed.ok
-          ? "moved · dropped at " + toIndexBefore + " · committed at " + toIndex
+          ? "moved · dropped at " + spot.indexBefore + " · committed at " + toIndex
           : "rejected · " + committed.error.code,
       );
     },
-    [dragId, dispatch, store],
+    [dragId, dispatch, hover, store],
   );
 
-  const begin = useCallback((id: NodeId) => setDragId(id), []);
-
   return (
-    <DragContext.Provider value={{ dragId, begin, dropAt }}>
+    <DragContext.Provider value={{ dragId, hover, begin }}>
       <div data-testid="dnd-outcome" style={dndStyles.outcome}>
         {outcome}
       </div>
-      {children}
+      <div
+        // Exposed so the live feedback is observable to a test, not just to a
+        // pair of eyes.
+        data-testid="dnd-board"
+        data-hover={hover === null ? "" : hover.parentId + ":" + hover.indexBefore}
+        onPointerMove={track}
+        onPointerUp={finish}
+        // A cancelled pointer (the OS taking over, a context menu) must not
+        // leave the drag armed.
+        onPointerCancel={finish}
+        style={dndStyles.board}
+      >
+        {children}
+      </div>
     </DragContext.Provider>
   );
 }
 
-/** The gap between two rows. Its `indexBefore` is what the view can see. */
+/** The gap between two rows. Its index is what the view can see. */
 function Gap({
   parentId,
   indexBefore,
 }: Readonly<{ parentId: NodeId; indexBefore: number }>) {
-  const { dragId, dropAt } = useDragApi();
+  const { dragId, hover } = useDragApi();
+  const lit = isHovered(hover, parentId, indexBefore);
   return (
     <div
       data-testid={"gap-" + parentId + "-" + indexBefore}
-      onPointerUp={() => dropAt(parentId, indexBefore)}
+      data-drop-parent={parentId}
+      data-drop-index={indexBefore}
       style={{
         ...dndStyles.gap,
         ...(dragId === null ? null : dndStyles.gapArmed),
+        ...(lit ? dndStyles.gapLit : null),
       }}
     >
-      {indexBefore}
+      <span style={dndStyles.gapIndex}>{indexBefore}</span>
     </div>
   );
 }
 
-/** A draggable row. The grip is the handle, so the label stays selectable. */
-function DragRow({ id }: Readonly<{ id: NodeId }>) {
+/**
+ * A draggable row, and a drop target in its own right.
+ *
+ * THE WHOLE ROW IS THE HANDLE. The grip is an affordance, not the hit area —
+ * making only the grip draggable meant the intuitive gesture, grabbing the row,
+ * did nothing at all.
+ */
+function DragRow({
+  id,
+  parentId,
+  index,
+}: Readonly<{ id: NodeId; parentId: NodeId; index: number }>) {
   const node = ui.useNode(id);
-  const { dragId, begin } = useDragApi();
+  const { dragId, hover, begin } = useDragApi();
   if (node === undefined) return null;
 
   const label = node.quarantined
@@ -1808,11 +1950,20 @@ function DragRow({ id }: Readonly<{ id: NodeId }>) {
         ? node.data.text
         : node.data.name;
 
+  const before = isHovered(hover, parentId, index);
+  const after = isHovered(hover, parentId, index + 1);
+
   return (
     <div
+      data-row-parent={parentId}
+      data-row-index={index}
+      data-testid={"row-" + id}
+      onPointerDown={(event) => begin(id, event)}
       style={{
         ...dndStyles.row,
         ...(dragId === id ? dndStyles.rowDragging : null),
+        ...(before ? dndStyles.rowBefore : null),
+        ...(after ? dndStyles.rowAfter : null),
       }}
     >
       <span
@@ -1824,11 +1975,10 @@ function DragRow({ id }: Readonly<{ id: NodeId }>) {
         // A real sensor library would also demand `isPrimary: true` on every
         // synthesised event — dnd-kit's PointerSensor silently ignores an
         // entire sequence without it, a trap this repo has already paid for.
-        onPointerDown={() => begin(id)}
-        style={dndStyles.grip}
         aria-label={"Drag " + String(id)}
         role="button"
         tabIndex={0}
+        style={dndStyles.grip}
       >
         {"⠿"}
       </span>
@@ -1854,7 +2004,7 @@ function DragCollection({
 }: Readonly<{ id: NodeId; depth?: number }>) {
   const node = ui.useNode(id);
   const children = ui.useChildren(id);
-  const { dropAt } = useDragApi();
+  const { dragId, hover } = useDragApi();
   if (node === undefined || node.quarantined || !node.container) return null;
 
   const loaded = node.children.status === "loaded";
@@ -1870,8 +2020,14 @@ function DragCollection({
       {!loaded ? (
         <div
           data-testid={"gap-" + id + "-0"}
-          onPointerUp={() => dropAt(id, 0)}
-          style={{ ...dndStyles.gap, ...dndStyles.gapClosed }}
+          data-drop-parent={id}
+          data-drop-index={0}
+          style={{
+            ...dndStyles.gap,
+            ...dndStyles.gapClosed,
+            ...(dragId === null ? null : dndStyles.gapArmed),
+            ...(isHovered(hover, id, 0) ? dndStyles.gapLit : null),
+          }}
         >
           nobody has read these children
         </div>
@@ -1880,7 +2036,7 @@ function DragCollection({
           <Gap parentId={id} indexBefore={0} />
           {children.map((childId, index) => (
             <Fragment key={childId}>
-              <ChildRow id={childId} depth={depth} />
+              <ChildRow id={childId} parentId={id} index={index} depth={depth} />
               <Gap parentId={id} indexBefore={index + 1} />
             </Fragment>
           ))}
@@ -1891,18 +2047,23 @@ function DragCollection({
 }
 
 /** A child is either another container (recurse) or a leaf row. */
-function ChildRow({ id, depth }: Readonly<{ id: NodeId; depth: number }>) {
+function ChildRow({
+  id,
+  parentId,
+  index,
+  depth,
+}: Readonly<{ id: NodeId; parentId: NodeId; index: number; depth: number }>) {
   const node = ui.useNode(id);
   if (node === undefined) return null;
   if (!node.quarantined && node.container) {
     return (
       <div>
-        <DragRow id={id} />
+        <DragRow id={id} parentId={parentId} index={index} />
         <DragCollection id={id} depth={depth + 1} />
       </div>
     );
   }
-  return <DragRow id={id} />;
+  return <DragRow id={id} parentId={parentId} index={index} />;
 }
 
 const dndStyles: Readonly<Record<string, CSSProperties>> = {
@@ -1914,6 +2075,10 @@ const dndStyles: Readonly<Record<string, CSSProperties>> = {
     background: "rgba(127,127,127,.12)",
     marginBottom: 10,
   },
+  // `touch-action: none` on the whole board: a touch drag would otherwise
+  // scroll the page, because the browser claims the gesture before any pointer
+  // handler sees it.
+  board: { touchAction: "none" },
   collection: {
     border: "1px solid rgba(127,127,127,.35)",
     borderRadius: 6,
@@ -1933,8 +2098,15 @@ const dndStyles: Readonly<Record<string, CSSProperties>> = {
     padding: "5px 8px",
     borderRadius: 4,
     background: "rgba(127,127,127,.10)",
+    cursor: "grab",
+    // The insertion line is drawn as a border, so reserve it on both edges and
+    // keep it transparent — otherwise every hover nudges the row by 2px.
+    borderTop: "2px solid transparent",
+    borderBottom: "2px solid transparent",
   },
-  rowDragging: { opacity: 0.45 },
+  rowDragging: { opacity: 0.45, cursor: "grabbing" },
+  rowBefore: { borderTop: "2px solid currentColor" },
+  rowAfter: { borderBottom: "2px solid currentColor" },
   rowLabel: { flex: 1, fontSize: 13 },
   rowKind: {
     fontSize: 11,
@@ -1942,10 +2114,6 @@ const dndStyles: Readonly<Record<string, CSSProperties>> = {
     fontFamily: "ui-monospace, monospace",
   },
   grip: {
-    // A REAL HIT TARGET. The handle is the only thing on the row you are meant
-    // to press, so it gets the size of a control rather than the size of its
-    // glyph — 32px square, which clears the 24px minimum for a pointer target
-    // with room to spare and stays comfortable on a trackpad.
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -1957,29 +2125,32 @@ const dndStyles: Readonly<Record<string, CSSProperties>> = {
     borderRadius: 5,
     border: "1px solid rgba(127,127,127,.35)",
     background: "rgba(127,127,127,.12)",
-    cursor: "grab",
     userSelect: "none",
     opacity: 0.75,
-    // Without this a touch drag scrolls the page instead of moving the row:
-    // the browser claims the gesture before the pointer handlers see it.
-    touchAction: "none",
   },
   gap: {
-    height: 16,
+    height: 18,
     display: "flex",
     alignItems: "center",
     paddingLeft: 6,
     fontSize: 10,
     opacity: 0.35,
     fontFamily: "ui-monospace, monospace",
+    borderRadius: 3,
   },
-  gapArmed: { outline: "1px dashed rgba(127,127,127,.6)", opacity: 0.8 },
+  gapArmed: { outline: "1px dashed rgba(127,127,127,.5)", opacity: 0.7 },
+  gapLit: {
+    outline: "2px solid currentColor",
+    opacity: 1,
+    background: "rgba(127,127,127,.2)",
+  },
   gapClosed: {
     height: "auto",
     padding: 6,
     opacity: 0.5,
     fontStyle: "italic",
   },
+  gapIndex: {},
 };
 
 /**
@@ -1993,7 +2164,8 @@ export const DragAndDrop: Story = {
         reducer needs the index after the moved node is taken out.{" "}
         <code>resolveDrop</code> converts one to the other in exactly one place.
         Drag downward inside one reel and the two numbers differ; drag across
-        reels and they agree.
+        reels and they agree. Drop on a gap, or on a row&rsquo;s upper or lower
+        half.
       </Lesson>
       <DragBoard>
         <DragCollection id={IDS.reelA} />
@@ -2006,10 +2178,10 @@ export const DragAndDrop: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const drag = async (grip: string, gap: string) => {
+    const drag = async (from: string, to: string) => {
       await userEvent.pointer([
-        { keys: "[MouseLeft>]", target: canvas.getByTestId(grip) },
-        { target: canvas.getByTestId(gap) },
+        { keys: "[MouseLeft>]", target: canvas.getByTestId(from) },
+        { target: canvas.getByTestId(to) },
         { keys: "[/MouseLeft]" },
       ]);
     };
@@ -2054,6 +2226,16 @@ export const DragAndDrop: Story = {
     await userEvent.click(canvas.getByTestId("undo"));
     await expect(canvas.getByTestId("order-reel-b")).not.toHaveTextContent(
       "shot-reveal",
+    );
+
+    // --- 6. a ROW is a drop target too ------------------------------------
+    //
+    // `userEvent` aims at an element's CENTRE, and the midpoint test is
+    // `y > middle`, so a centre hit resolves to "before this row" — which is
+    // exactly the boundary case worth pinning.
+    await drag("grip-shot-reveal", "row-scene-two");
+    await expect(canvas.getByTestId("order-reel-a")).toHaveTextContent(
+      "shot-reveal, scene-two",
     );
   },
 };
