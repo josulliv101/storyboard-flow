@@ -601,6 +601,20 @@ export type RejectionCode =
   /** A seed's data failed its own `parse`. See `issues`. */
   | "parse-failed"
   | "leaf-seed-with-children"
+  /**
+   * A gesture that would push the graph past `EngineConfig.maxNodes` or
+   * `maxDepth`.
+   *
+   * Named to mirror `would-create-cycle` rather than the ingress pair
+   * `document-too-large` / `document-too-deep`, because the subject is
+   * different: those describe a DOCUMENT that is already too big, this
+   * describes a COMMAND that has not happened. The ceilings used to live only
+   * on the ingress doors, so the reducer could grow a graph that
+   * `engine.serialize` then emitted and `engine.deserialize` refused — the
+   * engine producing documents it cannot read back.
+   */
+  | "would-exceed-max-nodes"
+  | "would-exceed-max-depth"
   /** The consumer's PRE-commit `commandPolicy` vetoed it. */
   | "policy-rejected";
 
@@ -617,6 +631,12 @@ export type Rejection = Readonly<{
   issues?: readonly Issue[];
   /** The codec's verbatim complaint, on `"edit-rejected"`. */
   editRejection?: EditRejection;
+  /** The ceiling that was hit, on the two `would-exceed-*` codes. Named the
+   *  same as `StructuralError`'s pair so a consumer reporting a limit to the
+   *  user reads it the same way whichever door refused. */
+  limit?: number;
+  /** What the graph WOULD have reached. */
+  actual?: number;
 }>;
 
 /**
@@ -1489,6 +1509,51 @@ export function makeDataChange<Ts extends readonly unknown[]>(
  * helper whose whole job is to describe a failure must not have a failure mode
  * of its own.
  */
+/**
+ * `describeThrown`'s sibling, for an untrusted VALUE rather than a thrown one.
+ *
+ * `JSON.parse` is ITERATIVE in V8 and `JSON.stringify` is RECURSIVE, so a
+ * payload that parsed perfectly well can still blow the stack while the engine
+ * composes the refusal that rejects it — a throw out of a function whose whole
+ * contract is a `Result`. It does not take an exotic input: ~6,000 levels is a
+ * 12 KB request body, and the failure lands on the trust boundary where every
+ * hostile document arrives.
+ *
+ * Also CLAMPED, which is a second and smaller problem the same edit closes: an
+ * unclamped describer echoes a 5 MB string straight into a message a consumer
+ * will log.
+ *
+ * NOT re-exported from ./index — a consumer reads the strings it produces and
+ * never calls it.
+ */
+export function describeValue(value: unknown): string {
+  if (value === null) return "null";
+  // Primitives cannot nest, so they need no walk. `String` is safe on a symbol
+  // where a template literal is not, and a function's source can be long, so
+  // everything here still goes through the same clamp.
+  if (typeof value !== "object" && typeof value !== "string") {
+    return clamp(String(value));
+  }
+  try {
+    const text = JSON.stringify(value);
+    // `stringify` answers `undefined` for a function or a bare symbol.
+    if (text === undefined) return typeof value;
+    return clamp(text);
+  } catch {
+    // Stack exhaustion, or a cycle. Either way the shape is all that can be
+    // said safely, and the stack is fully usable again once the frame unwinds.
+    return Array.isArray(value) ? "[deeply nested array]" : "[deeply nested object]";
+  }
+}
+
+const DESCRIBE_LIMIT = 120;
+
+function clamp(text: string): string {
+  return text.length > DESCRIBE_LIMIT
+    ? `${text.slice(0, DESCRIBE_LIMIT - 3)}...`
+    : text;
+}
+
 export function describeThrown(thrown: unknown): string {
   if (thrown instanceof Error) return thrown.message;
   return String(thrown);

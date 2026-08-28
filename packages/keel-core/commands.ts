@@ -437,6 +437,29 @@ function isNoOpMove(moves: readonly Move[]): boolean {
   );
 }
 
+/**
+ * The tallest LIVE subtree under `id`, counting `id` itself as 1.
+ *
+ * `subtreeIds` descends only `loaded` collections, which is the right rule
+ * here: an unloaded branch contributes its placeholder and nothing more,
+ * exactly as it does when the ingress door measures the same graph. So a move
+ * is judged on the depth the graph actually holds, and loading that branch
+ * later is bounded by `loadChildrenInto`'s own check rather than pre-refused
+ * here on a guess about what it might contain.
+ */
+function tallestSubtree<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): number {
+  const base = ancestorChain(graph, id).length;
+  let tallest = 1;
+  for (const descendantId of subtreeIds(graph, id)) {
+    const depth = ancestorChain(graph, descendantId).length - base + 1;
+    if (depth > tallest) tallest = depth;
+  }
+  return tallest;
+}
+
 function applyMoveNodes<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   nodeIds: readonly NodeId[],
@@ -454,6 +477,24 @@ function applyMoveNodes<Ts extends readonly unknown[], S>(
       `toIndex ${toIndex} is outside [0, ${plan.postRemovalChildren.length}] (POST-REMOVAL) for ${JSON.stringify(toParentId)}.`,
       { parentId: toParentId, index: toIndex },
     );
+  }
+
+  // DEPTH, checked against the destination rather than the source: relocating a
+  // deep subtree under a deep parent adds the two together, and only the
+  // ingress doors used to notice.
+  if (ctx.maxDepth !== null) {
+    const parentDepth = depthOf(graph, toParentId);
+    for (const id of plan.orderedIds) {
+      const deepest = parentDepth + tallestSubtree<Ts, S>(graph, id);
+      if (deepest > ctx.maxDepth) {
+        return fail(
+          "would-exceed-max-depth",
+          `Moving ${JSON.stringify(id)} here would nest ${deepest} levels, above the ` +
+            `${ctx.maxDepth} ceiling. Raise or clear EngineConfig.maxDepth if this is legitimate.`,
+          { nodeIds: [id], parentId: toParentId, limit: ctx.maxDepth, actual: deepest },
+        );
+      }
+    }
   }
 
   const built = buildMoves(plan, toParentId, toIndex);
@@ -562,8 +603,36 @@ function applyInsertNodes<Ts extends readonly unknown[], S>(
     );
   }
 
+  // DEPTH first, because it can be answered from the seeds alone and refusing
+  // before `buildSeedPlacements` mints ids keeps a refused command from having
+  // consumed any of the id space.
+  if (ctx.maxDepth !== null) {
+    const deepest = depthOf(graph, toParentId) + tallestSeed<Ts, S>(seeds);
+    if (deepest > ctx.maxDepth) {
+      return fail(
+        "would-exceed-max-depth",
+        `Inserting here would nest ${deepest} levels, above the ${ctx.maxDepth} ceiling. ` +
+          `Raise or clear EngineConfig.maxDepth if this is legitimate.`,
+        { parentId: toParentId, limit: ctx.maxDepth, actual: deepest },
+      );
+    }
+  }
+
   const built = buildSeedPlacements(graph, seeds, toParentId, toIndex, ctx);
   if (!built.ok) return built;
+
+  // COUNTED FROM THE PLACEMENTS, not from `seeds.length`: one seed may carry a
+  // whole subtree, and a per-command check would let three nodes in under a
+  // ceiling with room for one.
+  const total = graph.nodesById.size + built.value.length;
+  if (total > ctx.maxNodes) {
+    return fail(
+      "would-exceed-max-nodes",
+      `Inserting ${built.value.length} node(s) into a graph of ${graph.nodesById.size} would reach ` +
+        `${total}, above the ${ctx.maxNodes} ceiling. Raise EngineConfig.maxNodes if this is legitimate.`,
+      { parentId: toParentId, limit: ctx.maxNodes, actual: total },
+    );
+  }
 
   const patch: Patch<Ts, S> = { type: "inserted", placements: built.value };
   return ok({ graph: applyPatch(graph, patch, ctx), patch });
@@ -605,6 +674,46 @@ function checkInsertTarget<Ts extends readonly unknown[], S>(
  *
  * EXPLICIT STACK, never recursion — seed depth is consumer input.
  */
+/**
+ * How deep `id` sits, counting the roots as level 1.
+ *
+ * `ancestorChain` excludes `id` itself, so its length plus one IS the depth —
+ * the same arithmetic `loadChildrenInto` uses to tell `buildDocument` where a
+ * lazy payload is being attached. Stated once here so the reducer and the
+ * ingress door cannot drift about what "depth" counts.
+ */
+function depthOf<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): number {
+  return ancestorChain(graph, id).length + 1;
+}
+
+/**
+ * The tallest subtree in a seed batch, counting the seed itself as 1.
+ *
+ * Walked with an explicit stack for the same reason every other walk in this
+ * package is: a seed's children are consumer-supplied and their nesting is not
+ * this module's to trust.
+ */
+function tallestSeed<Ts extends readonly unknown[], S>(
+  seeds: readonly Seed<Ts, S>[],
+): number {
+  let tallest = 0;
+  const stack: Readonly<{ seed: Seed<Ts, S>; depth: number }>[] = seeds.map(
+    (seed) => ({ seed, depth: 1 }),
+  );
+  while (stack.length > 0) {
+    const frame = stack.pop();
+    if (frame === undefined) break;
+    if (frame.depth > tallest) tallest = frame.depth;
+    const kids = frame.seed.children;
+    if (kids === undefined) continue;
+    for (const kid of kids) stack.push({ seed: kid, depth: frame.depth + 1 });
+  }
+  return tallest;
+}
+
 function buildSeedPlacements<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   seeds: readonly Seed<Ts, S>[],

@@ -35,6 +35,7 @@
 
 import {
   describeThrown,
+  describeValue,
   makeCollectionNode,
   makeLeafNode,
   makeQuarantinedNode,
@@ -58,6 +59,7 @@ import {
 } from "./types";
 
 import {
+  ancestorChain,
   ownsItsSubtree,
   bumpSubtreeRevs,
   childrenStateOf,
@@ -167,7 +169,7 @@ export function parseSerializedDocument(
   if (raw.formatVersion !== 1) {
     return fail({
       code: "unsupported-format-version",
-      message: `Unsupported formatVersion ${JSON.stringify(raw.formatVersion)} (this engine reads 1)`,
+      message: `Unsupported formatVersion ${describeValue(raw.formatVersion)} (this engine reads 1)`,
     });
   }
 
@@ -302,7 +304,7 @@ function parseSerializedNode(
     if (!isWireChildrenState(raw.childrenState)) {
       return fail({
         code: "invalid-children-state",
-        message: `node ${JSON.stringify(raw.id)}: childrenState must be "unloaded", "reference" or "missing", received ${JSON.stringify(raw.childrenState)}`,
+        message: `node ${JSON.stringify(raw.id)}: childrenState must be "unloaded", "reference" or "missing", received ${describeValue(raw.childrenState)}`,
         rawId: raw.id,
       });
     }
@@ -544,6 +546,20 @@ function buildDocument<Ts extends readonly unknown[], S>(
      * ever the one that is too big.
      */
     existingNodeCount?: number;
+    /**
+     * How deep the payload's own roots already sit in the HOST graph.
+     *
+     * The exact companion to `existingNodeCount`, and it was missing for the
+     * same reason that one was needed: `maxDepth` counted from each payload's
+     * own roots and ignored where they were being attached, so the lazy door
+     * walked straight past the ceiling. MEASURED before this existed: a
+     * `maxDepth` of 3, then twelve successive one-node `store.load` calls each
+     * attaching to the last, produced a graph 13 levels deep. Every one of
+     * those payloads was legally 1 level deep on its own.
+     *
+     * 1 for the eager door, where the roots ARE the graph's roots.
+     */
+    existingDepth?: number;
   }>,
 ): Result<BuiltDocument<Ts, S>, StructuralError> {
   const parsed = parseSerializedDocument(raw, {
@@ -740,7 +756,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
     const root = rootIds[i];
     if (root !== undefined) {
       stack.push(root);
-      depths.push(1);
+      depths.push(options.existingDepth ?? 1);
     }
   }
   while (stack.length > 0) {
@@ -1295,6 +1311,10 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
   const built = buildDocument<Ts, S>(doc, ctx, {
     rootsMustBeContainers: false,
     existingNodeCount: graph.nodesById.size,
+    // The payload's roots become THIS target's children, so they land one level
+    // below it. `ancestorChain` excludes `id` itself, hence the +2: one for the
+    // target, one for the children about to hang off it.
+    existingDepth: ancestorChain(graph, id).length + 2,
   });
   if (!built.ok) {
     return loadRejection({
