@@ -203,4 +203,10 @@ export {
 // The assembled engine
 // ---------------------------------------------------------------------------
 
-export { createEngine } from "./engine";
+export {
+  createEngine,
+  // Named for the same reason the other two defaults are: a consumer deciding
+  // whether to raise `EngineConfig.interactiveNodeBudget` needs to see what
+  // they are raising it from, and the measurement that set it.
+  DEFAULT_INTERACTIVE_NODE_BUDGET,
+} from "./engine";
