@@ -174,6 +174,41 @@ function inDocumentOrder<Ts extends readonly unknown[], S>(
 }
 
 /**
+ * `id -> index` within one parent's children, computed ONCE per parent.
+ *
+ * Both bulk paths — `planMove` and `applyRemoveNodes` — used
+ * `getChildren(graph, parentId).indexOf(id)` once per named node, which is
+ * O(siblings) each and therefore O(K x N) for K nodes out of one strip. That is
+ * the patch-BUILDING half of the same quadratic `spliceOutMany` fixed on the
+ * applying half; fixing one and not the other left select-all-then-Delete at
+ * 62x growth for 10x the siblings when a linear reference moved 15x.
+ *
+ * FIRST occurrence wins, which is what `indexOf` answered. A repeated id in one
+ * children array is an invariant violation the audit reports; this is not the
+ * place to disagree with the old behaviour about it.
+ *
+ * Cached per CALL, never across calls: the map is keyed by parent and read off
+ * a specific graph, and holding it beyond the command would be a stale index
+ * one mutation later.
+ */
+function childSlots<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  parentId: NodeId,
+  cache: Map<NodeId, ReadonlyMap<NodeId, number>>,
+): ReadonlyMap<NodeId, number> {
+  const hit = cache.get(parentId);
+  if (hit !== undefined) return hit;
+  const slots = new Map<NodeId, number>();
+  const children = getChildren(graph, parentId);
+  for (let index = 0; index < children.length; index += 1) {
+    const id = children[index];
+    if (id !== undefined && !slots.has(id)) slots.set(id, index);
+  }
+  cache.set(parentId, slots);
+  return slots;
+}
+
+/**
  * Drop every id that lives under another id in the same set — a subtree travels
  * with its root, so naming both a folder and a clip inside it must not move (or
  * remove) that clip twice.
@@ -326,6 +361,7 @@ function planMove<Ts extends readonly unknown[], S>(
   const orderedIds = inDocumentOrder(graph, kept);
 
   const originById = new Map<NodeId, Origin>();
+  const slotCache = new Map<NodeId, ReadonlyMap<NodeId, number>>();
   for (const id of orderedIds) {
     const parentId = getParent(graph, id);
     if (parentId === null) {
@@ -335,8 +371,8 @@ function planMove<Ts extends readonly unknown[], S>(
         nodeIds: [id],
       });
     }
-    const index = getChildren(graph, parentId).indexOf(id);
-    if (index < 0) {
+    const index = childSlots(graph, parentId, slotCache).get(id);
+    if (index === undefined) {
       return fail(
         "unknown-node",
         `Node ${JSON.stringify(id)} is not in its parent's children array.`,
@@ -734,6 +770,7 @@ function applyRemoveNodes<Ts extends readonly unknown[], S>(
   const roots = inDocumentOrder(graph, pruneDescendants(graph, unique));
 
   const placements: Placement<Ts, S>[] = [];
+  const slotCache = new Map<NodeId, ReadonlyMap<NodeId, number>>();
   for (const rootId of roots) {
     // `subtreeIds` is pre-order and descends only `loaded` collections, so an
     // unloaded branch contributes exactly its placeholder — which is the whole
@@ -765,8 +802,8 @@ function applyRemoveNodes<Ts extends readonly unknown[], S>(
           nodeIds: [id],
         });
       }
-      const index = getChildren(graph, parentId).indexOf(id);
-      if (index < 0) {
+      const index = childSlots(graph, parentId, slotCache).get(id);
+      if (index === undefined) {
         return fail(
           "unknown-node",
           `Node ${JSON.stringify(id)} is not in its parent's children array.`,
