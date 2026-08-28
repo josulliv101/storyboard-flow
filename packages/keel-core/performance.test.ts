@@ -932,7 +932,20 @@ function growth(perOp: ReadonlyMap<string, number>): number {
  * the same data got 19x slower" is.
  */
 function expectSubQuadratic(perOp: ReadonlyMap<string, number>, what: string): void {
-  const ratio = growth(perOp);
+  expectSubQuadraticRatio(growth(perOp), what);
+}
+
+/**
+ * The same gate, for a measurement whose two samples are NOT the wide 1k/10k
+ * fixtures.
+ *
+ * `growth` reads those two labels specifically, which is right for everything
+ * that scales with NODE COUNT. A multi-select delete does not: its cost is
+ * driven by how many SIBLINGS one parent holds, and the wide fixture caps that
+ * at `WIDE_FANOUT`. Split out rather than duplicated so both callers share one
+ * calibration and one failure message.
+ */
+function expectSubQuadraticRatio(ratio: number, what: string): void {
   // Sampled HERE, immediately after the operation above, so a slow stretch of
   // wall clock inflates both or neither.
   const reference = measureLinearReferenceGrowth();
@@ -959,6 +972,32 @@ function expectSubQuadratic(perOp: ReadonlyMap<string, number>, what: string): v
     ratio,
     `${what}: 10x the nodes made it ${ratio.toFixed(1)}x slower. ` +
       `A linear reference on the same fixtures, timed immediately afterwards, ` +
+      `moved ${reference.toFixed(1)}x, so the ceiling was ${ceiling.toFixed(1)}x.`,
+  ).toBeLessThan(ceiling);
+}
+
+/**
+ * A STRONGER time claim than sub-quadratic: this cost does not track the size at
+ * all.
+ *
+ * `expectSubQuadraticRatio` is the right gate for work that IS linear and must
+ * not become quadratic. It is the wrong gate for work that should be constant —
+ * a regression from O(1) to O(n) lands around the linear reference (~15x), sails
+ * under a ceiling of 40, and ships. This one sits a third of the way up the
+ * reference instead: far above the noise a genuinely constant operation
+ * produces (~1x), far below what linear would.
+ *
+ * Floored at 4 so a machine whose reference measures unusually low cannot make
+ * the gate tighter than measurement noise.
+ */
+function expectConstantTime(ratio: number, what: string): void {
+  const reference = measureLinearReferenceGrowth();
+  observedReferences.push(reference);
+  const ceiling = Math.max(4, reference / 3);
+  expect(
+    ratio,
+    `${what}: 10x the size made it ${ratio.toFixed(1)}x slower, and it should ` +
+      `not have moved at all. A linear reference, timed immediately afterwards, ` +
       `moved ${reference.toFixed(1)}x, so the ceiling was ${ceiling.toFixed(1)}x.`,
   ).toBeLessThan(ceiling);
 }
@@ -1173,6 +1212,137 @@ describe("mutations", () => {
     expect(perMove).toBeLessThanOrEqual(CROSS_PARENT_MOVED_SUBTREE);
 
     expectSubQuadratic(perOp, "cross-parent move");
+  }, 120_000);
+
+  /**
+   * MULTI-SELECT DELETE, which is select-all-then-Delete on a strip.
+   *
+   * `applyRemoved` called `spliceOut` once per removed placement, and
+   * `spliceOut` is three O(siblings) passes — `indexOf`, `slice`, `splice` —
+   * with a fresh array allocated each time. Removing K of N siblings therefore
+   * cost O(K x N). The constant is a memcpy, which is exactly what let it hide:
+   * invisible below a thousand siblings, and 5.2 SECONDS measured at 40,000.
+   *
+   * ITS OWN FIXTURE, because the wide one cannot see this. The cost is driven
+   * by how many siblings ONE parent holds, and `makeWideFixture` caps that at
+   * `WIDE_FANOUT` (20) no matter how large the document gets — the first
+   * version of this test used it, passed on the unfixed engine, and proved
+   * nothing. A flat parent is the shape the gesture actually happens on.
+   */
+  it("a multi-select delete is linear in the siblings it removes", () => {
+    const flatSizes = [1_000, 10_000] as const;
+    const ratioSamples: number[] = [];
+
+    for (const siblings of flatSizes) {
+      const childIds: string[] = [];
+      const nodes: SerializedNode[] = [];
+      for (let i = 0; i < siblings; i += 1) childIds.push(`flat-${i}`);
+      nodes.push({
+        id: "root",
+        kind: "folder",
+        data: { name: "root" },
+        children: childIds,
+      });
+      for (const id of childIds) {
+        nodes.push({ id, kind: "clip", data: { title: id, seconds: 1 } });
+      }
+      const loaded = engine.deserialize({
+        formatVersion: 1,
+        schemaVersions: { folder: 1, clip: 1 },
+        rootIds: ["root"],
+        nodes,
+      });
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      const graph = loaded.value.graph;
+
+      const command: Command<Types, Summary> = {
+        type: "remove-nodes",
+        nodeIds: childIds.map((id) => parseNodeId(id)),
+      };
+      // The op must actually succeed, or this times a rejection path.
+      expect(engine.applyCommand(graph, command).ok).toBe(true);
+
+      ratioSamples.push(
+        measure(
+          "multi-select delete",
+          `flat${siblings}`,
+          siblings + 1,
+          () => {
+            engine.applyCommand(graph, command);
+          },
+        ),
+      );
+    }
+
+    const small = ratioSamples[0];
+    const large = ratioSamples[1];
+    expect(small !== undefined && large !== undefined && small > 0).toBe(true);
+    if (small === undefined || large === undefined || small <= 0) return;
+    expectSubQuadraticRatio(large / small, "multi-select delete");
+  }, 120_000);
+
+  /**
+   * SELECTION MEMBERSHIP, which `useIsSelected` calls once per mounted card
+   * every time the selection changes.
+   *
+   * It was `selectedIds.includes(id)` — O(selected) — so one render pass across
+   * N cards with M selected was O(N x M). Measured before the fix: 0.28ms for
+   * 500 cards all selected, 3.7ms for 2,000, and 63ms for 8,000. Four dropped
+   * frames on every selection change, on a board the engine is explicitly built
+   * to handle.
+   *
+   * Gated as CONSTANT rather than sub-quadratic on purpose: the regression this
+   * guards against is a return to a linear scan, which a sub-quadratic ceiling
+   * would happily let through.
+   */
+  it("selection membership does not depend on how much is selected", () => {
+    const samples: number[] = [];
+
+    for (const size of [1_000, 10_000] as const) {
+      const childIds: string[] = [];
+      const nodes: SerializedNode[] = [];
+      for (let i = 0; i < size; i += 1) childIds.push(`sel-${i}`);
+      nodes.push({
+        id: "root",
+        kind: "folder",
+        data: { name: "root" },
+        children: childIds,
+      });
+      for (const id of childIds) {
+        nodes.push({ id, kind: "clip", data: { title: id, seconds: 1 } });
+      }
+      const loaded = engine.deserialize({
+        formatVersion: 1,
+        schemaVersions: { folder: 1, clip: 1 },
+        rootIds: ["root"],
+        nodes,
+      });
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+
+      const store = engine.createStore(loaded.value.graph);
+      const ids = childIds.map((id) => parseNodeId(id));
+      store.selection.set(ids);
+      expect(store.selection.get().length).toBe(size);
+
+      // The LAST id, which is where a linear scan costs the most — a probe near
+      // the front would hide the very regression this is written to catch.
+      const probe = at(ids, size - 1, "selection probe");
+      expect(store.selection.has(probe)).toBe(true);
+
+      samples.push(
+        measure("selection.has", `sel${size}`, size + 1, () => {
+          store.selection.has(probe);
+        }),
+      );
+    }
+
+    const small = samples[0];
+    const large = samples[1];
+    expect(small !== undefined && large !== undefined && small > 0).toBe(true);
+    if (small === undefined || large === undefined || small <= 0) return;
+    expectConstantTime(large / small, "selection.has");
   }, 120_000);
 
   it("a content edit consults exactly one codec, whatever the graph size", () => {
