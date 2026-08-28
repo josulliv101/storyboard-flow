@@ -58,12 +58,12 @@ import {
 } from "./types";
 
 import {
+  ownsItsSubtree,
   bumpSubtreeRevs,
   childrenStateOf,
   documentOrder,
   getChildren,
   getNode,
-  ownsSubtree,
   rebuildDerivedIndexes,
   sourceKeyOf,
 } from "./graph";
@@ -974,8 +974,10 @@ function findDuplicateOwner<Ts extends readonly unknown[], S>(
 ): StructuralError | null {
   const owners = new Map<string, NodeId>();
   for (const [id, node] of graph.nodesById) {
-    const state = childrenStateOf(graph, id);
-    if (state === null || !ownsSubtree(state)) continue;
+    // DELEGATED, not re-derived. This site had the RIGHT answer about leaves
+    // and the other two did not; sharing one predicate is what stops that being
+    // rediscovered a third time.
+    if (!ownsItsSubtree(node)) continue;
     const key = sourceKeyOf(registry, node);
     if (key === null) continue;
     const existing = owners.get(key);
