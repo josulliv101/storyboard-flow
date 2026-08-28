@@ -42,6 +42,7 @@ import {
 import {
   ancestorChain,
   bumpSubtreeRevs,
+  documentOrderComparator,
   documentOrder,
   getChildren,
   getNode,
@@ -124,9 +125,47 @@ function inDocumentOrder<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   ids: Iterable<NodeId>,
 ): readonly NodeId[] {
+  const list = [...ids];
+  if (list.length <= 1) return list;
+
+  // FAST PATH: one parent. Dragging inside a strip is the commonest gesture
+  // there is, and the answer is just the sibling slots.
+  const first = list[0];
+  if (first !== undefined) {
+    const parentId = getParent(graph, first);
+    if (parentId !== null && list.every((id) => getParent(graph, id) === parentId)) {
+      const siblings = getChildren(graph, parentId);
+      const slots = new Map<NodeId, number>();
+      for (const [index, id] of siblings.entries()) slots.set(id, index);
+      if (list.every((id) => slots.has(id))) {
+        return list.sort((a, b) => (slots.get(a) ?? 0) - (slots.get(b) ?? 0));
+      }
+    }
+  }
+
+  // GENERAL PATH: compare root-paths, which is O(k log k x depth) and touches
+  // only the ancestors of the ids actually named.
+  const compare = documentOrderComparator(graph);
+  let declined = false;
+  const sorted = list.slice().sort((a, b) => {
+    const verdict = compare(a, b);
+    if (verdict === null) {
+      declined = true;
+      return 0;
+    }
+    return verdict;
+  });
+  if (!declined) return sorted;
+
+  // The comparator says "cannot say" only when `parentById` and `childrenById`
+  // disagree, or a node is unreachable from every root — both invariant
+  // violations `findInvariantViolation` reports. Fall back to the authoritative
+  // walk, which still puts an unranked id LAST deterministically, because a
+  // drag that discovered a broken graph should still resolve somewhere rather
+  // than crash.
   const rank = documentOrderRank(graph);
   const unreachable = Number.MAX_SAFE_INTEGER;
-  return [...ids].sort(
+  return list.sort(
     (a, b) => (rank.get(a) ?? unreachable) - (rank.get(b) ?? unreachable),
   );
 }

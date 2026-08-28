@@ -751,7 +751,7 @@ export function reindexPlacementsWithinSubtree<Ts extends readonly unknown[], S>
  * costs the same order as the rebuild it replaces. It is never worse than the
  * rebuild, and for every realistic bucket it is not close.
  */
-function documentOrderComparator<Ts extends readonly unknown[], S>(
+export function documentOrderComparator<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
 ): (a: NodeId, b: NodeId) => number | null {
   const pathCache = new Map<NodeId, readonly NodeId[]>();

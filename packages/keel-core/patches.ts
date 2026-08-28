@@ -986,6 +986,18 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
     // does not consider meaningful (a normalized copy, a cached derivation), and
     // comparing those would refuse valid undos; the wire form is the codec's own
     // statement of what its value IS.
+    // IDENTITY FIRST. `change.before` and the node's live data are usually the
+    // very same object — the reducer stores exactly what `applyEdit` returned
+    // and the patch records that reference — so the common replay is settled
+    // without calling the consumer's `serialize` at all. Sound because same
+    // reference implies same serialization for any deterministic codec, and a
+    // non-deterministic one already fails the slow path.
+    //
+    // Worth doing for the same reason the cross-parent move stopped asking for
+    // `contentKey`: `serialize` is consumer code of unknown cost, and undo runs
+    // it once per changed node per verification.
+    if (Object.is(change.before, node.data)) continue;
+
     if (!deepEqual(codec.serialize(change.before), codec.serialize(node.data))) {
       return replayError(
         "data-mismatch",
