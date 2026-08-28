@@ -56,6 +56,11 @@ export default defineConfig({
             "../../packages/timeline-domain/**/*.test.ts",
             "../../packages/collections-core/**/*.test.ts",
             "../../packages/keel-core/**/*.test.ts",
+            // keel-react's runtime tests. They existed and never ran: the
+            // globs named six packages and this was not one of them, and the
+            // file is `.tsx` so a `*.test.ts` glob alone would still miss it.
+            "../../packages/keel-react/**/*.test.ts",
+            "../../packages/keel-react/**/*.test.tsx",
             "../../packages/timeline-model/**/*.test.ts",
             "../../packages/timeline-widget/**/*.test.ts",
           ],

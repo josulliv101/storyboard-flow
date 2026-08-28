@@ -129,10 +129,12 @@ function nothingToReplay(direction: "undo" | "redo"): ReplayRejection {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the engine. THROWS on a duplicate `kind` (via `buildRegistry`) and on
- * nothing else, ever — a duplicate is a programmer error at module init, before
- * any data has been read, and there is no partial-success answer worth
- * returning when the consumer's own module graph is wrong.
+ * Build the engine. THROWS on a duplicate `kind` (via `buildRegistry`) and on a
+ * duplicate fold `key`, and on nothing else, ever — both are programmer errors
+ * at module init, before any data has been read, and there is no
+ * partial-success answer worth returning when the consumer's own module graph
+ * is wrong. Everything that can go wrong once DATA is involved returns a
+ * `Result` instead.
  *
  * Defaults: `onUnknownKind` and `onParseFailure` quarantine, `mintId` a
  * counter-plus-random id, `now` `Date.now`, `historyLimit` unbounded,
@@ -145,6 +147,34 @@ export function createEngine<
   F extends FoldRegistry<Ts, S>,
 >(config: EngineConfig<Ts, S, F>): Engine<Ts, S, F> {
   const registry = buildRegistry(config.types);
+
+  // Fold keys must be unique, and this is the check `readCachedFold` in
+  // ./folds names as living here.
+  //
+  // Its cast from the cache's `unknown` slot is sound ONLY because the slot was
+  // written under this same `fold.key`, so the value is that fold's `A`. Two
+  // folds sharing a key share cache slots, and a `Folded<number>` then comes
+  // back typed as whatever the other fold declared. Nothing else would notice:
+  // the registry is keyed by the RECORD key, which may differ from the fold's
+  // own `.key`, so a duplicate is invisible at the call site and produces a
+  // wrong-typed value rather than an error.
+  //
+  // THROWS, like `buildRegistry`'s duplicate kind, for the same reason: it is a
+  // programmer error at module init, before any data has been read, and there
+  // is no partial-success answer worth returning.
+  const foldKeyOwners = new Map<string, string>();
+  for (const [entryKey, fold] of Object.entries(config.folds)) {
+    const prior = foldKeyOwners.get(fold.key);
+    if (prior !== undefined) {
+      throw new Error(
+        `keel: duplicate fold key ${JSON.stringify(fold.key)} — registered as ` +
+          `both ${JSON.stringify(prior)} and ${JSON.stringify(entryKey)}. Fold ` +
+          `keys are cache keys; two folds sharing one would read each other's ` +
+          `cached values.`,
+      );
+    }
+    foldKeyOwners.set(fold.key, entryKey);
+  }
 
   // A fresh symbol per call is the whole cross-instance guard: `NodeId` is
   // branded globally, so an id from another engine typechecks here, and this is

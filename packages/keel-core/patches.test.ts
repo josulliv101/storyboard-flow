@@ -789,8 +789,12 @@ describe("applyPatch: removed", () => {
     for (const gone of ["f1", "c", "f2"]) {
       expect(next.nodesById.has(nid(gone))).toBe(false);
       expect(next.parentById.has(nid(gone))).toBe(false);
-      expect(next.subtreeRevById.has(nid(gone))).toBe(false);
       expect(next.childrenById.has(nid(gone))).toBe(false);
+      // The rev entry SURVIVES on purpose. It is the fold cache's only
+      // invalidation mechanism, and dropping it let a re-inserted id restart
+      // low enough to reach the dead lineage's cached values. See the
+      // tombstone comment in `applyRemoved`.
+      expect(next.subtreeRevById.has(nid(gone))).toBe(true);
     }
     // The surviving placement of asset-1 is `a`; `c` left with the subtree.
     expect(
