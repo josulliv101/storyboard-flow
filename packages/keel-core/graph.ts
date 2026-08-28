@@ -402,17 +402,39 @@ export function sourceKeyOf<Ts extends readonly unknown[], S>(
 /**
  * Is this node the OWNING placement for its `sourceKey`?
  *
- * A leaf (and a quarantined leaf) has no `ChildrenState` at all, and a
- * placement that cannot be a reference is an owner by default — the `reference`
- * state exists to disclaim a subtree, and a node with no subtree has nothing to
- * disclaim.
+ * THE SINGLE ANSWER. Three call sites used to decide this independently — this
+ * one, `owningSourceKey` in ./commands, and `findDuplicateOwner` in ./serialize
+ * — and they did not agree about leaves. The first two said a leaf owns; the
+ * third said it does not. The consequence was a document that `deserialize`
+ * ACCEPTED, `findInvariantViolation` then condemned as `duplicate-owner`, and
+ * the reducer refused every edit to: it loaded, failed its own audit, and could
+ * not be repaired through the API. All three now call this.
+ *
+ * A LEAF OWNS NOTHING, which reverses what this function used to return.
+ * The earlier reading was that "a placement that cannot be a reference is an
+ * owner by default", and that is exactly backwards once you follow it through:
+ *
+ *   - `sourceKey` is "same stored SUBTREE", and the rejection it produces tells
+ *     the consumer to insert a `reference` instead. A leaf has no
+ *     `ChildrenState`, so it can never BE a reference placement — the rule was
+ *     unsatisfiable for leaves, with no escape hatch in the command vocabulary.
+ *   - `contentKey` already answers the question a repeated clip is actually
+ *     asking ("same asset"), and it permits many placements by design.
+ *   - The alternative fix — making ingress agree with the other two — would
+ *     have made a stored document stop loading, which is the failure quarantine
+ *     exists to prevent and which this repo has already paid for once.
+ *
+ * A quarantined node owns nothing either: its key would have to come from a
+ * codec that by definition did not run, so `sourceKeyOf` already answers `null`
+ * for it. Stated here as well so the predicate is total on its own terms rather
+ * than relying on a caller having checked first.
  */
-function isOwningPlacement<Ts extends readonly unknown[], S>(
-  graph: Graph<Ts, S>,
-  id: NodeId,
+export function ownsItsSubtree<Ts extends readonly unknown[], S>(
+  node: AnyNode<Ts, S>,
 ): boolean {
-  const state = childrenStateOf(graph, id);
-  return state === null || ownsSubtree(state);
+  if (node.quarantined) return false;
+  if (!node.container) return false;
+  return ownsSubtree(node.children);
 }
 
 // ---------------------------------------------------------------------------
@@ -577,7 +599,7 @@ function walkDerivedIndexes<Ts extends readonly unknown[], S>(
     if (ownerBySourceKey === null) continue;
     const sourceKey = sourceKeyOf(registry, node);
     if (sourceKey === null) continue;
-    if (!isOwningPlacement(graph, id)) continue;
+    if (!ownsItsSubtree(node)) continue;
     // FIRST owner in document order wins, deterministically. A second one is a
     // violation, but saying so is `findInvariantViolation`'s job — this
     // function runs on every mutation and must not have an opinion it could
@@ -1384,7 +1406,7 @@ export function findInvariantViolation<Ts extends readonly unknown[], S>(
     if (node === undefined) continue;
     const sourceKey = sourceKeyOf(registry, node);
     if (sourceKey === null) continue;
-    if (!isOwningPlacement(graph, id)) continue;
+    if (!ownsItsSubtree(node)) continue;
     const ownerId = owners.get(sourceKey);
     if (ownerId !== undefined) {
       return {

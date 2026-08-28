@@ -42,6 +42,7 @@ import {
   tryParseNodeId,
 } from "./types";
 import {
+  ownsItsSubtree,
   ancestorChain,
   bumpSubtreeRevs,
   documentOrderComparator,
@@ -212,8 +213,9 @@ function owningSourceKey<Ts extends readonly unknown[], S>(
 ): string | null {
   const key = sourceKeyOf<Ts, S>(ctx.registry, node);
   if (key === null) return null;
-  if (node.quarantined) return null;
-  if (node.container && !ownsSubtree(node.children)) return null;
+  // DELEGATED, not re-derived. This used to spell the rule out again and
+  // disagreed with ./serialize about leaves — see `ownsItsSubtree`.
+  if (!ownsItsSubtree<Ts, S>(node)) return null;
   return key;
 }
 
