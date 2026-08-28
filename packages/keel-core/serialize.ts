@@ -89,6 +89,8 @@ type NodeDraft = {
   children?: readonly string[];
   childrenState?: WireChildrenState;
   missingReason?: string;
+  /** Written only for a quarantined node — see `SerializedNode.schemaVersion`. */
+  schemaVersion?: number;
   summary?: unknown;
   data: unknown;
 };
@@ -305,6 +307,17 @@ function parseSerializedNode(
       });
     }
     draft.childrenState = raw.childrenState;
+  }
+
+  // Off the wire, so validated like everything else there. A non-finite or
+  // non-numeric version would flow straight into `runMigrations`' bounds.
+  if (raw.schemaVersion !== undefined) {
+    if (typeof raw.schemaVersion !== "number" || !Number.isFinite(raw.schemaVersion)) {
+      return malformed(
+        `node ${JSON.stringify(raw.id)}: schemaVersion must be a finite number`,
+      );
+    }
+    draft.schemaVersion = raw.schemaVersion;
   }
 
   if (raw.missingReason !== undefined) {
@@ -801,6 +814,11 @@ function buildDocument<Ts extends readonly unknown[], S>(
     // QUARANTINES — loud, byte-exact, and repairable. Between a silent
     // corruption and a loud refusal, take the refusal.
     const declaredVersion =
+      // THE NODE'S OWN VERSION WINS. Present only on a node re-emitted from
+      // quarantine, where the document-level entry describes the registry
+      // rather than these bytes. Absent everywhere else, so the map below stays
+      // the answer for every healthy node.
+      wire.schemaVersion ??
       // BELT AND BRACES, and unreachable today — verified by mutation: with the
       // null-prototype initializer in `parseSerializedDocument` in place,
       // reverting this guard fails nothing, because every `doc` reaching here
@@ -1137,6 +1155,16 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
       if (!Object.hasOwn(schemaVersions, node.kind)) {
         schemaVersions[node.kind] = node.schemaVersion;
       }
+      // AND on the node itself, unconditionally, because the document-level
+      // entry above is only reachable for an UNREGISTERED kind — a registered
+      // one had the registry's current version written before any node was
+      // examined, and it wins. That is precisely the case that made quarantine
+      // a one-way door: a node quarantined at v1 because the v2 migration threw
+      // was re-emitted labelled v2, so the fixed build's `runMigrations` saw
+      // `from >= to`, ran nothing, and handed v1 bytes to a v2 `parse`. The
+      // node quarantined again, forever, and the mechanism that existed to
+      // preserve it is what destroyed it.
+      draft.schemaVersion = node.schemaVersion;
       if (node.summary !== undefined) draft.summary = node.summary;
       writeChildren(draft, id, node.children);
       nodes.push(draft);
