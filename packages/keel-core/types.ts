@@ -647,6 +647,15 @@ export type ReplayRejectionCode =
   | "kind-mismatch"
   /** The recorded `before` is no longer what the node holds. */
   | "data-mismatch"
+  /**
+   * Replaying this patch would put a second owner on one `sourceKey`.
+   *
+   * Reachable only because `applyIngest` is a NON-UNDOABLE write: it can move a
+   * live node onto a key a sleeping patch still carries, and the replay would
+   * then re-install the original owner beside it. Mirrors `RejectionCode`'s
+   * member of the same name so a consumer handling one handles the other.
+   */
+  | "duplicate-owner"
   /** The store was destroyed. Every mutating call refuses rather than writing
    *  into a graph nothing is listening to — see `Store.destroy`. */
   | "store-destroyed";

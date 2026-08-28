@@ -55,6 +55,9 @@ import {
 } from "./types";
 import {
   bumpSubtreeRevs,
+  ownsItsSubtree,
+  sourceKeyOf,
+  sourceKeyOfKindData,
   bumpSubtreeRevsInto,
   dataChangeLeavesDerivedIndexesIntact,
   derivedIndexNeed,
@@ -749,7 +752,7 @@ export function verifyPatchApplies<Ts extends readonly unknown[], S>(
     case "moved":
       return verifyMoved(graph, patch.moves);
     case "inserted":
-      return verifyInserted(graph, patch.placements);
+      return verifyInserted(graph, patch.placements, ctx);
     case "removed":
       return verifyRemoved(graph, patch.placements);
     case "data-changed":
@@ -844,9 +847,76 @@ function requireLoadedParent<Ts extends readonly unknown[], S>(
   return VERIFY_OK;
 }
 
+/**
+ * Would replaying these ownership claims leave two placements on one
+ * `sourceKey`?
+ *
+ * THE REPLAY DOOR'S HALF OF THE SINGLE-OWNER RULE. The reducer enforces it on
+ * the forward path and `findInvariantViolation` audits it, but verification —
+ * the one door whose entire job is refusing patches whose world has moved — did
+ * not ask. `applyIngest` is what makes that reachable: it is a non-undoable
+ * server write, so it can move a live node onto a key a sleeping patch still
+ * carries, and the replay then re-installs the original owner beside it.
+ *
+ * NO `vacating` EXEMPTION, and the reason is worth recording because the first
+ * version had one. The case it covered was a single patch re-keying two nodes
+ * that swap keys, where the pre-state owner is itself moving off the key it
+ * holds. That patch cannot exist: `planEdits` refuses a same-command swap with
+ * `duplicate-owner` before any patch is built (measured), so nothing on either
+ * history stack can carry one. The exemption cost a second `ReadonlyMap` and a
+ * `sourceKey` call per changed node on the undo path — the same path the last
+ * round worked to get down to zero codec calls for a common replay — to guard a
+ * state the reducer will not produce. Mutation testing is what surfaced it:
+ * deleting the exemption failed no test, which is the signature of code that
+ * defends nothing.
+ *
+ * A hand-built patch could still reach it, and would be refused rather than
+ * applied. A refusal on an exotic hand-built patch is the safe direction.
+ */
+function ownershipConflict<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+  claims: ReadonlyMap<NodeId, string | null>,
+): ReplayRejection | null {
+  const claimedHere = new Map<string, NodeId>();
+  for (const [nodeId, key] of claims) {
+    if (key === null) continue;
+
+    // BELT AND BRACES, and labelled as such rather than claimed as live: the
+    // reducer refuses a command whose own nodes claim one key twice, so no
+    // patch on either stack carries this shape and mutation testing correctly
+    // reports that deleting these lines fails nothing.
+    //
+    // Kept anyway, where the `vacating` exemption was deleted, because the two
+    // fail in opposite directions. Removing `vacating` made the check STRICTER,
+    // and a refusal is the safe answer for a patch nobody can build. Removing
+    // this one makes it fail OPEN — neither node is in `ownerBySourceKey` yet,
+    // so a hand-built patch claiming one key twice would sail through and
+    // install exactly the duplicate owner this function exists to prevent.
+    const alreadyHere = claimedHere.get(key);
+    if (alreadyHere !== undefined && alreadyHere !== nodeId) {
+      return {
+        code: "duplicate-owner",
+        message: `Replaying this patch would give sourceKey ${JSON.stringify(key)} two owners (${alreadyHere} and ${nodeId}).`,
+        nodeId,
+      };
+    }
+    claimedHere.set(key, nodeId);
+
+    const existing = graph.ownerBySourceKey.get(key);
+    if (existing === undefined || existing === nodeId) continue;
+    return {
+      code: "duplicate-owner",
+      message: `Replaying this patch would put ${nodeId} on sourceKey ${JSON.stringify(key)}, which ${existing} now owns.`,
+      nodeId,
+    };
+  }
+  return null;
+}
+
 function verifyInserted<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   placements: readonly Placement<Ts, S>[],
+  ctx: EngineContext<S>,
 ): Result<void, ReplayRejection> {
   const overlay = createChildrenOverlay(graph);
   const willExist = new Set<NodeId>();
@@ -887,6 +957,24 @@ function verifyInserted<Ts extends readonly unknown[], S>(
     overlay.insert(parentId, index, node.id);
     willExist.add(node.id);
     if (isLoadedContainer(node)) overlay.seedLoaded(node.id);
+  }
+
+  // Checked AFTER the structural pass, so a patch that is structurally
+  // impossible reports that rather than an ownership complaint about a node it
+  // could never have placed. Nothing is vacating a key here — an insert only
+  // adds — so the second argument is null.
+  // Gated on the registry, not on the patch: when no codec declares
+  // `sourceKey` at all, `ownerBySourceKey` is permanently empty and this check
+  // could never fire, so the whole pass — including a `sourceKey` call per
+  // arriving node — is skipped rather than run to reach a foregone answer.
+  if (derivedIndexNeed(ctx.registry).source) {
+    const claims = new Map<NodeId, string | null>();
+    for (const { node } of placements) {
+      if (!ownsItsSubtree<Ts, S>(node)) continue;
+      claims.set(node.id, sourceKeyOf<Ts, S>(ctx.registry, node));
+    }
+    const conflict = ownershipConflict(graph, claims);
+    if (conflict !== null) return { ok: false, error: conflict };
   }
 
   return VERIFY_OK;
@@ -1051,6 +1139,45 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
       );
     }
   }
+
+  // THE SAME OWNERSHIP HOLE AS `verifyInserted`, through the data path. A
+  // `sourceKey` is computed FROM data, so restoring an old value re-claims an
+  // old key — and `applyIngest` may have moved another node onto it meanwhile.
+  // The original review named only the insert arm; this one reproduces
+  // identically (edit a box off its key, let the server move a sibling onto it,
+  // then Ctrl-Z) and a fix that guarded one arm would have left the other open.
+  //
+  // Both maps are keyed by the same node set, so a patch that re-keys several
+  // nodes at once — including two swapping keys — is judged on where they all
+  // END UP rather than on one intermediate state that never exists.
+  // Gated for the same reason as the insert arm, and it matters more here: undo
+  // runs this per changed node, and the last round spent real effort getting a
+  // common replay down to zero consumer-codec calls.
+  if (derivedIndexNeed(ctx.registry).source) {
+    const claims = new Map<NodeId, string | null>();
+    for (const change of changes) {
+      const node = graph.nodesById.get(change.nodeId);
+      // Ownership is a property of the node's SHAPE, which a data change cannot
+      // alter — so the live node answers it even though its data is about to be
+      // replaced.
+      //
+      // A COST FILTER, not a correctness one, and mutation testing says so:
+      // deleting `ownsItsSubtree` here fails nothing, because `ownsItsSubtree`
+      // is also what decides who gets INTO `ownerBySourceKey`, so a non-owner's
+      // key is never found there anyway. It stays because it is the cheaper of
+      // the two ways to reach that answer — a shape check instead of a consumer
+      // `sourceKey` call per changed node — and because reading the same
+      // predicate the index was built from is what keeps the two in step.
+      if (node === undefined || !ownsItsSubtree<Ts, S>(node)) continue;
+      claims.set(
+        change.nodeId,
+        sourceKeyOfKindData(ctx.registry, change.kind, change.after),
+      );
+    }
+    const conflict = ownershipConflict(graph, claims);
+    if (conflict !== null) return { ok: false, error: conflict };
+  }
+
   return VERIFY_OK;
 }
 
