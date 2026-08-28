@@ -1362,7 +1362,8 @@ function resolveInsertDrop<Ts extends readonly unknown[], S>(
  *
  * The user loses undo of their own edit to that one node — correct, the server
  * has since overwritten it — and keeps everything else. Cost is
- * O(historyLimit x changes), bounded.
+ * O(historyLimit x changes) — bounded only when a consumer SET a
+ * `historyLimit`, which is not the default. See `EngineConfig.historyLimit`.
  */
 export function applyIngestEdits<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
