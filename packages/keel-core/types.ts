@@ -1250,6 +1250,23 @@ export type EngineConfig<
    */
   maxNodes?: number;
   /**
+   * Live-node count past which each store warns ONCE that its commits no
+   * longer fit an interactive frame. Defaults to
+   * `DEFAULT_INTERACTIVE_NODE_BUDGET`; `0` silences it.
+   *
+   * NOT A CEILING, and specifically not `maxNodes` by another name. `maxNodes`
+   * is a trust boundary on one incoming payload — it refuses hostile input so a
+   * document cannot decide this process's memory. This is a property of ANY
+   * graph however it got that big, including one that loaded at 900 nodes and
+   * grew past the budget an insert at a time, which no load-time check can see.
+   *
+   * Set it when you know your documents are large and you have accepted what a
+   * commit costs there — the number in `DEFAULT_INTERACTIVE_NODE_BUDGET` is
+   * measured, not guessed, and a consumer who names their own has named THE
+   * budget. Setting `0` is the same statement, said louder.
+   */
+  interactiveNodeBudget?: number;
+  /**
    * Ceiling on nesting depth. Defaults to UNBOUNDED, deliberately.
    *
    * Depth is not a correctness risk here and a default would be a fiction:

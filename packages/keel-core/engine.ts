@@ -143,6 +143,46 @@ function defaultMintId(): string {
  */
 const FOLD_CACHE_HEADROOM = 2;
 
+/**
+ * Live-node count past which ONE commit stops fitting an interactive frame.
+ *
+ * WHY THERE IS A NUMBER HERE AT ALL. A commit copies whole maps: every
+ * mutation copies `subtreeRevById` (in `bumpSubtreeRevs`), a data change also
+ * copies `nodesById` (in `applyDataChanged`), and an insert or a removal copies
+ * four maps rather than two. So commit cost is proportional to how many nodes
+ * the document HOLDS and not at all to how small the edit was — one keystroke
+ * on one title pays for the whole graph.
+ *
+ * MEASURED, one `edit-nodes` and one `insert-nodes`, best-of-25, product-shaped
+ * fixture (root -> folders of 20 clips):
+ *
+ *    10,025 nodes   edit  1.21 ms   insert  2.33 ms   0.120 us/node
+ *    25,025 nodes   edit  3.26 ms   insert  6.28 ms   0.130 us/node
+ *    50,025 nodes   edit  7.59 ms   insert 14.92 ms   0.152 us/node
+ *   100,025 nodes   edit 17.06 ms   insert 33.89 ms   0.171 us/node
+ *
+ * Two things in that table decide this number. The per-node cost RISES with
+ * size — 42% worse at 100,000 than at 10,000, as allocation and GC stop being
+ * free — so extrapolating the small sizes linearly UNDERSTATES what a large
+ * document costs. And `DEFAULT_MAX_NODES` is 100,000, where a single keystroke
+ * costs 17 ms: a whole 60Hz frame inside the reducer, before React is asked to
+ * render anything. The engine's own default admits documents it cannot serve
+ * interactively.
+ *
+ * 25,000 is where the worst common gesture — an insert, which copies four maps
+ * — still costs 6.3 ms, about a third of a frame, leaving the rest for render.
+ * Above it the curve bends the wrong way.
+ *
+ * A DIAGNOSTIC, NOT A GATE, and deliberately not a lowered `maxNodes`. That
+ * ceiling is a TRUST boundary: it exists so a hostile payload cannot decide how
+ * much memory this process allocates, and lowering it to serve a performance
+ * argument would refuse honest documents for the wrong reason. The two numbers
+ * answer different questions and both should be sayable — which is the same
+ * mistake, in the other direction, that #585 found between `maxNodes` and
+ * `foldCacheLimit`. This one is audible instead of enforced.
+ */
+export const DEFAULT_INTERACTIVE_NODE_BUDGET = 25_000;
+
 const noop = (): void => {};
 
 function sameIds(a: readonly NodeId[], b: readonly NodeId[]): boolean {
@@ -429,6 +469,51 @@ export function createEngine<
     };
     warnIfCacheCannotCover(initialGraph);
 
+    /**
+     * The OTHER thing a graph outgrows, and it outgrows it silently.
+     *
+     * A commit copies whole maps — see `DEFAULT_INTERACTIVE_NODE_BUDGET` for
+     * which ones and what they cost — so the price of a keystroke is set by how
+     * many nodes the document holds, not by how small the edit was. There is no
+     * symptom short of a laggy app: nothing throws, nothing is dropped, every
+     * result is correct, and the frame is simply gone.
+     *
+     * SAME SHAPE AS THE CACHE WARNING ABOVE, and for the same reasons. Checked
+     * against `nodesById.size` rather than a ceiling, because the ceiling is a
+     * number about payloads and this is a question about THIS graph. Latched,
+     * so it is one integer compare behind a boolean after the first crossing.
+     * Re-checked on commit, because the case a load-time check cannot see is
+     * the document that loads small and grows.
+     *
+     * NOT GATED ON `maxNodes`, and that is the one place it departs from the
+     * cache warning. `foldCacheLimit` and the table it sizes answer the same
+     * question, so naming one is choosing. `maxNodes` does not: it is a trust
+     * boundary against hostile payloads, and a consumer who set it to 50,000 to
+     * bound allocation has said nothing whatever about what they will accept
+     * per keystroke. Reading their security number as a performance opinion
+     * would silence exactly the deployment most likely to need this.
+     */
+    let warnedAboutCommitCost = false;
+    const warnIfCommitCostIsPastInteractive = (candidate: Graph<Ts, S>): void => {
+      if (warnedAboutCommitCost) return;
+      const budget = config.interactiveNodeBudget ?? DEFAULT_INTERACTIVE_NODE_BUDGET;
+      // A named budget is a choice, and `0` is how that choice says "never".
+      if (budget <= 0) return;
+      const nodeCount = candidate.nodesById.size;
+      if (nodeCount <= budget) return;
+      warnedAboutCommitCost = true;
+      console.error(
+        `keel: this graph holds ${nodeCount} live nodes, past the ${budget} this engine ` +
+          `treats as interactive. A commit copies whole maps — every mutation copies ` +
+          `subtreeRevById, a data change also copies nodesById, an insert or removal copies ` +
+          `four — so a commit costs what the DOCUMENT costs, not what the edit costs: ` +
+          `measured at 3.3 ms per keystroke at 25,000 nodes and 17.1 ms at 100,000, where ` +
+          `one keystroke is a whole 60Hz frame before anything renders. Set ` +
+          `EngineConfig.interactiveNodeBudget to silence this once you have priced it.`,
+      );
+    };
+    warnIfCommitCostIsPastInteractive(initialGraph);
+
     // Handed out here, before the store exists and before any fold can run, so
     // a consumer that wants the counters has them from the first `aggregate`
     // rather than from whenever it next remembered to ask.
@@ -552,9 +637,11 @@ export function createEngine<
 
       graph = next;
       auditIfDev(label, next);
-      // A graph grows; the table does not. Latched, so this is one integer
-      // compare behind a boolean after the first crossing.
+      // A graph grows; the table does not, and neither does the frame. Both
+      // latched, so each is one integer compare behind a boolean after the
+      // first crossing.
       warnIfCacheCannotCover(next);
+      warnIfCommitCostIsPastInteractive(next);
 
       const selectionChanged = pruneSelection();
 
