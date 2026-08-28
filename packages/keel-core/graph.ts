@@ -48,6 +48,9 @@ import type {
 const NO_IDS: readonly NodeId[] = Object.freeze([]);
 const NO_PLACEMENTS: ReadonlyMap<string, readonly NodeId[]> = new Map();
 const NO_OWNERS: ReadonlyMap<string, NodeId> = new Map();
+/** Shared empty tombstone store. A graph that has never removed anything holds
+ *  this one, by reference. */
+export const NO_DEAD_REVS: ReadonlyMap<NodeId, number> = new Map();
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -92,6 +95,7 @@ export function emptyGraph<Ts extends readonly unknown[], S>(
     parentById: new Map(),
     rootIds: NO_IDS,
     subtreeRevById: new Map(),
+    deadRevById: NO_DEAD_REVS,
     placementsByContentKey: NO_PLACEMENTS,
     ownerBySourceKey: NO_OWNERS,
   };
@@ -122,6 +126,9 @@ export function buildGraph<Ts extends readonly unknown[], S>(
     rootIds: readonly NodeId[];
     registry: NodeTypeRegistry;
     subtreeRevs?: ReadonlyMap<NodeId, number>;
+    /** Carried forward when a graph is rebuilt around existing nodes, so a
+     *  rebuild does not forget what has been removed. */
+    deadRevs?: ReadonlyMap<NodeId, number>;
   }>,
 ): Graph<Ts, S> {
   const parentById = new Map<NodeId, NodeId | null>();
@@ -145,6 +152,8 @@ export function buildGraph<Ts extends readonly unknown[], S>(
     parentById,
     rootIds: args.rootIds,
     subtreeRevById,
+    // Ingress builds a graph from a node set; nothing has been removed from it.
+    deadRevById: args.deadRevs ?? NO_DEAD_REVS,
     placementsByContentKey: NO_PLACEMENTS,
     ownerBySourceKey: NO_OWNERS,
   };
@@ -194,7 +203,12 @@ export function getSubtreeRev<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): number {
-  return graph.subtreeRevById.get(id) ?? 0;
+  // LIVE FIRST. The two maps are disjoint, so the order is not what makes this
+  // correct — it is what makes it cheap, since the live map is the one every
+  // read of a present node hits. A dead id answers with the revision it held
+  // when it was removed, which is what keeps a re-inserted id from landing back
+  // on a revision its previous lifetime already cached.
+  return graph.subtreeRevById.get(id) ?? graph.deadRevById.get(id) ?? 0;
 }
 
 /** `null` for a leaf, an unknown node, or a QUARANTINED leaf — the three cases

@@ -9,7 +9,11 @@ import {
   scrubPatchForIngest,
   verifyPatchApplies,
 } from "./patches";
-import { findInvariantViolation, rebuildDerivedIndexes } from "./graph";
+import {
+  findInvariantViolation,
+  getSubtreeRev,
+  rebuildDerivedIndexes,
+} from "./graph";
 import {
   defineNodeType,
   makeCollectionNode,
@@ -254,6 +258,7 @@ function buildGraph(
     parentById,
     rootIds,
     subtreeRevById,
+    deadRevById: new Map(),
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };
@@ -794,7 +799,18 @@ describe("applyPatch: removed", () => {
       // invalidation mechanism, and dropping it let a re-inserted id restart
       // low enough to reach the dead lineage's cached values. See the
       // tombstone comment in `applyRemoved`.
-      expect(next.subtreeRevById.has(nid(gone))).toBe(true);
+      //
+      // It now survives in `deadRevById` rather than in `subtreeRevById`, which
+      // is a change of ADDRESS and not of contract: the number is the same, the
+      // high-water rule is the same, and `getSubtreeRev` still answers with it.
+      // What changed is that it is no longer inside the map every commit
+      // copies. Both halves are asserted, because "the tombstone moved" and
+      // "the tombstone was dropped" must not look alike to this test.
+      expect(next.subtreeRevById.has(nid(gone))).toBe(false);
+      expect(next.deadRevById.has(nid(gone))).toBe(true);
+      expect(getSubtreeRev(next, nid(gone))).toBeGreaterThan(
+        getSubtreeRev(graph, nid(gone)),
+      );
     }
     // The surviving placement of asset-1 is `a`; `c` left with the subtree.
     expect(

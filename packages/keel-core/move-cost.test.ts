@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   bumpSubtreeRevs,
+  getSubtreeRev,
   bumpSubtreeRevsInto,
   findInvariantViolation,
   rebuildDerivedIndexes,
@@ -243,6 +244,7 @@ function buildGraph(
     parentById,
     rootIds,
     subtreeRevById,
+    deadRevById: new Map(),
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };
@@ -1221,6 +1223,99 @@ describe("insert / remove / edit commit cost", () => {
 // ---------------------------------------------------------------------------
 // The differential guard
 // ---------------------------------------------------------------------------
+
+describe("the tombstone store is out of the per-commit copy", () => {
+  /**
+   * The property, stated as reference identity rather than as a clock reading:
+   * a commit that removes nothing does not touch `deadRevById` at all.
+   *
+   * That is what takes tombstones out of the cost curve. They used to live in
+   * `subtreeRevById`, which every commit copies, so per-commit cost tracked the
+   * number of nodes a session had EVER DELETED rather than the number it held.
+   * MEASURED on one `edit-nodes` before the split: 40us at zero tombstones,
+   * 1.7ms at 20,000, 29.4ms at 200,400 — and confirmed to be the copy, since a
+   * bare `new Map` on the same map tracked it at ratio ~1.0.
+   */
+  it("shares deadRevById by reference across every commit that removes nothing", () => {
+    const graph = wideGraph(4, 4);
+
+    const edited = commit(graph, {
+      type: "data-changed",
+      changes: [
+        {
+          nodeId: nid("c0-m0"),
+          kind: "clip",
+          before: { title: "c0-m0", assetId: "asset-c0-m0" },
+          after: { title: "renamed", assetId: "asset-c0-m0" },
+        },
+      ],
+    });
+    expect(edited.deadRevById).toBe(graph.deadRevById);
+
+    const moved = commit(graph, reorderWithin("c0", "c0-m0", 0, 3));
+    expect(moved.deadRevById).toBe(graph.deadRevById);
+
+    const inserted = commit(graph, {
+      type: "inserted",
+      placements: [
+        {
+          node: makeLeafNode<TestTypes>(nid("arrival"), "clip", {
+            title: "arrival",
+            assetId: "asset-arrival",
+          }),
+          parentId: nid("c0"),
+          index: 0,
+        },
+      ],
+    });
+    expect(inserted.deadRevById).toBe(graph.deadRevById);
+  });
+
+  it("keeps subtreeRevById exactly total over nodesById", () => {
+    // The contract the type has always documented, and which the tombstone
+    // silently broke by making the map a SUPERSET. Restored by the split, and
+    // asserted here because invariant check 6 can only say every live node HAS
+    // an entry — it cannot say no dead one does.
+    const graph = wideGraph(4, 4);
+    expect(graph.subtreeRevById.size).toBe(graph.nodesById.size);
+
+    const node = graph.nodesById.get(nid("c0-m0"));
+    if (node === undefined) throw new Error("fixture");
+    const next = commit(graph, {
+      type: "removed",
+      placements: [{ node, parentId: nid("c0"), index: 0 }],
+    });
+
+    expect(next.subtreeRevById.size).toBe(next.nodesById.size);
+    expect(next.subtreeRevById.has(nid("c0-m0"))).toBe(false);
+    // And the number itself is preserved, one higher, at its new address.
+    expect(next.deadRevById.get(nid("c0-m0"))).toBe(
+      (graph.subtreeRevById.get(nid("c0-m0")) ?? 0) + 1,
+    );
+  });
+
+  it("still resumes a re-inserted id above everything its last life cached", () => {
+    // The P1 this whole mechanism exists to prevent, checked through the new
+    // address. `review-f1.test.ts` covers it end to end through the store; this
+    // is the arithmetic, isolated.
+    const graph = wideGraph(4, 4);
+    const node = graph.nodesById.get(nid("c0-m0"));
+    if (node === undefined) throw new Error("fixture");
+
+    const removed = commit(graph, {
+      type: "removed",
+      placements: [{ node, parentId: nid("c0"), index: 0 }],
+    });
+    const tombstone = removed.deadRevById.get(nid("c0-m0")) ?? 0;
+
+    const back = commit(removed, {
+      type: "inserted",
+      placements: [{ node, parentId: nid("c0"), index: 0 }],
+    });
+
+    expect(getSubtreeRev(back, nid("c0-m0"))).toBeGreaterThan(tombstone);
+  });
+});
 
 describe("incremental indexes never diverge from a rebuild", () => {
   /** Deterministic LCG. A seeded generator, never `Math.random`: a fuzz that

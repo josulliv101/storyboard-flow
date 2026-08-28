@@ -264,6 +264,7 @@ function buildGraph(engineId: symbol, roots: readonly Spec[]): Graph<Types, Summ
     parentById: parents,
     rootIds,
     subtreeRevById: revs,
+    deadRevById: new Map(),
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };

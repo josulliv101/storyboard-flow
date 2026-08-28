@@ -196,6 +196,7 @@ function buildGraph(roots: readonly Spec[]): TestGraph {
     parentById,
     rootIds,
     subtreeRevById,
+    deadRevById: new Map(),
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };
@@ -689,6 +690,7 @@ describe("computeFold dispatch", () => {
       parentById,
       rootIds: [childId],
       subtreeRevById,
+    deadRevById: new Map(),
       placementsByContentKey: new Map(),
       ownerBySourceKey: new Map(),
     };
@@ -726,6 +728,7 @@ describe("computeFold dispatch", () => {
     const graph: TestGraph = {
       engineId: ENGINE_ID,
       nodesById,
+      deadRevById: new Map(),
       childrenById: new Map<NodeId, readonly NodeId[]>([
         [a, [b]],
         [b, [a]],
