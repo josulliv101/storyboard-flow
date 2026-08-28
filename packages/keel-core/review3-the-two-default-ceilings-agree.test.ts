@@ -175,14 +175,19 @@ describe("the store says so when the memo table cannot cover its graph", () => {
     engine.createStore(graph);
     expect(spy).toHaveBeenCalled();
     const message = String(spy.mock.calls[0]?.[0] ?? "");
-    // The number a consumer acts on is the size it stops covering, so the
-    // message has to carry it rather than just saying "too small".
-    expect(message).toContain("16384");
+    // The number a consumer acts on is the size it comfortably covers, so the
+    // message has to carry it rather than just saying "too small". 8,192, not
+    // 16,384: the gate now allows headroom over `folds x nodes` because the
+    // product is the working set's FLOOR and editing strands entries above it.
+    expect(message).toContain("8192");
     expect(message).toContain("foldCacheLimit");
   });
 
-  it("stays silent when the table covers the graph", () => {
-    const { engine, graph } = storeOf(8, 16_000);
+  it("stays silent when the table covers the graph WITH headroom", () => {
+    // 8 folds x 8,000 nodes x 2 = 128,000, inside the 131,072 default. At
+    // 16,000 it would fit the bare product and still thrash, which is the
+    // whole reason the multiple exists.
+    const { engine, graph } = storeOf(8, 8_000);
     const spy = captureErrors();
     engine.createStore(graph);
     expect(spy).not.toHaveBeenCalled();
@@ -243,9 +248,10 @@ describe("the store says so when the memo table cannot cover its graph", () => {
 
   it("warns when a graph GROWS past what the table covers", () => {
     // Under the default table at load, over it after a few inserts — the case
-    // a load-time-only check would miss entirely. 8 folds makes the default
-    // cover 16,384 nodes, so this sits just under it and then crosses.
-    const { engine, graph } = storeOf(8, 16_380);
+    // a load-time-only check would miss entirely. 8 folds and the headroom
+    // multiple make the default comfortably cover 8,192 nodes, so this sits
+    // just under it and then crosses.
+    const { engine, graph } = storeOf(8, 8_190);
     const spy = captureErrors();
     const store = engine.createStore(graph);
     expect(spy).not.toHaveBeenCalled();
@@ -268,6 +274,10 @@ describe("the store says so when the memo table cannot cover its graph", () => {
       DEFAULT_FOLD_CACHE_LIMIT,
     );
     expect(Math.floor(DEFAULT_FOLD_CACHE_LIMIT / realisticFolds)).toBe(16_384);
+    // And the size it comfortably covers, once churn headroom is allowed for,
+    // is half that. The gap between these two numbers is where a graph passes
+    // the bare-product check and thrashes anyway.
+    expect(Math.floor(DEFAULT_FOLD_CACHE_LIMIT / (realisticFolds * 2))).toBe(8_192);
   });
 });
 

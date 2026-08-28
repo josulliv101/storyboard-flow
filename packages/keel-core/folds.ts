@@ -199,8 +199,38 @@ export function foldMonoid<Ts extends readonly unknown[], S, A>(
  *
  * `computeFold` commits an entry for EVERY node it walks, so one root-level
  * read of ONE fold over an n-node document occupies n slots, and the k folds a
- * consumer registered all share their store's single cache — k x n at steady
- * state. Below that product the LRU does not degrade gracefully, it INVERTS:
+ * consumer registered all share their store's single cache — k x n.
+ *
+ * THAT IS THE FLOOR, NOT THE STEADY STATE, and an earlier version of this
+ * comment said "at steady state" and was wrong. There is no steady state at
+ * k x n. Every edit bumps the edited node's ancestor chain, so the next root
+ * read mints k x DEPTH new keys and strands k x depth old ones, and occupancy
+ * grows with the session's EDIT COUNT until the limit bites:
+ *
+ *     occupancy  ~=  k x n  +  k x depth x edits
+ *
+ * MEASURED, and the fit is exact rather than approximate — at n=1,111, k=4,
+ * depth=4 the dead entries came to `16E + 384` to the entry at E = 1, 100, 500,
+ * 1,000, 2,000 and 4,000. At E=4,000 that is 15.5x the k x n this comment used
+ * to name as the resting size.
+ *
+ * The stranded entries are NOT a leak, and this is the part that keeps the
+ * design sound: a dead-rev entry is never touched again, so the LRU ages it out
+ * first — GIVEN HEADROOM. Measured against the ideal of k x depth fold calls
+ * per post-edit root read (16 for that fixture):
+ *
+ *     limit 1.0x k x n   ->  30.4 calls   (1.90x ideal)
+ *     limit 1.25x        ->  23.2
+ *     limit 2.0x         ->  20.3         (1.27x)
+ *     limit 4.0x         ->  16.0         (1.00x, with 131,052 evictions costing nothing)
+ *
+ * So the cliff is not at k x n, it is just below it. A dead entry is always
+ * NEWER than a cold live one — a leaf is only re-touched when a sibling is
+ * edited — so at exactly k x n there is no room and every dead admission evicts
+ * a live one. Size the table with headroom over the product, not to it;
+ * `createStore` warns using the same multiple.
+ *
+ * Below the product the LRU does not degrade gracefully, it INVERTS:
  * fold k's walk evicts fold 1's entries, fold 1's next read misses at the root,
  * and every mounted card refolds its whole subtree from scratch. That is
  * precisely the un-memoized behaviour this table exists to beat, so the cap
