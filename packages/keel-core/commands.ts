@@ -17,6 +17,7 @@
 // PURE. No React, no DOM. Nothing here throws; every failure is Result-shaped.
 
 import {
+  describeThrown,
   type AnyNode,
   type ChildrenState,
   type Command,
@@ -33,6 +34,7 @@ import {
   type Rejection,
   type RejectionCode,
   type Result,
+  type EditRejection,
   type Seed,
   makeCollectionNode,
   makeDataChange,
@@ -871,7 +873,22 @@ function planEdits<Ts extends readonly unknown[], S>(
       );
     }
 
-    const applied = type.applyEdit(node.data, edit.edit);
+    // WRAPPED for the same reason ./serialize wraps `parse`: `applyEdit` is
+    // consumer code, and a codec that throws must produce the refusal this
+    // function is contracted to return rather than an exception out of
+    // `dispatch`. A throw and a returned `{ ok: false }` mean the same thing to
+    // the user — the codec would not accept this edit — so they get the same
+    // code, with the thrown message carried through.
+    let applied: Result<unknown, EditRejection>;
+    try {
+      applied = type.applyEdit(node.data, edit.edit);
+    } catch (thrown) {
+      return fail(
+        "edit-rejected",
+        `The ${JSON.stringify(node.kind)} codec threw while applying the edit: ${describeThrown(thrown)}`,
+        { nodeIds: [edit.nodeId], kind: node.kind },
+      );
+    }
     if (!applied.ok) {
       return fail(
         "edit-rejected",
@@ -886,12 +903,31 @@ function planEdits<Ts extends readonly unknown[], S>(
     // value arriving off the wire. Round-tripped through `serialize` because
     // that is the form `parse` is defined over, which also means a lossy
     // `serialize` surfaces here rather than three saves later.
+    // WRAPPED, like the `applyEdit` above it. `parseNodeData` already guards
+    // the `parse` half of this round trip; leaving the `serialize` half bare
+    // meant the same class of consumer bug escaped as an exception from one
+    // side of one expression and as a `Result` from the other.
+    let raw: unknown;
+    try {
+      raw = type.serialize(applied.value);
+    } catch (thrown) {
+      return fail(
+        "parse-failed",
+        `The ${JSON.stringify(node.kind)} codec threw while serializing the edited value: ${describeThrown(thrown)}`,
+        {
+          nodeIds: [edit.nodeId],
+          kind: node.kind,
+          issues: [{ path: "$", message: describeThrown(thrown) }],
+        },
+      );
+    }
+
     const reparsed = parseNodeData<S>(ctx, {
       nodeId: edit.nodeId,
       kind: node.kind,
       container: type.container,
       schemaVersion: type.schemaVersion,
-      raw: type.serialize(applied.value),
+      raw,
     });
     if (!reparsed.ok) {
       return fail(
