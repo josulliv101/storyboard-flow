@@ -1437,3 +1437,31 @@ export function makeDataChange<Ts extends readonly unknown[]>(
   }> = { nodeId, kind, before, after };
   return change as unknown as DataChange<Ts>;
 }
+
+// ---------------------------------------------------------------------------
+// Describing a throw
+// ---------------------------------------------------------------------------
+
+/**
+ * The message to put in an `Issue` when consumer code threw instead of
+ * returning.
+ *
+ * It lives HERE, in the module that imports nothing, because all four modules
+ * that call into a consumer codec need it — ./serialize wraps `parse` and the
+ * summary codec, ./commands wraps `applyEdit` and `serialize`, ./patches wraps
+ * the `serialize` pair that replay verification compares on. One
+ * implementation, so the three cannot drift into describing the same throw
+ * three different ways.
+ *
+ * NOT re-exported from ./index: a consumer never calls this, it only ever reads
+ * the strings it produces.
+ *
+ * `String(thrown)` rather than `JSON.stringify`: a thrown value is arbitrary,
+ * `stringify` is recursive and can itself throw on a cycle or a BigInt, and a
+ * helper whose whole job is to describe a failure must not have a failure mode
+ * of its own.
+ */
+export function describeThrown(thrown: unknown): string {
+  if (thrown instanceof Error) return thrown.message;
+  return String(thrown);
+}

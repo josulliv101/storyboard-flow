@@ -34,6 +34,7 @@
 //   6. loadChildrenInto
 
 import {
+  describeThrown,
   makeCollectionNode,
   makeLeafNode,
   makeQuarantinedNode,
@@ -481,11 +482,6 @@ function runMigrations(
   }
 
   return { ok: true, value: { data, migratedFrom: from } };
-}
-
-function describeThrown(thrown: unknown): string {
-  if (thrown instanceof Error) return thrown.message;
-  return String(thrown);
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,7 +1097,28 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
     // this function total — an unserializable node should cost one node's
     // fidelity, never the whole save.
     if (type === undefined) return data;
-    return type.serialize(data);
+    // The SAME fallback, for the reachable version of the same problem. The
+    // branch above handles a codec that is missing; this one handles a codec
+    // that is present and throws, which is consumer code and therefore not
+    // hypothetical. Leaving it bare contradicted this function's own policy one
+    // line up and, worse, the module's promise that `serializeGraph` is TOTAL
+    // "because a save path that throws loses the user's document".
+    //
+    // The live value is the best remaining representation: it is what the codec
+    // was asked to encode, it is usually near-identical to the wire form, and
+    // on reload it either parses or quarantines loudly. Both outcomes beat
+    // losing the whole save.
+    try {
+      return type.serialize(data);
+    } catch (thrown) {
+      console.error(
+        `keel: the ${JSON.stringify(kind)} codec threw while serializing a node for save. ` +
+          `That node is being written in its live form instead, which may not round-trip. ` +
+          `The rest of the document is unaffected.`,
+        thrown,
+      );
+      return data;
+    }
   };
 
   const emit = (id: NodeId): void => {
@@ -1134,7 +1151,21 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
       // an explicit null would round-trip too, but only if the summary codec
       // tolerated being handed one.
       if (node.summary !== null) {
-        draft.summary = ctx.summary.serialize(node.summary);
+        // Guarded like `serializeData`, and for the same reason: the summary
+        // codec is consumer code on the same footing as a node codec, and its
+        // `parse` half is already wrapped at ingress. A summary is a DERIVED
+        // rollup, so dropping it costs strictly less than dropping a node —
+        // the next reader sees an unloaded container with no stored estimate,
+        // which is honest, where a thrown save loses everything.
+        try {
+          draft.summary = ctx.summary.serialize(node.summary);
+        } catch (thrown) {
+          console.error(
+            `keel: the summary codec threw while serializing node ${JSON.stringify(id)} for save. ` +
+              `Its stored summary is being omitted; the rest of the document is unaffected.`,
+            thrown,
+          );
+        }
       }
       writeChildren(draft, id, node.children);
     }

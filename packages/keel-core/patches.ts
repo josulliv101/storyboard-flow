@@ -35,6 +35,7 @@
 // a bad one is this module's.
 
 import {
+  describeThrown,
   makeCollectionNode,
   makeDataChange,
   makeLeafNode,
@@ -1022,7 +1023,27 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
     // it once per changed node per verification.
     if (Object.is(change.before, node.data)) continue;
 
-    if (!deepEqual(codec.serialize(change.before), codec.serialize(node.data))) {
+    // WRAPPED. `serialize` is consumer code, and this function is contracted to
+    // return a `Result` — a throw here escaped `verifyPatchApplies` and took
+    // `undo` and `redo` with it. A codec that cannot serialize its own value
+    // cannot prove the recorded `before` still stands, so the honest verdict is
+    // the same one a genuine difference produces: this patch no longer applies.
+    // Refusing is safe (the entry stays on the stack, the graph is untouched);
+    // proceeding on an unverifiable comparison is not.
+    let matches: boolean;
+    try {
+      matches = deepEqual(
+        codec.serialize(change.before),
+        codec.serialize(node.data),
+      );
+    } catch (thrown) {
+      return replayError(
+        "data-mismatch",
+        `Node ${change.nodeId} could not be compared against this patch's recorded "before": the ${JSON.stringify(change.kind)} codec threw while serializing (${describeThrown(thrown)}).`,
+        { nodeId: change.nodeId },
+      );
+    }
+    if (!matches) {
       return replayError(
         "data-mismatch",
         `Node ${change.nodeId} no longer holds the value this patch recorded as "before".`,
