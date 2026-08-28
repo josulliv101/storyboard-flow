@@ -478,10 +478,11 @@ ui.defineNodeView("sequence", function SequenceView({ id, data }) {
 
   return (
     <section data-testid={`node-${id}`} className={classes.collection}>
-      <header className={classes.row}>
+      <header className={classes.collectionHead}>
         <Tag>SEQ</Tag>
         <span className={classes.title}>{data.name}</span>
         <Rollup id={id} />
+        {state === undefined ? null : <StateChip status={state.status} />}
         <span className={classes.spacer} />
         <NudgeButtons id={id} move={move} />
       </header>
@@ -519,7 +520,7 @@ ui.defineQuarantinedView(function QuarantinedView({ id, node }) {
 
   return (
     <div data-testid={`node-${id}`} className={cx(classes.row, classes.warn)}>
-      <Tag>?</Tag>
+      <Tag tone="warn">?</Tag>
       <span className={classes.title}>
         kind {node.kind} — {node.reason}
       </span>
@@ -702,7 +703,13 @@ function Rollup({ id }: Readonly<{ id: NodeId }>) {
 
   return (
     <span data-testid={`rollup-${id}`} className={classes.rollup}>
-      {formatFolded(seconds, "s")} · {formatFolded(shots, " shots")}
+      <span className={certaintyClass(seconds)}>
+        {formatFolded(seconds, "s")}
+      </span>
+      {" · "}
+      <span className={certaintyClass(shots)}>
+        {formatFolded(shots, " shots")}
+      </span>
     </span>
   );
 }
@@ -870,13 +877,20 @@ function Lesson({
   return (
     <div className={classes.lesson}>
       <h3 className={classes.lessonTitle}>{title}</h3>
-      <p className={classes.muted}>{children}</p>
+      <p className={classes.lessonBody}>{children}</p>
     </div>
   );
 }
 
-function Tag({ children }: Readonly<{ children: ReactNode }>) {
-  return <span className={classes.tag}>{children}</span>;
+function Tag({
+  children,
+  tone,
+}: Readonly<{ children: ReactNode; tone?: "warn" }>) {
+  return (
+    <span className={tone === "warn" ? classes.tagWarn : classes.tag}>
+      {children}
+    </span>
+  );
 }
 
 function Button({
@@ -904,45 +918,117 @@ function Button({
 }
 
 /**
- * TAILWIND CLASSES, and one thing has to be true for them to work.
+ * TAILWIND CLASSES, and two things have to be true for them to work.
  *
- * The storybook workspace's Tailwind entry must name this package in an
+ * FIRST, the storybook workspace's Tailwind entry must name this package in an
  * `@source` glob. It scans files, not imports, so a class written here is
  * compiled ONLY if `.storybook/globals.css` was told to look — and when it was
  * not, the class name still renders in the DOM and simply matches no CSS. The
  * story comes out unstyled with nothing anywhere saying why, which is the same
  * failure mode this repo has already paid for once with `lib/` and portals.
  *
- * Colours stay on the neutral scale with opacity modifiers, and borders use
- * `currentColor`, so every story reads in both the light and the dark Storybook
- * theme without importing a design token.
+ * SECOND, and less obvious: a class must appear LITERALLY in a scanned file.
+ * Tailwind never runs this code, so a class name assembled at runtime compiles
+ * to nothing. That is why every variant below is a whole string in a table
+ * rather than an interpolation like `text-${hue}-600`.
  *
- * Truly dynamic values — a computed indent, for instance — stay inline. Tailwind
- * compiles class names it can SEE at build time, so a runtime-computed length
- * has no class to compile.
+ * COLOUR IS THEME-AGNOSTIC ON PURPOSE. Neutrals are `currentColor` dimmed with
+ * `opacity-*`, never a fixed grey, and every semantic hue is a mid-tone (600)
+ * over a low-opacity fill of its own colour — legible on a white ground and on
+ * a near-black one. Storybook currently forces a light ground here, so a fixed
+ * dark text colour would look identical today and break silently the day that
+ * changes.
+ *
+ * WHAT THE COLOUR IS SPENT ON is the whole design: the two ideas this tour
+ * exists to teach — which of the four states a collection's children are in,
+ * and how much a rollup is worth — are the only things allowed to be coloured.
+ * Everything else is a neutral at some opacity. A tour that renders `exact`
+ * and `partial` in identical grey has hidden its own subject, which is what
+ * the first version did.
+ *
+ * Truly dynamic values — a computed indent, for instance — stay inline.
  */
 const classes = {
-  stage: "flex flex-col gap-3 font-sans text-sm leading-normal",
-  lesson: "flex flex-col gap-1 max-w-[640px]",
-  lessonTitle: "m-0 text-[15px] font-semibold",
+  stage: "flex flex-col gap-4 font-sans text-sm leading-relaxed",
+  lesson: "flex flex-col gap-1.5 max-w-[68ch]",
+  lessonTitle: "m-0 text-[15px] font-semibold tracking-tight",
+  lessonBody: "m-0 text-[13px] leading-relaxed opacity-65",
+
   collection:
-    "flex flex-col gap-2 rounded-lg border border-neutral-500/45 p-2",
+    "flex flex-col gap-2 rounded-xl p-2.5 ring-1 ring-neutral-500/15",
+  collectionHead:
+    "flex items-center gap-2.5 rounded-lg bg-neutral-500/8 px-2.5 py-1.5",
   children:
-    "flex flex-col gap-1.5 border-l-2 border-neutral-500/30 pl-4",
-  row: "flex items-center gap-2 rounded-md bg-neutral-500/10 px-1.5 py-1",
-  warn: "bg-amber-600/15",
-  title: "font-semibold",
-  muted: "m-0 opacity-70",
+    "ml-1.5 flex flex-col gap-1.5 border-l border-neutral-500/20 pl-3.5",
+
+  row: "flex items-center gap-2.5 rounded-lg bg-neutral-500/5 px-2.5 py-1.5 transition-colors hover:bg-neutral-500/10",
+  warn: "bg-amber-500/12 ring-1 ring-inset ring-amber-600/40 hover:bg-amber-500/18",
+
+  title: "font-medium",
+  muted: "m-0 opacity-60",
   spacer: "flex-1",
-  tag: "rounded border border-neutral-500/60 px-[5px] py-[2px] text-[10px] tracking-[0.6px]",
-  rollup: "font-mono text-xs opacity-85",
+
+  // Quiet and uniform. The kind is context, not the lesson — colour is spent
+  // on state and certainty instead, so this stays a neutral outline.
+  tag: "shrink-0 rounded px-1.5 py-0.5 font-mono text-[9.5px] font-medium uppercase tracking-[0.08em] opacity-55 ring-1 ring-inset ring-neutral-500/25",
+  tagWarn:
+    "shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9.5px] font-medium uppercase tracking-[0.08em] text-amber-700 ring-1 ring-inset ring-amber-600/40",
+
+  rollup: "font-mono text-[11.5px] tabular-nums",
+  // `exact` is the ordinary case and gets no decoration; anything less than
+  // exact is underlined as well as tinted, so it survives a greyscale screen
+  // and a reader who does not know the colour code yet.
+  certaintyExact: "opacity-55",
+  certaintyEstimated:
+    "text-amber-600 underline decoration-dashed decoration-amber-600/40 underline-offset-[3px]",
+  certaintyPartial:
+    "text-rose-600 underline decoration-dashed decoration-rose-600/40 underline-offset-[3px]",
+
+  // The four children states, which is the distinction the whole engine turns
+  // on. `unloaded` is DASHED rather than tinted: nothing is wrong with it, we
+  // simply have not looked, and a colour would read as a status.
+  stateChip:
+    "shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9.5px] font-medium uppercase tracking-[0.08em]",
+  stateLoaded: "border-emerald-500/35 bg-emerald-500/10 text-emerald-600",
+  stateUnloaded: "border-dashed border-neutral-500/40 opacity-55",
+  stateReference: "border-sky-500/35 bg-sky-500/10 text-sky-600",
+  stateMissing: "border-rose-500/35 bg-rose-500/10 text-rose-600",
+
   panel: "flex flex-wrap items-center gap-2",
-  code: "m-0 font-mono text-xs opacity-85",
+  code: "m-0 rounded bg-neutral-500/8 px-2 py-1 font-mono text-[11.5px] opacity-70",
+
   button:
-    "cursor-pointer rounded-[5px] border border-neutral-500/60 bg-transparent px-2 py-[3px] font-[inherit] text-xs text-inherit",
+    "cursor-pointer rounded-md px-2 py-1 font-sans text-[11.5px] font-medium opacity-70 ring-1 ring-inset ring-neutral-500/25 transition-colors hover:bg-neutral-500/10 hover:opacity-100 active:bg-neutral-500/20",
   buttonOff:
-    "cursor-not-allowed rounded-[5px] border border-neutral-500/30 bg-transparent px-2 py-[3px] font-[inherit] text-xs text-inherit opacity-40",
+    "cursor-not-allowed rounded-md px-2 py-1 font-sans text-[11.5px] font-medium opacity-30 ring-1 ring-inset ring-neutral-500/15",
 } as const;
+
+/**
+ * A `ChildrenState` rendered as the thing it is: one of four, distinguishable
+ * without reading the word.
+ */
+function StateChip({ status }: Readonly<{ status: ChildrenState["status"] }>) {
+  const tone =
+    status === "loaded"
+      ? classes.stateLoaded
+      : status === "unloaded"
+        ? classes.stateUnloaded
+        : status === "reference"
+          ? classes.stateReference
+          : classes.stateMissing;
+  return <span className={cx(classes.stateChip, tone)}>{status}</span>;
+}
+
+/** How much a folded number is worth, as a class rather than a word. */
+function certaintyClass(value: Folded<number> | undefined): string {
+  if (value === undefined) return classes.certaintyExact;
+  return value.certainty === "exact"
+    ? classes.certaintyExact
+    : value.certainty === "estimated"
+      ? classes.certaintyEstimated
+      : classes.certaintyPartial;
+}
+
 
 // ===========================================================================
 // FIXTURES — deterministic, nothing fetches
@@ -1934,9 +2020,11 @@ function DragRow({
         {"⠿"}
       </span>
       <span className={dndClasses.rowLabel}>{label}</span>
-      <span className={dndClasses.rowKind}>
-        {node.quarantined ? "?" : node.kind}
-      </span>
+      {node.quarantined ? (
+        <Tag tone="warn">?</Tag>
+      ) : (
+        <Tag>{node.kind}</Tag>
+      )}
     </div>
   );
 }
@@ -1964,8 +2052,9 @@ function DragCollection({
   return (
     <div className={dndClasses.collection} style={{ marginLeft: depth * 18 }}>
       <div className={dndClasses.collectionHead}>
-        <strong>{name}</strong>
-        <span className={dndClasses.rowKind}>{node.children.status}</span>
+        <strong className="font-medium">{name}</strong>
+        <span className={classes.spacer} />
+        <StateChip status={node.children.status} />
       </div>
 
       {!loaded ? (
@@ -2019,23 +2108,24 @@ function ChildRow({
 
 const dndClasses = {
   outcome:
-    "mb-2.5 rounded bg-neutral-500/12 px-2.5 py-1.5 font-mono text-xs",
+    "mb-2.5 rounded-lg bg-neutral-500/8 px-2.5 py-1.5 font-mono text-[11.5px] opacity-70",
   // `touch-none` on the whole board: a touch drag would otherwise scroll the
   // page, because the browser claims the gesture before any pointer handler
   // sees it.
   board: "touch-none",
-  collection: "mb-2.5 rounded-md border border-neutral-500/35 p-2",
-  collectionHead: "mb-1.5 flex justify-between text-[13px]",
+  collection: "mb-2.5 flex flex-col gap-2 rounded-xl p-2.5 ring-1 ring-neutral-500/15",
+  collectionHead:
+    "flex items-center gap-2.5 rounded-lg bg-neutral-500/8 px-2.5 py-1.5 text-[13px]",
   // The insertion line is drawn as a border, so both edges are reserved and
   // transparent — otherwise every hover nudges the row by 2px.
-  row: "flex cursor-grab items-center gap-2 rounded border-y-2 border-transparent bg-neutral-500/10 px-2 py-[5px]",
+  row: "flex cursor-grab items-center gap-2.5 rounded-lg border-y-2 border-transparent bg-neutral-500/5 px-2.5 py-1 transition-colors hover:bg-neutral-500/10",
   rowDragging: "cursor-grabbing opacity-45",
   rowBefore: "border-t-current",
   rowAfter: "border-b-current",
-  rowLabel: "flex-1 text-[13px]",
+  rowLabel: "flex-1 text-[13px] font-medium",
   rowKind: "font-mono text-[11px] opacity-60",
-  grip: "inline-flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-[5px] border border-neutral-500/35 bg-neutral-500/12 text-[17px] leading-none opacity-75",
-  gap: "flex h-[18px] items-center rounded-[3px] pl-1.5 font-mono text-[10px] opacity-35",
+  grip: "inline-flex h-8 w-8 shrink-0 cursor-grab select-none items-center justify-center rounded-md text-[17px] leading-none opacity-40 ring-1 ring-inset ring-neutral-500/25 transition-colors hover:bg-neutral-500/10 hover:opacity-80",
+  gap: "flex h-[18px] items-center rounded pl-1.5 font-mono text-[10px] opacity-30",
   gapArmed: "opacity-70 outline outline-1 outline-dashed outline-neutral-500/50",
   gapLit: "bg-neutral-500/20 opacity-100 outline outline-2 outline-current",
   gapClosed: "h-auto p-1.5 italic opacity-50",
