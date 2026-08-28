@@ -554,8 +554,10 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     nodes.delete(id);
     parents.delete(id);
     children.delete(id);
-    // `revs` KEEPS ITS ENTRY — a tombstone, deliberately, and this is a
-    // correctness requirement rather than an optimisation.
+    // `revs` KEEPS ITS ENTRY AND MOVES IT. Two separate requirements, and the
+    // first version of this tombstone met only the first of them.
+    //
+    // KEEPING it is a correctness requirement rather than an optimisation.
     //
     // `subtreeRevById` is the fold cache's ONLY invalidation mechanism: an
     // entry keyed (foldKey, nodeId, rev) is meant to become UNREACHABLE once
@@ -572,6 +574,28 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     // protects. `subtreeRevById` becomes a SUPERSET of `nodesById` rather than
     // exactly total, which invariant check 6 permits: it requires every live
     // node to HAVE a rev, not that every rev has a node.
+    //
+    // MOVING it is what makes the removal VISIBLE. The store decides whether to
+    // wake a node's subscribers by comparing `getSubtreeRev` across the commit,
+    // so a tombstone frozen at its last live value compares EQUAL and the card
+    // mounted on the node that just disappeared is never told. Insertion had no
+    // such hole — `applyInserted` bumps every arriving id — so removal was the
+    // one direction that went unannounced. Measured: subscribe to a node,
+    // remove it, and its listener fired zero times while its parent's fired
+    // once. A tree view hides that (the parent re-renders and React unmounts
+    // the child); anything addressing a node directly — a detail pane, an
+    // inspector, a flattened list — renders the deleted node forever.
+    //
+    // `+ 1` rather than a bump through `bumpSubtreeRevsInto`: the ancestors are
+    // already bumped above, against the PRE-state graph, and walking again from
+    // here would double-count them for no gain. The node's own entry is the
+    // only one still standing still.
+    //
+    // This also STRENGTHENS the high-water mark rather than weakening it: the
+    // tombstone now sits strictly above every rev the dead lineage could have
+    // cached, which is exactly the property `applyInserted`'s re-insertion bump
+    // relies on.
+    revs.set(id, (revs.get(id) ?? 0) + 1);
   }
 
   // Updated, not rebuilt: a removal cannot REORDER a survivor, so each affected

@@ -319,10 +319,51 @@ export function createEngine<
     let anchorId: NodeId | null = null;
     let destroyed = false;
 
-    const notifyAll = (listeners: ReadonlySet<() => void>): void => {
+    /**
+     * Run ONE consumer callback so that its failure cannot become the engine's.
+     *
+     * Every listener below is consumer code, and before this existed a single
+     * one of them throwing did three things at once, all of them worse than the
+     * original error:
+     *
+     *   1. The exception escaped `dispatch` — a function whose entire contract
+     *      is that it returns a `Result` and does not throw. It escaped AFTER
+     *      the graph had committed and history had been pushed, so the caller
+     *      saw a failure for a mutation that had actually succeeded.
+     *   2. Every listener after it in the same set was starved. One consumer's
+     *      bad callback silently disabled another's.
+     *   3. Worst, `emitChange` is sequenced after `commitGraph`, so a throwing
+     *      GRAPH subscriber meant the change feed never emitted at all. The
+     *      edit existed in memory and in the undo stack and was never announced
+     *      to whatever performs the write. Measured: graph committed, `canUndo`
+     *      true, change-feed listeners fired zero times.
+     *
+     * SWALLOWED AND REPORTED, not rethrown, and it is the same judgement
+     * `auditIfDev` already makes: a throw here takes down a render for a
+     * condition the user cannot fix, and the engine has no way to undo a
+     * notification half-delivered. `console.error` rather than silence, because
+     * a subscriber that throws on every commit is a real bug in the consumer
+     * and must not be invisible.
+     */
+    const notifyOne = (label: string, deliver: () => void): void => {
+      try {
+        deliver();
+      } catch (thrown) {
+        console.error(
+          `keel: a ${label} subscriber threw. The commit is unaffected and the ` +
+            `remaining subscribers still ran, but this callback must not throw.`,
+          thrown,
+        );
+      }
+    };
+
+    const notifyAll = (
+      label: string,
+      listeners: ReadonlySet<() => void>,
+    ): void => {
       // Copied before iterating: a listener that unsubscribes itself (the
       // normal React teardown) mutates the set mid-iteration otherwise.
-      for (const listener of [...listeners]) listener();
+      for (const listener of [...listeners]) notifyOne(label, listener);
     };
 
     /**
@@ -374,21 +415,39 @@ export function createEngine<
       const selectionChanged = pruneSelection();
 
       // Only SUBSCRIBED ids are compared, so this is O(mounted cards) rather
-      // than O(graph). Reading through `getSubtreeRev` (0 for an unknown node)
-      // is what makes a removal and an insertion both register as a change.
+      // than O(graph).
+      //
+      // WHAT MAKES A REMOVAL VISIBLE HERE lives in ./patches, not in this
+      // comparison, and saying so is the whole point of writing it down. An
+      // earlier version of this comment claimed the credit for itself —
+      // "`getSubtreeRev` answers 0 for an unknown node, which is what makes a
+      // removal and an insertion both register as a change" — and that was true
+      // only while `applyRemoved` DELETED the removed id's revision entry. It
+      // now leaves a tombstone behind (a fold-cache requirement, see there), so
+      // a frozen tombstone would read back identical on both sides of this
+      // comparison and the deleted node's own subscribers would never fire.
+      // `applyRemoved` bumps the entry it tombstones for exactly this reason.
+      //
+      // The rule this loop actually depends on, and the only one to preserve:
+      // EVERY MUTATION MOVES THE REVISION OF EVERY NODE IT AFFECTS, including a
+      // node it affects by deleting.
       for (const [id, listeners] of nodeListeners) {
         if (getSubtreeRev(previous, id) === getSubtreeRev(next, id)) continue;
-        for (const listener of [...listeners]) listener();
+        for (const listener of [...listeners]) notifyOne("node", listener);
       }
 
-      notifyAll(graphListeners);
+      notifyAll("graph", graphListeners);
       // A selection change must never notify graph subscribers; the reverse —
       // a graph change pruning the selection — must notify selection ones.
-      if (selectionChanged) notifyAll(selectionListeners);
+      if (selectionChanged) notifyAll("selection", selectionListeners);
     };
 
     const emitChange = (change: Change<Ts, S>): void => {
-      for (const listener of [...changeListeners]) listener(change);
+      for (const listener of [...changeListeners]) {
+        notifyOne("change-feed", () => {
+          listener(change);
+        });
+      }
     };
 
     const setSelection = (
@@ -415,7 +474,7 @@ export function createEngine<
       if (resolvedAnchor === anchorId && sameIds(deduped, selectedIds)) return;
       selectedIds = deduped;
       anchorId = resolvedAnchor;
-      notifyAll(selectionListeners);
+      notifyAll("selection", selectionListeners);
     };
 
     const selection: SelectionSlice = {
