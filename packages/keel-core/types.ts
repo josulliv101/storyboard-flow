@@ -789,6 +789,25 @@ export type SerializedNode = Readonly<{
   childrenState?: "unloaded" | "reference" | "missing";
   /** Only meaningful with `childrenState: "missing"`. */
   missingReason?: string;
+  /**
+   * The version THIS node's `data` was written at, overriding the document's
+   * `schemaVersions` entry for its kind.
+   *
+   * Absent on every healthy node, and that is the point: a node that parsed
+   * cleanly holds current data, so the document-level map already describes it
+   * and writing a per-node copy on every node would bloat every document to
+   * restate a fact it already carries.
+   *
+   * It exists for QUARANTINE. A node quarantined because its migration was
+   * missing or threw still holds bytes from the version it was written at,
+   * while `schemaVersions[kind]` says what the REGISTRY is at now. Re-emitting
+   * those bytes under the registry's number is what made a quarantined node
+   * permanently unrepairable: the next build's `runMigrations` sees
+   * `from >= to`, runs nothing, and hands old bytes to a new `parse`. This is
+   * the escape hatch that keeps quarantine's promise — raw bytes AND the
+   * version they belong to.
+   */
+  schemaVersion?: number;
   summary?: unknown;
   data: unknown;
 }>;
