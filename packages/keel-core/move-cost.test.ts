@@ -1015,6 +1015,72 @@ describe("insert / remove / edit commit cost", () => {
     ]);
   });
 
+  it("claims the sourceKey of an inserted OWNING container", () => {
+    // `ownersAfterInsert` is the half of the incremental insert that the fuzz
+    // cannot reach: it inserts clips, and a leaf owns nothing since ownership
+    // became a container-only property. Without this test, deleting the claim
+    // entirely fails NOTHING — which is how it was found.
+    const graph = wideGraph(4, 4);
+    expect(graph.ownerBySourceKey.has("src-fresh")).toBe(false);
+
+    const next = commit(graph, {
+      type: "inserted",
+      placements: [
+        {
+          node: makeCollectionNode<TestTypes, Summary>(
+            nid("fresh"),
+            "folder",
+            { name: "fresh", source: "src-fresh" },
+            { status: "loaded" },
+            null,
+          ),
+          parentId: nid("root"),
+          index: 0,
+        },
+      ],
+    });
+
+    expect(next.ownerBySourceKey.get("src-fresh")).toBe(nid("fresh"));
+    // And it agrees with the authoritative walk, which is the property the
+    // incremental path exists to preserve rather than merely approximate.
+    const fresh = rebuildDerivedIndexes(next, keyedRegistry);
+    expect(next.ownerBySourceKey).toEqual(fresh.ownerBySourceKey);
+  });
+
+  it("leaves an inserted container's key alone when someone already owns it", () => {
+    // A second owner is `duplicate-owner`, which invariant check 8 refuses
+    // AHEAD of check 9's index comparison — so the incremental path must not
+    // quietly reassign the key, and the audit names the real defect either way.
+    const graph = wideGraph(4, 4);
+    const incumbent = graph.ownerBySourceKey.get("src-c0");
+    expect(incumbent).toBe(nid("c0"));
+
+    const next = applyPatch(
+      graph,
+      {
+        type: "inserted",
+        placements: [
+          {
+            node: makeCollectionNode<TestTypes, Summary>(
+              nid("usurper"),
+              "folder",
+              { name: "usurper", source: "src-c0" },
+              { status: "loaded" },
+              null,
+            ),
+            parentId: nid("root"),
+            index: 0,
+          },
+        ],
+      },
+      makeCtx(keyedRegistry),
+    );
+
+    // The incumbent keeps the key. `commit` is not used here because this graph
+    // is deliberately in the state check 8 refuses.
+    expect(next.ownerBySourceKey.get("src-c0")).toBe(nid("c0"));
+  });
+
   it("updates the placement index on removal without touching other buckets", () => {
     const graph = buildGraph([
       {
@@ -1193,6 +1259,7 @@ describe("incremental indexes never diverge from a rebuild", () => {
     let reorders = 0;
     let reparents = 0;
     let removals = 0;
+    let inserts = 0;
     let edits = 0;
 
     for (let step = 0; step < 300; step += 1) {
@@ -1240,7 +1307,7 @@ describe("incremental indexes never diverge from a rebuild", () => {
           ],
         });
         reparents += 1;
-      } else if (roll < 0.9) {
+      } else if (roll < 0.88) {
         // Removal — the filtered-bucket path. Clips are leaves, so one
         // placement is the whole subtree.
         const node = graph.nodesById.get(nodeId);
@@ -1251,6 +1318,31 @@ describe("incremental indexes never diverge from a rebuild", () => {
         });
         assetOfClip.delete(String(nodeId));
         removals += 1;
+      } else if (roll < 0.94) {
+        // INSERT — the arriving-node path. Absent from this fuzz until the
+        // insert arm stopped rebuilding from scratch, which is precisely the
+        // change that made a differential check of it worth having: a
+        // from-scratch rebuild cannot diverge from a from-scratch rebuild, so
+        // there was nothing to catch before.
+        const asset = pick(assetPool);
+        if (asset === undefined) continue;
+        const newId = nid(`ins-${step}`);
+        const index = Math.floor(random() * (from.length + 1));
+        graph = commit(graph, {
+          type: "inserted",
+          placements: [
+            {
+              node: makeLeafNode<TestTypes>(newId, "clip", {
+                title: `ins-${step}`,
+                assetId: asset,
+              }),
+              parentId: nid(fromId),
+              index,
+            },
+          ],
+        });
+        assetOfClip.set(String(newId), asset);
+        inserts += 1;
       } else {
         // Content edit — half of these move the key, half do not.
         const before = assetOfClip.get(String(nodeId));
@@ -1280,6 +1372,9 @@ describe("incremental indexes never diverge from a rebuild", () => {
     expect(reorders).toBeGreaterThan(50);
     expect(reparents).toBeGreaterThan(20);
     expect(removals).toBeGreaterThan(5);
+    // The arm this change added. Asserted like its siblings so a future
+    // reshuffle of the roll ranges cannot silently stop exercising it.
+    expect(inserts).toBeGreaterThan(5);
     expect(edits).toBeGreaterThan(5);
     // A last explicit comparison, so a reader does not have to take check 9 on
     // trust to see what this test proves.

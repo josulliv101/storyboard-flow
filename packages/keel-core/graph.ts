@@ -1000,6 +1000,144 @@ export function reindexPlacementsAcrossMove<Ts extends readonly unknown[], S>(
 }
 
 /**
+ * `placementsByContentKey` after an INSERT, updated rather than rebuilt.
+ *
+ * The mirror of `reindexPlacementsAcrossMove`, minus its lift-out step: an
+ * arriving node is not in `previous` at all, so there are no survivors to
+ * separate from movers — only arrivals to merge into buckets that are already
+ * in order.
+ *
+ * Sound for the same reason the move case is: an insert cannot REORDER anything
+ * that was already there. Splicing an id into a children array shifts later
+ * siblings within document order but preserves every pre-existing node's order
+ * relative to every other, so each existing bucket stays sorted and the only
+ * new entries are the arrivals' own.
+ *
+ * ONE DIFFERENCE FROM THE MOVE CASE, and it is the only place the two diverge:
+ * an absent bucket here means a brand-new key, which is ordinary and gets set.
+ * There, an absent bucket meant `previous` disagreed with the graph, and the
+ * answer was to decline.
+ *
+ * `null` is "declined", on the same terms as its neighbours — a comparator that
+ * cannot rank two ids, or an arriving id already sitting in the bucket, which
+ * would mean this was not an insert of new nodes.
+ */
+export function placementsAfterInsert<Ts extends readonly unknown[], S>(
+  post: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+  previous: ReadonlyMap<string, readonly NodeId[]>,
+  arrived: readonly AnyNode<Ts, S>[],
+): ReadonlyMap<string, readonly NodeId[]> | null {
+  // THE ONLY codec calls this function makes: one per ARRIVING node. Every
+  // other node's key is not merely unchanged but irrelevant — `contentKey`
+  // reads `data`, and an insert does not touch anybody else's.
+  const arrivalsByKey = new Map<string, NodeId[]>();
+  for (const node of arrived) {
+    const contentKey = contentKeyOf(registry, node);
+    if (contentKey === null) continue;
+    const bucket = arrivalsByKey.get(contentKey);
+    if (bucket === undefined) arrivalsByKey.set(contentKey, [node.id]);
+    else bucket.push(node.id);
+  }
+  // Nothing arriving carries a key, so the index is exactly what it was. By
+  // reference, which is what `insertLeavesDerivedIndexesIntact` bought before
+  // this function existed and is worth keeping.
+  if (arrivalsByKey.size === 0) return previous;
+
+  const compare = documentOrderComparator(post);
+  const rewritten = new Map<string, readonly NodeId[]>();
+
+  for (const [contentKey, arrivals] of arrivalsByKey) {
+    let declined = false;
+    const ordered = arrivals.slice().sort((a, b) => {
+      const verdict = compare(a, b);
+      if (verdict === null) {
+        declined = true;
+        return 0;
+      }
+      return verdict;
+    });
+    if (declined) return null;
+
+    const bucket = previous.get(contentKey);
+    if (bucket === undefined) {
+      // A key nothing held before. Ordinary for an insert.
+      rewritten.set(contentKey, ordered);
+      continue;
+    }
+
+    const merged: NodeId[] = [];
+    let left = 0;
+    let right = 0;
+    while (left < bucket.length && right < ordered.length) {
+      const incumbent = bucket[left];
+      const arrival = ordered[right];
+      if (incumbent === undefined || arrival === undefined) break;
+      // An arriving id already in the bucket means this was not an insert of
+      // new nodes, and merging would duplicate it.
+      if (incumbent === arrival) return null;
+      const verdict = compare(incumbent, arrival);
+      if (verdict === null) return null;
+      if (verdict <= 0) {
+        merged.push(incumbent);
+        left += 1;
+      } else {
+        merged.push(arrival);
+        right += 1;
+      }
+    }
+    for (; left < bucket.length; left += 1) {
+      const incumbent = bucket[left];
+      if (incumbent === undefined) continue;
+      if (ordered.includes(incumbent)) return null;
+      merged.push(incumbent);
+    }
+    for (; right < ordered.length; right += 1) {
+      const arrival = ordered[right];
+      if (arrival !== undefined) merged.push(arrival);
+    }
+    rewritten.set(contentKey, merged);
+  }
+
+  const next = new Map(previous);
+  for (const [contentKey, bucket] of rewritten) next.set(contentKey, bucket);
+  return next;
+}
+
+/**
+ * `ownerBySourceKey` after an INSERT, updated rather than rebuilt.
+ *
+ * The mirror of `derivedIndexesAfterRemoval`'s owner half. Only a node that
+ * OWNS its subtree can claim a key — the same `ownsItsSubtree` predicate
+ * `walkDerivedIndexes` applies, so the incremental answer and the from-scratch
+ * one cannot disagree about who counts.
+ *
+ * An arrival colliding with an incumbent owner is `duplicate-owner`, which
+ * invariant check 8 refuses AHEAD of check 9's index comparison — the identical
+ * reprieve `rebuildPlacementIndex` and `derivedIndexesAfterRemoval` already
+ * take. So on any graph where carrying the map forward could disagree with a
+ * rebuild, the audit already names the real defect rather than a stale-index
+ * symptom of it.
+ */
+export function ownersAfterInsert<Ts extends readonly unknown[], S>(
+  registry: NodeTypeRegistry,
+  previous: ReadonlyMap<string, NodeId>,
+  arrived: readonly AnyNode<Ts, S>[],
+): ReadonlyMap<string, NodeId> {
+  let next: Map<string, NodeId> | null = null;
+  for (const node of arrived) {
+    if (!ownsItsSubtree<Ts, S>(node)) continue;
+    const sourceKey = sourceKeyOf<Ts, S>(registry, node);
+    if (sourceKey === null) continue;
+    if (previous.has(sourceKey)) continue;
+    if (next === null) next = new Map(previous);
+    if (!next.has(sourceKey)) next.set(sourceKey, node.id);
+  }
+  // Nothing claimed, so the map is what it was — by reference.
+  return next ?? previous;
+}
+
+/**
  * Both indexes after a removal, updated rather than rebuilt.
  *
  * Sound because a removal cannot REORDER anything: dropping ids leaves every
