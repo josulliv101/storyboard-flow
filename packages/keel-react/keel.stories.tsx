@@ -13,7 +13,7 @@
 // you would copy into your own app. Everything after it is story chrome.
 
 import { Fragment, createContext, useCallback, useContext, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, within } from "storybook/test";
 
@@ -421,15 +421,15 @@ ui.defineNodeView("shot", function ShotView({ id, data }) {
   const move = useMoveWithinParent();
 
   return (
-    <div data-testid={`node-${id}`} style={styles.row}>
+    <div data-testid={`node-${id}`} className={classes.row}>
       <Tag>SHOT</Tag>
-      <span data-testid={`slug-${id}`} style={styles.title}>
+      <span data-testid={`slug-${id}`} className={classes.title}>
         {data.slug}
       </span>
-      <span style={styles.muted}>
+      <span className={classes.muted}>
         {data.seconds}s · cam {data.camera}
       </span>
-      <span style={styles.spacer} />
+      <span className={classes.spacer} />
       <NudgeButtons id={id} move={move} />
       <Button
         testId={`rename-${id}`}
@@ -459,13 +459,13 @@ ui.defineNodeView("note", function NoteView({ id, data }) {
   const move = useMoveWithinParent();
 
   return (
-    <div data-testid={`node-${id}`} style={styles.row}>
+    <div data-testid={`node-${id}`} className={classes.row}>
       <Tag>NOTE</Tag>
-      <span data-testid={`text-${id}`} style={styles.title}>
+      <span data-testid={`text-${id}`} className={classes.title}>
         {data.text}
       </span>
-      <span style={styles.muted}>— {data.author}</span>
-      <span style={styles.spacer} />
+      <span className={classes.muted}>— {data.author}</span>
+      <span className={classes.spacer} />
       <NudgeButtons id={id} move={move} />
     </div>
   );
@@ -477,22 +477,22 @@ ui.defineNodeView("sequence", function SequenceView({ id, data }) {
   const move = useMoveWithinParent();
 
   return (
-    <section data-testid={`node-${id}`} style={styles.collection}>
-      <header style={styles.row}>
+    <section data-testid={`node-${id}`} className={classes.collection}>
+      <header className={classes.row}>
         <Tag>SEQ</Tag>
-        <span style={styles.title}>{data.name}</span>
+        <span className={classes.title}>{data.name}</span>
         <Rollup id={id} />
-        <span style={styles.spacer} />
+        <span className={classes.spacer} />
         <NudgeButtons id={id} move={move} />
       </header>
 
       {state !== undefined && state.status === "loaded" ? (
-        <div style={styles.children}>
+        <div className={classes.children}>
           {childIds.length === 0 ? (
             // KNOWN to be empty — the four-state `ChildrenState` is what lets
             // this sentence be written at all. A three-state model cannot tell
             // "empty" from "not read yet".
-            <p style={styles.muted}>Empty, and known to be empty.</p>
+            <p className={classes.muted}>Empty, and known to be empty.</p>
           ) : (
             childIds.map((childId) => (
               <ui.NodeSlot key={childId} id={childId} />
@@ -518,19 +518,19 @@ ui.defineQuarantinedView(function QuarantinedView({ id, node }) {
   const firstIssue = node.issues[0];
 
   return (
-    <div data-testid={`node-${id}`} style={{ ...styles.row, ...styles.warn }}>
+    <div data-testid={`node-${id}`} className={cx(classes.row, classes.warn)}>
       <Tag>?</Tag>
-      <span style={styles.title}>
+      <span className={classes.title}>
         kind {node.kind} — {node.reason}
       </span>
-      <span data-testid={`why-${id}`} style={styles.muted}>
+      <span data-testid={`why-${id}`} className={classes.muted}>
         {/* The engine always attaches at least one Issue, for both quarantine
             reasons — but `issues` is a readonly array and this repo types
             `arr[0]` as possibly undefined, so the empty case is answered rather
             than asserted away. */}
         {firstIssue === undefined ? "(no detail)" : firstIssue.message}
       </span>
-      <span style={styles.spacer} />
+      <span className={classes.spacer} />
       {/* Still movable. That is the point: quarantine is not a tombstone. */}
       <NudgeButtons id={id} move={move} />
     </div>
@@ -643,7 +643,7 @@ function PlaceholderBody({
 
   if (state.status === "reference") {
     return (
-      <p data-testid={`state-${id}`} style={styles.muted}>
+      <p data-testid={`state-${id}`} className={classes.muted}>
         reference — another placement owns these children, and this one is
         structurally childless forever.
       </p>
@@ -652,7 +652,7 @@ function PlaceholderBody({
 
   if (state.status === "missing") {
     return (
-      <p data-testid={`state-${id}`} style={styles.muted}>
+      <p data-testid={`state-${id}`} className={classes.muted}>
         missing ({state.reason}) — confirmed gone, so the rollup above is EXACT.
       </p>
     );
@@ -661,8 +661,8 @@ function PlaceholderBody({
   const payload = LAZY_PAYLOADS.get(id);
 
   return (
-    <div style={styles.children}>
-      <p data-testid={`state-${id}`} style={styles.muted}>
+    <div className={classes.children}>
+      <p data-testid={`state-${id}`} className={classes.muted}>
         unloaded — nobody has read these children, so the rollup above is a
         guess and says so.
       </p>
@@ -681,9 +681,9 @@ function PlaceholderBody({
           Load children
         </Button>
       ) : (
-        <p style={styles.muted}>No payload registered for this one.</p>
+        <p className={classes.muted}>No payload registered for this one.</p>
       )}
-      {problem !== null ? <p style={styles.muted}>{problem}</p> : null}
+      {problem !== null ? <p className={classes.muted}>{problem}</p> : null}
     </div>
   );
 }
@@ -701,7 +701,7 @@ function Rollup({ id }: Readonly<{ id: NodeId }>) {
   const shots = ui.useFold("shots", id);
 
   return (
-    <span data-testid={`rollup-${id}`} style={styles.rollup}>
+    <span data-testid={`rollup-${id}`} className={classes.rollup}>
       {formatFolded(seconds, "s")} · {formatFolded(shots, " shots")}
     </span>
   );
@@ -733,7 +733,7 @@ function PersistPanel({ id }: Readonly<{ id: NodeId }>) {
   const [written, setWritten] = useState<string>("nothing written yet");
 
   return (
-    <div style={styles.panel}>
+    <div className={classes.panel}>
       <Button
         testId="persist"
         onClick={() => {
@@ -753,7 +753,7 @@ function PersistPanel({ id }: Readonly<{ id: NodeId }>) {
       >
         Write rollup to the stored summary
       </Button>
-      <code data-testid="persist-result" style={styles.code}>
+      <code data-testid="persist-result" className={classes.code}>
         {written}
       </code>
     </div>
@@ -765,14 +765,14 @@ function HistoryBar() {
   const { canUndo, canRedo, undo, redo } = ui.useHistory();
 
   return (
-    <div style={styles.panel}>
+    <div className={classes.panel}>
       <Button testId="undo" disabled={!canUndo} onClick={() => void undo()}>
         Undo
       </Button>
       <Button testId="redo" disabled={!canRedo} onClick={() => void redo()}>
         Redo
       </Button>
-      <span style={styles.muted}>
+      <span className={classes.muted}>
         undo={String(canUndo)} redo={String(canRedo)}
       </span>
     </div>
@@ -786,7 +786,7 @@ function ChildOrder({
 }: Readonly<{ id: NodeId; label: string }>) {
   const childIds = ui.useChildren(id);
   return (
-    <p data-testid={`order-${id}`} style={styles.code}>
+    <p data-testid={`order-${id}`} className={classes.code}>
       {label}: {childIds.length === 0 ? "(empty)" : childIds.join(", ")}
     </p>
   );
@@ -806,7 +806,7 @@ function ReEmittedNode({ id }: Readonly<{ id: NodeId }>) {
     .nodes.find((node) => node.id === id);
 
   return (
-    <code data-testid={`wire-${id}`} style={styles.code}>
+    <code data-testid={`wire-${id}`} className={classes.code}>
       {JSON.stringify(wire?.data ?? null)}
     </code>
   );
@@ -846,7 +846,7 @@ function Stage({
 
   return (
     <ui.Provider store={store}>
-      <div style={styles.stage}>{children}</div>
+      <div className={classes.stage}>{children}</div>
     </ui.Provider>
   );
 }
@@ -868,15 +868,15 @@ function Lesson({
   children,
 }: Readonly<{ title: string; children: ReactNode }>) {
   return (
-    <div style={styles.lesson}>
-      <h3 style={styles.lessonTitle}>{title}</h3>
-      <p style={styles.muted}>{children}</p>
+    <div className={classes.lesson}>
+      <h3 className={classes.lessonTitle}>{title}</h3>
+      <p className={classes.muted}>{children}</p>
     </div>
   );
 }
 
 function Tag({ children }: Readonly<{ children: ReactNode }>) {
-  return <span style={styles.tag}>{children}</span>;
+  return <span className={classes.tag}>{children}</span>;
 }
 
 function Button({
@@ -896,7 +896,7 @@ function Button({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled === true}
-      style={disabled === true ? styles.buttonOff : styles.button}
+      className={disabled === true ? classes.buttonOff : classes.button}
     >
       {children}
     </button>
@@ -904,94 +904,45 @@ function Button({
 }
 
 /**
- * INLINE STYLES, NOT TAILWIND CLASSES, and that is deliberate.
+ * TAILWIND CLASSES, and one thing has to be true for them to work.
  *
- * The storybook workspace's Tailwind entry declares
- * `@source "../../../packages/ui/**"` and nothing else, so a class name written
- * in packages/keel-react compiles to no CSS at all — the story would render
- * unstyled and nothing would say why. Everything below is also expressed in
- * `currentColor` and translucent greys so it reads in both the light and the
- * dark Storybook theme without importing a token.
+ * The storybook workspace's Tailwind entry must name this package in an
+ * `@source` glob. It scans files, not imports, so a class written here is
+ * compiled ONLY if `.storybook/globals.css` was told to look — and when it was
+ * not, the class name still renders in the DOM and simply matches no CSS. The
+ * story comes out unstyled with nothing anywhere saying why, which is the same
+ * failure mode this repo has already paid for once with `lib/` and portals.
+ *
+ * Colours stay on the neutral scale with opacity modifiers, and borders use
+ * `currentColor`, so every story reads in both the light and the dark Storybook
+ * theme without importing a design token.
+ *
+ * Truly dynamic values — a computed indent, for instance — stay inline. Tailwind
+ * compiles class names it can SEE at build time, so a runtime-computed length
+ * has no class to compile.
  */
-const styles: Readonly<Record<string, CSSProperties>> = {
-  stage: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-    fontFamily: "ui-sans-serif, system-ui, sans-serif",
-    fontSize: 14,
-    lineHeight: 1.5,
-  },
-  lesson: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 640 },
-  lessonTitle: { margin: 0, fontSize: 15, fontWeight: 600 },
-  collection: {
-    border: "1px solid rgba(128,128,128,0.45)",
-    borderRadius: 8,
-    padding: 8,
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  children: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    paddingLeft: 16,
-    borderLeft: "2px solid rgba(128,128,128,0.3)",
-  },
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "4px 6px",
-    borderRadius: 6,
-    background: "rgba(128,128,128,0.08)",
-  },
-  warn: { background: "rgba(200,120,0,0.16)" },
-  title: { fontWeight: 600 },
-  muted: { opacity: 0.7, margin: 0 },
-  spacer: { flex: 1 },
-  tag: {
-    fontSize: 10,
-    letterSpacing: 0.6,
-    padding: "2px 5px",
-    borderRadius: 4,
-    border: "1px solid rgba(128,128,128,0.6)",
-  },
-  rollup: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: 12,
-    opacity: 0.85,
-  },
-  panel: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  code: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: 12,
-    opacity: 0.85,
-    margin: 0,
-  },
-  button: {
-    font: "inherit",
-    fontSize: 12,
-    padding: "3px 8px",
-    borderRadius: 5,
-    border: "1px solid rgba(128,128,128,0.6)",
-    background: "transparent",
-    color: "inherit",
-    cursor: "pointer",
-  },
-  buttonOff: {
-    font: "inherit",
-    fontSize: 12,
-    padding: "3px 8px",
-    borderRadius: 5,
-    border: "1px solid rgba(128,128,128,0.3)",
-    background: "transparent",
-    color: "inherit",
-    opacity: 0.4,
-    cursor: "not-allowed",
-  },
-};
+const classes = {
+  stage: "flex flex-col gap-3 font-sans text-sm leading-normal",
+  lesson: "flex flex-col gap-1 max-w-[640px]",
+  lessonTitle: "m-0 text-[15px] font-semibold",
+  collection:
+    "flex flex-col gap-2 rounded-lg border border-neutral-500/45 p-2",
+  children:
+    "flex flex-col gap-1.5 border-l-2 border-neutral-500/30 pl-4",
+  row: "flex items-center gap-2 rounded-md bg-neutral-500/10 px-1.5 py-1",
+  warn: "bg-amber-600/15",
+  title: "font-semibold",
+  muted: "m-0 opacity-70",
+  spacer: "flex-1",
+  tag: "rounded border border-neutral-500/60 px-[5px] py-[2px] text-[10px] tracking-[0.6px]",
+  rollup: "font-mono text-xs opacity-85",
+  panel: "flex flex-wrap items-center gap-2",
+  code: "m-0 font-mono text-xs opacity-85",
+  button:
+    "cursor-pointer rounded-[5px] border border-neutral-500/60 bg-transparent px-2 py-[3px] font-[inherit] text-xs text-inherit",
+  buttonOff:
+    "cursor-not-allowed rounded-[5px] border border-neutral-500/30 bg-transparent px-2 py-[3px] font-[inherit] text-xs text-inherit opacity-40",
+} as const;
 
 // ===========================================================================
 // FIXTURES — deterministic, nothing fetches
@@ -1193,7 +1144,7 @@ const meta = {
   title: "KEEL/Tour",
   decorators: [
     (Story) => (
-      <div style={{ padding: 24, color: "inherit" }}>
+      <div className="p-6 text-inherit">
         <Story />
       </div>
     ),
@@ -1316,7 +1267,7 @@ export const ReorderAndMove: Story = {
 function ReelToolbar() {
   const moveTo = useMoveToCollection();
   return (
-    <div style={styles.panel}>
+    <div className={classes.panel}>
       <Button
         testId="send-to-reel-b"
         onClick={() => moveTo(IDS.shotBridge, IDS.reelB)}
@@ -1371,7 +1322,7 @@ function RejectedEditPanel() {
   const [message, setMessage] = useState<string>("no edit attempted yet");
 
   return (
-    <div style={styles.panel}>
+    <div className={classes.panel}>
       <Button
         testId="bad-edit"
         onClick={() => {
@@ -1396,7 +1347,7 @@ function RejectedEditPanel() {
       >
         Try to set Bridge to 0s
       </Button>
-      <code data-testid="edit-result" style={styles.code}>
+      <code data-testid="edit-result" className={classes.code}>
         {message}
       </code>
     </div>
@@ -1468,7 +1419,7 @@ export const UndoAndRedo: Story = {
 function AddNoteButton() {
   const store = ui.useStore();
   return (
-    <div style={styles.panel}>
+    <div className={classes.panel}>
       <Button
         testId="add-note"
         onClick={() => {
@@ -1604,7 +1555,7 @@ export const UnloadedCollection: Story = {
 function MissingToolbar() {
   const store = ui.useStore();
   return (
-    <div style={styles.panel}>
+    <div className={classes.panel}>
       <Button
         testId="mark-missing"
         onClick={() =>
@@ -1643,7 +1594,7 @@ export const Quarantine: Story = {
       </Lesson>
       <Roots />
       <ChildOrder id={IDS.actOne} label="act-one children" />
-      <p style={styles.muted}>Re-emitted wire data for the unknown node:</p>
+      <p className={classes.muted}>Re-emitted wire data for the unknown node:</p>
       <ReEmittedNode id={IDS.sticker} />
     </Stage>
   ),
@@ -1882,7 +1833,7 @@ function DragBoard({ children }: Readonly<{ children: ReactNode }>) {
 
   return (
     <DragContext.Provider value={{ dragId, hover, begin }}>
-      <div data-testid="dnd-outcome" style={dndStyles.outcome}>
+      <div data-testid="dnd-outcome" className={dndClasses.outcome}>
         {outcome}
       </div>
       <div
@@ -1895,7 +1846,7 @@ function DragBoard({ children }: Readonly<{ children: ReactNode }>) {
         // A cancelled pointer (the OS taking over, a context menu) must not
         // leave the drag armed.
         onPointerCancel={finish}
-        style={dndStyles.board}
+        className={dndClasses.board}
       >
         {children}
       </div>
@@ -1915,13 +1866,13 @@ function Gap({
       data-testid={"gap-" + parentId + "-" + indexBefore}
       data-drop-parent={parentId}
       data-drop-index={indexBefore}
-      style={{
-        ...dndStyles.gap,
-        ...(dragId === null ? null : dndStyles.gapArmed),
-        ...(lit ? dndStyles.gapLit : null),
-      }}
+      className={cx(
+        dndClasses.gap,
+        dragId !== null && dndClasses.gapArmed,
+        lit && dndClasses.gapLit,
+      )}
     >
-      <span style={dndStyles.gapIndex}>{indexBefore}</span>
+      <span className={dndClasses.gapIndex}>{indexBefore}</span>
     </div>
   );
 }
@@ -1959,12 +1910,12 @@ function DragRow({
       data-row-index={index}
       data-testid={"row-" + id}
       onPointerDown={(event) => begin(id, event)}
-      style={{
-        ...dndStyles.row,
-        ...(dragId === id ? dndStyles.rowDragging : null),
-        ...(before ? dndStyles.rowBefore : null),
-        ...(after ? dndStyles.rowAfter : null),
-      }}
+      className={cx(
+        dndClasses.row,
+        dragId === id && dndClasses.rowDragging,
+        before && dndClasses.rowBefore,
+        after && dndClasses.rowAfter,
+      )}
     >
       <span
         data-testid={"grip-" + id}
@@ -1978,12 +1929,12 @@ function DragRow({
         aria-label={"Drag " + String(id)}
         role="button"
         tabIndex={0}
-        style={dndStyles.grip}
+        className={dndClasses.grip}
       >
         {"⠿"}
       </span>
-      <span style={dndStyles.rowLabel}>{label}</span>
-      <span style={dndStyles.rowKind}>
+      <span className={dndClasses.rowLabel}>{label}</span>
+      <span className={dndClasses.rowKind}>
         {node.quarantined ? "?" : node.kind}
       </span>
     </div>
@@ -2011,10 +1962,10 @@ function DragCollection({
   const name = node.kind === "sequence" ? node.data.name : String(id);
 
   return (
-    <div style={{ ...dndStyles.collection, marginLeft: depth * 18 }}>
-      <div style={dndStyles.collectionHead}>
+    <div className={dndClasses.collection} style={{ marginLeft: depth * 18 }}>
+      <div className={dndClasses.collectionHead}>
         <strong>{name}</strong>
-        <span style={dndStyles.rowKind}>{node.children.status}</span>
+        <span className={dndClasses.rowKind}>{node.children.status}</span>
       </div>
 
       {!loaded ? (
@@ -2022,12 +1973,12 @@ function DragCollection({
           data-testid={"gap-" + id + "-0"}
           data-drop-parent={id}
           data-drop-index={0}
-          style={{
-            ...dndStyles.gap,
-            ...dndStyles.gapClosed,
-            ...(dragId === null ? null : dndStyles.gapArmed),
-            ...(isHovered(hover, id, 0) ? dndStyles.gapLit : null),
-          }}
+          className={cx(
+            dndClasses.gap,
+            dndClasses.gapClosed,
+            dragId !== null && dndClasses.gapArmed,
+            isHovered(hover, id, 0) && dndClasses.gapLit,
+          )}
         >
           nobody has read these children
         </div>
@@ -2066,92 +2017,35 @@ function ChildRow({
   return <DragRow id={id} parentId={parentId} index={index} />;
 }
 
-const dndStyles: Readonly<Record<string, CSSProperties>> = {
-  outcome: {
-    fontFamily: "ui-monospace, monospace",
-    fontSize: 12,
-    padding: "6px 10px",
-    borderRadius: 4,
-    background: "rgba(127,127,127,.12)",
-    marginBottom: 10,
-  },
-  // `touch-action: none` on the whole board: a touch drag would otherwise
-  // scroll the page, because the browser claims the gesture before any pointer
-  // handler sees it.
-  board: { touchAction: "none" },
-  collection: {
-    border: "1px solid rgba(127,127,127,.35)",
-    borderRadius: 6,
-    padding: 8,
-    marginBottom: 10,
-  },
-  collectionHead: {
-    display: "flex",
-    justifyContent: "space-between",
-    fontSize: 13,
-    marginBottom: 6,
-  },
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "5px 8px",
-    borderRadius: 4,
-    background: "rgba(127,127,127,.10)",
-    cursor: "grab",
-    // The insertion line is drawn as a border, so reserve it on both edges and
-    // keep it transparent — otherwise every hover nudges the row by 2px.
-    borderTop: "2px solid transparent",
-    borderBottom: "2px solid transparent",
-  },
-  rowDragging: { opacity: 0.45, cursor: "grabbing" },
-  rowBefore: { borderTop: "2px solid currentColor" },
-  rowAfter: { borderBottom: "2px solid currentColor" },
-  rowLabel: { flex: 1, fontSize: 13 },
-  rowKind: {
-    fontSize: 11,
-    opacity: 0.6,
-    fontFamily: "ui-monospace, monospace",
-  },
-  grip: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 32,
-    height: 32,
-    flex: "0 0 auto",
-    fontSize: 17,
-    lineHeight: 1,
-    borderRadius: 5,
-    border: "1px solid rgba(127,127,127,.35)",
-    background: "rgba(127,127,127,.12)",
-    userSelect: "none",
-    opacity: 0.75,
-  },
-  gap: {
-    height: 18,
-    display: "flex",
-    alignItems: "center",
-    paddingLeft: 6,
-    fontSize: 10,
-    opacity: 0.35,
-    fontFamily: "ui-monospace, monospace",
-    borderRadius: 3,
-  },
-  gapArmed: { outline: "1px dashed rgba(127,127,127,.5)", opacity: 0.7 },
-  gapLit: {
-    outline: "2px solid currentColor",
-    opacity: 1,
-    background: "rgba(127,127,127,.2)",
-  },
-  gapClosed: {
-    height: "auto",
-    padding: 6,
-    opacity: 0.5,
-    fontStyle: "italic",
-  },
-  gapIndex: {},
-};
+const dndClasses = {
+  outcome:
+    "mb-2.5 rounded bg-neutral-500/12 px-2.5 py-1.5 font-mono text-xs",
+  // `touch-none` on the whole board: a touch drag would otherwise scroll the
+  // page, because the browser claims the gesture before any pointer handler
+  // sees it.
+  board: "touch-none",
+  collection: "mb-2.5 rounded-md border border-neutral-500/35 p-2",
+  collectionHead: "mb-1.5 flex justify-between text-[13px]",
+  // The insertion line is drawn as a border, so both edges are reserved and
+  // transparent — otherwise every hover nudges the row by 2px.
+  row: "flex cursor-grab items-center gap-2 rounded border-y-2 border-transparent bg-neutral-500/10 px-2 py-[5px]",
+  rowDragging: "cursor-grabbing opacity-45",
+  rowBefore: "border-t-current",
+  rowAfter: "border-b-current",
+  rowLabel: "flex-1 text-[13px]",
+  rowKind: "font-mono text-[11px] opacity-60",
+  grip: "inline-flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-[5px] border border-neutral-500/35 bg-neutral-500/12 text-[17px] leading-none opacity-75",
+  gap: "flex h-[18px] items-center rounded-[3px] pl-1.5 font-mono text-[10px] opacity-35",
+  gapArmed: "opacity-70 outline outline-1 outline-dashed outline-neutral-500/50",
+  gapLit: "bg-neutral-500/20 opacity-100 outline outline-2 outline-current",
+  gapClosed: "h-auto p-1.5 italic opacity-50",
+  gapIndex: "",
+} as const;
+
+/** Join the class strings that survive a condition. */
+function cx(...parts: readonly (string | false | null | undefined)[]): string {
+  return parts.filter(Boolean).join(" ");
+}
 
 /**
  * 9. Drag and drop, and the index conversion nobody should re-derive.
