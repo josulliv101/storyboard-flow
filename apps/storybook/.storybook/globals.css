@@ -1,5 +1,9 @@
 @import "tailwindcss";
 @source "../../../packages/ui/**/*.{ts,tsx}";
+/* keel-react's stories are written in Tailwind classes; without this
+   @source they compile to no CSS at all and the tour renders unstyled
+   with nothing to say why. */
+@source "../../../packages/keel-react/**/*.{ts,tsx}";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
