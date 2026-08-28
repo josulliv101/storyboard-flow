@@ -393,19 +393,21 @@ function placementsAfterMove<Ts extends readonly unknown[], S>(
   // otherwise send the emptiest possible patch down the most expensive path.
   if (moves.length === 0) return previous;
 
-  const scopeRootId = soleReorderParent(moves);
-  if (scopeRootId !== null) {
-    const scoped = reindexPlacementsWithinSubtree(post, registry, previous, scopeRootId);
-    // `null` is "declined", not "invalid" — the incremental path found the
-    // previous index disagreeing with the graph and refused to guess.
-    if (scoped !== null) return scoped;
-  }
-
-  // A cross-parent move — or a scoped reorder that declined. Reposition what
-  // travelled instead of rediscovering what did not: the scope of a move is the
-  // moved subtrees, and every node outside them holds its relative order. See
-  // `reindexPlacementsAcrossMove` for why that is true rather than merely
-  // plausible.
+  // THE MOVED SET FIRST. Reposition what travelled instead of rediscovering
+  // what did not: the scope of a move is the moved subtrees, and every node
+  // outside them holds its relative order. `reindexPlacementsAcrossMove` proves
+  // that rather than assuming it, and its argument — take any two nodes,
+  // neither in a moved subtree — never assumes the parents DIFFER, so it covers
+  // a same-parent reorder unchanged.
+  //
+  // This used to run second, after the scoped path, and the engine therefore
+  // declined to use its own conclusion for exactly the gesture that needs it
+  // most. MEASURED, counting `contentKey`: a clip reorder inside a strip cost
+  // strip-width + 1 (21 for a 20-wide strip, 201 for a 200-wide one) while the
+  // same clip moved to ANOTHER strip cost 1 — the same node, the same distance,
+  // the same work, two orders of magnitude apart. Worse, reordering a
+  // COLLECTION under the root made the scope root the document root, so it
+  // walked the ENTIRE graph: 10,501 calls on a 10,501-node board, every drag.
   const repositioned = reindexPlacementsAcrossMove(
     post,
     registry,
@@ -413,6 +415,20 @@ function placementsAfterMove<Ts extends readonly unknown[], S>(
     moves.map((move) => move.nodeId),
   );
   if (repositioned !== null) return repositioned;
+
+  // The scoped reorder is now the FALLBACK, for a same-parent batch the moved
+  // set declined — which it does when `previous` disagrees with the graph, not
+  // when the move is unusual. Kept rather than deleted because it answers from
+  // a different direction (the subtree that contains the change, rather than
+  // the nodes that moved) and can therefore still succeed where the other
+  // could not.
+  const scopeRootId = soleReorderParent(moves);
+  if (scopeRootId !== null) {
+    const scoped = reindexPlacementsWithinSubtree(post, registry, previous, scopeRootId);
+    // `null` is "declined", not "invalid" — the incremental path found the
+    // previous index disagreeing with the graph and refused to guess.
+    if (scoped !== null) return scoped;
+  }
 
   return rebuildPlacementIndex(post, registry);
 }
