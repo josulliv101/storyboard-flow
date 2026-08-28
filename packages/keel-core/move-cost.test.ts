@@ -521,13 +521,61 @@ describe("derived index cost", () => {
     expect(next.ownerBySourceKey.get("src-c0")).toBe(nid("c0"));
   });
 
-  it("looks at only the reordered subtree, not the document", () => {
-    const graph = wideGraph(20, 20); // 400 clips
+  it("asks once per node that TRAVELLED, not once per sibling", () => {
+    // THE BILL IS THE MOVED SUBTREE. Held at three strip widths, because a
+    // per-width bound cannot tell "the moved subtree" apart from "the strip
+    // happened to be 20 wide" — which is exactly what the previous version of
+    // this test asserted, and why it passed while the commonest drag in the
+    // product paid for every sibling beside it.
+    const widths = [5, 20, 50] as const;
+    const counts = widths.map((width) => {
+      const graph = wideGraph(20, width);
+      resetCodecCounters();
+      commit(graph, reorderWithin("c0", "c0-m0", 0, 3));
+      return contentKeyCalls;
+    });
+    // One clip moved, one clip asked, whatever it was standing next to.
+    expect(counts).toEqual([1, 1, 1]);
+  });
+
+  it("charges a reorder the same as a cross-parent move of the same node", () => {
+    // The two gestures move one leaf; only the destination differs. They cost
+    // the same because the SCOPE is the same, and a reorder used to cost the
+    // whole sibling list while the cross-parent move already cost one.
+    const graph = wideGraph(20, 20);
+
     resetCodecCounters();
     commit(graph, reorderWithin("c0", "c0-m0", 0, 5));
-    // Exactly the 20 clips inside `c0`. The from-scratch rebuild this replaced
-    // asked all 400, every drag.
-    expect(contentKeyCalls).toBe(20);
+    const withinCalls = contentKeyCalls;
+
+    resetCodecCounters();
+    commit(graph, moveAcross("c0", "c1", "c0-m0", 0, 0));
+    const acrossCalls = contentKeyCalls;
+
+    expect(withinCalls).toBe(acrossCalls);
+  });
+
+  it("does not charge a COLLECTION reorder for the whole document", () => {
+    // The worst case, and the one no previous test covered: reordering a
+    // collection under the root made the scope root the DOCUMENT root, so the
+    // cheap path was skipped and every node in the graph was asked for its key.
+    const small = wideGraph(10, 20); // 200 clips + 10 folders
+    resetCodecCounters();
+    commit(small, reorderWithin("root", "c0", 0, 5));
+    const smallCalls = contentKeyCalls;
+
+    const large = wideGraph(20, 20); // 400 clips + 20 folders
+    resetCodecCounters();
+    commit(large, reorderWithin("root", "c0", 0, 5));
+    const largeCalls = contentKeyCalls;
+
+    // The moved subtree is one folder and its 20 clips in both graphs, so the
+    // count must not move when the document doubles.
+    expect(smallCalls).toBe(largeCalls);
+    // 20, not 21: only the clip kind defines `contentKey`, so the folder that
+    // actually moved contributes nothing to the index and is never asked. The
+    // bill is the moved subtree's KEYED nodes.
+    expect(largeCalls).toBe(20);
   });
 
   it("keeps placementsByContentKey identical when a reorder cannot move it", () => {

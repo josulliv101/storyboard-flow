@@ -46,6 +46,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { performance } from "node:perf_hooks";
 
 import { createEngine } from "./engine";
+import { createHistory } from "./history";
 import { computeFold, createFoldCache, DEFAULT_FOLD_CACHE_LIMIT } from "./folds";
 import {
   defineNodeType,
@@ -1405,6 +1406,76 @@ describe("mutations", () => {
     expect(perEdit).toBeLessThanOrEqual(2);
 
     expectSubQuadratic(perOp, "content edit");
+  }, 120_000);
+
+  /**
+   * THE SERVER-WRITE PATH, held to the same bill as the user-intent one.
+   *
+   * `applyIngestEdits` rebuilt BOTH derived indexes unconditionally, ignoring
+   * the check `applyPatch`'s data arm has used since it shipped. Its comment
+   * claimed parity with that arm — "the same thing `applyPatch` does after a
+   * 'data-changed' patch" — which stopped being true when the arm gained its
+   * guard, so the comment had become a description of the defect.
+   *
+   * MEASURED before the guard, counting `contentKey` on a key-preserving
+   * one-node write: ingest asked 1,000 / 10,000 / 40,000 times at those three
+   * sizes — exactly the reachable node count, a full document-order DFS — while
+   * `edit-nodes` asked 2, flat. Per CALL, not per edit: a batch of twenty still
+   * cost one whole walk.
+   *
+   * This is the path a thumbnail lands on.
+   */
+  it("a key-preserving ingest re-indexes no more than the equivalent command", () => {
+    const ingestReindexed = new Map<string, number>();
+    const editReindexed = new Map<string, number>();
+
+    for (const fx of wideSizes) {
+      const clips = firstFolderClips(fx);
+      const target = at(clips, 0, "clips");
+      // `seconds` is not what `contentKey` reads, so this write cannot move
+      // either index — the shape of a duration or a thumbnail arriving.
+      const edits = [
+        { nodeId: target, kind: "clip", edit: { seconds: 99 } },
+      ] as const;
+
+      const ingestCounts = countOnce(() => {
+        engine.applyIngest(fx.graph, createHistory<Types, Summary>(), edits);
+      });
+      ingestReindexed.set(
+        fx.label,
+        noteCount(
+          "ingest (key-preserving)",
+          fx.label,
+          fx.nodeCount,
+          "contentKey",
+          ingestCounts.contentKey,
+        ),
+      );
+
+      const editCounts = countOnce(() => {
+        engine.applyCommand(fx.graph, { type: "edit-nodes", edits: [...edits] });
+      });
+      editReindexed.set(fx.label, editCounts.contentKey);
+    }
+
+    // The claim is INDEPENDENCE, asserted at three sizes, because a per-size
+    // bound cannot tell a constant apart from a number that happens to be small
+    // at the size being looked at.
+    const perIngest = expectIndependentOfGraphSize(
+      ingestReindexed,
+      "ingest content-key lookups",
+    );
+    // Two per edited node — its key before and after — which is exactly what
+    // the command path above is already held to.
+    expect(perIngest).toBeLessThanOrEqual(2);
+
+    // And stated as a relationship, not two separate numbers: the IO door must
+    // not cost more than the user-intent door for the same write.
+    for (const fx of wideSizes) {
+      expect(ingestReindexed.get(fx.label)).toBeLessThanOrEqual(
+        editReindexed.get(fx.label) ?? 0,
+      );
+    }
   }, 120_000);
 });
 

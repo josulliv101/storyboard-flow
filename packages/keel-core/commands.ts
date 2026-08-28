@@ -42,6 +42,7 @@ import {
   tryParseNodeId,
 } from "./types";
 import {
+  dataChangeLeavesDerivedIndexesIntact,
   ownsItsSubtree,
   ancestorChain,
   bumpSubtreeRevs,
@@ -1415,13 +1416,43 @@ export function applyIngestEdits<Ts extends readonly unknown[], S>(
     // chain per node rather than a move's two.
     subtreeRevById: bumpSubtreeRevs(graph.subtreeRevById, graph, editedIds),
   };
-  const nextGraph: Graph<Ts, S> = {
-    ...withNodes,
-    // A `contentKey` or `sourceKey` can move with the data, so both derived
-    // indexes are rebuilt — the same thing `applyPatch` does after a
-    // "data-changed" patch.
-    ...rebuildDerivedIndexes(withNodes, ctx.registry),
-  };
+  // A `contentKey` or `sourceKey` can move with the data, so the indexes may
+  // need rebuilding — but only when a key ACTUALLY moved. This used to rebuild
+  // unconditionally, and the comment that stood here claimed it was doing "the
+  // same thing `applyPatch` does after a 'data-changed' patch". That stopped
+  // being true when `applyPatch`'s data arm gained its guard; the comment had
+  // become a description of the defect rather than of the code.
+  //
+  // MEASURED before this guard, counting `contentKey` on a key-preserving
+  // one-node write: ingest asked 1,000 / 10,000 / 40,000 times at those sizes —
+  // exactly the reachable node count, a whole document-order DFS — while
+  // `edit-nodes` asked 2, flat. Per CALL, not per edit: a batch of twenty still
+  // cost one full walk. This is the path an arriving thumbnail lands on, which
+  // makes it the highest-frequency write in the system.
+  //
+  // The soundness argument is the one ./patches already makes for the same
+  // predicate, and it is STRICTLY STRONGER here: ingest touches only `data`, so
+  // document order cannot change (no bucket's ORDER can move) and no node's
+  // `ownsItsSubtree` can change (no owner can move). Where the patch arm must
+  // also tolerate changes it skipped, `planEdits` refuses a quarantined node
+  // outright — so every plan here really was applied, and the predicate is
+  // evaluated over exactly the nodes that changed.
+  //
+  // On the no-move path both maps carry forward BY IDENTITY, which is what
+  // `walkDerivedIndexes` asks for: a consumer memoising on
+  // `placementsByContentKey` stops churning on every server write.
+  const movesAKey = plans.some(
+    (plan) =>
+      !dataChangeLeavesDerivedIndexesIntact(
+        ctx.registry,
+        plan.kind,
+        plan.before,
+        plan.after,
+      ),
+  );
+  const nextGraph: Graph<Ts, S> = movesAKey
+    ? { ...withNodes, ...rebuildDerivedIndexes(withNodes, ctx.registry) }
+    : withNodes;
 
   const replacements = new Map<NodeId, unknown>(
     plans.map((plan) => [plan.nodeId, plan.after]),
