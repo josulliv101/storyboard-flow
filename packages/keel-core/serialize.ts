@@ -1277,7 +1277,26 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
   }
 
   const subtreeRevById = new Map(graph.subtreeRevById);
-  for (const incomingId of payload.order) subtreeRevById.set(incomingId, 0);
+  // SEEDED ABOVE ANY TOMBSTONE, never unconditionally at 0 — the same rule
+  // `applyInserted` follows with `if (!revs.has(node.id))`, and for the same
+  // reason. `applyRemoved` leaves a removed id's revision behind deliberately,
+  // because `subtreeRevById` is the fold cache's ONLY invalidation mechanism:
+  // an entry keyed (foldKey, nodeId, rev) is meant to become unreachable once
+  // the rev moves past it, so nothing ever has to evict.
+  //
+  // Writing 0 here walked a returning id back onto revisions its DEAD lineage
+  // had already cached under different data. The `id-collision` guard above
+  // does not catch it — that one rejects ids the graph CURRENTLY holds, and a
+  // removed id is absent from `nodesById` while still present here. The gesture
+  // is: read a clip's rollup, edit it, delete it, then have the server report
+  // it inside a not-yet-loaded folder. Measured before this fix: the store
+  // answered the dead clip's 4 while the truth was 999, at the clip AND at
+  // every ancestor rollup, and it did not self-heal — each later edit landed on
+  // the next already-poisoned rev.
+  for (const incomingId of payload.order) {
+    const tombstone = graph.subtreeRevById.get(incomingId);
+    subtreeRevById.set(incomingId, tombstone === undefined ? 0 : tombstone + 1);
+  }
 
   const base: Graph<Ts, S> = {
     engineId: graph.engineId,
@@ -1286,8 +1305,10 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
     parentById,
     rootIds: graph.rootIds,
     // Bumped against the PRE-load graph on purpose: the ancestor chain is read
-    // from `parentById`, and the target's ancestors are unchanged by loading,
-    // while the newly arrived nodes are brand new and start at 0.
+    // from `parentById`, and the target's ancestors are unchanged by loading.
+    // The arriving nodes need no bump of their own — the loop above has already
+    // seeded each one at 0, or above its tombstone if the id has lived here
+    // before.
     subtreeRevById: bumpSubtreeRevs(subtreeRevById, graph, [id]),
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
