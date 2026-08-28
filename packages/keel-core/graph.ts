@@ -394,9 +394,29 @@ export function sourceKeyOf<Ts extends readonly unknown[], S>(
   node: AnyNode<Ts, S>,
 ): string | null {
   if (node.quarantined) return null;
-  const type = registry.get(node.kind);
+  return sourceKeyOfKindData(registry, node.kind, node.data);
+}
+
+/**
+ * The same `sourceKey` call, for a caller holding a value the node does not
+ * hold YET.
+ *
+ * `verifyDataChanged` needs exactly this: it must know what key a patch's
+ * `after` would claim before deciding whether replaying it is safe, and the
+ * node in the graph still carries the old value. Split out rather than
+ * duplicated so the two cannot disagree about which codec hook answers, and so
+ * the deliberate absence of a try/catch stays in ONE place — see the block
+ * comment above `contentKeyOf` for why a throwing key function is not swallowed
+ * into `null`.
+ */
+export function sourceKeyOfKindData(
+  registry: NodeTypeRegistry,
+  kind: string,
+  data: unknown,
+): string | null {
+  const type = registry.get(kind);
   if (type === undefined || type.sourceKey === undefined) return null;
-  return type.sourceKey(node.data);
+  return type.sourceKey(data);
 }
 
 /**
