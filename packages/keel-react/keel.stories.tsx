@@ -18,11 +18,14 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, within } from "storybook/test";
 
 import {
+  childrenStateOf,
   createEngine,
   defineNodeType,
   folded,
   foldedExact,
   foldMonoid,
+  getChildren,
+  getParent,
   parseNodeId,
   summaryFrom,
   weakestCertainty,
@@ -564,11 +567,17 @@ function useMoveWithinParent(): (id: NodeId, direction: -1 | 1) => void {
       // Read the graph AT CLICK TIME, not at render time. `store` is stable for
       // its lifetime, so this closure can never go stale.
       const graph = store.getGraph();
-      const parentId = graph.parentById.get(id);
-      if (parentId === undefined || parentId === null) return;
+      // `getParent`, not `graph.parentById.get` — the map answers `undefined`
+      // for an unknown id and `null` for a root, and this caller wants the same
+      // thing in both cases. The accessor already collapses them.
+      const parentId = getParent(graph, id);
+      if (parentId === null) return;
 
-      const siblings = graph.childrenById.get(parentId);
-      if (siblings === undefined) return;
+      // `getChildren` answers `[]` for anything that is not a loaded
+      // collection, and `[]` fails the `indexOf` below exactly as `undefined`
+      // did — so the load state is not load-bearing HERE. Where it is, this
+      // file uses `childrenStateOf`; see the drop handler below.
+      const siblings = getChildren(graph, parentId);
 
       const from = siblings.indexOf(id);
       if (from < 0) return;
@@ -597,12 +606,19 @@ function useMoveToCollection(): (id: NodeId, toParentId: NodeId) => void {
   return useCallback(
     (id, toParentId) => {
       const graph = store.getGraph();
-      // No `childrenById` entry means the target is not a LOADED collection,
-      // and the engine would refuse the drop with `target-not-loaded` anyway: a
-      // post-removal index into children you have never seen has no honest
-      // value.
-      const target = graph.childrenById.get(toParentId);
-      if (target === undefined) return;
+      // The target must be a LOADED collection — the engine would refuse the
+      // drop with `target-not-loaded` anyway, because a post-removal index into
+      // children you have never seen has no honest value.
+      //
+      // `childrenStateOf` is what answers that. `getChildren` cannot: it
+      // returns `[]` for a loaded-and-empty collection AND for an unloaded one,
+      // and collapsing those two is the exact ambiguity this engine exists to
+      // remove. Reading `graph.childrenById` raw would also distinguish them,
+      // which is why this line used to — but that spelling reaches past the
+      // accessor that states the contract, and the contract is what survives a
+      // change to how the graph stores its indexes.
+      if (childrenStateOf(graph, toParentId)?.status !== "loaded") return;
+      const target = getChildren(graph, toParentId);
 
       const command = store.resolveDrop({
         type: "move",
@@ -1509,8 +1525,12 @@ function AddNoteButton() {
       <Button
         testId="add-note"
         onClick={() => {
-          const children = store.getGraph().childrenById.get(IDS.actOne);
-          if (children === undefined) return;
+          const graph = store.getGraph();
+          // Loaded-or-nothing, for the same reason as the drop handler above:
+          // appending at `children.length` is only honest when the children
+          // are ones this client has actually seen.
+          if (childrenStateOf(graph, IDS.actOne)?.status !== "loaded") return;
+          const children = getChildren(graph, IDS.actOne);
           store.dispatch({
             type: "insert-nodes",
             // A SEED carries a VALUE and never an id — the engine mints the id,
