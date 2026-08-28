@@ -93,9 +93,41 @@ import {
  */
 let mintCounter = 0;
 
+/**
+ * Computed ONCE per module instance, which is what makes it worth having: the
+ * counter above rules out an intra-process collision, and this rules out a
+ * cross-process one. Two workers, two tabs, or a server and a client minting
+ * ids for the same document each get a different prefix, so their ids cannot
+ * meet in the middle when the documents merge.
+ *
+ * `crypto` is FEATURE-DETECTED rather than assumed. This module must load in a
+ * Node route handler, a browser bundle and a bare vitest node environment, and
+ * they have historically disagreed about where that global lives — so the
+ * fallback is the same `Math.random` this used before, and the detection can
+ * only improve on it.
+ */
+const mintPrefix: string = (() => {
+  // Structurally typed, not `Crypto` — this package's `lib` is `esnext` with no
+  // DOM, which is the very portability the paragraph above is about. Naming the
+  // DOM type here would break the build it is meant to protect.
+  const host: Readonly<Record<string, unknown>> =
+    globalThis as unknown as Readonly<Record<string, unknown>>;
+  const c = host["crypto"];
+  if (typeof c === "object" && c !== null) {
+    const uuid = (c as Readonly<Record<string, unknown>>)["randomUUID"];
+    if (typeof uuid === "function") {
+      const value: unknown = (uuid as () => unknown).call(c);
+      if (typeof value === "string" && value.length >= 8) return value.slice(0, 8);
+    }
+  }
+  return Math.random().toString(36).slice(2, 10);
+})();
+
 function defaultMintId(): string {
   mintCounter += 1;
-  return `keel-${mintCounter.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `keel-${mintPrefix}-${mintCounter.toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
 }
 
 const noop = (): void => {};
@@ -129,10 +161,12 @@ function nothingToReplay(direction: "undo" | "redo"): ReplayRejection {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the engine. THROWS on a duplicate `kind` (via `buildRegistry`) and on
- * nothing else, ever — a duplicate is a programmer error at module init, before
- * any data has been read, and there is no partial-success answer worth
- * returning when the consumer's own module graph is wrong.
+ * Build the engine. THROWS on a duplicate `kind` (via `buildRegistry`) and on a
+ * duplicate fold `key`, and on nothing else, ever — both are programmer errors
+ * at module init, before any data has been read, and there is no
+ * partial-success answer worth returning when the consumer's own module graph
+ * is wrong. Everything that can go wrong once DATA is involved returns a
+ * `Result` instead.
  *
  * Defaults: `onUnknownKind` and `onParseFailure` quarantine, `mintId` a
  * counter-plus-random id, `now` `Date.now`, `historyLimit` unbounded,
@@ -145,6 +179,34 @@ export function createEngine<
   F extends FoldRegistry<Ts, S>,
 >(config: EngineConfig<Ts, S, F>): Engine<Ts, S, F> {
   const registry = buildRegistry(config.types);
+
+  // Fold keys must be unique, and this is the check `readCachedFold` in
+  // ./folds names as living here.
+  //
+  // Its cast from the cache's `unknown` slot is sound ONLY because the slot was
+  // written under this same `fold.key`, so the value is that fold's `A`. Two
+  // folds sharing a key share cache slots, and a `Folded<number>` then comes
+  // back typed as whatever the other fold declared. Nothing else would notice:
+  // the registry is keyed by the RECORD key, which may differ from the fold's
+  // own `.key`, so a duplicate is invisible at the call site and produces a
+  // wrong-typed value rather than an error.
+  //
+  // THROWS, like `buildRegistry`'s duplicate kind, for the same reason: it is a
+  // programmer error at module init, before any data has been read, and there
+  // is no partial-success answer worth returning.
+  const foldKeyOwners = new Map<string, string>();
+  for (const [entryKey, fold] of Object.entries(config.folds)) {
+    const prior = foldKeyOwners.get(fold.key);
+    if (prior !== undefined) {
+      throw new Error(
+        `keel: duplicate fold key ${JSON.stringify(fold.key)} — registered as ` +
+          `both ${JSON.stringify(prior)} and ${JSON.stringify(entryKey)}. Fold ` +
+          `keys are cache keys; two folds sharing one would read each other's ` +
+          `cached values.`,
+      );
+    }
+    foldKeyOwners.set(fold.key, entryKey);
+  }
 
   // A fresh symbol per call is the whole cross-instance guard: `NodeId` is
   // branded globally, so an id from another engine typechecks here, and this is
@@ -432,6 +494,25 @@ export function createEngine<
       },
 
       dispatch(command, options) {
+      // A destroyed store REFUSES rather than writes. `destroy()` clears every
+      // listener and the fold cache, so a mutation after it lands in a graph
+      // nothing is subscribed to and no cache reflects — a zombie write whose
+      // only symptom is a later read disagreeing with the UI. The subscribe
+      // methods above already treat post-destroy calls as benign (they return
+      // a no-op unsubscribe); this is the same decision for the write half.
+      //
+      // A `Result`, not a throw: unmount races are ordinary in React — an
+      // in-flight callback firing after the provider tore down is not a
+      // programmer error the way a duplicate kind at module init is.
+        if (destroyed) {
+          return {
+            ok: false,
+            error: {
+              code: "store-destroyed",
+              message: "dispatch() on a destroyed store.",
+            },
+          };
+        }
         const applied = applyCommandWithPolicy(graph, command);
         if (!applied.ok) return applied;
 
@@ -464,6 +545,25 @@ export function createEngine<
        * the entry on a rejection and lose the undo step entirely.
        */
       undo() {
+      // A destroyed store REFUSES rather than writes. `destroy()` clears every
+      // listener and the fold cache, so a mutation after it lands in a graph
+      // nothing is subscribed to and no cache reflects — a zombie write whose
+      // only symptom is a later read disagreeing with the UI. The subscribe
+      // methods above already treat post-destroy calls as benign (they return
+      // a no-op unsubscribe); this is the same decision for the write half.
+      //
+      // A `Result`, not a throw: unmount races are ordinary in React — an
+      // in-flight callback firing after the provider tore down is not a
+      // programmer error the way a duplicate kind at module init is.
+        if (destroyed) {
+          return {
+            ok: false,
+            error: {
+              code: "store-destroyed",
+              message: "undo() on a destroyed store.",
+            },
+          };
+        }
         const entry = peekUndo(history);
         if (entry === null) return { ok: false, error: nothingToReplay("undo") };
 
@@ -497,6 +597,25 @@ export function createEngine<
        * selection entry and open editor is still pointing at.
        */
       redo() {
+      // A destroyed store REFUSES rather than writes. `destroy()` clears every
+      // listener and the fold cache, so a mutation after it lands in a graph
+      // nothing is subscribed to and no cache reflects — a zombie write whose
+      // only symptom is a later read disagreeing with the UI. The subscribe
+      // methods above already treat post-destroy calls as benign (they return
+      // a no-op unsubscribe); this is the same decision for the write half.
+      //
+      // A `Result`, not a throw: unmount races are ordinary in React — an
+      // in-flight callback firing after the provider tore down is not a
+      // programmer error the way a duplicate kind at module init is.
+        if (destroyed) {
+          return {
+            ok: false,
+            error: {
+              code: "store-destroyed",
+              message: "redo() on a destroyed store.",
+            },
+          };
+        }
         const entry = peekRedo(history);
         if (entry === null) return { ok: false, error: nothingToReplay("redo") };
 
@@ -530,6 +649,16 @@ export function createEngine<
        * back is how a persistence loop starts.
        */
       ingest(edits) {
+        // See `dispatch` for why a destroyed store refuses rather than writes.
+        if (destroyed) {
+          return {
+            ok: false,
+            error: {
+              code: "store-destroyed",
+              message: "ingest() on a destroyed store.",
+            },
+          };
+        }
         const ingested = applyIngestEdits(graph, history, edits, ctx);
         if (!ingested.ok) return ingested;
         history = ingested.value.history;
@@ -538,6 +667,16 @@ export function createEngine<
       },
 
       load(id, doc) {
+        // See `dispatch` for why a destroyed store refuses rather than writes.
+        if (destroyed) {
+          return {
+            ok: false,
+            error: {
+              code: "store-destroyed",
+              message: "load() on a destroyed store.",
+            },
+          };
+        }
         const loaded = loadChildrenInto<Ts, S>(graph, id, doc, ctx);
         if (!loaded.ok) return loaded;
         commitGraph(loaded.value, "load");
@@ -545,6 +684,10 @@ export function createEngine<
       },
 
       markMissing(id, reason) {
+        // See `dispatch` for why a destroyed store refuses rather than writes.
+        // Returns void, so there is nothing to reject with — it simply does
+        // not write.
+        if (destroyed) return;
         commitGraph(markMissingIn(graph, id, reason), "markMissing");
       },
 

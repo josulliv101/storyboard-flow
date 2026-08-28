@@ -385,8 +385,10 @@ type Frame = Readonly<{ id: NodeId; expanded: boolean }>;
  * this value was written by THIS function, under THIS `fold.key`, so it is a
  * `Folded<A>`. `fold.key` is what makes the argument hold, which is why the key
  * is part of the cache key and not a decorative label. Two folds registered
- * with the SAME `key` and different `A` would break it; that is a duplicate and
- * belongs in `createEngine`'s registry check, not here.
+ * with the SAME `key` and different `A` would break it; `createEngine` refuses
+ * that at construction, which is what lets this cast stand. That check was
+ * missing when this comment first claimed it — the argument was sound and the
+ * premise was not.
  *
  * `undefined` unambiguously means "miss" because `Folded<A>` is always an
  * object, never `undefined`, for every `A`.

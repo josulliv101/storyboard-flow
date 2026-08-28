@@ -585,6 +585,9 @@ export type RejectionCode =
   | "cannot-remove-root"
   /** Removing a container with a non-`loaded` subtree without `allowUnloaded`. */
   | "unloaded-subtree"
+  /** The store was destroyed. Every mutating call refuses rather than writing
+   *  into a graph nothing is listening to — see `Store.destroy`. */
+  | "store-destroyed"
   /** A second non-`reference` placement for one `sourceKey`. Insert a
    *  `reference` instead — that is the typed answer the consumer is meant to
    *  give. */
@@ -643,7 +646,10 @@ export type ReplayRejectionCode =
   | "node-not-empty"
   | "kind-mismatch"
   /** The recorded `before` is no longer what the node holds. */
-  | "data-mismatch";
+  | "data-mismatch"
+  /** The store was destroyed. Every mutating call refuses rather than writing
+   *  into a graph nothing is listening to — see `Store.destroy`. */
+  | "store-destroyed";
 
 export type ReplayRejection = Readonly<{
   code: ReplayRejectionCode;
@@ -662,7 +668,10 @@ export type LoadRejectionCode =
   | "target-not-unloaded"
   /** The incoming document reuses an id the host graph already holds. */
   | "id-collision"
-  | "malformed-document";
+  | "malformed-document"
+  /** The store was destroyed. Every mutating call refuses rather than writing
+   *  into a graph nothing is listening to — see `Store.destroy`. */
+  | "store-destroyed";
 
 export type LoadRejection = Readonly<{
   code: LoadRejectionCode;

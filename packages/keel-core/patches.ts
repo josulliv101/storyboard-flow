@@ -488,12 +488,10 @@ function applyInserted<Ts extends readonly unknown[], S>(
   // chain runs up through its (possibly also-new) parent to a root, so one call
   // covers every inserted node and every surviving ancestor.
   //
-  // KNOWN RESIDUAL, documented rather than hidden: an id that was removed and
-  // is now being re-inserted restarts from 0, because removal drops its rev
-  // entry to keep `subtreeRevById` exactly total. A fold cache entry keyed on
-  // that id at a low rev is therefore reachable again. It only bites when the
-  // same id is edited, removed, and restored — the fold cache is per-store and
-  // cleared on `destroy`, so the blast radius is one session.
+  // A re-inserted id does NOT restart from 0: `applyRemoved` leaves its rev
+  // entry behind as a tombstone, so the seed below is a no-op for it and the
+  // bump lands it strictly above every rev its previous lifetime ever cached.
+  // That is what keeps a stale fold-cache entry unreachable rather than wrong.
   //
   // Written INTO the copy made above rather than through the copying form: the
   // map is private to this call until `grown` escapes, and the alternative
@@ -556,7 +554,24 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     nodes.delete(id);
     parents.delete(id);
     children.delete(id);
-    revs.delete(id);
+    // `revs` KEEPS ITS ENTRY — a tombstone, deliberately, and this is a
+    // correctness requirement rather than an optimisation.
+    //
+    // `subtreeRevById` is the fold cache's ONLY invalidation mechanism: an
+    // entry keyed (foldKey, nodeId, rev) is meant to become UNREACHABLE once
+    // the node's rev moves past it, which is why nothing ever has to evict.
+    // Dropping the entry here restarted a re-inserted id at 0, and undo then
+    // walked it back up through revs the DEAD lineage had already cached under
+    // different data. Measured, through the public store: edit a clip twice,
+    // remove it, undo — the ROOT aggregate then answers with the dead
+    // lineage's value, and it does not self-heal, because each later edit
+    // lands on the next already-poisoned rev.
+    //
+    // The cost is one number per ever-removed id for the store's lifetime,
+    // against ~232 bytes for each of the k fold-cache entries per node it
+    // protects. `subtreeRevById` becomes a SUPERSET of `nodesById` rather than
+    // exactly total, which invariant check 6 permits: it requires every live
+    // node to HAVE a rev, not that every rev has a node.
   }
 
   // Updated, not rebuilt: a removal cannot REORDER a survivor, so each affected
@@ -971,6 +986,18 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
     // does not consider meaningful (a normalized copy, a cached derivation), and
     // comparing those would refuse valid undos; the wire form is the codec's own
     // statement of what its value IS.
+    // IDENTITY FIRST. `change.before` and the node's live data are usually the
+    // very same object — the reducer stores exactly what `applyEdit` returned
+    // and the patch records that reference — so the common replay is settled
+    // without calling the consumer's `serialize` at all. Sound because same
+    // reference implies same serialization for any deterministic codec, and a
+    // non-deterministic one already fails the slow path.
+    //
+    // Worth doing for the same reason the cross-parent move stopped asking for
+    // `contentKey`: `serialize` is consumer code of unknown cost, and undo runs
+    // it once per changed node per verification.
+    if (Object.is(change.before, node.data)) continue;
+
     if (!deepEqual(codec.serialize(change.before), codec.serialize(node.data))) {
       return replayError(
         "data-mismatch",

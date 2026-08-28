@@ -145,6 +145,12 @@ function malformed(message: string): Result<never, StructuralError> {
  */
 export function parseSerializedDocument(
   raw: unknown,
+  /**
+   * Optional so the exported signature is unchanged for a consumer validating
+   * a document on its own. `buildDocument` always passes one — that is the
+   * path an untrusted payload takes.
+   */
+  bound?: Readonly<{ maxNodes: number; existingNodeCount: number }>,
 ): Result<SerializedDocument, StructuralError> {
   if (!isRecord(raw)) {
     return malformed(
@@ -162,7 +168,18 @@ export function parseSerializedDocument(
     });
   }
 
-  const schemaVersions: Record<string, number> = {};
+  // NULL-PROTOTYPE, because the keys are consumer-chosen kind names arriving
+  // off the wire. On a plain `{}`, `schemaVersions["__proto__"] = 1` does not
+  // create an own property at all — the write is swallowed by the setter — and
+  // `"constructor"`, `"toString"` and `"valueOf"` all READ as inherited
+  // functions when nothing declared them, so an undeclared kind by any of
+  // those names would answer with a function instead of `undefined`. A
+  // document controls these names, so this is an ingress concern, not a
+  // hypothetical.
+  const schemaVersions: Record<string, number> = Object.create(null) as Record<
+    string,
+    number
+  >;
   const rawVersions = raw.schemaVersions;
   // Absent is tolerated rather than fatal: a document may predate per-kind
   // versioning entirely, and `parseNodeData` has a defined answer for a kind
@@ -196,6 +213,37 @@ export function parseSerializedDocument(
   if (!Array.isArray(raw.nodes)) {
     return malformed("nodes must be an array");
   }
+
+  // THE SIZE BOUND, and this is the earliest point it can honestly live.
+  //
+  // It has to come after `formatVersion` (a document we cannot read at all is
+  // not a size question) and after `nodes` is known to be an array, because
+  // `.length` on a non-array means nothing. It has to come BEFORE the loop
+  // below, which parses and copies every node — an earlier version of this
+  // check sat in `buildDocument` AFTER this whole function had run, and its
+  // comment claimed to be "before anything is allocated" while a hostile
+  // payload had already been normalised in full. Measured at that time:
+  // 199,999 nodes inspected before the refusal.
+  //
+  // `Array.prototype.length` is the O(1) fact the bound should be reading.
+  if (bound !== undefined) {
+    const total = bound.existingNodeCount + raw.nodes.length;
+    if (total > bound.maxNodes) {
+      return fail({
+        code: "document-too-large",
+        message:
+          bound.existingNodeCount === 0
+            ? `Document presents ${raw.nodes.length} nodes, above the ${bound.maxNodes} ceiling. ` +
+              `Raise EngineConfig.maxNodes if this document is legitimate.`
+            : `Loading ${raw.nodes.length} nodes into a graph of ${bound.existingNodeCount} would ` +
+              `reach ${total}, above the ${bound.maxNodes} ceiling. Raise EngineConfig.maxNodes if ` +
+              `this is legitimate.`,
+        limit: bound.maxNodes,
+        actual: total,
+      });
+    }
+  }
+
   const nodes: SerializedNode[] = [];
   for (const rawNode of raw.nodes) {
     const parsed = parseSerializedNode(rawNode);
@@ -489,32 +537,13 @@ function buildDocument<Ts extends readonly unknown[], S>(
     existingNodeCount?: number;
   }>,
 ): Result<BuiltDocument<Ts, S>, StructuralError> {
-  const parsed = parseSerializedDocument(raw);
+  const parsed = parseSerializedDocument(raw, {
+    maxNodes: ctx.maxNodes,
+    existingNodeCount: options.existingNodeCount ?? 0,
+  });
   if (!parsed.ok) return parsed;
   const doc = parsed.value;
 
-  // --- The size bound, before anything is allocated -------------------------
-  //
-  // FIRST, and it has to be first to be worth having. Every pass below builds
-  // a map sized by `doc.nodes`, so a check that ran after even one of them
-  // would be reporting a document too large from inside the allocation it was
-  // supposed to prevent. `doc.nodes` is a flat array, so its length is known
-  // without walking anything — the cheapest possible place to say no.
-  const existing = options.existingNodeCount ?? 0;
-  const total = existing + doc.nodes.length;
-  if (total > ctx.maxNodes) {
-    return fail({
-      code: "document-too-large",
-      message:
-        existing === 0
-          ? `Document presents ${doc.nodes.length} nodes, above the ${ctx.maxNodes} ceiling. ` +
-            `Raise EngineConfig.maxNodes if this document is legitimate.`
-          : `Loading ${doc.nodes.length} nodes into a graph of ${existing} would reach ${total}, ` +
-            `above the ${ctx.maxNodes} ceiling. Raise EngineConfig.maxNodes if this is legitimate.`,
-      limit: ctx.maxNodes,
-      actual: total,
-    });
-  }
 
   // --- Pass A: adopt the wire's ids -----------------------------------------
   const wireById = new Map<NodeId, SerializedNode>();
@@ -776,7 +805,18 @@ function buildDocument<Ts extends readonly unknown[], S>(
     // QUARANTINES — loud, byte-exact, and repairable. Between a silent
     // corruption and a loud refusal, take the refusal.
     const declaredVersion =
-      doc.schemaVersions[wire.kind] ?? type?.schemaVersion ?? 0;
+      // BELT AND BRACES, and unreachable today — verified by mutation: with the
+      // null-prototype initializer in `parseSerializedDocument` in place,
+      // reverting this guard fails nothing, because every `doc` reaching here
+      // was built by that function. `SerializedDocument.schemaVersions` is
+      // typed `Readonly<Record<string, number>>` though, so a refactor that let
+      // a caller supply the document directly would reintroduce the hole
+      // silently. Kept for that, not claimed as live.
+      (Object.hasOwn(doc.schemaVersions, wire.kind)
+        ? doc.schemaVersions[wire.kind]
+        : undefined) ??
+      type?.schemaVersion ??
+      0;
 
     let failure: IngressError | null = null;
     let summaryFailed = false;
@@ -814,7 +854,22 @@ function buildDocument<Ts extends readonly unknown[], S>(
       // to a codec that expects `S` would quarantine a node for the crime of
       // having no rollup yet.
       if (container && wire.summary !== undefined && wire.summary !== null) {
-        const parsedSummary = ctx.summary.parse(wire.summary);
+        // WRAPPED, exactly as `parseNodeData` wraps a node codec's `parse`. The
+    // summary codec is consumer-supplied and runs on untrusted bytes, so a
+    // throw here is the same class of event as a throw there — and it used to
+    // take the whole `deserialize` down instead of quarantining one node,
+    // which is the failure quarantine exists to prevent.
+    let parsedSummary: Result<S, readonly Issue[]>;
+    try {
+      parsedSummary = ctx.summary.parse(wire.summary);
+    } catch (thrown) {
+      parsedSummary = {
+        ok: false,
+        error: [
+          { path: "$", message: `summary parse threw: ${describeThrown(thrown)}` },
+        ],
+      };
+    }
         if (!parsedSummary.ok) {
           // A failed summary is PER-NODE CONTENT, so it quarantines like any
           // other content failure rather than killing the document. The node
@@ -1010,7 +1065,13 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   ctx: EngineContext<S>,
 ): SerializedDocument {
-  const schemaVersions: Record<string, number> = {};
+  // Null-prototype for the same reason the ingress side is — see
+  // `parseSerializedDocument`. A kind named "constructor" must not read as
+  // already-declared here.
+  const schemaVersions: Record<string, number> = Object.create(null) as Record<
+    string,
+    number
+  >;
   for (const [kind, type] of ctx.registry) {
     schemaVersions[kind] = type.schemaVersion;
   }
@@ -1054,7 +1115,7 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
       // the document declared. First writer wins so the output is deterministic
       // in document order; a registered kind's registry version always wins,
       // because it was written above and is not overwritten here.
-      if (!(node.kind in schemaVersions)) {
+      if (!Object.hasOwn(schemaVersions, node.kind)) {
         schemaVersions[node.kind] = node.schemaVersion;
       }
       if (node.summary !== undefined) draft.summary = node.summary;
