@@ -1409,6 +1409,68 @@ describe("mutations", () => {
   }, 120_000);
 
   /**
+   * AN INSERT RE-INDEXES WHAT ARRIVED, NOT THE DOCUMENT.
+   *
+   * `applyInserted` fell back to a whole-document `rebuildDerivedIndexes`
+   * whenever ANY arriving node carried a content or source key — the gate
+   * short-circuits on the first keyed node, so one keyed seed condemned the
+   * whole batch. MEASURED, counting `contentKey`:
+   *
+   *   board      insert 1 keyless   insert 1 KEYED   remove 1 keyed
+   *    1,000            0                1,002              1
+   *   10,000            0               10,002              1
+   *   40,000            0               40,002              1
+   *
+   * The removal direction has been incremental since it shipped
+   * (`derivedIndexesAfterRemoval`) and costs ONE. Undo of a delete inverts to an
+   * `inserted` patch and paid the full 40,001.
+   *
+   * The bound below is `arrivals + 1`, not `arrivals`: the `+1` is the gate
+   * itself asking the first arrival for its key before deciding.
+   */
+  it("an insert re-indexes what arrived, not the document", () => {
+    const reindexed = new Map<string, number>();
+
+    for (const fx of wideSizes) {
+      const command: Command<Types, Summary> = {
+        type: "insert-nodes",
+        toParentId: firstFolder(fx),
+        toIndex: 0,
+        seeds: [
+          {
+            kind: "clip",
+            data: { title: "arrival", seconds: 3, assetId: "arriving-asset" },
+          },
+        ],
+      };
+      expect(engine.applyCommand(fx.graph, command).ok).toBe(true);
+
+      const counts = countOnce(() => {
+        engine.applyCommand(fx.graph, command);
+      });
+      reindexed.set(
+        fx.label,
+        noteCount(
+          "insert (one keyed node)",
+          fx.label,
+          fx.nodeCount,
+          "contentKey",
+          counts.contentKey,
+        ),
+      );
+    }
+
+    // INDEPENDENCE at three sizes, because a per-size bound cannot tell a
+    // constant from a number that happens to be small at the size examined.
+    const perInsert = expectIndependentOfGraphSize(
+      reindexed,
+      "insert content-key lookups",
+    );
+    // One arriving node, plus the gate's own look at it.
+    expect(perInsert).toBeLessThanOrEqual(2);
+  }, 120_000);
+
+  /**
    * THE SERVER-WRITE PATH, held to the same bill as the user-intent one.
    *
    * `applyIngestEdits` rebuilt BOTH derived indexes unconditionally, ignoring

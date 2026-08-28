@@ -55,6 +55,8 @@ import {
 } from "./types";
 import {
   bumpSubtreeRevs,
+  placementsAfterInsert,
+  ownersAfterInsert,
   ownsItsSubtree,
   sourceKeyOf,
   sourceKeyOfKindData,
@@ -582,16 +584,46 @@ function applyInserted<Ts extends readonly unknown[], S>(
   // An insert never reorders what was already there, so when the arriving nodes
   // contribute no key of their own, BOTH indexes are exactly the maps the
   // previous graph published.
+  // UPDATED, NOT REBUILT — the same shape `placementsAfterMove` uses, and the
+  // same argument `derivedIndexesAfterRemoval` makes in the other direction.
+  //
+  // An insert cannot REORDER anything already present: splicing an id into a
+  // children array shifts later siblings within document order but preserves
+  // every pre-existing node's order relative to every other. So each existing
+  // bucket stays sorted, and the only new entries are the arrivals' own.
+  //
+  // This used to fall back to a whole-document rebuild whenever ANY arriving
+  // node carried a key — and `insertLeavesDerivedIndexesIntact` short-circuits
+  // on the first keyed node, so one keyed seed condemned the whole batch.
+  // MEASURED, counting `contentKey`: inserting ONE clip cost 1,002 / 10,002 /
+  // 40,002 calls at those board sizes, while removing one cost 1, because the
+  // removal side has been incremental since it shipped. Undo of a delete
+  // inverts to an `inserted` patch and paid the full 40,001.
+  //
+  // The keyless case still costs nothing and still hands both maps back by
+  // reference — `placementsAfterInsert` returns `previous` by identity when the
+  // arrivals contribute no key, which is exactly what the old gate bought.
   const insertedNodes = placements.map((placement) => placement.node);
-  const derived: DerivedIndexes<Ts, S> = insertLeavesDerivedIndexesIntact(
+  const placementsNext = placementsAfterInsert(
+    grown,
     ctx.registry,
+    graph.placementsByContentKey,
     insertedNodes,
-  )
-    ? {
-        placementsByContentKey: graph.placementsByContentKey,
-        ownerBySourceKey: graph.ownerBySourceKey,
-      }
-    : rebuildDerivedIndexes(grown, ctx.registry);
+  );
+  const derived: DerivedIndexes<Ts, S> =
+    placementsNext === null
+      ? // Declined — the comparator could not rank two ids, or an arriving id
+        // was already in its bucket. Fall back to the authoritative walk rather
+        // than guessing, exactly as the move arm does.
+        rebuildDerivedIndexes(grown, ctx.registry)
+      : {
+          placementsByContentKey: placementsNext,
+          ownerBySourceKey: ownersAfterInsert<Ts, S>(
+            ctx.registry,
+            graph.ownerBySourceKey,
+            insertedNodes,
+          ),
+        };
 
   return { ...grown, ...derived };
 }
