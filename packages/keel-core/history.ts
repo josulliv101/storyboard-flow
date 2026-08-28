@@ -312,7 +312,9 @@ export function coalesceEntries<Ts extends readonly unknown[], S>(
  * their own edit to the one overwritten node — correct, the server has since
  * overwritten it — and keeps every other entry, in order, fully invertible.
  *
- * Cost is O(entries x changes), bounded by `historyLimit`.
+ * Cost is O(entries x changes). `historyLimit` bounds `entries` only when a
+ * consumer SET one — it defaults to unbounded, so by default the bound named
+ * here is the one that does not exist.
  */
 export function scrubHistoryForIngest<Ts extends readonly unknown[], S>(
   history: History<Ts, S>,

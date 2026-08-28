@@ -58,7 +58,7 @@ import {
   applyIngestEdits,
   resolveDrop as resolveDropIn,
 } from "./commands";
-import { computeFold, createFoldCache } from "./folds";
+import { computeFold, createFoldCache, DEFAULT_FOLD_CACHE_LIMIT } from "./folds";
 import {
   DEFAULT_MAX_NODES,
   deserializeDocument,
@@ -208,6 +208,30 @@ export function createEngine<
     foldKeyOwners.set(fold.key, entryKey);
   }
 
+  // `historyLimit` REFUSED rather than reinterpreted, and this is the one place
+  // that can. ./history's `effectiveLimit` maps anything that is not a positive
+  // integer — `0`, a negative, a fraction, `NaN` — to unbounded, and argues for
+  // it on the grounds that `historyLimit: 2.5` is a typo and silently choosing
+  // 2 or 3 would hide it. True, and choosing INFINITY hides it too, in the one
+  // direction that is unsafe: the consumer asked to bound memory and got no
+  // bound. MEASURED: `historyLimit: 2.5` retained 200 entries.
+  //
+  // Throws, like the duplicate kind and the duplicate fold key above, for the
+  // same reason — a programmer error at module init, before any data has been
+  // read. Omitting the field is still how a consumer asks for unbounded, and
+  // that stays silent.
+  const historyLimit = config.historyLimit;
+  if (
+    historyLimit !== undefined &&
+    (!Number.isInteger(historyLimit) || historyLimit <= 0)
+  ) {
+    throw new Error(
+      `keel: historyLimit must be a positive integer, received ${String(historyLimit)}. ` +
+        `Omit it entirely for unbounded history — a fractional or non-positive value ` +
+        `would silently mean unbounded, which is the opposite of what naming a limit asks for.`,
+    );
+  }
+
   // A fresh symbol per call is the whole cross-instance guard: `NodeId` is
   // branded globally, so an id from another engine typechecks here, and this is
   // the only thing standing between that and a graph quietly holding another
@@ -304,6 +328,71 @@ export function createEngine<
      * product gets a table that thrashes without saying so.
      */
     const cache = createFoldCache(config.foldCacheLimit);
+
+    /**
+     * THE TWO CEILINGS, compared against the graph that actually exists.
+     *
+     * `maxNodes` says how large a document may be; `foldCacheLimit` says how
+     * many (fold, node, rev) entries the memo table holds. They are
+     * independent numbers describing one graph, and at the DEFAULTS they
+     * disagree: a registry of 8 folds — the size ./folds itself calls
+     * realistic — makes the table cover 16,384 nodes while the node ceiling
+     * admits 100,000.
+     *
+     * Past that point the LRU does not degrade, it INVERTS: fold k's walk
+     * evicts fold 1's entries, fold 1's next read misses at the root, and every
+     * mounted card refolds its whole subtree. MEASURED at 20,001 nodes with 8
+     * folds — five times under the node ceiling, and accepted by `deserialize`:
+     * 188,944 evictions, ZERO hits on an identical repeat, 5,542 ms against
+     * 0.017 ms with the table sized to fit. Worse than no cache at all, because
+     * every `set` also runs the eviction loop.
+     *
+     * CHECKED AGAINST `nodesById.size`, NOT AGAINST `maxNodes`, and that
+     * distinction is the whole difference between a diagnostic and noise. The
+     * first version of this compared the two CEILINGS at `createEngine`, which
+     * is where both numbers are in hand — and it fired for twelve of this
+     * package's own fixtures, including one that sets `foldCacheLimit: 4`
+     * deliberately to exercise eviction. A consumer who sized a small cache on
+     * purpose is not making a mistake, and a consumer whose documents are 500
+     * nodes does not care that a ceiling they will never reach exceeds a table
+     * they will never fill. The real condition is "this table cannot cover THIS
+     * graph", and only a store knows that.
+     *
+     * ONCE per store, latched, and re-checked on commit because a graph grows.
+     * The cost is an integer compare behind a boolean that flips at most once.
+     */
+    let warnedAboutCacheSize = false;
+    const warnIfCacheCannotCover = (candidate: Graph<Ts, S>): void => {
+      if (warnedAboutCacheSize) return;
+      // ONLY WHEN THE LIMIT IS THE DEFAULT. A consumer who wrote a number chose
+      // it; the failure this exists to catch belongs to the consumer who wrote
+      // none and does not know the default stops covering at 16,384 nodes. This
+      // is the same rule `maxNodes` states a few lines up — "a consumer who
+      // names a ceiling has named THE ceiling" — applied to the other one.
+      //
+      // It is also what makes the diagnostic quiet enough to keep: checking
+      // every store took out four of this package's own capacity tests, which
+      // set tiny limits deliberately to exercise eviction. Those stores really
+      // will thrash, so the warning was true — and useless, because thrashing
+      // was the point.
+      if (config.foldCacheLimit !== undefined) return;
+      const foldCount = Object.keys(config.folds).length;
+      if (foldCount === 0) return;
+      const limit = cache.stats().limit;
+      if (limit <= 0) return;
+      const nodeCount = candidate.nodesById.size;
+      if (foldCount * nodeCount <= limit) return;
+      warnedAboutCacheSize = true;
+      const servable = Math.floor(limit / foldCount);
+      console.error(
+        `keel: this graph holds ${nodeCount} nodes and ${foldCount} fold(s) are registered, ` +
+          `but foldCacheLimit (${limit}) covers only ${servable} nodes. Past that the memo ` +
+          `table thrashes and every rollup refolds from scratch — measurably slower than no ` +
+          `cache at all. Raise EngineConfig.foldCacheLimit to at least ${foldCount * nodeCount} ` +
+          `(folds x nodes). EngineConfig.onFoldCacheStats reports evictions if you want to watch it.`,
+      );
+    };
+    warnIfCacheCannotCover(initialGraph);
 
     // Handed out here, before the store exists and before any fold can run, so
     // a consumer that wants the counters has them from the first `aggregate`
@@ -428,6 +517,9 @@ export function createEngine<
 
       graph = next;
       auditIfDev(label, next);
+      // A graph grows; the table does not. Latched, so this is one integer
+      // compare behind a boolean after the first crossing.
+      warnIfCacheCannotCover(next);
 
       const selectionChanged = pruneSelection();
 

@@ -1352,7 +1352,8 @@ export function isEmptyPatch<Ts extends readonly unknown[], S>(
  *
  * The alternative shipped in a predecessor design — a version stamp that
  * invalidates the whole entry — means every remote write destroys undo from
- * that entry down. This costs O(historyLimit x changes) and destroys one node's
+ * that entry down. This costs O(entries x changes), where `historyLimit` bounds `entries` only
+ * when a consumer set one, and destroys one node's
  * worth.
  *
  * Returns null when the patch is left empty, and the caller drops the entry.
