@@ -130,6 +130,19 @@ function defaultMintId(): string {
     .slice(2, 8)}`;
 }
 
+/**
+ * How much room over `folds x nodes` a fold cache needs to stop thrashing.
+ *
+ * The product is the working set's FLOOR. Editing strands `folds x depth`
+ * entries per edit, and those strays are newer than a cold live entry, so a
+ * table sized exactly to the product evicts something live for every one of
+ * them. Measured against the ideal fold-call count per post-edit root read:
+ * 1.90x ideal at 1x the product, 1.27x at 2x, 1.00x at 4x. Two is the knee —
+ * enough to stop the inversion, not so much that the recommendation reads as
+ * absurd for a large board.
+ */
+const FOLD_CACHE_HEADROOM = 2;
+
 const noop = (): void => {};
 
 function sameIds(a: readonly NodeId[], b: readonly NodeId[]): boolean {
@@ -381,15 +394,37 @@ export function createEngine<
       const limit = cache.stats().limit;
       if (limit <= 0) return;
       const nodeCount = candidate.nodesById.size;
-      if (foldCount * nodeCount <= limit) return;
+      // HEADROOM, not the bare product — and the first version of this check
+      // used the bare product, which is why it is spelled out here.
+      //
+      // `folds x nodes` is the FLOOR of the working set, not its resting size:
+      // every edit strands `folds x depth` entries, so occupancy grows with the
+      // session's edit count until the limit reclaims them. Those strays are
+      // not a leak, because a dead-rev entry is never touched again and ages
+      // out first — but they are always NEWER than a cold live entry, so at
+      // exactly `folds x nodes` there is no room and every stray admission
+      // evicts something live.
+      //
+      // MEASURED against the ideal of `folds x depth` fold calls per post-edit
+      // root read: 1.90x ideal at a limit of 1x the product, 1.27x at 2x, and
+      // exactly 1.00x at 4x. Two is the knee, and it is what this gate uses.
+      //
+      // A 16,105-node graph with 8 folds passed the old bare-product check
+      // silently (128,840 <= 131,072) while doing 2.04x the fold work per
+      // rollup after 2,000 edits — at a fixed graph size, driven purely by
+      // churn. That is the exact silent degradation this warning exists for,
+      // and it sat just under the threshold.
+      const want = foldCount * nodeCount * FOLD_CACHE_HEADROOM;
+      if (want <= limit) return;
       warnedAboutCacheSize = true;
-      const servable = Math.floor(limit / foldCount);
+      const servable = Math.floor(limit / (foldCount * FOLD_CACHE_HEADROOM));
       console.error(
         `keel: this graph holds ${nodeCount} nodes and ${foldCount} fold(s) are registered, ` +
-          `but foldCacheLimit (${limit}) covers only ${servable} nodes. Past that the memo ` +
-          `table thrashes and every rollup refolds from scratch — measurably slower than no ` +
-          `cache at all. Raise EngineConfig.foldCacheLimit to at least ${foldCount * nodeCount} ` +
-          `(folds x nodes). EngineConfig.onFoldCacheStats reports evictions if you want to watch it.`,
+          `but foldCacheLimit (${limit}) comfortably covers only ${servable} nodes. Past that ` +
+          `the memo table thrashes and every rollup refolds from scratch — measurably slower ` +
+          `than no cache at all. Raise EngineConfig.foldCacheLimit to at least ${want} ` +
+          `(folds x nodes x ${FOLD_CACHE_HEADROOM} for edit churn). ` +
+          `EngineConfig.onFoldCacheStats reports evictions if you want to watch it.`,
       );
     };
     warnIfCacheCannotCover(initialGraph);
