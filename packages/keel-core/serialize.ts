@@ -59,6 +59,7 @@ import {
 } from "./types";
 
 import {
+  NO_DEAD_REVS,
   ancestorChain,
   ownsItsSubtree,
   bumpSubtreeRevs,
@@ -1076,6 +1077,8 @@ export function deserializeDocument<Ts extends readonly unknown[], S>(
     parentById: doc.parentById,
     rootIds: doc.rootIds,
     subtreeRevById,
+    // A freshly deserialized document has removed nothing.
+    deadRevById: NO_DEAD_REVS,
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };
@@ -1391,13 +1394,26 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
   // every ancestor rollup, and it did not self-heal — each later edit landed on
   // the next already-poisoned rev.
   for (const incomingId of payload.order) {
-    const tombstone = graph.subtreeRevById.get(incomingId);
+    // The tombstone now lives in its own store, so this reads there rather than
+    // in the live map — but the RULE is unchanged: an id that has lived here
+    // before resumes strictly above every revision its previous lifetime could
+    // have cached.
+    //
+    // The dead entry is NOT removed as the id returns. `applyRemoved` is the
+    // only writer of that store, and leaving it alone is what keeps that true —
+    // a returning id simply has a live entry that `getSubtreeRev` reads first,
+    // and the stale dead number can only ever be overwritten upward by a later
+    // removal of the same id.
+    const tombstone = graph.deadRevById.get(incomingId);
     subtreeRevById.set(incomingId, tombstone === undefined ? 0 : tombstone + 1);
   }
 
   const base: Graph<Ts, S> = {
     engineId: graph.engineId,
     nodesById,
+    // Shared by reference: a load removes nothing, so the tombstone store is
+    // exactly the one the previous graph published.
+    deadRevById: graph.deadRevById,
     childrenById,
     parentById,
     rootIds: graph.rootIds,

@@ -386,9 +386,42 @@ export type Graph<Ts extends readonly unknown[], S> = Readonly<{
    * rollup — move a node at depth 5 and no ancestor's children array changes
    * identity, so no ancestor rollup ever re-renders.
    *
-   * Total over `nodesById`: every node has an entry.
+   * TOTAL OVER `nodesById` AND NOTHING MORE: every live node has an entry, and
+   * no id without a node does. A removed id's revision moves to `deadRevById`
+   * rather than staying here — see there for why it is kept at all, and why
+   * keeping it HERE cost a long session real time.
    */
   subtreeRevById: ReadonlyMap<NodeId, number>;
+  /**
+   * The revision each REMOVED id last held. A tombstone store.
+   *
+   * WHY THESE ARE KEPT. `subtreeRevById` is the fold cache's only invalidation
+   * mechanism: an entry keyed (foldKey, nodeId, rev) is meant to become
+   * unreachable once the rev moves past it, which is why nothing ever evicts
+   * for correctness. Forgetting a removed id's revision restarts a re-inserted
+   * id at 0, and the store then serves the DEAD lineage's cached values — a
+   * wrong AGGREGATE at the root that does not self-heal. That shipped twice.
+   *
+   * WHY THEY LIVE HERE RATHER THAN BESIDE THE LIVE ONES. They used to sit in
+   * `subtreeRevById`, which made it a superset of `nodesById` and — the part
+   * that cost — put them inside the map every commit copies. Growth is exactly
+   * one entry per ever-removed id, for the life of the store, so per-commit
+   * cost tracked the number of nodes a session had ever DELETED rather than the
+   * number it currently holds. MEASURED on one `edit-nodes`: 40us at zero
+   * tombstones, 1.7ms at 20,000, 29.4ms at 200,400 — and confirmed to be the
+   * copy, since a bare `new Map` on the same map tracked it at ratio ~1.0.
+   *
+   * Split out, the semantics are byte-for-byte what they were — same numbers,
+   * same high-water rule, no eviction and no threshold — and the copy every
+   * commit makes is proportional to LIVE nodes again. This map has exactly one
+   * writer (`applyRemoved`) and is shared by reference by every commit that
+   * removes nothing, which is nearly all of them.
+   *
+   * DISJOINT from `subtreeRevById` by construction: an id is live or dead,
+   * never both. `getSubtreeRev` reads live first regardless, and invariant
+   * check 6 asserts the disjointness rather than trusting it.
+   */
+  deadRevById: ReadonlyMap<NodeId, number>;
   /** Derived from `contentKey`. Values are in document order. */
   placementsByContentKey: ReadonlyMap<string, readonly NodeId[]>;
   /** Derived from `sourceKey`. At most one non-`reference` placement per key. */

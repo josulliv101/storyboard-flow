@@ -552,7 +552,12 @@ function applyInserted<Ts extends readonly unknown[], S>(
     }
     // `subtreeRevById` is TOTAL over `nodesById`. Seeding before the bump means
     // this holds regardless of how `bumpSubtreeRevs` treats an absent id.
-    if (!revs.has(node.id)) revs.set(node.id, 0);
+    // The floor comes from the TOMBSTONE STORE now, not from this map: a
+    // removed id's revision moved there, so `revs.has` can no longer answer
+    // "has this id lived here before". The rule is unchanged — a returning id
+    // resumes strictly above every revision its previous lifetime could have
+    // cached — and the bump below carries it the final step.
+    if (!revs.has(node.id)) revs.set(node.id, graph.deadRevById.get(node.id) ?? 0);
   }
 
   const grown: Graph<Ts, S> = {
@@ -649,6 +654,13 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     placements.map((placement) => placement.parentId),
   );
 
+  // THE ONE WRITER of the tombstone store, and the only place a graph's
+  // `deadRevById` is ever a fresh map. Every other commit shares the previous
+  // graph's by reference, which is the whole point of the split: the map that
+  // grows with a session's total deletions is no longer inside the map every
+  // commit copies.
+  const deadRevs = new Map<NodeId, number>(graph.deadRevById);
+
   const removedIds: NodeId[] = [];
   // BACKWARD walk: children leave before parents, and a later sibling's splice
   // cannot invalidate an earlier one's recorded index.
@@ -703,7 +715,8 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     // tombstone now sits strictly above every rev the dead lineage could have
     // cached, which is exactly the property `applyInserted`'s re-insertion bump
     // relies on.
-    revs.set(id, (revs.get(id) ?? 0) + 1);
+    deadRevs.set(id, (revs.get(id) ?? 0) + 1);
+    revs.delete(id);
   }
 
   // ONE rewrite per affected parent, after the loop rather than inside it. The
@@ -731,6 +744,7 @@ function applyRemoved<Ts extends readonly unknown[], S>(
     childrenById: children,
     parentById: parents,
     subtreeRevById: revs,
+    deadRevById: deadRevs,
     ...derived,
   };
 }
