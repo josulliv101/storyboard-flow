@@ -25,7 +25,7 @@
 
 import { getChildren, getNode, getSubtreeRev } from "./graph";
 import type {
-  AnyNode,
+  GraphNode,
   Certainty,
   CollectionNode,
   ExactFolded,
@@ -451,7 +451,7 @@ function readCachedFold<A>(
  * recoverable from the flag.
  */
 function isPlaceholderNode<Ts extends readonly unknown[], S>(
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): boolean {
   // Discriminate on `quarantined` FIRST: `container` is plain `boolean` on the
   // quarantined arm (it comes off the wire), so it cannot separate the three.

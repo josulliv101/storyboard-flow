@@ -13,13 +13,13 @@ import {
   makeCollectionNode,
   makeLeafNode,
   parseNodeId,
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type EngineContext,
   type Graph,
   type NodeId,
   type Patch,
-  type SomeNodeType,
+  type ErasedNodeType,
   type SummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
@@ -141,12 +141,12 @@ type TestTypes = readonly [typeof clipType, typeof folderType];
 type Summary = Readonly<{ label: string }>;
 type TestGraph = Graph<TestTypes, Summary>;
 
-const keyedRegistry: ReadonlyMap<string, SomeNodeType> = new Map<string, SomeNodeType>([
+const keyedRegistry: ReadonlyMap<string, ErasedNodeType> = new Map<string, ErasedNodeType>([
   ["clip", clipType],
   ["folder", folderType],
 ]);
 
-const keylessRegistry: ReadonlyMap<string, SomeNodeType> = new Map<string, SomeNodeType>([
+const keylessRegistry: ReadonlyMap<string, ErasedNodeType> = new Map<string, ErasedNodeType>([
   ["clip", keylessClipType],
   ["folder", keylessFolderType],
 ]);
@@ -167,7 +167,7 @@ const summaryType: SummaryType<Summary> = {
 const ENGINE_ID = Symbol("keel-move-cost-engine");
 const LOADED: ChildrenState = { status: "loaded" };
 
-function makeCtx(registry: ReadonlyMap<string, SomeNodeType>): EngineContext<Summary> {
+function makeCtx(registry: ReadonlyMap<string, ErasedNodeType>): EngineContext<Summary> {
   return {
     engineId: ENGINE_ID,
     registry,
@@ -201,9 +201,9 @@ type Spec =
  */
 function buildGraph(
   roots: readonly Spec[],
-  registry: ReadonlyMap<string, SomeNodeType> = keyedRegistry,
+  registry: ReadonlyMap<string, ErasedNodeType> = keyedRegistry,
 ): TestGraph {
-  const nodesById = new Map<NodeId, AnyNode<TestTypes, Summary>>();
+  const nodesById = new Map<NodeId, GraphNode<TestTypes, Summary>>();
   const childrenById = new Map<NodeId, readonly NodeId[]>();
   const parentById = new Map<NodeId, NodeId | null>();
   const subtreeRevById = new Map<NodeId, number>();
@@ -261,7 +261,7 @@ function wideGraph(
   perCollection: number,
   options?: Readonly<{
     assetOf?: (collection: number, index: number) => string;
-    registry?: ReadonlyMap<string, SomeNodeType>;
+    registry?: ReadonlyMap<string, ErasedNodeType>;
   }>,
 ): TestGraph {
   const roots: Spec[] = [];

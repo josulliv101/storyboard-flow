@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type EditOf,
   type EngineContext,
@@ -205,7 +205,7 @@ function folderSpec(
 }
 
 function buildGraph(engineId: symbol, roots: readonly Spec[]): Graph<Types, Summary> {
-  const nodes = new Map<NodeId, AnyNode<Types, Summary>>();
+  const nodes = new Map<NodeId, GraphNode<Types, Summary>>();
   const children = new Map<NodeId, readonly NodeId[]>();
   const parents = new Map<NodeId, NodeId | null>();
   const revs = new Map<NodeId, number>();

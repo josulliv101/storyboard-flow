@@ -25,14 +25,14 @@
 //      form of the rules the rest of the engine assumes without re-checking.
 
 import type {
-  AnyNode,
+  GraphNode,
   ChildrenState,
   CollectionNode,
   Graph,
   NodeId,
   NodeTypeRegistry,
   QuarantinedNode,
-  SomeNodeType,
+  ErasedNodeType,
   Violation,
 } from "./types";
 
@@ -67,8 +67,8 @@ export const NO_DEAD_REVS: ReadonlyMap<NodeId, number> = new Map();
  * partial-success answer worth returning — the consumer's module graph is
  * wrong, and it is wrong before any data has been read.
  */
-export function buildRegistry(types: readonly SomeNodeType[]): NodeTypeRegistry {
-  const registry = new Map<string, SomeNodeType>();
+export function buildRegistry(types: readonly ErasedNodeType[]): NodeTypeRegistry {
+  const registry = new Map<string, ErasedNodeType>();
   for (const nodeType of types) {
     if (registry.has(nodeType.kind)) {
       throw new Error(
@@ -121,7 +121,7 @@ export function emptyGraph<Ts extends readonly unknown[], S>(
 export function buildGraph<Ts extends readonly unknown[], S>(
   args: Readonly<{
     engineId: symbol;
-    nodesById: ReadonlyMap<NodeId, AnyNode<Ts, S>>;
+    nodesById: ReadonlyMap<NodeId, GraphNode<Ts, S>>;
     childrenById: ReadonlyMap<NodeId, readonly NodeId[]>;
     rootIds: readonly NodeId[];
     registry: NodeTypeRegistry;
@@ -170,7 +170,7 @@ export function buildGraph<Ts extends readonly unknown[], S>(
 export function getNode<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
-): AnyNode<Ts, S> | undefined {
+): GraphNode<Ts, S> | undefined {
   return graph.nodesById.get(id);
 }
 
@@ -256,7 +256,7 @@ export function childrenStateOf<Ts extends readonly unknown[], S>(
  * every call site actually wants to know.
  */
 export function isCollection<Ts extends readonly unknown[], S>(
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): node is CollectionNode<Ts, S> | QuarantinedNode {
   return node.quarantined || node.container;
 }
@@ -411,7 +411,7 @@ export function documentOrder<Ts extends readonly unknown[], S>(
 
 export function contentKeyOf<Ts extends readonly unknown[], S>(
   registry: NodeTypeRegistry,
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): string | null {
   if (node.quarantined) return null;
   const nodeType = registry.get(node.kind);
@@ -421,7 +421,7 @@ export function contentKeyOf<Ts extends readonly unknown[], S>(
 
 export function sourceKeyOf<Ts extends readonly unknown[], S>(
   registry: NodeTypeRegistry,
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): string | null {
   if (node.quarantined) return null;
   return sourceKeyOfKindData(registry, node.kind, node.data);
@@ -480,7 +480,7 @@ export function sourceKeyOfKindData(
  * than relying on a caller having checked first.
  */
 export function ownsItsSubtree<Ts extends readonly unknown[], S>(
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): boolean {
   if (node.quarantined) return false;
   if (!node.container) return false;
@@ -1056,7 +1056,7 @@ export function placementsAfterInsert<Ts extends readonly unknown[], S>(
   post: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
-  arrived: readonly AnyNode<Ts, S>[],
+  arrived: readonly GraphNode<Ts, S>[],
 ): ReadonlyMap<string, readonly NodeId[]> | null {
   // THE ONLY node-type calls this function makes: one per ARRIVING node. Every
   // other node's key is not merely unchanged but irrelevant — `contentKey`
@@ -1152,7 +1152,7 @@ export function placementsAfterInsert<Ts extends readonly unknown[], S>(
 export function ownersAfterInsert<Ts extends readonly unknown[], S>(
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, NodeId>,
-  arrived: readonly AnyNode<Ts, S>[],
+  arrived: readonly GraphNode<Ts, S>[],
 ): ReadonlyMap<string, NodeId> {
   let next: Map<string, NodeId> | null = null;
   for (const node of arrived) {
@@ -1252,7 +1252,7 @@ export function derivedIndexesAfterRemoval<Ts extends readonly unknown[], S>(
  */
 export function insertLeavesDerivedIndexesIntact<Ts extends readonly unknown[], S>(
   registry: NodeTypeRegistry,
-  nodes: readonly AnyNode<Ts, S>[],
+  nodes: readonly GraphNode<Ts, S>[],
 ): boolean {
   for (const node of nodes) {
     if (contentKeyOf(registry, node) !== null) return false;
@@ -1333,7 +1333,7 @@ export function markMissing<Ts extends readonly unknown[], S>(
   // A spread, not one of the boundary constructors: nothing here came out of
   // the erased registry, so no cast is warranted, and a spread cannot silently
   // drop a field the node type grows later.
-  const next: AnyNode<Ts, S> = node.quarantined
+  const next: GraphNode<Ts, S> = node.quarantined
     ? { ...node, children }
     : { ...node, children };
 

@@ -179,7 +179,7 @@ export function FoldAliasProbe(): ReactNode {
   return <span>{viaAlias}</span>;
 }
 
-// --- assertion 4: `AnyNode` still discriminates ------------------------------
+// --- assertion 4: `GraphNode` still discriminates ------------------------------
 //
 // Three arms, `quarantined` first. If `Ts` had widened, `node.kind` on the last
 // arm would be `string` rather than `"clip" | "folder"` and `node.children`

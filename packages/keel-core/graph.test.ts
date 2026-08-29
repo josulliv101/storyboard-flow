@@ -41,7 +41,7 @@ import {
   parseNodeId,
 } from "./types";
 import type {
-  AnyNode,
+  GraphNode,
   ChildrenState,
   Graph,
   Issue,
@@ -143,7 +143,7 @@ const noteType = defineNodeType<NoteData, NoteEdit>()({
 
 type Types = readonly [typeof clipType, typeof folderType, typeof noteType];
 type TestGraph = Graph<Types, Summary>;
-type TestNode = AnyNode<Types, Summary>;
+type TestNode = GraphNode<Types, Summary>;
 
 const registry = buildRegistry([clipType, folderType, noteType]);
 const ENGINE = Symbol("keel-graph-test");

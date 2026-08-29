@@ -39,7 +39,7 @@ import {
   makeCollectionNode,
   makeDataChange,
   makeLeafNode,
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type DataChange,
   type EngineContext,
@@ -99,7 +99,7 @@ function replayError(
  * literals on the other two and cannot discriminate on its own.
  */
 function containerChildrenState<Ts extends readonly unknown[], S>(
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): ChildrenState | null {
   if (node.quarantined) return node.children;
   if (node.container) return node.children;
@@ -109,7 +109,7 @@ function containerChildrenState<Ts extends readonly unknown[], S>(
 /** `true` when this node owns a `childrenById` entry — i.e. it is a `loaded`
  *  container. Exactly one state has an entry; the other three have none. */
 function isLoadedContainer<Ts extends readonly unknown[], S>(
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): boolean {
   const state = containerChildrenState(node);
   return state !== null && state.status === "loaded";
@@ -524,7 +524,7 @@ function applyInserted<Ts extends readonly unknown[], S>(
   placements: readonly Placement<Ts, S>[],
   ctx: EngineContext<S>,
 ): Graph<Ts, S> {
-  const nodes = new Map<NodeId, AnyNode<Ts, S>>(graph.nodesById);
+  const nodes = new Map<NodeId, GraphNode<Ts, S>>(graph.nodesById);
   const children = new Map<NodeId, readonly NodeId[]>(graph.childrenById);
   const parents = new Map<NodeId, NodeId | null>(graph.parentById);
   const revs = new Map<NodeId, number>(graph.subtreeRevById);
@@ -630,7 +630,7 @@ function applyRemoved<Ts extends readonly unknown[], S>(
   placements: readonly Placement<Ts, S>[],
   ctx: EngineContext<S>,
 ): Graph<Ts, S> {
-  const nodes = new Map<NodeId, AnyNode<Ts, S>>(graph.nodesById);
+  const nodes = new Map<NodeId, GraphNode<Ts, S>>(graph.nodesById);
   const children = new Map<NodeId, readonly NodeId[]>(graph.childrenById);
   const parents = new Map<NodeId, NodeId | null>(graph.parentById);
   const revs = new Map<NodeId, number>(graph.subtreeRevById);
@@ -746,7 +746,7 @@ function applyDataChanged<Ts extends readonly unknown[], S>(
   changes: readonly DataChange<Ts>[],
   ctx: EngineContext<S>,
 ): Graph<Ts, S> {
-  const nodes = new Map<NodeId, AnyNode<Ts, S>>(graph.nodesById);
+  const nodes = new Map<NodeId, GraphNode<Ts, S>>(graph.nodesById);
 
   for (const change of changes) {
     const node = nodes.get(change.nodeId);
@@ -1446,7 +1446,7 @@ export function scrubPatchForIngest<Ts extends readonly unknown[], S>(
         if (node.quarantined) return placement;
         const replacement = replacements.get(node.id);
         rewrote = true;
-        const rebuilt: AnyNode<Ts, S> = node.container
+        const rebuilt: GraphNode<Ts, S> = node.container
           ? makeCollectionNode<Ts, S>(
               node.id,
               node.kind,

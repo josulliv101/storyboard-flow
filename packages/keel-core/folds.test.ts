@@ -17,7 +17,7 @@ import {
   parseNodeId,
 } from "./types";
 import type {
-  AnyNode,
+  GraphNode,
   Certainty,
   ChildrenState,
   Fold,
@@ -131,7 +131,7 @@ type Spec =
 const LOADED: ChildrenState = { status: "loaded" };
 
 function buildGraph(roots: readonly Spec[]): TestGraph {
-  const nodesById = new Map<NodeId, AnyNode<Types, Summary>>();
+  const nodesById = new Map<NodeId, GraphNode<Types, Summary>>();
   const childrenById = new Map<NodeId, readonly NodeId[]>();
   const parentById = new Map<NodeId, NodeId | null>();
   const subtreeRevById = new Map<NodeId, number>();
@@ -658,7 +658,7 @@ describe("computeFold dispatch", () => {
 
   it("survives depth that would overflow a recursive evaluator", () => {
     const depth = 5000;
-    const nodesById = new Map<NodeId, AnyNode<Types, Summary>>();
+    const nodesById = new Map<NodeId, GraphNode<Types, Summary>>();
     const childrenById = new Map<NodeId, readonly NodeId[]>();
     const parentById = new Map<NodeId, NodeId | null>();
     const subtreeRevById = new Map<NodeId, number>();
@@ -728,7 +728,7 @@ describe("computeFold dispatch", () => {
   it("terminates on a graph that violates its own acyclicity invariant", () => {
     const a = id("cyc-a");
     const b = id("cyc-b");
-    const nodesById = new Map<NodeId, AnyNode<Types, Summary>>([
+    const nodesById = new Map<NodeId, GraphNode<Types, Summary>>([
       [a, makeCollectionNode<Types, Summary>(a, "folder", { name: "a", disabled: false }, LOADED, null)],
       [b, makeCollectionNode<Types, Summary>(b, "folder", { name: "b", disabled: false }, LOADED, null)],
     ]);

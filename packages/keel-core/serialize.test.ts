@@ -12,7 +12,7 @@ import {
 import {
   defineNodeType,
   parseNodeId,
-  type AnyNode,
+  type GraphNode,
   type EngineContext,
   type Graph,
   type Issue,
@@ -252,7 +252,7 @@ function id(raw: string): NodeId {
 function nodeIn(
   graph: Graph<Types, Summary>,
   raw: string,
-): AnyNode<Types, Summary> {
+): GraphNode<Types, Summary> {
   const node = graph.nodesById.get(id(raw));
   if (node === undefined) throw new Error(`no node ${raw} in graph`);
   return node;

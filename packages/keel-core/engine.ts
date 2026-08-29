@@ -34,8 +34,8 @@ import type {
   ReplayRejection,
   Result,
   SelectionSlice,
-  SomeFold,
-  SomeNodeType,
+  ErasedFold,
+  ErasedNodeType,
   Store,
 } from "./types";
 import {
@@ -242,7 +242,7 @@ function nothingToReplay(direction: "undo" | "redo"): ReplayRejection {
  * ./folds), `devChecks` off.
  */
 export function createEngine<
-  const Ts extends readonly SomeNodeType[],
+  const Ts extends readonly ErasedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 >(config: EngineConfig<Ts, S, F>): Engine<Ts, S, F> {
@@ -364,7 +364,7 @@ export function createEngine<
     // however the key was typed. `undefined` is reachable under
     // `noUncheckedIndexedAccess` for a generic key, and it is also the honest
     // answer for a key that names no fold.
-    const fold: SomeFold<Ts, S> | undefined = config.folds[key];
+    const fold: ErasedFold<Ts, S> | undefined = config.folds[key];
     if (fold === undefined) return undefined;
 
     // ---- THE SHADOW COLD REFOLD, rescoped to CACHE HITS ONLY ---------------
@@ -410,7 +410,7 @@ export function createEngine<
   let shadowsLeft = SHADOW_REFOLD_BUDGET;
   const shadowCheck = (
     graph: Graph<Ts, S>,
-    fold: SomeFold<Ts, S>,
+    fold: ErasedFold<Ts, S>,
     id: NodeId,
     cachedValue: unknown,
     key: string,
