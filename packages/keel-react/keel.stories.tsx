@@ -38,7 +38,6 @@ import {
   type SerializedDocument,
   type SerializedNode,
   type ConsumerDefinedSummaryType,
-  type ErasedNodeType,
 } from "@storyboard/keel-core";
 
 import { createReactBindings } from "./index";
