@@ -1803,11 +1803,20 @@ export const DEV_CHECK_BUDGET = 20_000;
  * audit needs a comparator that can abstain; production needs one that cannot.
  * They are different functions and must stay so.
  *
- * BOUNDED, and that is the whole point. A PARSED value may legitimately hold a
- * back-pointer, and the unbounded walk does not terminate on one — measured, a
- * verbatim transcription of `deepEqual` ran 2,000,000 iterations on `a.self=a`
- * vs `b.self=b` without finishing. The step counter is simultaneously the cycle
- * guard and the cost bound.
+ * BOUNDED, and that is the whole point — but the cycle is no longer why. A
+ * PARSED value may legitimately hold a back-pointer, and a verbatim
+ * transcription of `deepEqual` once ran 2,000,000 iterations on `a.self=a` vs
+ * `b.self=b` without finishing. `deepEqual` now carries a co-inductive pair
+ * memo and terminates on exactly that input, so the two functions no longer
+ * differ in whether they can survive a cycle — only in whether they may ABSTAIN.
+ *
+ * The step counter here remains the COST bound, which is the reason a dev check
+ * needs one and production does not: this runs on every parsed value at every
+ * ingress under `devChecks`, where a 40,000-node document with 200 keyframes a
+ * clip reached 2.67 seconds unbudgeted. `verifyPatchApplies` runs its
+ * comparison once per changed node on the undo path, and must answer rather
+ * than shrug — a budget bail there would be a spurious `data-mismatch`
+ * refusing a legitimate undo for being large.
  *
  * `"unknown"` is SILENCE at every call site, never a report. A check that
  * cannot see the whole value has not found a violation.

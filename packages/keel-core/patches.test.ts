@@ -17,6 +17,7 @@ import {
 import {
   defineNodeType,
   makeCollectionNode,
+  makeDataChange,
   makeLeafNode,
   makeQuarantinedNode,
   parseNodeId,
@@ -30,6 +31,8 @@ import {
   type Patch,
   type Placement,
   type ErasedNodeType,
+  type Issue,
+  type Result,
   type ConsumerDefinedSummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
@@ -2055,4 +2058,132 @@ describe("batched insertion equals sequential splicing", () => {
     ]));
     expect(kids(next, "b")).toEqual(sequentially(["b0"], [{ index: 1, id: "y" }]));
   });
+});
+
+// ---------------------------------------------------------------------------
+// deepEqual — a cyclic `serialize` output must not take the process with it
+// ---------------------------------------------------------------------------
+//
+// `verifyDataChanged` compares `nodeType.serialize(change.before)` against
+// `nodeType.serialize(node.data)`. Those are two FRESH objects, so `Object.is`
+// cannot short-circuit them, and if the node type's `serialize` returns a value
+// holding a back-reference the walk used to push two frames for every one it
+// popped. Measured before the fix: heap exhaustion at 4 GB and a killed process
+// in 23 seconds — not a hang, a crash, out of a function contracted to return a
+// `Result`.
+//
+// Reaching it takes a node type whose `serialize` returns a cycle, which is a
+// consumer bug on the same footing as the throwing `serialize` this module
+// already wraps. Wire data cannot carry one; an in-memory value handed to
+// `deserialize` can.
+//
+// The fix is a co-inductive pair memo, NOT a step budget: a budget would refuse
+// a legitimately large value as `data-mismatch`, which is the failure ./types
+// argues production must not have. So these assert a DEFINITE verdict in both
+// directions, not merely that it terminated.
+describe("a cyclic serialize output is compared, not fatal", () => {
+  type Cyclic = Readonly<{ n: number }>;
+
+  /** `serialize` returns a fresh object that points at itself. Conforming
+   *  enough to run; not something that could ever reach the wire. */
+  function cyclicType(shape: (n: number) => Record<string, unknown>) {
+    return defineNodeType<Cyclic, Readonly<{ n: number }>>()({
+      kind: "cyc",
+      container: false,
+      schemaVersion: 1,
+      parse(raw): Result<Cyclic, readonly Issue[]> {
+        if (!isRecord(raw) || typeof raw["n"] !== "number") {
+          return { ok: false, error: [{ path: "$.n", message: "n" }] };
+        }
+        return { ok: true, value: { n: raw["n"] } };
+      },
+      serialize(data): unknown {
+        const out = shape(data.n);
+        out["self"] = out;
+        return out;
+      },
+      applyEdit(_data, edit) {
+        return { ok: true, value: { n: edit.n } };
+      },
+    });
+  }
+
+  function ctxWithCyclic(shape: (n: number) => Record<string, unknown>) {
+    const nodeType = cyclicType(shape);
+    const reg = new Map<string, ErasedNodeType>([["cyc", nodeType as ErasedNodeType]]);
+    return { ...makeCtx(), registry: reg };
+  }
+
+  /** A `data-changed` patch whose `before` is a DIFFERENT object holding the
+   *  same value — so the `Object.is` fast path cannot fire and the comparison
+   *  really runs. That is the save/reload shape: a dormant patch replayed
+   *  against a graph deserialized separately. */
+  function patchAgainst(before: Cyclic): Patch<TestTypes, Summary> {
+    return {
+      type: "data-changed",
+      changes: [
+        makeDataChange<TestTypes>(nid("c"), "cyc", before, { n: 99 }),
+      ],
+    };
+  }
+
+  function graphHolding(n: number): Graph<TestTypes, Summary> {
+    const g = buildGraph([folder("root", [clip("c")])]);
+    const node = makeLeafNode<TestTypes>(nid("c"), "cyc", { n });
+    return { ...g, nodesById: new Map(g.nodesById).set(nid("c"), node) };
+  }
+
+  it("terminates with a verdict when both sides cycle identically", () => {
+    const ctx = ctxWithCyclic((n) => ({ n }));
+    // before and live hold EQUAL values in DIFFERENT objects.
+    const verdict = verifyPatchApplies<TestTypes, Summary>(
+      graphHolding(7),
+      patchAgainst({ n: 7 }),
+      ctx,
+    );
+    // Structurally identical cycles compare EQUAL, so the patch still applies.
+    expect(verdict.ok).toBe(true);
+  }, 5000);
+
+  it("still refuses when the cyclic values genuinely differ", () => {
+    const ctx = ctxWithCyclic((n) => ({ n }));
+    const verdict = verifyPatchApplies<TestTypes, Summary>(
+      graphHolding(7),
+      patchAgainst({ n: 8 }),
+      ctx,
+    );
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.error.code).toBe("data-mismatch");
+  }, 5000);
+
+  it("refuses when one side cycles and the other does not", () => {
+    // `n` decides the shape, so the two serialize outputs disagree in structure
+    // as well as in their back-reference.
+    const ctx = ctxWithCyclic((n) => (n === 7 ? { n } : { n, extra: [1, 2, 3] }));
+    const verdict = verifyPatchApplies<TestTypes, Summary>(
+      graphHolding(7),
+      patchAgainst({ n: 8 }),
+      ctx,
+    );
+    expect(verdict.ok).toBe(false);
+  }, 5000);
+
+  it("compares a deeply shared acyclic value without exploding", () => {
+    // A DAG, not a cycle: the same subobject reachable by many paths. The memo
+    // is what keeps this linear rather than exponential in the sharing depth.
+    const ctx = ctxWithCyclic((n) => {
+      let level: Record<string, unknown> = { n };
+      for (let i = 0; i < 24; i += 1) level = { a: level, b: level };
+      return level;
+    });
+    const started = Date.now();
+    const verdict = verifyPatchApplies<TestTypes, Summary>(
+      graphHolding(7),
+      patchAgainst({ n: 7 }),
+      ctx,
+    );
+    expect(verdict.ok).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2000);
+  }, 5000);
 });
