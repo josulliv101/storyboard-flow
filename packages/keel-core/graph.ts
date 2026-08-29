@@ -190,6 +190,22 @@ export function getChildren<Ts extends readonly unknown[], S>(
   return graph.childrenById.get(id) ?? NO_IDS;
 }
 
+/**
+ * How many LIVE nodes the graph holds.
+ *
+ * Exists because the guard in `./review3-consumers-go-through-the-accessors`
+ * had nothing to offer a consumer asking this: every alternative reached past
+ * the accessors into `nodesById` for its `.size`, which is the one question the
+ * raw map answers correctly and no accessor answered at all. Tombstones are NOT
+ * counted — `deadRevById` is a separate store, and "how big is this document"
+ * has never meant "plus everything ever deleted from it".
+ */
+export function nodeCount<Ts extends readonly unknown[], S>(
+  graph: Graph<Ts, S>,
+): number {
+  return graph.nodesById.size;
+}
+
 export function getParent<Ts extends readonly unknown[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,

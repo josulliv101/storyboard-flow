@@ -63,7 +63,7 @@ const INDEX_FIELDS = [
  * accessor to `graph.ts`, which is also where the contract would then live.
  */
 const ACCESSOR_FOR: Readonly<Record<string, string>> = {
-  nodesById: "getNode",
+  nodesById: "getNode / nodeCount",
   childrenById: "getChildren / childrenStateOf",
   parentById: "getParent",
   subtreeRevById: "getSubtreeRev",
