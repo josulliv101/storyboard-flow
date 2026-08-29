@@ -29,7 +29,7 @@ import type {
   Certainty,
   CollectionNode,
   ExactFolded,
-  Fold,
+  ConsumerDefinedFold,
   FoldCache,
   Folded,
   FoldedChild,
@@ -81,7 +81,7 @@ const CERTAINTY_RANK: Readonly<Record<Certainty, number>> = {
  *
  * Weakest-wins is correct for a sum. It is NOT correct in general: the rule for
  * a first-frame preview is position-sensitive (a hole AFTER the first hit
- * changes nothing), which is exactly why `Fold.collection` returns `Folded<A>`
+ * changes nothing), which is exactly why `ConsumerDefinedFold.collection` returns `Folded<A>`
  * itself and is free to ignore this helper.
  */
 export function weakestCertainty(certainties: readonly Certainty[]): Certainty {
@@ -121,7 +121,7 @@ export function summaryFrom<A>(folded: ExactFolded<A>): A {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a `Fold` from a monoid plus weakest-wins certainty.
+ * Build a `ConsumerDefinedFold` from a monoid plus weakest-wins certainty.
  *
  * USE IT FOR SUMS AND COUNTS. It CANNOT express:
  *
@@ -136,8 +136,8 @@ export function summaryFrom<A>(folded: ExactFolded<A>): A {
  *    would demote it and send the reader back to the stored summary, discarding
  *    a just-made edit.
  *
- * Those three are why `Fold` is the primitive and this is the convenience.
- * Write `Fold` by hand when you need any of them.
+ * Those three are why `ConsumerDefinedFold` is the primitive and this is the convenience.
+ * Write `ConsumerDefinedFold` by hand when you need any of them.
  */
 export function foldMonoid<Ts extends readonly unknown[], S, A>(
   m: Readonly<{
@@ -148,7 +148,7 @@ export function foldMonoid<Ts extends readonly unknown[], S, A>(
     own?(node: CollectionNode<Ts, S>): A;
     placeholder?(node: CollectionNode<Ts, S>): A | undefined;
   }>,
-): Fold<Ts, S, A> {
+): ConsumerDefinedFold<Ts, S, A> {
   return {
     key: m.key,
     leaf(node) {
@@ -488,7 +488,7 @@ function isPlaceholderNode<Ts extends readonly unknown[], S>(
  */
 export function computeFold<Ts extends readonly unknown[], S, A>(
   graph: Graph<Ts, S>,
-  fold: Fold<Ts, S, A>,
+  fold: ConsumerDefinedFold<Ts, S, A>,
   nodeId: NodeId,
   cache?: FoldCache,
 ): Folded<A> | undefined {

@@ -24,7 +24,7 @@ import {
   type Rejection,
   type Result,
   type Seed,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
@@ -141,7 +141,7 @@ const types = [clipType, folderType] as const;
 type Types = typeof types;
 type Summary = Readonly<{ label: string }>;
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };

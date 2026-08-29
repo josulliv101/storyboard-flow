@@ -1,11 +1,11 @@
-// Duplicate `Fold.key` must not reach a store.
+// Duplicate `ConsumerDefinedFold.key` must not reach a store.
 //
 // folds.ts's `readCachedFold` justifies its `as Folded<A>` cast with "this value
 // was written by THIS function, under THIS `fold.key`", concedes that two folds
 // registered with the same `key` and different `A` would break it, and defers
 // the guard to "`createEngine`'s registry check". There is no such check.
 //
-// `EngineConfig.folds` is `Record<string, Fold<Ts, S, unknown>>`: the RECORD key
+// `EngineConfig.folds` is `Record<string, ConsumerDefinedFold<Ts, S, unknown>>`: the RECORD key
 // is what `aggregate(key, id)` looks up, `fold.key` is what the per-store cache
 // is keyed by (`computeFold`'s `commit` -> `cache.set(fold.key, ...)`), and
 // nothing relates the two or forces the `fold.key`s to be distinct. Two entries
@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   type Issue,
   type Result,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
   defineNodeType,
   parseNodeId,
 } from "./types";
@@ -90,7 +90,7 @@ type Types = typeof types;
 
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryType<Summary> = {
+const summary: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -170,7 +170,7 @@ function engineOrThrown():
   }
 }
 
-describe("duplicate Fold.key", () => {
+describe("duplicate ConsumerDefinedFold.key", () => {
   it("createEngine rejects a fold registry whose entries share a fold key", () => {
     expect(() => makeEngine()).toThrow(/duplicate fold key/i);
   });

@@ -55,7 +55,7 @@ import {
   type Seed,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 import {
   ancestorChain,
@@ -239,7 +239,7 @@ const nodeTypes = [clipType, folderType] as const;
 type Types = typeof nodeTypes;
 type Summary = Readonly<{ label: string }>;
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };

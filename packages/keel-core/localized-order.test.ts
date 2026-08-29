@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEngine } from "./engine";
 import { defineNodeType, parseNodeId } from "./types";
-import type { Issue, NodeId, Result, SummaryType } from "./types";
+import type { Issue, NodeId, Result, ConsumerDefinedSummaryType } from "./types";
 
 type Clip = Readonly<{ t: string }>;
 type Folder = Readonly<{ n: string }>;
@@ -16,7 +16,7 @@ const folder = defineNodeType<Folder, Record<string, never>>()({
   serialize: (d) => d, applyEdit: (d) => ({ ok: true, value: d }),
 });
 const types = [clip, folder] as const;
-const summary: SummaryType<Record<string, never>> = { parse: () => ({ ok: true, value: {} }), serialize: () => ({}) };
+const summary: ConsumerDefinedSummaryType<Record<string, never>> = { parse: () => ({ ok: true, value: {} }), serialize: () => ({}) };
 const engine = createEngine<typeof types, Record<string, never>, Record<string, never>>({
   types, summary, folds: {}, now: () => 0,
 });

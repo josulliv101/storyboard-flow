@@ -31,13 +31,13 @@ import type {
   Command,
   EditOf,
   Engine,
-  Fold,
+  ConsumerDefinedFold,
   Folded,
   Graph,
   Issue,
   NodeId,
   Result,
-  SummaryType,
+  ConsumerDefinedSummaryType,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ const types = [clipType, folderType] as const;
 type Types = typeof types;
 type TestGraph = Graph<Types, Summary>;
 
-const summary: SummaryType<Summary> = {
+const summary: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: fail("$", "expected an object") };
@@ -147,7 +147,7 @@ const countFold = foldMonoid<Types, Summary, number>({
   concat: (a, b) => a + b,
 });
 
-const titlesFold: Fold<Types, Summary, readonly string[]> = {
+const titlesFold: ConsumerDefinedFold<Types, Summary, readonly string[]> = {
   key: "titles",
   leaf(node) {
     return node.kind === "clip" ? [node.data.title] : [];
@@ -552,7 +552,7 @@ describe("fold cache observability", () => {
 // ---------------------------------------------------------------------------
 
 type CountingFold = Readonly<{
-  fold: Fold<Types, Summary, number>;
+  fold: ConsumerDefinedFold<Types, Summary, number>;
   leafCalls(): number;
   collectionCalls(): number;
 }>;
@@ -560,7 +560,7 @@ type CountingFold = Readonly<{
 function countingDuration(): CountingFold {
   let leafCalls = 0;
   let collectionCalls = 0;
-  const fold: Fold<Types, Summary, number> = {
+  const fold: ConsumerDefinedFold<Types, Summary, number> = {
     key: "counting-duration",
     leaf(node) {
       leafCalls += 1;

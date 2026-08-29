@@ -54,7 +54,7 @@ import {
   type Certainty,
   type Command,
   type DropIntent,
-  type Fold,
+  type ConsumerDefinedFold,
   type FoldCache,
   type Graph,
   type Issue,
@@ -62,7 +62,7 @@ import {
   type Result,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -226,7 +226,7 @@ type Types = typeof types;
 
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryType<Summary> = {
+const summary: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -254,7 +254,7 @@ const summary: SummaryType<Summary> = {
  * loop, and an array per node would put the harness's own garbage into the
  * numbers it reports.
  */
-const durationFold: Fold<Types, Summary, number> = {
+const durationFold: ConsumerDefinedFold<Types, Summary, number> = {
   key: "duration",
   leaf(node) {
     counters.foldLeaf += 1;
@@ -1787,7 +1787,7 @@ describe("folds", () => {
       // is a cache hit at an unchanged revision, and its twenty children are
       // never looked at.
       //
-      // The graph-blind `Fold` contract is what makes this SOUND rather than
+      // The graph-blind `ConsumerDefinedFold` contract is what makes this SOUND rather than
       // lucky: a node's value depends only on its own data and its children's
       // values, so "invalidate the changed node and its ancestors" is provably
       // sufficient. A fold handed the graph could read anything, and the only

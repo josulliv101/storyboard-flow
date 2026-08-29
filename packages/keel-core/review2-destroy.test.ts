@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEngine } from "./engine";
 import { defineNodeType, parseNodeId } from "./types";
-import type { Issue, Result, SummaryType } from "./types";
+import type { Issue, Result, ConsumerDefinedSummaryType } from "./types";
 
 type Clip = Readonly<{ title: string }>;
 type ClipEdit = Readonly<{ title: string }>;
@@ -39,7 +39,7 @@ const folderType = defineNodeType<Folder, Record<string, never>>()({
 });
 
 const types = [clipType, folderType] as const;
-const summary: SummaryType<Record<string, never>> = {
+const summary: ConsumerDefinedSummaryType<Record<string, never>> = {
   parse: () => ({ ok: true, value: {} }),
   serialize: () => ({}),
 };

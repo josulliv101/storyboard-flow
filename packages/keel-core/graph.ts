@@ -588,7 +588,7 @@ export type DerivedIndexNeed = Readonly<{ content: boolean; source: boolean }>;
 /**
  * Ask the REGISTRY, once per commit, whether either index can hold anything.
  *
- * `contentKey` and `sourceKey` are both optional on `NodeType`, so a consumer
+ * `contentKey` and `sourceKey` are both optional on `ConsumerDefinedNodeType`, so a consumer
  * that opts into neither has two permanently empty maps — and used to pay a
  * full document-order DFS, plus a registry lookup per node, to rediscover that
  * on every single mutation. The cost of asking is proportional to the number of

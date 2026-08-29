@@ -12,13 +12,13 @@ import {
   parseNodeId,
   type Issue,
   type Result,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 import { foldMonoid } from "./folds";
 import { createEngine } from "./engine";
 
 type Summary = Readonly<{ seconds: number }>;
-const summary: SummaryType<Summary> = {
+const summary: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "x" }] };

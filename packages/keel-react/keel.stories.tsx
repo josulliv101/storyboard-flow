@@ -31,13 +31,13 @@ import {
   weakestCertainty,
   type Certainty,
   type ChildrenState,
-  type Fold,
+  type ConsumerDefinedFold,
   type Folded,
   type Issue,
   type NodeId,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "@storyboard/keel-core";
 
 import { createReactBindings } from "./index";
@@ -256,7 +256,7 @@ type Types = readonly [typeof shotType, typeof noteType, typeof sequenceType];
 
 type Summary = Readonly<{ seconds: number; shots: number }>;
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw) {
     const record = asRecord(raw);
     if (record === null) {
@@ -319,12 +319,12 @@ const secondsFold = foldMonoid<Types, Summary, number>({
  * sufficient; a fold handed the graph could read anything, and then the only
  * correct invalidation would be "drop everything".
  *
- * Reach for a hand-written `Fold` when you need something a monoid cannot
+ * Reach for a hand-written `ConsumerDefinedFold` when you need something a monoid cannot
  * express: a subtree veto (a container's own flag dropping everything under
  * it), an empty-collection floor (`children.length === 0` is visible here and
  * is NOT the same as the monoid identity), or position-sensitive certainty.
  */
-const shotsFold: Fold<Types, Summary, number> = {
+const shotsFold: ConsumerDefinedFold<Types, Summary, number> = {
   key: "shots",
 
   leaf(node) {

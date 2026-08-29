@@ -1132,7 +1132,7 @@ function planEdits<Ts extends readonly unknown[], S>(
         );
       }
 
-      // 2. THE OPT-IN INVERSE. `invertEdit` is declared on `NodeType` and
+      // 2. THE OPT-IN INVERSE. `invertEdit` is declared on `ConsumerDefinedNodeType` and
       //    documented to satisfy
       //      applyEdit(applyEdit(d, e).value, invertEdit(e, d)) deep-equals d
       //    and the engine never calls it — undo works from whole-value

@@ -5,8 +5,8 @@
 // or the components it registers should not have to import a `.tsx` module to
 // do it. Nothing here has a runtime representation.
 //
-// Every member below is METHOD SHORTHAND, matching keel-core's `NodeType` and
-// `Fold`. There it is load-bearing (bivariance is what lets the registry
+// Every member below is METHOD SHORTHAND, matching keel-core's `ConsumerDefinedNodeType` and
+// `ConsumerDefinedFold`. There it is load-bearing (bivariance is what lets the registry
 // constraint be written with `unknown` and no `any`); here it is merely
 // consistent, and consistency is worth something when the two packages are read
 // side by side.

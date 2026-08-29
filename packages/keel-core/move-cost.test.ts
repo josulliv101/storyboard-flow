@@ -20,7 +20,7 @@ import {
   type NodeId,
   type Patch,
   type ErasedNodeType,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
 
@@ -151,7 +151,7 @@ const keylessRegistry: ReadonlyMap<string, ErasedNodeType> = new Map<string, Era
   ["folder", keylessFolderType],
 ]);
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw) {
     if (isRecord(raw)) {
       const label = raw["label"];

@@ -30,7 +30,7 @@ import {
   type Patch,
   type Placement,
   type ErasedNodeType,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
 
@@ -113,7 +113,7 @@ const registry: ReadonlyMap<string, ErasedNodeType> = new Map<string, ErasedNode
   ],
 );
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw) {
     if (isRecord(raw)) {
       const label = raw["label"];

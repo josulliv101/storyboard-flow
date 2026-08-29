@@ -248,7 +248,7 @@ export function createEngine<
 >(config: EngineConfig<Ts, S, F>): Engine<Ts, S, F> {
   const registry = buildRegistry(config.types);
 
-  // Fold keys must be unique, and this is the check `readCachedFold` in
+  // ConsumerDefinedFold keys must be unique, and this is the check `readCachedFold` in
   // ./folds names as living here.
   //
   // Its cast from the cache's `unknown` slot is sound ONLY because the slot was
@@ -268,7 +268,7 @@ export function createEngine<
     if (prior !== undefined) {
       throw new Error(
         `keel: duplicate fold key ${JSON.stringify(fold.key)} — registered as ` +
-          `both ${JSON.stringify(prior)} and ${JSON.stringify(entryKey)}. Fold ` +
+          `both ${JSON.stringify(prior)} and ${JSON.stringify(entryKey)}. ConsumerDefinedFold ` +
           `keys are cache keys; two folds sharing one would read each other's ` +
           `cached values.`,
       );
@@ -360,7 +360,7 @@ export function createEngine<
     id: NodeId,
     cache: FoldCache | undefined,
   ): Folded<FoldValue<F[K]>> | undefined => {
-    // The registry erases each fold's `A`, so this is `Fold<Ts, S, unknown>`
+    // The registry erases each fold's `A`, so this is `ConsumerDefinedFold<Ts, S, unknown>`
     // however the key was typed. `undefined` is reachable under
     // `noUncheckedIndexedAccess` for a generic key, and it is also the honest
     // answer for a key that names no fold.

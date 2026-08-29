@@ -29,7 +29,7 @@ import {
   parseNodeId,
   type Issue,
   type Result,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -97,7 +97,7 @@ type Types = typeof types;
 
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryType<Summary> = {
+const summary: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (!isRecord(raw) || typeof raw.seconds !== "number") {
       return { ok: false, error: [{ path: "$.seconds", message: "seconds" }] };
