@@ -31,7 +31,7 @@
 // FIXTURES COME THROUGH THE REAL INGRESS. Graphs are built by
 // `deserializeDocument` on generated wire documents rather than by a local
 // node-assembler, so quarantine arises the way it does in production (an
-// unregistered kind, data its own codec refuses) instead of being hand-planted
+// unregistered kind, data its own node type refuses) instead of being hand-planted
 // — and the ingress door is fuzzed along with the reducer.
 
 import { describe, expect, test } from "vitest";
@@ -55,7 +55,7 @@ import {
   type Seed,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 import {
   ancestorChain,
@@ -151,7 +151,7 @@ type ClipEdit = Readonly<{ title?: string; seconds?: number }>;
  * `parse` is deliberately STRICTER than `applyEdit`: it caps `seconds` at 100
  * while `applyEdit` does not. That asymmetry is the only way the fuzz reaches
  * the "the edit produced a value that no longer parses" branch without the
- * codec refusing the edit itself, and both branches are rejection paths the
+ * node type refusing the edit itself, and both branches are rejection paths the
  * property covers.
  */
 const clipType = defineNodeType<Clip, ClipEdit>()({
@@ -239,7 +239,7 @@ const nodeTypes = [clipType, folderType] as const;
 type Types = typeof nodeTypes;
 type Summary = Readonly<{ label: string }>;
 
-const summaryCodec: SummaryCodec<Summary> = {
+const summaryType: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -276,7 +276,7 @@ function makeCtx(): Ctx {
   return {
     engineId: Symbol("keel-fuzz"),
     registry,
-    summary: summaryCodec,
+    summary: summaryType,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
     maxNodes: DEFAULT_MAX_NODES,
@@ -401,7 +401,7 @@ function randomDocument(
       return id;
     }
     if (roll < 0.66) {
-      // Registered kind, data its own codec refuses ⇒ `parse-failed`
+      // Registered kind, data its own node type refuses ⇒ `parse-failed`
       // quarantine. Byte-exact re-emit is the same promise either way.
       const data = { title: 42, seconds: "nope" };
       nodes.push({ id, kind: "clip", data });
@@ -559,18 +559,18 @@ function stateLabel(state: ChildrenState | null): string | null {
 
 function nodeDataJson(node: FuzzNode): string {
   if (node.quarantined) return stableJson(node.raw);
-  const type = registry.get(node.kind);
+  const nodeType = registry.get(node.kind);
   // Compared on the SERIALIZED form for the same reason `verifyDataChanged`
-  // does: a parsed value may carry identity its codec does not consider
-  // meaningful, and the wire form is the codec's own statement of what the
+  // does: a parsed value may carry identity its node type does not consider
+  // meaningful, and the wire form is the node type's own statement of what the
   // value IS.
-  return stableJson(type === undefined ? node.data : type.serialize(node.data));
+  return stableJson(nodeType === undefined ? node.data : nodeType.serialize(node.data));
 }
 
 function nodeSummaryJson(node: FuzzNode): string {
   if (node.quarantined) return stableJson(node.summary);
   if (!node.container) return "leaf";
-  return node.summary === null ? "null" : stableJson(summaryCodec.serialize(node.summary));
+  return node.summary === null ? "null" : stableJson(summaryType.serialize(node.summary));
 }
 
 function graphShape(graph: FuzzGraph): GraphShape {
@@ -648,7 +648,7 @@ function randomSeed(rand: () => number, graph: FuzzGraph, depth: number): FuzzSe
     return { kind: "clip", data: { title: "   ", seconds: -1 } };
   }
   if (roll < 0.54) {
-    // `seconds` above the parse cap: legal to the type, refused by the codec.
+    // `seconds` above the parse cap: legal to the type, refused by the node type.
     return { kind: "clip", data: { title: "too long", seconds: 500 } };
   }
   if (roll < 0.60) {
@@ -692,7 +692,7 @@ function randomEdit(rand: () => number, graph: FuzzGraph, nodeId: NodeId): EditO
   if (asClip) {
     const roll = rand();
     if (roll < 0.15) {
-      // The codec's own refusal — relayed as `edit-rejected`.
+      // The node type's own refusal — relayed as `edit-rejected`.
       return { nodeId, kind: "clip", edit: { title: "" } };
     }
     if (roll < 0.30) {
@@ -1520,7 +1520,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
         // Unwind everything. A quarantined node that was REMOVED during churn
         // has to come back byte-exact too — the patch records the whole node,
         // `raw` included, which is what makes "delete then undo" safe for data
-        // no codec in this build can read.
+        // no node type in this build can read.
         while (canUndo(history)) {
           const stepBack = commitUndo(history);
           if (stepBack === null) break;

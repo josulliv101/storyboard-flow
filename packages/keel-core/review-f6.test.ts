@@ -29,7 +29,7 @@ import {
   parseNodeId,
   type Issue,
   type Result,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -64,7 +64,7 @@ type Proto = Readonly<{ text: string }>;
 /**
  * A leaf kind literally named `__proto__`, at schemaVersion 2, with a v1 -> v2
  * migration that renames `body` to `text`. Nothing about this is exotic to the
- * engine: it is an ordinary registered codec whose kind string happens to
+ * engine: it is an ordinary registered node type whose kind string happens to
  * collide with an accessor on `Object.prototype`.
  */
 const protoType = defineNodeType<Proto, never>()({
@@ -97,7 +97,7 @@ type Types = typeof types;
 
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryCodec<Summary> = {
+const summary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (!isRecord(raw) || typeof raw.seconds !== "number") {
       return { ok: false, error: [{ path: "$.seconds", message: "seconds" }] };

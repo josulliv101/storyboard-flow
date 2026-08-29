@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEngine } from "./engine";
 import { defineNodeType, parseNodeId } from "./types";
-import type { Issue, Result, SummaryCodec } from "./types";
+import type { Issue, Result, SummaryType } from "./types";
 
 type Clip = Readonly<{ title: string }>;
 type ClipEdit = Readonly<{ title: string }>;
@@ -39,7 +39,7 @@ const folderType = defineNodeType<Folder, Record<string, never>>()({
 });
 
 const types = [clipType, folderType] as const;
-const summary: SummaryCodec<Record<string, never>> = {
+const summary: SummaryType<Record<string, never>> = {
   parse: () => ({ ok: true, value: {} }),
   serialize: () => ({}),
 };
@@ -155,10 +155,10 @@ describe("a destroyed store refuses every write", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Undo verification must not call the consumer's codec when it does not have to
+// Undo verification must not call the consumer's node type when it does not have to
 // ---------------------------------------------------------------------------
 
-describe("verifyDataChanged consults the codec only when it must", () => {
+describe("verifyDataChanged consults the node type only when it must", () => {
   it("serializes nothing on an ordinary undo/redo of an edit", () => {
     // The machine-independent form of this claim: COUNT the consumer calls
     // rather than time them. `serialize` is consumer code of unknown cost, and

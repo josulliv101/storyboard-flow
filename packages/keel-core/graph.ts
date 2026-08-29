@@ -57,11 +57,11 @@ export const NO_DEAD_REVS: ReadonlyMap<NodeId, number> = new Map();
 // ---------------------------------------------------------------------------
 
 /**
- * Build the kind -> codec map.
+ * Build the kind -> node type map.
  *
  * THROWS on a duplicate kind, and this is the only function in keel-core that
  * throws. It is a module-init programmer error, not a recoverable condition:
- * two codecs claiming one kind means one of them silently wins at the trust
+ * two node types claiming one kind means one of them silently wins at the trust
  * boundary, so `switch (node.kind)` narrows `data` to a type the node does not
  * hold and the whole discriminated union is quietly a lie. There is no
  * partial-success answer worth returning — the consumer's module graph is
@@ -69,14 +69,14 @@ export const NO_DEAD_REVS: ReadonlyMap<NodeId, number> = new Map();
  */
 export function buildRegistry(types: readonly SomeNodeType[]): NodeTypeRegistry {
   const registry = new Map<string, SomeNodeType>();
-  for (const type of types) {
-    if (registry.has(type.kind)) {
+  for (const nodeType of types) {
+    if (registry.has(nodeType.kind)) {
       throw new Error(
-        `keel: duplicate node kind ${JSON.stringify(type.kind)} in ` +
-          `createEngine({ types }). Each kind may be claimed by exactly one codec.`,
+        `keel: duplicate node kind ${JSON.stringify(nodeType.kind)} in ` +
+          `createEngine({ types }). Each kind may be claimed by exactly one node type.`,
       );
     }
-    registry.set(type.kind, type);
+    registry.set(nodeType.kind, nodeType);
   }
   return registry;
 }
@@ -398,12 +398,12 @@ export function documentOrder<Ts extends readonly unknown[], S>(
 // ---------------------------------------------------------------------------
 //
 // Both return `null` for a quarantined node, and that is not a shortcut. A
-// quarantined node holds `raw`, not parsed `Data`; no codec is willing to vouch
+// quarantined node holds `raw`, not parsed `Data`; no node type is willing to vouch
 // for it, so handing `raw` to `contentKey` would ask a function typed against
 // `Data` to read something that failed to become `Data`. A node whose content
 // could not be understood has no content identity.
 //
-// Neither wraps the codec call in try/catch. A throwing `contentKey` is a
+// Neither wraps the call in try/catch. A throwing `contentKey` is a
 // consumer bug, and swallowing it into `null` would silently disable the
 // single-owner rule — the invariant that stops two placements from both
 // claiming one stored subtree, which is the condition the predecessor's server
@@ -414,9 +414,9 @@ export function contentKeyOf<Ts extends readonly unknown[], S>(
   node: AnyNode<Ts, S>,
 ): string | null {
   if (node.quarantined) return null;
-  const type = registry.get(node.kind);
-  if (type === undefined || type.contentKey === undefined) return null;
-  return type.contentKey(node.data);
+  const nodeType = registry.get(node.kind);
+  if (nodeType === undefined || nodeType.contentKey === undefined) return null;
+  return nodeType.contentKey(node.data);
 }
 
 export function sourceKeyOf<Ts extends readonly unknown[], S>(
@@ -434,7 +434,7 @@ export function sourceKeyOf<Ts extends readonly unknown[], S>(
  * `verifyDataChanged` needs exactly this: it must know what key a patch's
  * `after` would claim before deciding whether replaying it is safe, and the
  * node in the graph still carries the old value. Split out rather than
- * duplicated so the two cannot disagree about which codec hook answers, and so
+ * duplicated so the two cannot disagree about which node-type hook answers, and so
  * the deliberate absence of a try/catch stays in ONE place — see the block
  * comment above `contentKeyOf` for why a throwing key function is not swallowed
  * into `null`.
@@ -444,9 +444,9 @@ export function sourceKeyOfKindData(
   kind: string,
   data: unknown,
 ): string | null {
-  const type = registry.get(kind);
-  if (type === undefined || type.sourceKey === undefined) return null;
-  return type.sourceKey(data);
+  const nodeType = registry.get(kind);
+  if (nodeType === undefined || nodeType.sourceKey === undefined) return null;
+  return nodeType.sourceKey(data);
 }
 
 /**
@@ -475,7 +475,7 @@ export function sourceKeyOfKindData(
  *     exists to prevent and which this repo has already paid for once.
  *
  * A quarantined node owns nothing either: its key would have to come from a
- * codec that by definition did not run, so `sourceKeyOf` already answers `null`
+ * node type that by definition did not run, so `sourceKeyOf` already answers `null`
  * for it. Stated here as well so the predicate is total on its own terms rather
  * than relying on a caller having checked first.
  */
@@ -582,7 +582,7 @@ export type DerivedIndexes<Ts extends readonly unknown[], S> = Pick<
   "placementsByContentKey" | "ownerBySourceKey"
 >;
 
-/** Which halves of the derived pair the registered codecs can populate AT ALL. */
+/** Which halves of the derived pair the registered node types can populate AT ALL. */
 export type DerivedIndexNeed = Readonly<{ content: boolean; source: boolean }>;
 
 /**
@@ -598,9 +598,9 @@ export type DerivedIndexNeed = Readonly<{ content: boolean; source: boolean }>;
 export function derivedIndexNeed(registry: NodeTypeRegistry): DerivedIndexNeed {
   let content = false;
   let source = false;
-  for (const type of registry.values()) {
-    if (type.contentKey !== undefined) content = true;
-    if (type.sourceKey !== undefined) source = true;
+  for (const nodeType of registry.values()) {
+    if (nodeType.contentKey !== undefined) content = true;
+    if (nodeType.sourceKey !== undefined) source = true;
     if (content && source) break;
   }
   return { content, source };
@@ -908,7 +908,7 @@ export function documentOrderComparator<Ts extends readonly unknown[], S>(
  * is to lift out the ids that travelled and merge them back at their new
  * positions. A bucket holding nothing that moved cannot change at all — which
  * is why the common shape, a content key placed exactly once so that every
- * bucket holds one id, settles in a handful of codec calls and no comparisons
+ * bucket holds one id, settles in a handful of node-type calls and no comparisons
  * at all, against a full document walk before.
  *
  * Returns `previous` BY IDENTITY when nothing reordered, and `null` for
@@ -932,7 +932,7 @@ export function reindexPlacementsAcrossMove<Ts extends readonly unknown[], S>(
   }
   if (travelled.size === 0) return previous;
 
-  // The ONLY codec calls this function makes: one per node that actually
+  // The ONLY node-type calls this function makes: one per node that actually
   // travelled. Every other node's key is not merely unchanged but irrelevant —
   // `contentKey` reads `data`, and a move does not touch `data`.
   const moversByKey = new Map<string, NodeId[]>();
@@ -1058,7 +1058,7 @@ export function placementsAfterInsert<Ts extends readonly unknown[], S>(
   previous: ReadonlyMap<string, readonly NodeId[]>,
   arrived: readonly AnyNode<Ts, S>[],
 ): ReadonlyMap<string, readonly NodeId[]> | null {
-  // THE ONLY codec calls this function makes: one per ARRIVING node. Every
+  // THE ONLY node-type calls this function makes: one per ARRIVING node. Every
   // other node's key is not merely unchanged but irrelevant — `contentKey`
   // reads `data`, and an insert does not touch anybody else's.
   const arrivalsByKey = new Map<string, NodeId[]>();
@@ -1264,7 +1264,7 @@ export function insertLeavesDerivedIndexesIntact<Ts extends readonly unknown[], 
 /**
  * True when one node's data change cannot move EITHER derived index.
  *
- * Asks the codec rather than the registry shape, because the high-value case is
+ * Asks the node type rather than the registry shape, because the high-value case is
  * a kind that DOES define `contentKey` and whose key does not depend on the
  * field being edited — retitling a clip whose `contentKey` is its asset id. The
  * cheap structural case (a kind defining neither function) falls out of the same
@@ -1279,12 +1279,12 @@ export function dataChangeLeavesDerivedIndexesIntact(
   before: unknown,
   after: unknown,
 ): boolean {
-  const type = registry.get(kind);
-  if (type === undefined) return true;
-  if (type.contentKey !== undefined && type.contentKey(before) !== type.contentKey(after)) {
+  const nodeType = registry.get(kind);
+  if (nodeType === undefined) return true;
+  if (nodeType.contentKey !== undefined && nodeType.contentKey(before) !== nodeType.contentKey(after)) {
     return false;
   }
-  if (type.sourceKey !== undefined && type.sourceKey(before) !== type.sourceKey(after)) {
+  if (nodeType.sourceKey !== undefined && nodeType.sourceKey(before) !== nodeType.sourceKey(after)) {
     return false;
   }
   return true;
@@ -1497,7 +1497,7 @@ export function findInvariantViolation<Ts extends readonly unknown[], S>(
     seenRootIds.add(rootId);
     // Read straight off the node, not through `isCollection`: a quarantined
     // root is judged by the `container` flag its document declared, which is
-    // the only evidence there is when no codec would parse it.
+    // the only evidence there is when no node type would parse it.
     if (!node.container) {
       return {
         code: "root-not-container",

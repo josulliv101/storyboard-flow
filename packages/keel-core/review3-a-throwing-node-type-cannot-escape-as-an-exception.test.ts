@@ -1,35 +1,35 @@
 // Third review round — the other half of "the engine survives its consumers".
 //
 // Every consumer `parse` call is defensively wrapped: ./serialize wraps node
-// data, and a prior round wrapped the summary codec beside it. NO `serialize`
+// data, and a prior round wrapped the summary type beside it. NO `serialize`
 // call was, and `serialize` is consumer code on exactly the same footing.
 //
 // The asymmetry costs three different contracts:
 //
-//   - `dispatch` promises a `Result`. A codec that throws while the reducer
+//   - `dispatch` promises a `Result`. A node type that throws while the reducer
 //     round-trips its own output turned that into an unhandled exception out of
 //     a React event handler, at every call site that correctly wrote
 //     `if (!result.ok)`.
 //   - `verifyPatchApplies` promises a `Result`. Undo runs the consumer's
 //     `serialize` once per changed node to prove the recorded `before` still
-//     stands, so a throwing codec took out undo the same way.
+//     stands, so a throwing node type took out undo the same way.
 //   - `serializeGraph` promises to be TOTAL, in those words, "because a save
 //     path that throws loses the user's document". Its own `serializeData`
 //     already states the policy — "an unserializable node should cost one
-//     node's fidelity, never the whole save" — and then called `type.serialize`
+//     node's fidelity, never the whole save" — and then called `nodeType.serialize`
 //     unwrapped on the very next line.
 import { describe, expect, it } from "vitest";
 
 import {
   type Issue,
   type Result,
-  type SummaryCodec,
+  type SummaryType,
   defineNodeType,
   parseNodeId,
 } from "./types";
 import { createEngine } from "./engine";
 
-// Which codec call should blow up. Flipped per test; the throw is realistic —
+// Which node-type call should blow up. Flipped per test; the throw is realistic —
 // an encoder meeting a value it cannot represent, not a synthetic panic.
 const explode = {
   nodeSerialize: false,
@@ -116,7 +116,7 @@ type Types = typeof types;
 
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryCodec<Summary> = {
+const summary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -181,7 +181,7 @@ function loadedStore() {
 // dispatch
 // ---------------------------------------------------------------------------
 
-describe("the reducer refuses rather than throwing when a codec blows up", () => {
+describe("the reducer refuses rather than throwing when a node type blows up", () => {
   it("returns a Result when applyEdit throws", () => {
     resetExplosions();
     const { store } = loadedStore();
@@ -227,7 +227,7 @@ describe("the reducer refuses rather than throwing when a codec blows up", () =>
     if (result && !result.ok) expect(result.error.code).toBe("parse-failed");
   });
 
-  it("leaves the graph and the history stack untouched after a codec throw", () => {
+  it("leaves the graph and the history stack untouched after a node type throw", () => {
     resetExplosions();
     const { store } = loadedStore();
     const before = store.getGraph();
@@ -285,7 +285,7 @@ describe("replay verification refuses rather than throwing", () => {
     }
   });
 
-  it("keeps undo Result-shaped when the codec throws mid-verification", () => {
+  it("keeps undo Result-shaped when the node type throws mid-verification", () => {
     resetExplosions();
     const { store } = loadedStore();
     store.dispatch({
@@ -315,8 +315,8 @@ describe("replay verification refuses rather than throwing", () => {
 // serializeGraph — the save path, which is documented TOTAL
 // ---------------------------------------------------------------------------
 
-describe("the save path stays total when a codec throws", () => {
-  it("does not lose the document when a node codec throws", () => {
+describe("the save path stays total when a node type throws", () => {
+  it("does not lose the document when a node type throws", () => {
     resetExplosions();
     const { engine, store } = loadedStore();
     const graph = store.getGraph();
@@ -344,7 +344,7 @@ describe("the save path stays total when a codec throws", () => {
     expect(root?.data).toEqual({ name: "Root" });
   });
 
-  it("does not lose the document when the summary codec throws", () => {
+  it("does not lose the document when the summary type throws", () => {
     resetExplosions();
     const { engine, store } = loadedStore();
     const graph = store.getGraph();
@@ -365,7 +365,7 @@ describe("the save path stays total when a codec throws", () => {
       "box",
       "root",
     ]);
-    // The clip beside it is untouched by the summary codec's failure.
+    // The clip beside it is untouched by the summary type's failure.
     const clip = doc?.nodes.find((node) => node.id === "a");
     expect(clip?.data).toEqual({ title: "A", seconds: 4 });
   });

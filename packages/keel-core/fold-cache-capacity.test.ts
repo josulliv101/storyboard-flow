@@ -37,7 +37,7 @@ import type {
   Issue,
   NodeId,
   Result,
-  SummaryCodec,
+  SummaryType,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ const types = [clipType, folderType] as const;
 type Types = typeof types;
 type TestGraph = Graph<Types, Summary>;
 
-const summary: SummaryCodec<Summary> = {
+const summary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: fail("$", "expected an object") };
@@ -260,7 +260,7 @@ function buildDocument(
       childrenState: "missing",
       missingReason: "404",
     });
-    // No codec is registered for this kind, so it lands quarantined.
+    // No node type is registered for this kind, so it lands quarantined.
     nodes.push({ id: "mystery", kind: "mystery", data: { opaque: true } });
     nodes.push({ id: "empty", kind: "folder", data: { name: "empty" }, children: [] });
     rootChildren.push("unloaded", "gone", "mystery", "empty");

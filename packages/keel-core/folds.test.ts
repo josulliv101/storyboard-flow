@@ -49,10 +49,10 @@ function issue(path: string, message: string): readonly Issue[] {
   return [{ path, message }];
 }
 
-// The codec VALUE is never registered. This file builds its graph with
+// The node type VALUE is never registered. This file builds its graph with
 // `makeLeafNode<Types>` rather than through an engine, so this exists only so
 // `typeof` can derive the `Types` tuple below — deleting it would mean
-// hand-writing that tuple and letting it drift from the codecs it describes.
+// hand-writing that tuple and letting it drift from the node types it describes.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const clipType = defineNodeType<ClipData, ClipEdit>()({
   kind: "clip",
@@ -163,7 +163,7 @@ function buildGraph(roots: readonly Spec[]): TestGraph {
           schemaVersion: 0,
           raw: { opaque: spec.id },
           reason: "unknown-kind",
-          issues: issue("$.kind", "no codec registered"),
+          issues: issue("$.kind", "no node type registered"),
           children: container ? LOADED : null,
           summary: null,
         }),

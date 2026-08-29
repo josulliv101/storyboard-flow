@@ -62,7 +62,7 @@ import {
   type Result,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -226,7 +226,7 @@ type Types = typeof types;
 
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryCodec<Summary> = {
+const summary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -333,7 +333,7 @@ function at<T>(items: readonly T[], index: number, what: string): T {
  * fixture in this file rather than on the one that was wrong.
  *
  * A quarantined node is a SUCCESS, by design: the four-state model exists so a
- * node the codec refuses can still be held, named and repaired rather than
+ * node the node type refuses can still be held, named and repaired rather than
  * taking its document down with it. That is exactly what makes a quarantined
  * FIXTURE invisible. `deserialize` returns ok, `report.nodeCount` matches,
  * `expect(loaded.ok).toBe(true)` passes, and every count a benchmark normally
@@ -359,7 +359,7 @@ function assertNothingQuarantined(
   throw new Error(
     `keel performance fixture: ${label} quarantined ` +
       `${report.quarantined.length} node(s) — the fixture does not satisfy its ` +
-      `own codec, so this measures the unparsed path rather than the gesture`,
+      `own node type, so this measures the unparsed path rather than the gesture`,
   );
 }
 
@@ -1089,7 +1089,7 @@ describe("deserialize", () => {
         noteCount("deserialize", fx.label, fx.nodeCount, "parse", counts.parse),
       ).toBe(fx.nodeCount);
 
-      // Ingress does NOT touch the codec's `serialize`. Round-tripping to
+      // Ingress does NOT touch the node type's `serialize`. Round-tripping to
       // normalise would be a plausible implementation and would silently double
       // the work; asserting zero pins the choice.
       expect(counts.serialize).toBe(0);
@@ -1154,7 +1154,7 @@ describe("mutations", () => {
         ),
       );
 
-      // A move carries no content, so no codec is consulted about data. If this
+      // A move carries no content, so no node type is consulted about data. If this
       // ever fires, a structural command has started re-parsing the graph.
       expect(counts.parse).toBe(0);
       expect(counts.applyEdit).toBe(0);
@@ -1397,7 +1397,7 @@ describe("mutations", () => {
     expectConstantTime(large / small, "selection.has");
   }, 120_000);
 
-  it("a content edit consults exactly one codec, whatever the graph size", () => {
+  it("a content edit consults exactly one node type, whatever the graph size", () => {
     const perOp = new Map<string, number>();
     const reindexed = new Map<string, number>();
 
@@ -1410,7 +1410,7 @@ describe("mutations", () => {
       });
 
       // ONE node edited => ONE `applyEdit`, plus one `serialize` and one `parse`
-      // for the reducer's re-validation of the codec's own output. These are
+      // for the reducer's re-validation of the node type's own output. These are
       // CONSTANTS: they do not move when the graph grows 100x, and that is the
       // property worth pinning.
       expect(
@@ -1641,7 +1641,7 @@ describe("undo and redo", () => {
           counts.contentKey,
         ),
       );
-      // Replay must never re-run a codec: the patch stores whole values, which
+      // Replay must never re-run a node type: the patch stores whole values, which
       // is exactly what makes an inverse impossible to get wrong.
       expect(counts.parse).toBe(0);
       expect(counts.applyEdit).toBe(0);

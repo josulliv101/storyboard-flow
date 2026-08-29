@@ -1,4 +1,4 @@
-// KEEL — the four `devChecks` audits, each with a codec built to violate it.
+// KEEL — the four `devChecks` audits, each with a node type built to violate it.
 //
 // `EngineContext.devChecks` named four audits and implemented NONE of them
 // (#590), so the whole risk in fixing it is shipping four audits that cannot
@@ -12,13 +12,13 @@ import {
   parseNodeId,
   type Issue,
   type Result,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 import { foldMonoid } from "./folds";
 import { createEngine } from "./engine";
 
 type Summary = Readonly<{ seconds: number }>;
-const summary: SummaryCodec<Summary> = {
+const summary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "x" }] };
@@ -69,7 +69,7 @@ function messagesFrom(spy: ReturnType<typeof errors>): string {
   return spy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
 }
 
-/** root -> one clip. `data` is whatever the caller's codec wants. */
+/** root -> one clip. `data` is whatever the caller's node type wants. */
 function docWith(clipData: unknown) {
   return {
     formatVersion: 1,
@@ -88,7 +88,7 @@ function docWith(clipData: unknown) {
 
 describe("parsed values are frozen under devChecks", () => {
   /**
-   * A codec that normalises IN PLACE during serialize — a real performance
+   * A node type that normalises IN PLACE during serialize — a real performance
    * idiom, and precisely the class the reducer already wraps in try/catch. The
    * engine stores what `parse` returned, so a `serialize` that edits its
    * argument is quietly rewriting stored state from a method contracted to read.
@@ -148,7 +148,7 @@ describe("parsed values are frozen under devChecks", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("does not throw on a codec that returns a typed array", () => {
+  it("does not throw on a node type that returns a typed array", () => {
     // THE REGRESSION THIS GUARD EXISTS FOR. `Object.freeze` on a TypedArray
     // with elements throws, so without the `ArrayBuffer.isView` skip, turning
     // devChecks on takes the ingress door down for a conforming consumer.
@@ -184,7 +184,7 @@ describe("parsed values are frozen under devChecks", () => {
 // 2. parse(serialize(d)) ROUND-TRIP
 // ---------------------------------------------------------------------------
 
-/** Parses two fields, serializes ONE. The classic lossy codec. */
+/** Parses two fields, serializes ONE. The classic lossy node type. */
 const lossy = defineNodeType<
   Readonly<{ title: string; note: string }>,
   Readonly<{ title?: string }>
@@ -254,9 +254,9 @@ describe("the round trip catches a lossy serialize", () => {
     expect(messagesFrom(spy)).toContain("clip");
   });
 
-  it("stays silent for a NORMALISING codec — the false-alarm floor", () => {
+  it("stays silent for a NORMALISING node type — the false-alarm floor", () => {
     // A raw-vs-reserialized comparison would report a violation here on a
-    // perfectly correct codec, which is why both halves of the comparison must
+    // perfectly correct node type, which is why both halves of the comparison must
     // be parse OUTPUTS. `{title:"  a  "}` parses to `{title:"a"}`, and `"a"`
     // round-trips to itself.
     const engine = createEngine<readonly [typeof trimming, typeof folder], Summary, {}>({
@@ -354,9 +354,9 @@ describe("an opt-in invertEdit is verified", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("stays silent when the codec declares no inverse at all", () => {
+  it("stays silent when the node type declares no inverse at all", () => {
     // The common case by far — `invertEdit` is opt-in and off by default, so
-    // the check must cost nothing and say nothing for a codec without one.
+    // the check must cost nothing and say nothing for a node type without one.
     const spy = run(clipWithInverse(undefined));
     expect(spy).not.toHaveBeenCalled();
   });
