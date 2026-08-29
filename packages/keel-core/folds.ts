@@ -36,6 +36,7 @@ import type {
   Graph,
   LeafNode,
   NodeId,
+  ErasedNodeType,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -139,7 +140,7 @@ export function summaryFrom<A>(folded: ExactFolded<A>): A {
  * Those three are why `ConsumerDefinedFold` is the primitive and this is the convenience.
  * Write `ConsumerDefinedFold` by hand when you need any of them.
  */
-export function foldMonoid<Ts extends readonly unknown[], S, A>(
+export function foldMonoid<Ts extends readonly ErasedNodeType[], S, A>(
   m: Readonly<{
     key: string;
     empty: A;
@@ -450,7 +451,7 @@ function readCachedFold<A>(
  * make `placeholder` mean two different things at once and leave neither
  * recoverable from the flag.
  */
-function isPlaceholderNode<Ts extends readonly unknown[], S>(
+function isPlaceholderNode<Ts extends readonly ErasedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): boolean {
   // Discriminate on `quarantined` FIRST: `container` is plain `boolean` on the
@@ -486,7 +487,7 @@ function isPlaceholderNode<Ts extends readonly unknown[], S>(
  * Pass `cache` to memoize; results are keyed by `(fold.key, id, subtreeRev)`,
  * so passing a cache can never change the answer, only the work.
  */
-export function computeFold<Ts extends readonly unknown[], S, A>(
+export function computeFold<Ts extends readonly ErasedNodeType[], S, A>(
   graph: Graph<Ts, S>,
   fold: ConsumerDefinedFold<Ts, S, A>,
   nodeId: NodeId,

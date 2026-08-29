@@ -85,7 +85,7 @@ export function buildRegistry(types: readonly ErasedNodeType[]): NodeTypeRegistr
 // Construction
 // ---------------------------------------------------------------------------
 
-export function emptyGraph<Ts extends readonly unknown[], S>(
+export function emptyGraph<Ts extends readonly ErasedNodeType[], S>(
   engineId: symbol,
 ): Graph<Ts, S> {
   return {
@@ -118,7 +118,7 @@ export function emptyGraph<Ts extends readonly unknown[], S>(
  * `subtreeRevs` carries revisions forward when a graph is rebuilt around
  * existing nodes; a node with no carried revision starts at 0.
  */
-export function buildGraph<Ts extends readonly unknown[], S>(
+export function buildGraph<Ts extends readonly ErasedNodeType[], S>(
   args: Readonly<{
     engineId: symbol;
     nodesById: ReadonlyMap<NodeId, GraphNode<Ts, S>>;
@@ -167,7 +167,7 @@ export function buildGraph<Ts extends readonly unknown[], S>(
 // Queries — all TOTAL, none throw
 // ---------------------------------------------------------------------------
 
-export function getNode<Ts extends readonly unknown[], S>(
+export function getNode<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): GraphNode<Ts, S> | undefined {
@@ -183,7 +183,7 @@ export function getNode<Ts extends readonly unknown[], S>(
  * in its own source, and every downstream uncertainty flag it grew is scar
  * tissue from that one missing bit. Use `childrenStateOf`.
  */
-export function getChildren<Ts extends readonly unknown[], S>(
+export function getChildren<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): readonly NodeId[] {
@@ -200,13 +200,13 @@ export function getChildren<Ts extends readonly unknown[], S>(
  * counted — `deadRevById` is a separate store, and "how big is this document"
  * has never meant "plus everything ever deleted from it".
  */
-export function nodeCount<Ts extends readonly unknown[], S>(
+export function nodeCount<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): number {
   return graph.nodesById.size;
 }
 
-export function getParent<Ts extends readonly unknown[], S>(
+export function getParent<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): NodeId | null {
@@ -215,7 +215,7 @@ export function getParent<Ts extends readonly unknown[], S>(
 
 /** 0 for an unknown node, so a subscriber comparing revisions across a removal
  *  sees a change rather than an exception. */
-export function getSubtreeRev<Ts extends readonly unknown[], S>(
+export function getSubtreeRev<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): number {
@@ -230,7 +230,7 @@ export function getSubtreeRev<Ts extends readonly unknown[], S>(
 /** `null` for a leaf, an unknown node, or a QUARANTINED leaf — the three cases
  *  where "what is this subtree's load state" has no answer, because there is no
  *  subtree. */
-export function childrenStateOf<Ts extends readonly unknown[], S>(
+export function childrenStateOf<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): ChildrenState | null {
@@ -255,13 +255,13 @@ export function childrenStateOf<Ts extends readonly unknown[], S>(
  * sound in both branches, and it reads as "may own children", which is what
  * every call site actually wants to know.
  */
-export function isCollection<Ts extends readonly unknown[], S>(
+export function isCollection<Ts extends readonly ErasedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): node is CollectionNode<Ts, S> | QuarantinedNode {
   return node.quarantined || node.container;
 }
 
-export function isLoaded<Ts extends readonly unknown[], S>(
+export function isLoaded<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): boolean {
@@ -294,7 +294,7 @@ export function ownsSubtree(state: ChildrenState): boolean {
  * instead of hanging a render loop. `findInvariantViolation` is what names the
  * corruption.
  */
-export function ancestorChain<Ts extends readonly unknown[], S>(
+export function ancestorChain<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): readonly NodeId[] {
@@ -319,7 +319,7 @@ export function ancestorChain<Ts extends readonly unknown[], S>(
  * lookup here would only make an unknown id answer "no relation", which is the
  * more dangerous answer for a cycle test to give.
  */
-export function isSameOrAncestor<Ts extends readonly unknown[], S>(
+export function isSameOrAncestor<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   maybeAncestorId: NodeId,
   id: NodeId,
@@ -348,7 +348,7 @@ export function isSameOrAncestor<Ts extends readonly unknown[], S>(
  * once, so the walk length is exactly the number of reachable nodes. It bounds
  * the damage when the graph is not valid.
  */
-function walkPreOrder<Ts extends readonly unknown[], S>(
+function walkPreOrder<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   roots: readonly NodeId[],
 ): NodeId[] {
@@ -376,7 +376,7 @@ function walkPreOrder<Ts extends readonly unknown[], S>(
 
 /** Pre-order, INCLUDES `id`. `[]` for an unknown node — an id the graph does
  *  not hold has no subtree, not a one-element one. */
-export function subtreeIds<Ts extends readonly unknown[], S>(
+export function subtreeIds<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): readonly NodeId[] {
@@ -387,7 +387,7 @@ export function subtreeIds<Ts extends readonly unknown[], S>(
 /** Pre-order across every root, in `rootIds` order. Backs `selectRange`, which
  *  is inclusive in DOCUMENT order — the reason selection is engine-owned rather
  *  than a consumer concern. */
-export function documentOrder<Ts extends readonly unknown[], S>(
+export function documentOrder<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): readonly NodeId[] {
   return walkPreOrder(graph, graph.rootIds);
@@ -409,7 +409,7 @@ export function documentOrder<Ts extends readonly unknown[], S>(
 // claiming one stored subtree, which is the condition the predecessor's server
 // had to answer with a 409 because nothing upstream enforced it.
 
-export function contentKeyOf<Ts extends readonly unknown[], S>(
+export function contentKeyOf<Ts extends readonly ErasedNodeType[], S>(
   registry: NodeTypeRegistry,
   node: GraphNode<Ts, S>,
 ): string | null {
@@ -419,7 +419,7 @@ export function contentKeyOf<Ts extends readonly unknown[], S>(
   return nodeType.contentKey(node.data);
 }
 
-export function sourceKeyOf<Ts extends readonly unknown[], S>(
+export function sourceKeyOf<Ts extends readonly ErasedNodeType[], S>(
   registry: NodeTypeRegistry,
   node: GraphNode<Ts, S>,
 ): string | null {
@@ -479,7 +479,7 @@ export function sourceKeyOfKindData(
  * for it. Stated here as well so the predicate is total on its own terms rather
  * than relying on a caller having checked first.
  */
-export function ownsItsSubtree<Ts extends readonly unknown[], S>(
+export function ownsItsSubtree<Ts extends readonly ErasedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): boolean {
   if (node.quarantined) return false;
@@ -509,7 +509,7 @@ export function ownsItsSubtree<Ts extends readonly unknown[], S>(
  * stray revision entry for an id that no longer exists is inert by comparison —
  * nothing reads a revision for a node it cannot find.
  */
-export function bumpSubtreeRevs<Ts extends readonly unknown[], S>(
+export function bumpSubtreeRevs<Ts extends readonly ErasedNodeType[], S>(
   revs: ReadonlyMap<NodeId, number>,
   graph: Graph<Ts, S>,
   fromIds: readonly NodeId[],
@@ -544,7 +544,7 @@ export function bumpSubtreeRevs<Ts extends readonly unknown[], S>(
  * redundant. Breaking at the first already-bumped id makes the cost proportional
  * to the NEW part of each chain.
  */
-export function bumpSubtreeRevsInto<Ts extends readonly unknown[], S>(
+export function bumpSubtreeRevsInto<Ts extends readonly ErasedNodeType[], S>(
   revs: Map<NodeId, number>,
   graph: Graph<Ts, S>,
   fromIds: readonly NodeId[],
@@ -577,7 +577,7 @@ export function bumpSubtreeRevsInto<Ts extends readonly unknown[], S>(
 }
 
 /** The derived pair, as `applyPatch` splices it onto a graph. */
-export type DerivedIndexes<Ts extends readonly unknown[], S> = Pick<
+export type DerivedIndexes<Ts extends readonly ErasedNodeType[], S> = Pick<
   Graph<Ts, S>,
   "placementsByContentKey" | "ownerBySourceKey"
 >;
@@ -618,7 +618,7 @@ export function derivedIndexNeed(registry: NodeTypeRegistry): DerivedIndexNeed {
  * invalid one, indexing an orphan would give a detached subtree a vote on
  * ownership.
  */
-function walkDerivedIndexes<Ts extends readonly unknown[], S>(
+function walkDerivedIndexes<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   want: DerivedIndexNeed,
@@ -679,7 +679,7 @@ function walkDerivedIndexes<Ts extends readonly unknown[], S>(
  * placement. So the rule is: update only where the patch's own shape PROVES what
  * cannot have moved, and rebuild otherwise.
  */
-export function rebuildDerivedIndexes<Ts extends readonly unknown[], S>(
+export function rebuildDerivedIndexes<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): DerivedIndexes<Ts, S> {
@@ -706,7 +706,7 @@ export function rebuildDerivedIndexes<Ts extends readonly unknown[], S>(
  * `placementsByContentKey` gets no such reprieve: its values are in DOCUMENT
  * order, so a pure reorder moves it even though no data did.
  */
-export function rebuildPlacementIndex<Ts extends readonly unknown[], S>(
+export function rebuildPlacementIndex<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): ReadonlyMap<string, readonly NodeId[]> {
@@ -737,7 +737,7 @@ export function rebuildPlacementIndex<Ts extends readonly unknown[], S>(
  * — nothing here is a rejection the engine reports; it is an optimisation
  * declining to apply.
  */
-export function reindexPlacementsWithinSubtree<Ts extends readonly unknown[], S>(
+export function reindexPlacementsWithinSubtree<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
@@ -823,7 +823,7 @@ export function reindexPlacementsWithinSubtree<Ts extends readonly unknown[], S>
  * costs the same order as the rebuild it replaces. It is never worse than the
  * rebuild, and for every realistic bucket it is not close.
  */
-export function documentOrderComparator<Ts extends readonly unknown[], S>(
+export function documentOrderComparator<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): (a: NodeId, b: NodeId) => number | null {
   const pathCache = new Map<NodeId, readonly NodeId[]>();
@@ -916,7 +916,7 @@ export function documentOrderComparator<Ts extends readonly unknown[], S>(
  * `reindexPlacementsWithinSubtree`: if `previous` disagrees with the graph it
  * was supposedly built from, this refuses to guess and the caller rebuilds.
  */
-export function reindexPlacementsAcrossMove<Ts extends readonly unknown[], S>(
+export function reindexPlacementsAcrossMove<Ts extends readonly ErasedNodeType[], S>(
   post: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
@@ -1052,7 +1052,7 @@ export function reindexPlacementsAcrossMove<Ts extends readonly unknown[], S>(
  * cannot rank two ids, or an arriving id already sitting in the bucket, which
  * would mean this was not an insert of new nodes.
  */
-export function placementsAfterInsert<Ts extends readonly unknown[], S>(
+export function placementsAfterInsert<Ts extends readonly ErasedNodeType[], S>(
   post: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
@@ -1149,7 +1149,7 @@ export function placementsAfterInsert<Ts extends readonly unknown[], S>(
  * rebuild, the audit already names the real defect rather than a stale-index
  * symptom of it.
  */
-export function ownersAfterInsert<Ts extends readonly unknown[], S>(
+export function ownersAfterInsert<Ts extends readonly ErasedNodeType[], S>(
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, NodeId>,
   arrived: readonly GraphNode<Ts, S>[],
@@ -1183,7 +1183,7 @@ export function ownersAfterInsert<Ts extends readonly unknown[], S>(
  * `contentKey` — is no longer what the graph holds. Deleting under the recorded
  * key would leave the real bucket holding a dead id.
  */
-export function derivedIndexesAfterRemoval<Ts extends readonly unknown[], S>(
+export function derivedIndexesAfterRemoval<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   removedIds: readonly NodeId[],
@@ -1250,7 +1250,7 @@ export function derivedIndexesAfterRemoval<Ts extends readonly unknown[], S>(
  * no key at all (a new folder, in a registry where only clips carry keys) leaves
  * both maps exactly as they were, and both can be handed on by reference.
  */
-export function insertLeavesDerivedIndexesIntact<Ts extends readonly unknown[], S>(
+export function insertLeavesDerivedIndexesIntact<Ts extends readonly ErasedNodeType[], S>(
   registry: NodeTypeRegistry,
   nodes: readonly GraphNode<Ts, S>[],
 ): boolean {
@@ -1316,7 +1316,7 @@ export function dataChangeLeavesDerivedIndexesIntact(
  * performed the IO and already knows. It DOES bump `subtreeRev` along the
  * chain, because every ancestor's rollup just changed meaning.
  */
-export function markMissing<Ts extends readonly unknown[], S>(
+export function markMissing<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
   reason: string,
@@ -1382,7 +1382,7 @@ export function markMissing<Ts extends readonly unknown[], S>(
  * by the reachability walk's re-visit guard, which in a graph that passed 2 and
  * 4 is unreachable, and which exists to TERMINATE rather than to detect.
  */
-export function findInvariantViolation<Ts extends readonly unknown[], S>(
+export function findInvariantViolation<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): Violation | null {
@@ -1615,7 +1615,7 @@ export function findInvariantViolation<Ts extends readonly unknown[], S>(
 }
 
 /** Split out only so `findInvariantViolation` stays readable; it is check 9. */
-function findStaleDerivedIndex<Ts extends readonly unknown[], S>(
+function findStaleDerivedIndex<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   fresh: Pick<Graph<Ts, S>, "placementsByContentKey" | "ownerBySourceKey">,
 ): Violation | null {

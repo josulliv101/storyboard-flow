@@ -298,6 +298,39 @@ describe("createEngine end to end", () => {
     expect(engine.serialize(again.value.graph)).toEqual(wire);
   });
 
+  // `Store.load` and `Engine.loadChildren` take `unknown`, not
+  // `SerializedDocument`. They used to take the latter while delegating to an
+  // implementation that took `unknown` and re-validated — so the public type
+  // vouched for an envelope nothing had checked, on the one door a payload
+  // reaches straight from IO.
+  //
+  // Every value below would have needed a cast to get past a `SerializedDocument`
+  // parameter, and every one is REFUSED as a value. That is the property the
+  // widening exists to make expressible: the signature no longer implies a check
+  // that only the body performs.
+  it.each([
+    ["null", null],
+    ["a string", "not a document"],
+    ["an array", [1, 2, 3]],
+    ["an object with no formatVersion", { nodes: [], rootIds: [] }],
+    ["a future formatVersion", { formatVersion: 99, nodes: [], rootIds: [] }],
+    ["nodes that are not an array", { formatVersion: 1, rootIds: [], nodes: "nope" }],
+  ])("refuses %s at the public load door rather than trusting it", (_label, payload) => {
+    const engine = makeEngine();
+    const loaded = engine.deserialize(doc);
+    if (!loaded.ok) throw new Error("fixture failed to load");
+    const store = engine.createStore(loaded.value.graph);
+
+    const result = store.load(subId, payload);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("malformed-document");
+    // A refused load lands nothing: the graph is untouched and undoable state
+    // is unchanged.
+    expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
+    expect(store.canUndo()).toBe(false);
+  });
+
   it("loads a lazily-fetched subtree with no patch and no history entry", () => {
     const engine = makeEngine();
     const loaded = engine.deserialize(doc);

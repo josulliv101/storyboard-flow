@@ -43,6 +43,7 @@ import {
   type NodeId,
   type SelectionSlice,
   type Store,
+  type ErasedNodeType,
 } from "@storyboard/keel-core";
 import type {
   DispatchFn,
@@ -79,7 +80,7 @@ type ErasedNodeView = FunctionComponent<
  * props parameter is contravariant and `FC<{ data: Clip }>` is genuinely not
  * assignable to `FC<{ data: unknown }>`. Through `unknown`, never `any`.
  */
-function eraseNodeView<Ts extends readonly unknown[], K extends string>(
+function eraseNodeView<Ts extends readonly ErasedNodeType[], K extends string>(
   view: NodeView<Ts, K>,
 ): ErasedNodeView {
   return view as unknown as ErasedNodeView;
@@ -101,7 +102,7 @@ function eraseNodeView<Ts extends readonly unknown[], K extends string>(
  * throws the "must be used inside the Provider" error with no other clue.
  */
 export function createReactBindings<
-  Ts extends readonly unknown[],
+  Ts extends readonly ErasedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 >(engine: Engine<Ts, S, F>): ReactBindings<Ts, S, F> {
