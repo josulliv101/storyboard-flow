@@ -389,8 +389,18 @@ export function createEngine<
      * many (fold, node, rev) entries the memo table holds. They are
      * independent numbers describing one graph, and at the DEFAULTS they
      * disagree: a registry of 8 folds — the size ./folds itself calls
-     * realistic — makes the table cover 16,384 nodes while the node ceiling
-     * admits 100,000.
+     * realistic — makes the table cover `limit / (folds × FOLD_CACHE_HEADROOM)`
+     * = 8,192 nodes, while the node ceiling admits 100,000. That is a factor of
+     * twelve, not the factor of six the bare product would suggest.
+     *
+     * DERIVED, NOT QUOTED, and that is deliberate. These two sentences said
+     * "16,384" until the headroom multiple landed, because 16,384 was the bare
+     * `limit / folds` and had been right until it wasn't. Writing the division
+     * out means the next change to `FOLD_CACHE_HEADROOM` cannot leave this
+     * paragraph asserting a number the code disagrees with — which it did, for
+     * three pull requests, introduced by the fix for the previous instance of
+     * exactly that. `./review3-the-two-default-ceilings-agree.test.ts` holds
+     * both numbers executably; this is the reading, not the record.
      *
      * Past that point the LRU does not degrade, it INVERTS: fold k's walk
      * evicts fold 1's entries, fold 1's next read misses at the root, and every
@@ -419,9 +429,11 @@ export function createEngine<
       if (warnedAboutCacheSize) return;
       // ONLY WHEN THE LIMIT IS THE DEFAULT. A consumer who wrote a number chose
       // it; the failure this exists to catch belongs to the consumer who wrote
-      // none and does not know the default stops covering at 16,384 nodes. This
-      // is the same rule `maxNodes` states a few lines up — "a consumer who
-      // names a ceiling has named THE ceiling" — applied to the other one.
+      // none and does not know the default stops comfortably covering at
+      // `servable` nodes — 8,192 at 8 folds, computed below rather than quoted
+      // here. This is the same rule `maxNodes` states a few lines up — "a
+      // consumer who names a ceiling has named THE ceiling" — applied to the
+      // other one.
       //
       // It is also what makes the diagnostic quiet enough to keep: checking
       // every store took out four of this package's own capacity tests, which

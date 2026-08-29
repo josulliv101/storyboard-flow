@@ -328,6 +328,41 @@ function at<T>(items: readonly T[], index: number, what: string): T {
   return item;
 }
 
+/**
+ * THE ASSERTION THAT WOULD HAVE CAUGHT IT, and the reason it now runs on every
+ * fixture in this file rather than on the one that was wrong.
+ *
+ * A quarantined node is a SUCCESS, by design: the four-state model exists so a
+ * node the codec refuses can still be held, named and repaired rather than
+ * taking its document down with it. That is exactly what makes a quarantined
+ * FIXTURE invisible. `deserialize` returns ok, `report.nodeCount` matches,
+ * `expect(loaded.ok).toBe(true)` passes, and every count a benchmark normally
+ * checks agrees — while the graph is a field of corpses and the parsed path the
+ * gate claims to measure never executes.
+ *
+ * MEASURED: the flat delete fixture omitted the `assetId` that `clipType.parse`
+ * requires, so 1,000/1,000 and 10,000/10,000 clips quarantined, and the timed
+ * path ran roughly 20-28% under the gesture the gate is named after. It went
+ * green for three review rounds and its number was the headline row of the
+ * survey.
+ *
+ * Nothing else distinguishes the two states, so this has to be its own check.
+ * It THROWS rather than expects because two of its three call sites are
+ * module-level fixture builders with no `expect` in scope, and because a broken
+ * fixture is a harness bug rather than a result.
+ */
+function assertNothingQuarantined(
+  report: Readonly<{ quarantined: readonly unknown[] }>,
+  label: string,
+): void {
+  if (report.quarantined.length === 0) return;
+  throw new Error(
+    `keel performance fixture: ${label} quarantined ` +
+      `${report.quarantined.length} node(s) — the fixture does not satisfy its ` +
+      `own codec, so this measures the unparsed path rather than the gesture`,
+  );
+}
+
 type WideFixture = Readonly<{
   label: string;
   nodeCount: number;
@@ -426,6 +461,9 @@ function makeWideFixture(nodeCount: number): WideFixture {
         `${loaded.value.report.nodeCount} of ${nodes.length} nodes`,
     );
   }
+  // `nodeCount` counts quarantined nodes too, so the check above agrees with
+  // a document that parsed nothing. This is the one that does not.
+  assertNothingQuarantined(loaded.value.report, `wide/${nodeCount}`);
 
   return {
     label: `wide/${nodeCount}`,
@@ -478,6 +516,7 @@ function makeDeepFixture(depth: number): DeepFixture {
       `keel performance fixture: deep/${depth} failed to load: ${loaded.error.message}`,
     );
   }
+  assertNothingQuarantined(loaded.value.report, `deep/${depth}`);
 
   return {
     label: `deep/${depth}`,
@@ -1245,7 +1284,18 @@ describe("mutations", () => {
         children: childIds,
       });
       for (const id of childIds) {
-        nodes.push({ id, kind: "clip", data: { title: id, seconds: 1 } });
+        // `assetId` IS REQUIRED by `clipType.parse`, and omitting it here cost
+        // this gate its meaning for three rounds. Without it every clip failed
+        // ingress and arrived QUARANTINED — 1,000/1,000 and 10,000/10,000,
+        // reproduced — which is a success path, so `deserialize` returned ok,
+        // the assertion below passed, and the gate measured the corpse path at
+        // roughly 20-28% under the gesture it is named after. See
+        // `expectNothingQuarantined`, which is why it cannot happen again.
+        nodes.push({
+          id,
+          kind: "clip",
+          data: { title: id, seconds: 1, assetId: `asset-${id}` },
+        });
       }
       const loaded = engine.deserialize({
         formatVersion: 1,
@@ -1255,6 +1305,7 @@ describe("mutations", () => {
       });
       expect(loaded.ok).toBe(true);
       if (!loaded.ok) return;
+      assertNothingQuarantined(loaded.value.report, `flat/${siblings}`);
       const graph = loaded.value.graph;
 
       const command: Command<Types, Summary> = {
