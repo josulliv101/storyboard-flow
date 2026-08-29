@@ -302,7 +302,25 @@ export type CollectionNode<Ts extends readonly unknown[], S> = {
  * consumer-visible distinction that matters is "we could not build this", and
  * the Issue carries the detail.
  */
-export type QuarantineReason = "unknown-kind" | "parse-failed";
+export type QuarantineReason =
+  | "unknown-kind"
+  | "parse-failed"
+  /**
+   * The node's WIRE SHAPE disagrees with its registered kind: a leaf kind
+   * arriving with a children array or a `childrenState`.
+   *
+   * This used to abort the WHOLE DOCUMENT — the one shape failure that still
+   * did, while a node whose DATA failed to parse quarantined and the document
+   * loaded around it. The asymmetry was not deliberate; the comment two types
+   * down already made the argument against it: "one refused stored clip made
+   * a whole document unwritable forever."
+   *
+   * The node is held as a QUARANTINED CONTAINER carrying the children it
+   * declared, which is what keeps them from being orphaned — the one thing
+   * this engine refuses to do. Repair it by fixing the kind's `container`
+   * flag or the document, and it loads clean.
+   */
+  | "shape-mismatch";
 
 /**
  * A node whose kind is unregistered, or whose parse failed.

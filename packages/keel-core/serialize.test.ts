@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { childrenStateOf, buildRegistry, findInvariantViolation } from "./graph";
+import { childrenStateOf, buildRegistry, findInvariantViolation, getChildren, getParent } from "./graph";
 import {
   DEFAULT_MAX_NODES,
   deserializeDocument,
@@ -939,21 +939,42 @@ describe("deserializeDocument structural failures", () => {
     expect(error.code).toBe("root-not-container");
   });
 
-  it("rejects a leaf kind carrying a children array", () => {
-    const error = expectErr(
+  // THESE TWO USED TO ASSERT REJECTION, and the change is deliberate. A leaf
+  // kind arriving with children was the last shape failure that took the WHOLE
+  // DOCUMENT down, while a node whose DATA failed to parse quarantined and
+  // everything around it loaded. Nothing justified the asymmetry: both are one
+  // node's wire form disagreeing with this build.
+  it("QUARANTINES a leaf kind carrying a children array, and keeps the children", () => {
+    const loaded = expectOk(
       loadNodes(
         ["root"],
         [
           { id: "root", kind: "folder", children: ["a"], data: { title: "R", source: null } },
-          { id: "a", kind: "clip", children: [], data: { name: "A", asset: null } },
+          { id: "a", kind: "clip", children: ["b"], data: { name: "A", asset: null } },
+          { id: "b", kind: "clip", data: { name: "B", asset: null } },
         ],
       ),
     );
-    expect(error.code).toBe("leaf-with-children");
+    expect(loaded.report.quarantined).toHaveLength(1);
+    expect(loaded.report.quarantined[0]?.reason).toBe("shape-mismatch");
+
+    const bad = loaded.graph.nodesById.get(parseNodeId("a"));
+    expect(bad?.quarantined).toBe(true);
+    // HELD AS A CONTAINER, which is the whole point. The node declared a
+    // child; something has to own it.
+    expect(bad?.container).toBe(true);
+
+    // THE ASSERTION THAT MATTERS. Recording the node as a leaf would have left
+    // `b` parentless, and nothing in this engine may be orphaned. Reverting the
+    // `containerById.set(id, true)` fall-through fails HERE, not above.
+    expect(getChildren(loaded.graph, parseNodeId("a"))).toEqual([parseNodeId("b")]);
+    expect(getParent(loaded.graph, parseNodeId("b"))).toBe(parseNodeId("a"));
+    // And the rest of the document is untouched.
+    expect(getChildren(loaded.graph, parseNodeId("root"))).toEqual([parseNodeId("a")]);
   });
 
-  it("rejects a leaf kind carrying a childrenState", () => {
-    const error = expectErr(
+  it("QUARANTINES a leaf kind carrying a childrenState", () => {
+    const loaded = expectOk(
       loadNodes(
         ["root"],
         [
@@ -962,7 +983,50 @@ describe("deserializeDocument structural failures", () => {
         ],
       ),
     );
-    expect(error.code).toBe("invalid-children-state");
+    expect(loaded.report.quarantined).toHaveLength(1);
+    expect(loaded.report.quarantined[0]?.reason).toBe("shape-mismatch");
+    const bad = loaded.graph.nodesById.get(parseNodeId("a"));
+    expect(bad?.quarantined).toBe(true);
+    // The declared load state survives, so a round trip through quarantine does
+    // not forget that the subtree was never fetched.
+    expect(bad?.quarantined === true ? bad.children?.status : null).toBe("unloaded");
+  });
+
+  it("still REJECTS a shape mismatch when the consumer asked for strictness", () => {
+    // A shape mismatch routes through `onParseFailure`, because a consumer who
+    // said "reject on a content failure at ingress" means this too. Quarantine
+    // is the DEFAULT, not the only behaviour.
+    const error = expectErr(
+      deserializeDocument<Types, Summary>(
+        {
+          formatVersion: 1,
+          schemaVersions: { clip: 1, folder: 1 },
+          rootIds: ["root"],
+          nodes: [
+            { id: "root", kind: "folder", children: ["a"], data: { title: "R", source: null } },
+            { id: "a", kind: "clip", children: [], data: { name: "A", asset: null } },
+          ],
+        },
+        { ...makeCtx(), onParseFailure: "reject" },
+      ),
+    );
+    expect(error.code).toBe("ingress-rejected");
+  });
+
+  it("a document with NO shape mismatch quarantines nothing", () => {
+    // The false-alarm floor: a healthy leaf with neither signal must still be
+    // recorded as a leaf, not swept into the new container arm.
+    const loaded = expectOk(
+      loadNodes(
+        ["root"],
+        [
+          { id: "root", kind: "folder", children: ["a"], data: { title: "R", source: null } },
+          { id: "a", kind: "clip", data: { name: "A", asset: null } },
+        ],
+      ),
+    );
+    expect(loaded.report.quarantined).toHaveLength(0);
+    expect(loaded.graph.nodesById.get(parseNodeId("a"))?.container).toBe(false);
   });
 
   it("rejects a node unreachable from any root", () => {

@@ -757,6 +757,8 @@ function buildDocument<Ts extends readonly unknown[], S>(
   // --- Pass C: container-ness and children state ----------------------------
   const containerById = new Map<NodeId, boolean>();
   const stateById = new Map<NodeId, ChildrenState>();
+  /** Leaf kinds that arrived carrying children. Quarantined in Pass F. */
+  const shapeMismatchById = new Map<NodeId, Issue>();
   for (const [id, node] of wireById) {
     const type = ctx.registry.get(node.kind);
     const hasChildren = node.children !== undefined;
@@ -779,22 +781,38 @@ function buildDocument<Ts extends readonly unknown[], S>(
         : hasChildren || node.childrenState !== undefined;
 
     if (!container) {
-      if (hasChildren) {
-        return fail({
-          code: "leaf-with-children",
-          message: `Node ${JSON.stringify(node.id)} of leaf kind ${JSON.stringify(node.kind)} carries a children array`,
-          nodeId: id,
-        });
+      // A LEAF KIND ARRIVING WITH CHILDREN IS QUARANTINED, NOT REJECTED.
+      //
+      // This was the last shape failure that took the whole document down,
+      // while a node whose DATA failed to parse quarantined and everything
+      // around it loaded. Nothing justified the asymmetry: both are one node's
+      // wire form disagreeing with this build, and `QuarantineReason`'s own
+      // doc already carried the argument — "one refused stored clip made a
+      // whole document unwritable forever."
+      //
+      // HELD AS A CONTAINER, deliberately, and this is the part that matters.
+      // The node declared children; they exist in the flat tree and something
+      // must own them. Recording it as a leaf here would leave every one of
+      // them parentless, which is the single thing this engine refuses to
+      // produce. `QuarantinedNode` carries both `container` and a
+      // `ChildrenState` precisely so this case has somewhere to land.
+      const mismatch = hasChildren
+        ? `carries a children array while kind ${JSON.stringify(node.kind)} is registered as a leaf`
+        : node.childrenState !== undefined
+          ? `carries childrenState ${JSON.stringify(node.childrenState)} while kind ${JSON.stringify(node.kind)} is registered as a leaf`
+          : null;
+      if (mismatch === null) {
+        containerById.set(id, false);
+        continue;
       }
-      if (node.childrenState !== undefined) {
-        return fail({
-          code: "invalid-children-state",
-          message: `Node ${JSON.stringify(node.id)} of leaf kind ${JSON.stringify(node.kind)} carries childrenState ${JSON.stringify(node.childrenState)}`,
-          nodeId: id,
-        });
-      }
-      containerById.set(id, false);
-      continue;
+      shapeMismatchById.set(id, {
+        path: "$",
+        message: `Node ${JSON.stringify(node.id)} ${mismatch}`,
+      });
+      // Fall through to the container arm below, so the declared children are
+      // walked, counted and attached exactly as a real container's would be.
+      // Pass F reads `containerById` and `stateById`, so the quarantined node
+      // it builds gets both.
     }
 
     containerById.set(id, true);
@@ -954,6 +972,12 @@ function buildDocument<Ts extends readonly unknown[], S>(
     const state = stateById.get(id) ?? { status: "unloaded" };
     const type = ctx.registry.get(wire.kind);
 
+    // A SHAPE MISMATCH SHORT-CIRCUITS THE CONTENT PASSES. There is no point
+    // migrating or parsing data for a node already known not to fit its own
+    // kind, and running `parse` on it would report a second, derived failure
+    // that tells the reader nothing about the real one.
+    const shapeIssue = shapeMismatchById.get(id);
+
     // An UNDECLARED version is read as "this build's current version", not 0.
     // Guessing 0 replays every migration over data that may already be
     // current, which corrupts it silently and permanently. Guessing current
@@ -979,12 +1003,22 @@ function buildDocument<Ts extends readonly unknown[], S>(
       type?.schemaVersion ??
       0;
 
-    let failure: IngressError | null = null;
+    let failure: IngressError | null =
+      shapeIssue === undefined
+        ? null
+        : {
+            nodeId: id,
+            kind: wire.kind,
+            reason: "shape-mismatch",
+            issues: [shapeIssue],
+          };
     let summaryFailed = false;
     let data: unknown = undefined;
     let summary: S | null = null;
 
-    const parsedData = parseNodeData(ctx, {
+    const parsedData = shapeIssue !== undefined
+      ? null
+      : parseNodeData(ctx, {
       nodeId: id,
       kind: wire.kind,
       container,
@@ -992,7 +1026,12 @@ function buildDocument<Ts extends readonly unknown[], S>(
       raw: wire.data,
     });
 
-    if (!parsedData.ok) {
+    if (parsedData === null) {
+      // A shape mismatch, already recorded above. Its DATA is never parsed:
+      // running the codec on a node known not to fit its own kind reports a
+      // second, derived failure that tells the reader nothing about the real
+      // one. `raw` is carried through byte-exact, as with every quarantine.
+    } else if (!parsedData.ok) {
       failure = parsedData.error;
     } else {
       data = parsedData.value.data;
