@@ -1328,6 +1328,29 @@ export type Store<
   redo(): Result<Patch<Ts, S>, ReplayRejection>;
   canUndo(): boolean;
   canRedo(): boolean;
+  /**
+   * Drop the undo stack. THE ONLY RECOVERY from a dormant entry whose world
+   * moved, and until it existed there was none.
+   *
+   * `undo()` deliberately leaves the stack untouched when replay is refused, so
+   * a rejection does not destroy the entry — but entries replay in order, so
+   * one permanently inapplicable entry makes everything beneath it unreachable
+   * too. Reachable through `applyNonUndoableWrite`, which is a NON-undoable
+   * write: it can move a live node onto a `sourceKey` a sleeping patch still
+   * carries, and the replay then refuses with `"duplicate-owner"` forever while
+   * `canUndo()` keeps answering true. The button stays lit and does nothing for
+   * the rest of the session.
+   *
+   * ./history has exported `clearPast` since it was written and documented it
+   * as exactly this recovery; nothing could reach it, because the engine holds
+   * `History` in a closure and no accessor returned one. The pure function is
+   * still there for a consumer composing history values directly.
+   */
+  clearPast(): void;
+  /** Drop the redo branch, keeping the undo stack. */
+  clearFuture(): void;
+  /** Both stacks. The document is untouched — this forgets how it got here. */
+  clearHistory(): void;
   /** The non-undoable content write. Returns the ids whose history was scrubbed. */
   applyNonUndoableWrite(edits: readonly EditOf<Ts>[]): Result<readonly NodeId[], Rejection>;
   /** `unknown` for the reason `Engine.loadChildren` gives: the payload came from
