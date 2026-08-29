@@ -378,6 +378,39 @@ export function createFoldCache(
   let misses = 0;
   let evictions = 0;
 
+  /**
+   * ONE long-lived eviction cursor, advanced rather than re-created.
+   *
+   * `entries.keys().next()` per eviction reads as O(1) and is not. V8 backs a
+   * Map with an ordered entry array and `delete` writes a TOMBSTONE into it,
+   * compacting only on rehash. This LRU always deletes from the FRONT, so
+   * tombstones pile up there and every fresh iterator has to scan past all of
+   * them to reach the first live entry — the cost of one eviction scales with
+   * the cache LIMIT, and the default limit (131,072) is the worst case.
+   *
+   * MEASURED, 50,000 evictions in every row, so the work is identical:
+   *     limit   1,000     25 ms
+   *     limit  10,000    274 ms
+   *     limit  50,000    400 ms
+   *     limit 131,072    682 ms      <- the DEFAULT
+   *
+   * This also re-attributes the number in ./engine's cache-pressure comment,
+   * which treated the eviction loop as a constant and blamed refold work: an
+   * over-capacity cache reading 8 root rollups measured 8,220 ms with 0 hits,
+   * and 295 ms with this cursor and byte-identical eviction/hit/miss counts.
+   * A correctly-sized cache pays too — 8 folds x 8,000 nodes under the default
+   * limit still stranded 92,928 stale-rev entries over 2,000 edits, 2,304 ms
+   * of pure loop overhead against 55 ms.
+   *
+   * SAFE because a Map iterator is live: an entry deleted before the cursor
+   * reaches it is skipped rather than yielded, and one promoted by `get`
+   * (delete + re-set) is re-appended BEHIND the cursor, so it is offered again
+   * only after everything older — which is exactly LRU order. Once a Map
+   * iterator reports `done` it detaches permanently, so it is re-created then,
+   * and on `clear()`.
+   */
+  let evictionCursor: Iterator<string> | null = null;
+
   return {
     get(foldKey, nodeId, subtreeRev) {
       const key = cacheKey(foldKey, nodeId, subtreeRev);
@@ -403,12 +436,19 @@ export function createFoldCache(
       entries.delete(key);
       entries.set(key, value);
       while (entries.size > max) {
-        const oldestKey: string | undefined = entries.keys().next().value;
-        // Keys are never `undefined` (every one starts with a length digit), so
-        // this only fires on an exhausted iterator — impossible while size > 0,
-        // but it is what keeps the loop provably terminating without a `!`.
-        if (oldestKey === undefined) break;
-        entries.delete(oldestKey);
+        if (evictionCursor === null) evictionCursor = entries.keys();
+        let step = evictionCursor.next();
+        if (step.done === true) {
+          // Exhausted, which is permanent for a Map iterator. Everything it
+          // ever held has been evicted, so start again from the current front —
+          // rare by construction, and the only path that pays the scan.
+          evictionCursor = entries.keys();
+          step = evictionCursor.next();
+          // Nothing left to evict. Unreachable while `size > max >= 0`, but it
+          // is what keeps the loop provably terminating without a `!`.
+          if (step.done === true) break;
+        }
+        entries.delete(step.value);
         evictions += 1;
       }
     },
@@ -419,6 +459,8 @@ export function createFoldCache(
     },
     clear() {
       entries.clear();
+      // The cursor belongs to the emptied map and would report `done` forever.
+      evictionCursor = null;
     },
     size() {
       return entries.size;
