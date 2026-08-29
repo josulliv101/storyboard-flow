@@ -305,7 +305,25 @@ export type FoldCacheStats = Readonly<{
  * cache is CONSUMED, because `computeFold` has no business reading counters.
  */
 export type ObservableFoldCache = FoldCache &
-  Readonly<{ stats(): FoldCacheStats }>;
+  Readonly<{
+    stats(): FoldCacheStats;
+    /**
+     * Is this slot occupied? WITHOUT counting a hit or a miss, and without
+     * moving the entry in the LRU order.
+     *
+     * For a diagnostic that needs to know whether an answer CAME from the table
+     * — the shadow cold refold in ./engine is the only one — and must not
+     * change the table or the numbers by asking. `get` cannot serve that: it
+     * counts, and `FoldCacheStats` is the one instrument a consumer has for
+     * telling a memo table that has silently stopped helping from one that
+     * never helped. A probe that inflates `hits` on every read, or `misses` on
+     * every read, is a diagnostic corrupting the diagnostic.
+     *
+     * Deliberately NOT on `FoldCache`. That type is what `computeFold` consumes,
+     * and folding has no business asking a question it cannot act on.
+     */
+    peek(foldKey: string, nodeId: NodeId, subtreeRev: number): boolean;
+  }>;
 
 /**
  * Length-prefixed, NOT `[foldKey, nodeId, rev].join(":")`.
@@ -393,6 +411,11 @@ export function createFoldCache(
         entries.delete(oldestKey);
         evictions += 1;
       }
+    },
+    peek(foldKey, nodeId, subtreeRev) {
+      // `has`, and nothing else. No counter, no re-insertion — see the doc on
+      // `ObservableFoldCache`.
+      return entries.has(cacheKey(foldKey, nodeId, subtreeRev));
     },
     clear() {
       entries.clear();

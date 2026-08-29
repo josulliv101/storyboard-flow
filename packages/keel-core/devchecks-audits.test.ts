@@ -11,6 +11,7 @@ import {
   defineNodeType,
   parseNodeId,
   type Issue,
+  type NodeId,
   type Result,
   type ConsumerDefinedSummaryType,
 } from "./types";
@@ -473,5 +474,148 @@ describe("the shadow refold audits what the memo table serves", () => {
     // And the fold ran ZERO extra times: the second read was served from the
     // table with no shadow beside it.
     expect(tick).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The shadow refold probes the RIGHT key, and does not score itself
+// ---------------------------------------------------------------------------
+//
+// Two defects in one line. The probe read `cache.get(String(key), ...)`:
+//
+//   THE KEY. `computeFold` reads and writes under `fold.key`; `String(key)` is
+//   the key in the `folds` RECORD. Those are allowed to differ, and
+//   `createEngine` only refuses duplicate `fold.key`s — so `{ seconds: f }`
+//   with `f.key === "seconds-v2"` is legal. Wherever they differed the probe
+//   found nothing and THE AUDIT SILENTLY DID NOT RUN. Every test above
+//   registers a fold whose two names agree, which is why nothing caught it.
+//
+//   THE READ. `get` counts a hit or a miss and re-inserts for LRU order, so the
+//   probe scored itself into `FoldCacheStats` — the one instrument a consumer
+//   has for telling a table that has stopped helping from one that never
+//   helped.
+describe("the shadow refold under a fold whose record key differs from its own", () => {
+  const tickClip = defineNodeType<Readonly<{ seconds: number }>, Readonly<{ seconds?: number }>>()({
+    kind: "clip",
+    container: false,
+    schemaVersion: 1,
+    parse(raw): Result<Readonly<{ seconds: number }>, readonly Issue[]> {
+      if (typeof raw !== "object" || raw === null) {
+        return { ok: false, error: [{ path: "$", message: "x" }] };
+      }
+      const seconds = ({ ...raw } as Record<string, unknown>)["seconds"];
+      if (typeof seconds !== "number") {
+        return { ok: false, error: [{ path: "$.seconds", message: "seconds" }] };
+      }
+      return { ok: true, value: { seconds } };
+    },
+    serialize(data): unknown {
+      return { seconds: data.seconds };
+    },
+    applyEdit(data, edit) {
+      return { ok: true, value: { seconds: edit.seconds ?? data.seconds } };
+    },
+  });
+  type Ts = readonly [typeof tickClip, typeof folder];
+
+  /** RECORD key "seconds"; the fold's OWN key is different. Legal, and the
+   *  shape the probe used to miss entirely. */
+  function foldsWith(leaf: () => number) {
+    return {
+      seconds: foldMonoid<Ts, Summary, number>({
+        key: "seconds-v2",
+        empty: 0,
+        leaf,
+        concat: (a, b) => a + b,
+      }),
+    };
+  }
+
+  it("still reports a stale entry when the two names disagree", () => {
+    // A non-deterministic fold: every evaluation differs, which is the SHAPE of
+    // a stale entry induced honestly. The probe must find the cached entry
+    // under `fold.key` for the shadow to run at all.
+    let tick = 0;
+    const folds = foldsWith(() => {
+      tick += 1;
+      return tick;
+    });
+    const engine = createEngine<Ts, Summary, typeof folds>({
+      types: [tickClip, folder],
+      summary,
+      folds,
+      devChecks: true,
+    });
+    const loaded = engine.deserialize(docWith({ seconds: 4 }));
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const store = engine.createStore(loaded.value.graph);
+    const spy = errors();
+
+    store.aggregate("seconds", parseNodeId("root")); // miss — not audited
+    store.aggregate("seconds", parseNodeId("root")); // hit  — audited
+
+    expect(spy).toHaveBeenCalled();
+    expect(messagesFrom(spy)).toContain("STALE");
+  });
+
+  it("does not score its own probe into the cache statistics", () => {
+    const stats: (() => Readonly<{ hits: number; misses: number }>)[] = [];
+    const folds = foldsWith(() => 1);
+    const engine = createEngine<Ts, Summary, typeof folds>({
+      types: [tickClip, folder],
+      summary,
+      folds,
+      devChecks: true,
+      onFoldCacheStats: (read) => {
+        stats.push(read);
+      },
+    });
+    const loaded = engine.deserialize(docWith({ seconds: 4 }));
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const store = engine.createStore(loaded.value.graph);
+    const read = stats[0];
+    expect(read).toBeDefined();
+    if (read === undefined) return;
+
+    store.aggregate("seconds", parseNodeId("root"));
+    const first = { hits: read().hits, misses: read().misses };
+    store.aggregate("seconds", parseNodeId("root"));
+    const second = read();
+
+    // ONE warm read is ONE hit and no misses. The probe must be invisible here,
+    // or the numbers a consumer sizes `foldCacheLimit` from are the
+    // diagnostic's rather than their own.
+    expect(second.hits - first.hits).toBe(1);
+    expect(second.misses - first.misses).toBe(0);
+  });
+
+  it("is total for a key that names no fold at all", () => {
+    const folds = foldsWith(() => 1);
+    const engine = createEngine<Ts, Summary, typeof folds>({
+      types: [tickClip, folder],
+      summary,
+      folds,
+    });
+    const loaded = engine.deserialize(docWith({ seconds: 4 }));
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const store = engine.createStore(loaded.value.graph);
+
+    // An untyped or dynamically-built call site. `aggregate` documents
+    // `undefined` as the honest answer for a key that names no fold, and
+    // nothing in this package may throw after construction. `config.folds` was
+    // a raw object index, so each of these found something on the prototype
+    // chain, passed the `undefined` guard, and threw out of `cacheKey`.
+    for (const key of ["toString", "constructor", "hasOwnProperty", "valueOf", "nope"]) {
+      const call = () =>
+        (store.aggregate as unknown as (k: string, i: NodeId) => unknown)(
+          key,
+          parseNodeId("root"),
+        );
+      expect(call).not.toThrow();
+      expect(call()).toBeUndefined();
+    }
   });
 });

@@ -242,3 +242,87 @@ describe("verifyDataChanged consults the node type only when it must", () => {
     expect(title).toBe("SERVER");
   });
 });
+
+// ---------------------------------------------------------------------------
+// `scrubbed` names the ids a scrub actually touched
+// ---------------------------------------------------------------------------
+//
+// `Store.applyNonUndoableWrite` returns "the ids whose history was scrubbed",
+// and it computed that from `patchTouchedNodeIds` — which for an `inserted` or
+// `removed` patch also names every placement's PARENT. That is the right answer
+// for NOTIFICATION (a parent's rollup changed, so its subscribers must hear)
+// and the wrong one here: the scrub rewrites a placement's captured `data`, and
+// a parent's data is not in the patch at all.
+//
+// So a folder that merely PARENTED an inserted clip came back as scrubbed with
+// its history untouched, and a consumer using this list to tell a user "undo is
+// gone for these" showed a warning that was not true.
+//
+// The report now shares its definition with `scrubPatchForWrite`, so the two
+// cannot drift apart.
+describe("the non-undoable write reports only what it scrubbed", () => {
+  it("does not name a node that merely parented an inserted one", () => {
+    const { store } = makeStore();
+
+    // A history entry whose patch NAMES the root — as the insert's parent —
+    // while carrying none of the root's own data.
+    const inserted = store.dispatch({
+      type: "insert-nodes",
+      seeds: [{ kind: "clip", data: { title: "New" } }],
+      toParentId: rootId,
+      toIndex: 0,
+    });
+    expect(inserted.ok).toBe(true);
+
+    // Now write to the PARENT. Nothing of its own is in any patch.
+    const written = store.applyNonUndoableWrite([
+      { nodeId: rootId, kind: "folder", edit: {} },
+    ]);
+    expect(written.ok).toBe(true);
+    if (!written.ok) return;
+    expect(written.value).toEqual([]);
+  });
+
+  it("still names a node whose own captured data the scrub rewrote", () => {
+    const { store } = makeStore();
+
+    // An `inserted` placement carries the NEW node's data, so writing to that
+    // node really does rewrite what the dormant patch would restore.
+    const inserted = store.dispatch({
+      type: "insert-nodes",
+      seeds: [{ kind: "clip", data: { title: "New" } }],
+      toParentId: rootId,
+      toIndex: 0,
+    });
+    expect(inserted.ok).toBe(true);
+    if (!inserted.ok) return;
+    const patch = inserted.value;
+    if (patch.type !== "inserted") throw new Error("expected an inserted patch");
+    const newId = patch.placements[0]?.node.id;
+    expect(newId).toBeDefined();
+    if (newId === undefined) return;
+
+    const written = store.applyNonUndoableWrite([
+      { nodeId: newId, kind: "clip", edit: { title: "Server" } },
+    ]);
+    expect(written.ok).toBe(true);
+    if (!written.ok) return;
+    expect(written.value).toEqual([newId]);
+  });
+
+  it("still names a node an edit entry recorded", () => {
+    const { store } = makeStore();
+    const edited = store.dispatch({
+      type: "edit-nodes",
+      edits: [{ nodeId: clipAId, kind: "clip", edit: { title: "Mine" } }],
+    });
+    expect(edited.ok).toBe(true);
+
+    const written = store.applyNonUndoableWrite([
+      { nodeId: clipAId, kind: "clip", edit: { title: "Server" } },
+    ]);
+    expect(written.ok).toBe(true);
+    if (!written.ok) return;
+    expect(written.value).toEqual([clipAId]);
+  });
+});
