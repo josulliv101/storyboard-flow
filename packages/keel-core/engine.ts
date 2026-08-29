@@ -38,7 +38,12 @@ import type {
   SomeNodeType,
   Store,
 } from "./types";
-import { makeFolded } from "./types";
+import {
+  describeThrown,
+  describeValue,
+  makeFolded,
+  structurallyEqualBounded,
+} from "./types";
 import {
   buildRegistry,
   documentOrder,
@@ -182,6 +187,16 @@ const FOLD_CACHE_HEADROOM = 2;
  * `foldCacheLimit`. This one is audible instead of enforced.
  */
 export const DEFAULT_INTERACTIVE_NODE_BUDGET = 25_000;
+
+/**
+ * How many shadow cold refolds one engine will run before switching itself off.
+ *
+ * A cold fold is O(subtree) — 101ms over 100,000 nodes, measured — so an
+ * unbounded shadow turns `devChecks: true` from "slower" into "unusable". A
+ * stale entry, if there is one, shows up in the first handful of reads; the
+ * thousandth comparison is not where the value is.
+ */
+const SHADOW_REFOLD_BUDGET = 1_000;
 
 const noop = (): void => {};
 
@@ -352,9 +367,85 @@ export function createEngine<
     const fold: SomeFold<Ts, S> | undefined = config.folds[key];
     if (fold === undefined) return undefined;
 
+    // ---- THE SHADOW COLD REFOLD, rescoped to CACHE HITS ONLY ---------------
+    //
+    // The audit as originally specified was "beside every cached fold read",
+    // which is either vacuous or ruinous depending on which reads it catches.
+    // MEASURED on an instrumented run: 28 of 35 shadow executions compared a
+    // COLD result against a COLD result — 11 on the deliberately uncached
+    // `engine.aggregate` path and 17 on plain misses — so 80% of the cost
+    // bought a comparison that could not fail. A miss has nothing memoized to
+    // be wrong.
+    //
+    // Checking the top-level entry FIRST is what fixes that. If it is a hit,
+    // the answer about to be returned came out of the table, and folding the
+    // same subtree cold is a genuine test of it. If it is a miss, there is
+    // nothing to audit and the shadow is skipped.
+    //
+    // WHY THIS MATTERS MORE THAN THE OTHER THREE: the table's ONLY invalidation
+    // mechanism is the (foldKey, nodeId, rev) key. Nothing evicts for
+    // correctness, so a stale entry is served silently and forever — and that
+    // has shipped twice, both times as a wrong aggregate at the root that never
+    // self-healed.
+    const shadowable =
+      ctx.devChecks &&
+      cache !== undefined &&
+      cache.get(String(key), id, getSubtreeRev(graph, id)).hit;
+
     const result = computeFold(graph, fold, id, cache);
     if (result === undefined) return undefined;
+
+    if (shadowable) shadowCheck(graph, fold, id, result.value, String(key));
+
     return makeFolded<FoldValue<F[K]>>(result);
+  };
+
+  /**
+   * BUDGETED, and the budget is not optional. A cold fold over a large subtree
+   * is real work — measured at 101ms over 100,000 nodes — and doing it on every
+   * cached read would make dev mode unusable rather than merely slower. The cap
+   * is per ENGINE and announces itself once when it runs out, so a reader is
+   * never left believing an audit is running after it has gone quiet.
+   */
+  let shadowsLeft = SHADOW_REFOLD_BUDGET;
+  const shadowCheck = (
+    graph: Graph<Ts, S>,
+    fold: SomeFold<Ts, S>,
+    id: NodeId,
+    cachedValue: unknown,
+    key: string,
+  ): void => {
+    if (shadowsLeft <= 0) return;
+    shadowsLeft -= 1;
+    if (shadowsLeft === 0) {
+      console.error(
+        `keel dev check: the shadow cold refold has spent its budget of ` +
+          `${SHADOW_REFOLD_BUDGET} comparisons and is now OFF for this engine. ` +
+          `Everything it checked agreed; later reads are no longer audited.`,
+      );
+      return;
+    }
+    // NO CACHE ARGUMENT — that is what makes it cold. Passing one would let the
+    // shadow populate the very table it is auditing, and it would then be
+    // comparing an entry against itself.
+    let fresh: ReturnType<typeof computeFold<Ts, S, unknown>>;
+    try {
+      fresh = computeFold(graph, fold, id, undefined);
+    } catch (thrown) {
+      console.error(
+        `keel dev check: a shadow cold refold of ${JSON.stringify(key)} threw. ` +
+          describeThrown(thrown),
+      );
+      return;
+    }
+    if (fresh === undefined) return;
+    if (structurallyEqualBounded(fresh.value, cachedValue) !== false) return;
+    console.error(
+      `keel dev check: the memo table served a STALE ${JSON.stringify(key)} for node ` +
+        `${JSON.stringify(id)}. Cached and freshly folded values disagree, which means an ` +
+        `entry outlived the revision that should have made it unreachable. ` +
+        `cached=${describeValue(cachedValue)} fresh=${describeValue(fresh.value)}`,
+    );
   };
 
   // -------------------------------------------------------------------------

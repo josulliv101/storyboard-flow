@@ -18,6 +18,8 @@
 
 import {
   describeThrown,
+  describeValue,
+  structurallyEqualBounded,
   type AnyNode,
   type ChildrenState,
   type Command,
@@ -1077,6 +1079,11 @@ function planEdits<Ts extends readonly unknown[], S>(
       container: type.container,
       schemaVersion: type.schemaVersion,
       raw,
+      // `raw` IS this codec's serialize output, so the generic
+      // `parse(serialize(d))` comparison inside `parseNodeData` would re-derive
+      // a value from the bytes it just came from and can never fail. The
+      // stronger comparison for this door runs below instead.
+      rawIsSerializeOutput: true,
     });
     if (!reparsed.ok) {
       return fail(
@@ -1087,6 +1094,83 @@ function planEdits<Ts extends readonly unknown[], S>(
     }
 
     const nextData = reparsed.value.data;
+
+    // ---- DEV CHECKS AT THE EDIT DOOR ----------------------------------------
+    //
+    // PLACED HERE, AFTER `raw` and `nextData` exist, and not earlier. Above
+    // this point `node.data` is the LIVE value by reference and the engine has
+    // not yet captured it as the history entry's `before`. A consumer
+    // `applyEdit` or `invertEdit` that normalises its argument in place — a
+    // normal performance idiom, and the exact class this file already wraps for
+    // — would therefore change what gets recorded, storing different data under
+    // `devChecks: true` than under `false` and corrupting the `before` that
+    // `verifyPatchApplies` later compares. Undo would fail `data-mismatch` on a
+    // node nothing legitimately touched.
+    if (ctx.devChecks) {
+      // 1. UPSTREAM VS DOWNSTREAM, and it is FREE — both values already exist.
+      //
+      //    `applied.value` is what the codec's own `applyEdit` produced.
+      //    `nextData` is what came back after that value made a round trip
+      //    through `serialize` and `parse`, and it is what the engine actually
+      //    STORES. If they differ, the edit the consumer asked for is not the
+      //    edit that landed, and the difference is exactly what `serialize`
+      //    dropped on the way out.
+      //
+      //    THE FIRST DRAFT OF THIS COMPARED `serialize(nextData)` AGAINST `raw`
+      //    and could not fail: for a codec that drops a field, both sides drop
+      //    it, so the two agree while the field is being lost. The lossy
+      //    fixture in ./devchecks-audits caught that, which is the entire
+      //    argument for writing the violating codec before the check.
+      const verdict = structurallyEqualBounded(applied.value, nextData);
+      if (verdict === false) {
+        console.error(
+          `keel dev check: editing a ${JSON.stringify(node.kind)} node stored something ` +
+            `different from what its own applyEdit returned. The engine stores parse's ` +
+            `OUTPUT, so a field this codec's serialize omits is dropped on every edit. ` +
+            `node=${JSON.stringify(edit.nodeId)} produced=${describeValue(applied.value)} ` +
+            `stored=${describeValue(nextData)}`,
+        );
+      }
+
+      // 2. THE OPT-IN INVERSE. `invertEdit` is declared on `NodeType` and
+      //    documented to satisfy
+      //      applyEdit(applyEdit(d, e).value, invertEdit(e, d)) deep-equals d
+      //    and the engine never calls it — undo works from whole-value
+      //    before/after pairs, which cannot be wrong. So this verifies a
+      //    property of a method nothing consults: preparation for the day it is
+      //    consulted, not a bug hunt.
+      //
+      //    `type.applyEdit` is called DIRECTLY. Building a synthetic
+      //    `edit-nodes` command and dispatching it would re-enter `planEdits`
+      //    without bound — one full validation pass per level, ending in a
+      //    stack overflow escaping `dispatch` as an exception, from a function
+      //    contracted to return a `Result`.
+      const invert = type.invertEdit;
+      if (invert !== undefined) {
+        try {
+          const inverse = invert(edit.edit, node.data);
+          const back = type.applyEdit(applied.value, inverse);
+          if (!back.ok) {
+            console.error(
+              `keel dev check: ${JSON.stringify(node.kind)}.invertEdit produced an edit its ` +
+                `own applyEdit refuses. node=${JSON.stringify(edit.nodeId)}`,
+            );
+          } else if (structurallyEqualBounded(back.value, node.data) === false) {
+            console.error(
+              `keel dev check: ${JSON.stringify(node.kind)}.invertEdit does not undo its edit. ` +
+                `applyEdit(applyEdit(d, e), invertEdit(e, d)) did not reproduce d. ` +
+                `node=${JSON.stringify(edit.nodeId)}`,
+            );
+          }
+        } catch (thrown) {
+          console.error(
+            `keel dev check: ${JSON.stringify(node.kind)}.invertEdit threw. ` +
+              describeThrown(thrown),
+          );
+        }
+      }
+    }
+
     const collection = node.container
       ? { children: node.children, summary: node.summary }
       : null;

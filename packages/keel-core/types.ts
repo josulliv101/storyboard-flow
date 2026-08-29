@@ -921,11 +921,40 @@ export type EngineContext<S> = Readonly<{
   mintId(): string;
   now(): number;
   /**
-   * Enables the checks that are affordable in dev and not in prod: the
-   * `parse(serialize(d))` round-trip, deep-freezing parsed values, verifying
-   * an opt-in `invertEdit`, and the shadow cold refold. None of them can prove
-   * a consumer's codec actually validates — that is genuinely unenforceable —
-   * but they catch a lossy `serialize` and a wrong inverse.
+   * Enables the checks that are affordable in dev and not in prod. Every one is
+   * REPORTED through `console.error` and never thrown, never turned into a
+   * rejection, and never allowed to change what the engine stores: a document
+   * that loads clean with this off must load clean with it on.
+   *
+   * WHAT ACTUALLY RUNS, and where — this list was aspirational for a long time
+   * and named four audits the engine did not have (#590), so it is now written
+   * as an inventory rather than an intention:
+   *
+   *   - DEEP-FREEZE of every parsed value, at `parseNodeData`'s success return
+   *     and at the summary codec. Catches a `serialize` that normalises its
+   *     argument in place. Typed arrays are skipped — freezing one throws.
+   *   - `parse(serialize(d))` ROUND-TRIP at those same two doors. Catches a
+   *     `serialize` that drops a field `parse` keeps. Both sides of the
+   *     comparison are parse OUTPUTS, so a normalising codec does not
+   *     false-alarm.
+   *   - UPSTREAM VS DOWNSTREAM at the edit door: what `applyEdit` returned
+   *     against what the engine stored after its own round trip. Free, and
+   *     strictly stronger there than the generic form, which cannot fail at
+   *     that door.
+   *   - THE OPT-IN `invertEdit`, verified as
+   *     `applyEdit(applyEdit(d, e), invertEdit(e, d))` deep-equals `d`. A no-op
+   *     for the many codecs that declare no inverse.
+   *   - THE SHADOW COLD REFOLD, on cache HITS ONLY and budgeted. A miss has
+   *     nothing memoized to be wrong, so shadowing one buys a comparison that
+   *     cannot fail — measured at 80% of executions before the rescope.
+   *
+   * A fifth audit runs behind this flag and is not one of the above: the graph
+   * invariant walk after every commit. It predates the list.
+   *
+   * None of these can prove a consumer's codec actually validates — that is
+   * genuinely unenforceable. Two further limits are worth knowing: the
+   * comparator treats `Date`, `Map` and `Set` as `{}`, and freezing a `Map`
+   * does not stop `map.set`.
    */
   devChecks: boolean;
 }>;

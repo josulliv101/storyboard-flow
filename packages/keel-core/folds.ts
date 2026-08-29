@@ -328,9 +328,14 @@ function cacheKey(foldKey: string, nodeId: NodeId, subtreeRev: number): string {
  * nothing has to invalidate it — eviction is a memory concern only, never a
  * correctness one.
  *
- * `limit` of zero or less disables caching entirely (every `set` is a no-op),
- * which is what a cold shadow-refold check wants; a non-finite `limit` falls
- * back to the default rather than growing without bound.
+ * `limit` of zero or less disables caching entirely (every `set` is a no-op);
+ * a non-finite `limit` falls back to the default rather than growing without
+ * bound.
+ *
+ * NOT what the shadow-refold check uses, which this comment used to recommend.
+ * That check wants ONE cold fold beside a cached one, so it omits
+ * `computeFold`'s cache argument entirely — a whole disabled cache would also
+ * disable the memoisation it exists to audit.
  *
  * Because the key carries the rev, the limit is a COST dial and nothing else —
  * evicting an entry can only make the next read do work it already did, never
