@@ -477,7 +477,7 @@ export type Graph<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   /**
    * ONE mechanism doing two jobs: aggregate cache key AND render
    * subscription. Bumped along the affected ancestor chains by EVERY
-   * mutation — hydration, `markMissing` and `applyIngest` included, even
+   * mutation — hydration, `markMissing` and `applyNonUndoableWrite` included, even
    * though those produce no patch.
    *
    * This closes a hole measured in the predecessor: its per-parent data
@@ -804,7 +804,7 @@ export type ReplayRejectionCode =
   /**
    * Replaying this patch would put a second owner on one `sourceKey`.
    *
-   * Reachable only because `applyIngest` is a NON-UNDOABLE write: it can move a
+   * Reachable only because `applyNonUndoableWrite` is a NON-UNDOABLE write: it can move a
    * live node onto a key a sleeping patch still carries, and the replay would
    * then re-install the original owner beside it. Mirrors `RejectionCode`'s
    * member of the same name so a consumer handling one handles the other.
@@ -1223,7 +1223,7 @@ export type HistoryEntry<Ts extends readonly ErasedNodeType[], S> = Readonly<{
 
 /**
  * A PURE VALUE, unlike the predecessor's mutable handle. It has to be:
- * `applyIngest` rewrites both stacks and returns the new history alongside the
+ * `applyNonUndoableWrite` rewrites both stacks and returns the new history alongside the
  * new graph, and a mutable history would make that operation unobservable and
  * untestable.
  */
@@ -1241,7 +1241,7 @@ export type History<Ts extends readonly ErasedNodeType[], S> = Readonly<{
 // ---------------------------------------------------------------------------
 
 /**
- * What the persistence feed sees. `applyIngest`, `loadChildren` and
+ * What the persistence feed sees. `applyNonUndoableWrite`, `loadChildren` and
  * `markMissing` emit NOTHING here — they are IO landing, and the consumer
  * already knows about the write it just performed.
  */
@@ -1296,7 +1296,7 @@ export type Store<
   canUndo(): boolean;
   canRedo(): boolean;
   /** The non-undoable content write. Returns the ids whose history was scrubbed. */
-  ingest(edits: readonly EditOf<Ts>[]): Result<readonly NodeId[], Rejection>;
+  applyNonUndoableWrite(edits: readonly EditOf<Ts>[]): Result<readonly NodeId[], Rejection>;
   /** `unknown` for the reason `Engine.loadChildren` gives: the payload came from
    *  IO and is re-validated here, so the signature must not vouch for it. Pass a
    *  `SerializedDocument`; a structural failure returns `"malformed-document"`. */
@@ -1556,7 +1556,7 @@ export type Engine<
    * thumbnail, or a dormant whole-value `before` silently clobbers a server
    * write.
    *
-   * It SCRUBS the history: for every ingested id, that node's entry is removed
+   * It SCRUBS the history: for every written id, that node's entry is removed
    * from every `data-changed` patch in BOTH stacks, and the captured `data` for
    * that node is rewritten inside every dormant `inserted` / `removed`
    * placement. Content changes are per-node independent within a patch, so
@@ -1567,7 +1567,7 @@ export type Engine<
    * server has since overwritten it — and keeps everything else. No clobber, no
    * stack truncation, no version mismatch that nukes the whole history.
    */
-  applyIngest(
+  applyNonUndoableWrite(
     graph: Graph<Ts, S>,
     history: History<Ts, S>,
     edits: readonly EditOf<Ts>[],

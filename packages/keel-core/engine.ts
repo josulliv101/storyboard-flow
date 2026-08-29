@@ -60,7 +60,7 @@ import {
 } from "./patches";
 import {
   applyCommand as applyCommandTo,
-  applyIngestEdits,
+  applyNonUndoableWriteEdits,
   resolveDrop as resolveDropIn,
 } from "./commands";
 import { computeFold, createFoldCache } from "./folds";
@@ -728,13 +728,13 @@ export function createEngine<
      *
      * Notification order is the contract: node subscribers for every changed
      * revision, then graph subscribers, then selection. The change feed is NOT
-     * emitted here — `load`, `ingest` and `markMissing` are IO landing and emit
+     * emitted here — `load`, `applyNonUndoableWrite` and `markMissing` are IO landing and emit
      * nothing on it, so the caller decides.
      */
     const commitGraph = (next: Graph<Ts, S>, label: string): void => {
       const previous = graph;
       // Identity is preserved by the no-op paths (`markMissing` on a stale id,
-      // an ingest that changed nothing), and a notification storm for a no-op
+      // a write that changed nothing), and a notification storm for a no-op
       // is exactly what `subtreeRev` exists to prevent.
       if (next === previous) return;
 
@@ -1044,22 +1044,22 @@ export function createEngine<
        * consumer performed the write and already knows about it; echoing it
        * back is how a persistence loop starts.
        */
-      ingest(edits) {
+      applyNonUndoableWrite(edits) {
         // See `dispatch` for why a destroyed store refuses rather than writes.
         if (destroyed) {
           return {
             ok: false,
             error: {
               code: "store-destroyed",
-              message: "ingest() on a destroyed store.",
+              message: "applyNonUndoableWrite() on a destroyed store.",
             },
           };
         }
-        const ingested = applyIngestEdits(graph, history, edits, ctx);
-        if (!ingested.ok) return ingested;
-        history = ingested.value.history;
-        commitGraph(ingested.value.graph, "ingest");
-        return { ok: true, value: ingested.value.scrubbed };
+        const written = applyNonUndoableWriteEdits(graph, history, edits, ctx);
+        if (!written.ok) return written;
+        history = written.value.history;
+        commitGraph(written.value.graph, "the non-undoable write");
+        return { ok: true, value: written.value.scrubbed };
       },
 
       load(id, doc) {
@@ -1128,8 +1128,8 @@ export function createEngine<
     loadChildren: (graph, id, doc) =>
       loadChildrenInto<Ts, S>(graph, id, doc, ctx),
     markMissing: (graph, id, reason) => markMissingIn(graph, id, reason),
-    applyIngest: (graph, history, edits) =>
-      applyIngestEdits(graph, history, edits, ctx),
+    applyNonUndoableWrite: (graph, history, edits) =>
+      applyNonUndoableWriteEdits(graph, history, edits, ctx),
 
     /**
      * UNCACHED, deliberately. This takes an arbitrary graph, so

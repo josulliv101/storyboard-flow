@@ -1524,22 +1524,22 @@ describe("mutations", () => {
   /**
    * THE SERVER-WRITE PATH, held to the same bill as the user-intent one.
    *
-   * `applyIngestEdits` rebuilt BOTH derived indexes unconditionally, ignoring
+   * `applyNonUndoableWriteEdits` rebuilt BOTH derived indexes unconditionally, ignoring
    * the check `applyPatch`'s data arm has used since it shipped. Its comment
    * claimed parity with that arm — "the same thing `applyPatch` does after a
    * 'data-changed' patch" — which stopped being true when the arm gained its
    * guard, so the comment had become a description of the defect.
    *
    * MEASURED before the guard, counting `contentKey` on a key-preserving
-   * one-node write: ingest asked 1,000 / 10,000 / 40,000 times at those three
+   * one-node write: the non-undoable write asked 1,000 / 10,000 / 40,000 times at those three
    * sizes — exactly the reachable node count, a full document-order DFS — while
    * `edit-nodes` asked 2, flat. Per CALL, not per edit: a batch of twenty still
    * cost one whole walk.
    *
    * This is the path a thumbnail lands on.
    */
-  it("a key-preserving ingest re-indexes no more than the equivalent command", () => {
-    const ingestReindexed = new Map<string, number>();
+  it("a key-preserving non-undoable write re-indexes no more than the equivalent command", () => {
+    const writeReindexed = new Map<string, number>();
     const editReindexed = new Map<string, number>();
 
     for (const fx of wideSizes) {
@@ -1551,17 +1551,17 @@ describe("mutations", () => {
         { nodeId: target, kind: "clip", edit: { seconds: 99 } },
       ] as const;
 
-      const ingestCounts = countOnce(() => {
-        engine.applyIngest(fx.graph, createHistory<Types, Summary>(), edits);
+      const writeCounts = countOnce(() => {
+        engine.applyNonUndoableWrite(fx.graph, createHistory<Types, Summary>(), edits);
       });
-      ingestReindexed.set(
+      writeReindexed.set(
         fx.label,
         noteCount(
-          "ingest (key-preserving)",
+          "non-undoable write (key-preserving)",
           fx.label,
           fx.nodeCount,
           "contentKey",
-          ingestCounts.contentKey,
+          writeCounts.contentKey,
         ),
       );
 
@@ -1574,18 +1574,18 @@ describe("mutations", () => {
     // The claim is INDEPENDENCE, asserted at three sizes, because a per-size
     // bound cannot tell a constant apart from a number that happens to be small
     // at the size being looked at.
-    const perIngest = expectIndependentOfGraphSize(
-      ingestReindexed,
-      "ingest content-key lookups",
+    const perWrite = expectIndependentOfGraphSize(
+      writeReindexed,
+      "non-undoable write content-key lookups",
     );
     // Two per edited node — its key before and after — which is exactly what
     // the command path above is already held to.
-    expect(perIngest).toBeLessThanOrEqual(2);
+    expect(perWrite).toBeLessThanOrEqual(2);
 
     // And stated as a relationship, not two separate numbers: the IO door must
     // not cost more than the user-intent door for the same write.
     for (const fx of wideSizes) {
-      expect(ingestReindexed.get(fx.label)).toBeLessThanOrEqual(
+      expect(writeReindexed.get(fx.label)).toBeLessThanOrEqual(
         editReindexed.get(fx.label) ?? 0,
       );
     }

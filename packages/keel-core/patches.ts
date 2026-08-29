@@ -979,7 +979,7 @@ function requireLoadedParent<Ts extends readonly ErasedNodeType[], S>(
  * THE REPLAY DOOR'S HALF OF THE SINGLE-OWNER RULE. The reducer enforces it on
  * the forward path and `findInvariantViolation` audits it, but verification —
  * the one door whose entire job is refusing patches whose world has moved — did
- * not ask. `applyIngest` is what makes that reachable: it is a non-undoable
+ * not ask. `applyNonUndoableWrite` is what makes that reachable: it is a non-undoable
  * server write, so it can move a live node onto a key a sleeping patch still
  * carries, and the replay then re-installs the original owner beside it.
  *
@@ -1267,7 +1267,7 @@ function verifyDataChanged<Ts extends readonly ErasedNodeType[], S>(
 
   // THE SAME OWNERSHIP HOLE AS `verifyInserted`, through the data path. A
   // `sourceKey` is computed FROM data, so restoring an old value re-claims an
-  // old key — and `applyIngest` may have moved another node onto it meanwhile.
+  // old key — and `applyNonUndoableWrite` may have moved another node onto it meanwhile.
   // The original review named only the insert arm; this one reproduces
   // identically (edit a box off its key, let the server move a sibling onto it,
   // then Ctrl-Z) and a fix that guarded one arm would have left the other open.
@@ -1386,16 +1386,16 @@ export function isEmptyPatch<Ts extends readonly ErasedNodeType[], S>(
 }
 
 // ---------------------------------------------------------------------------
-// Ingest scrubbing
+// The non-undoable write scrubbing
 // ---------------------------------------------------------------------------
 
 /**
- * Surgical ingest scrubbing for ONE patch.
+ * Surgical scrubbing of ONE patch, for a non-undoable write.
  *
- * `applyIngest` is the non-undoable content write: a server stamped a field, a
+ * `applyNonUndoableWrite` is the non-undoable content write: a server stamped a field, a
  * thumbnail arrived. The user must not be able to Ctrl-Z it, and — more
  * importantly — a DORMANT `before` from an older entry must not be able to
- * clobber it later. So for every ingested node:
+ * clobber it later. So for every written node:
  *
  *   - "data-changed": DROP that node's entry. Content changes are per-node
  *     independent within a patch, so every other change in the entry stays
@@ -1413,7 +1413,7 @@ export function isEmptyPatch<Ts extends readonly ErasedNodeType[], S>(
  *
  * Returns null when the patch is left empty, and the caller drops the entry.
  */
-export function scrubPatchForIngest<Ts extends readonly ErasedNodeType[], S>(
+export function scrubPatchForWrite<Ts extends readonly ErasedNodeType[], S>(
   patch: Patch<Ts, S>,
   replacements: ReadonlyMap<NodeId, unknown>,
 ): Patch<Ts, S> | null {
@@ -1442,7 +1442,7 @@ export function scrubPatchForIngest<Ts extends readonly ErasedNodeType[], S>(
         const node = placement.node;
         if (!replacements.has(node.id)) return placement;
         // A quarantined node carries `raw`, not parsed data, and it is not
-        // editable — so it can never be an ingest target and its bytes must
+        // editable — so it can never be a non-undoable write target and its bytes must
         // survive untouched.
         if (node.quarantined) return placement;
         const replacement = replacements.get(node.id);

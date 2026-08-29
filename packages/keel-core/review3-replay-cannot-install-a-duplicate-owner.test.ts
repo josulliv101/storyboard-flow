@@ -7,7 +7,7 @@
 // — everything structural — and never asked whether the arriving node's
 // `sourceKey` is already owned by somebody else.
 //
-// `applyIngest` is what makes that reachable rather than theoretical. It is a
+// `applyNonUndoableWrite` is what makes that reachable rather than theoretical. It is a
 // NON-UNDOABLE server write, so it can move a live node onto a key a sleeping
 // patch still carries, and the undo that follows re-installs the original owner
 // beside it. The result is a graph `findInvariantViolation` reports as
@@ -158,10 +158,10 @@ describe("replay cannot install a duplicate owner", () => {
 
     // 2. The server moves z onto the key x used to own. Non-undoable, and
     //    legitimately accepted — nothing owns "asset-a" right now.
-    const ingested = store.ingest([
+    const written = store.applyNonUndoableWrite([
       { nodeId: zId, kind: "box", edit: { source: "asset-a" } },
     ]);
-    expect(ingested.ok).toBe(true);
+    expect(written.ok).toBe(true);
     expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
 
     // 3. Ctrl-Z. The sleeping patch would bring x back onto a key z now owns.
@@ -192,7 +192,7 @@ describe("replay cannot install a duplicate owner", () => {
 
     // The server moves z onto that key while the patch sleeps.
     expect(
-      store.ingest([{ nodeId: zId, kind: "box", edit: { source: "asset-c" } }]).ok,
+      store.applyNonUndoableWrite([{ nodeId: zId, kind: "box", edit: { source: "asset-c" } }]).ok,
     ).toBe(true);
 
     const redone = store.redo();
@@ -266,7 +266,7 @@ describe("replay cannot install a duplicate owner", () => {
 
     // The server moves z onto the key x just vacated.
     expect(
-      store.ingest([{ nodeId: zId, kind: "box", edit: { source: "asset-a" } }]).ok,
+      store.applyNonUndoableWrite([{ nodeId: zId, kind: "box", edit: { source: "asset-a" } }]).ok,
     ).toBe(true);
     expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
 

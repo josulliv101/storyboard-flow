@@ -4,7 +4,7 @@
 //
 // This module owns the only place untrusted content becomes typed `Data`.
 // Every ingress in the engine funnels through `parseNodeData`: `deserialize`,
-// `loadChildren`, `insert-nodes` seeds, and `applyIngest`. One door means one
+// `loadChildren`, `insert-nodes` seeds, and `applyNonUndoableWrite`. One door means one
 // place migrations run, one place a node type's refusal is interpreted, and one
 // place to look when forward-incompatible data shows up in production.
 //

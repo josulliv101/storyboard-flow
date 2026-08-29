@@ -163,7 +163,7 @@ describe("createEngine end to end", () => {
     ).toThrow(/duplicate node kind/);
   });
 
-  it("runs a full dispatch / undo / redo / ingest / selection cycle", () => {
+  it("runs a full dispatch / undo / redo / non-undoable write / selection cycle", () => {
     const engine = makeEngine();
     const loaded = engine.deserialize(doc);
     expect(loaded.ok).toBe(true);
@@ -220,12 +220,12 @@ describe("createEngine end to end", () => {
     const empty = store.undo();
     expect(empty.ok).toBe(false);
 
-    // Ingest: no change-feed event, and the graph still changes.
+    // The non-undoable write: no change-feed event, and the graph still changes.
     const feedLength = changes.length;
-    const ingested = store.ingest([
+    const written = store.applyNonUndoableWrite([
       { nodeId: clipAId, kind: "clip", edit: { seconds: 40 } },
     ]);
-    expect(ingested.ok).toBe(true);
+    expect(written.ok).toBe(true);
     expect(changes.length).toBe(feedLength);
     expect(store.aggregate("duration", rootId)?.value).toBe(70);
 

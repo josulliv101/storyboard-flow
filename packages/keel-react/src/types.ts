@@ -141,7 +141,7 @@ export type ReactBindings<
   /** Publishes one store to the subtree. Everything else throws without it. */
   Provider: FunctionComponent<ProviderProps<Ts, S, F>>;
 
-  /** The store itself — for imperative work (`load`, `ingest`, `resolveDrop`). */
+  /** The store itself — for imperative work (`load`, `applyNonUndoableWrite`, `resolveDrop`). */
   useStore(): Store<Ts, S, F>;
 
   /**
