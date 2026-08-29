@@ -986,7 +986,15 @@ export type SerializedDocument = Readonly<{
   nodes: readonly SerializedNode[];
 }>;
 
-/** Spec-compat alias. `SerializedDocument` is the name used in every signature. */
+/**
+ * Spec-compat alias for `SerializedDocument`.
+ *
+ * `SerializedDocument` now appears in exactly one signature — as what
+ * `Engine.serialize` RETURNS, which keel constructs and can therefore vouch
+ * for. The ingress doors take `unknown` and check, rather than taking this and
+ * believing. That asymmetry is the point: this type is a guarantee on the way
+ * out and would have been a fiction on the way in.
+ */
 export type SerializedGraph = SerializedDocument;
 
 export type LoadReport = Readonly<{
@@ -1289,7 +1297,10 @@ export type Store<
   canRedo(): boolean;
   /** The non-undoable content write. Returns the ids whose history was scrubbed. */
   ingest(edits: readonly EditOf<Ts>[]): Result<readonly NodeId[], Rejection>;
-  load(id: NodeId, doc: SerializedDocument): Result<void, LoadRejection>;
+  /** `unknown` for the reason `Engine.loadChildren` gives: the payload came from
+   *  IO and is re-validated here, so the signature must not vouch for it. Pass a
+   *  `SerializedDocument`; a structural failure returns `"malformed-document"`. */
+  load(id: NodeId, doc: unknown): Result<void, LoadRejection>;
   markMissing(id: NodeId, reason: string): void;
   /** `undefined` when the node is gone — routine in React, where a card can
    *  outlive its node by a frame. */
@@ -1515,10 +1526,25 @@ export type Engine<
   ): Result<Command<Ts, S>, Rejection>;
 
   // ---- IO landing: no patch, no history entry, no change-feed event ----
+  /**
+   * `doc` is `unknown`, matching `deserialize`, because it is the same kind of
+   * value: a payload that arrived from IO and has been validated by nobody.
+   *
+   * It used to say `SerializedDocument`, which was a promise this signature
+   * could not keep — the implementation has always taken `unknown` and
+   * re-validated, and the comment there said so outright: "the consumer's
+   * assertion, not a guarantee". A type that vouches for an unchecked envelope
+   * invites a cast to stand in for a check, on the one door hostile payloads
+   * arrive through.
+   *
+   * Pass a `SerializedDocument` — that is the shape this reads. It is simply
+   * checked rather than believed, and a structural failure comes back as
+   * `"malformed-document"` with the underlying `StructuralError` as `cause`.
+   */
   loadChildren(
     graph: Graph<Ts, S>,
     id: NodeId,
-    doc: SerializedDocument,
+    doc: unknown,
   ): Result<Graph<Ts, S>, LoadRejection>;
   markMissing(graph: Graph<Ts, S>, id: NodeId, reason: string): Graph<Ts, S>;
   /**

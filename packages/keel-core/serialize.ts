@@ -1433,10 +1433,14 @@ function loadRejection(error: LoadRejection): Result<never, LoadRejection> {
  * which meant a subtree loaded on demand was parsed by rules its own document
  * had already outgrown.
  *
- * `doc` is `unknown` because it came from IO. The Engine method's
- * `SerializedDocument` parameter is the consumer's assertion, not a guarantee,
- * and re-validating here is the difference between a typed claim and a checked
- * one.
+ * `doc` is `unknown` because it came from IO, and re-validating here is the
+ * difference between a typed claim and a checked one.
+ *
+ * `Engine.loadChildren` and `Store.load` now say `unknown` too. They used to
+ * say `SerializedDocument` while delegating to this — so the public types
+ * vouched for an envelope nothing had checked, and this comment existed to
+ * apologise for the gap rather than to describe the code. Both doors now agree
+ * with `deserialize`, which has always been honest about taking `unknown`.
  *
  * Produces NO patch, NO history entry, NO change-feed event; bumps
  * `subtreeRev` along the target's chain so ancestor rollups re-render.
