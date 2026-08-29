@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { CLIP_GAP_SECONDS } from "@storyboard/timeline-model";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 import { compilePlaybackManifest, manifestToClips } from "./playback-manifest";

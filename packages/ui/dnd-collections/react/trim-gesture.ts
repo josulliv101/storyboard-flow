@@ -9,7 +9,6 @@ import {
 
 import {
   hasSourceWindow,
-  mediaDurationSeconds,
   type MediaNode,
   type VideoMediaNode,
 } from "@storyboard/collections-core/graph";

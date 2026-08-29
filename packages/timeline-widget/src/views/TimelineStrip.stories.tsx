@@ -166,26 +166,37 @@ export const Empty: Story = {
   args: { clips: [] },
 };
 
+/**
+ * A REAL COMPONENT rather than hooks inside `render`.
+ *
+ * `render: (args) => { const [x] = useState() }` is an ordinary arrow function
+ * as far as React is concerned — lowercase, not a hook — so the rules-of-hooks
+ * lint cannot verify it and React's own invariants are not guaranteed to hold
+ * across a re-render. Storybook calls it like a component, which is why it
+ * works; the rule is right that nothing makes that true.
+ */
+function InteractiveStrip(args: React.ComponentProps<typeof TimelineStrip>) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
+  return (
+    <div>
+      <TimelineStrip
+        {...args}
+        selectedClipId={selected}
+        onSelect={(clip) => setSelected(clip.id ?? null)}
+        onOpen={(clip) => setOpened(clip.title ?? clip.id ?? null)}
+      />
+      <p className="muted">
+        selected: {selected ?? "none"} · opened: {opened ?? "none"}
+      </p>
+    </div>
+  );
+}
+
 /** Selection driven through the same path the app uses. */
 export const Interactive: Story = {
   args: { clips: foobar },
-  render: (args) => {
-    const [selected, setSelected] = useState<string | null>(null);
-    const [opened, setOpened] = useState<string | null>(null);
-    return (
-      <div>
-        <TimelineStrip
-          {...args}
-          selectedClipId={selected}
-          onSelect={(clip) => setSelected(clip.id ?? null)}
-          onOpen={(clip) => setOpened(clip.title ?? clip.id ?? null)}
-        />
-        <p className="muted">
-          selected: {selected ?? "none"} · opened: {opened ?? "none"}
-        </p>
-      </div>
-    );
-  },
+  render: (args) => <InteractiveStrip {...args} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
