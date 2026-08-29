@@ -42,6 +42,7 @@ import {
   makeDataChange,
   makeLeafNode,
   tryParseNodeId,
+  type ErasedNodeType,
 } from "./types";
 import {
   dataChangeLeavesDerivedIndexesIntact,
@@ -88,7 +89,7 @@ function ok<T>(value: T): Result<T, Rejection> {
  * id minted by engine A typechecks against engine B and only this runtime check
  * separates them. Every mutating door runs it first.
  */
-function foreignGraph<Ts extends readonly unknown[], S>(
+function foreignGraph<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   ctx: EngineContext<S>,
 ): Rejection | null {
@@ -109,7 +110,7 @@ function foreignGraph<Ts extends readonly unknown[], S>(
  * from inside a comparator. It is the same order `selection.selectRange` uses,
  * so a shift-click range and a multi-node drag agree about what "first" means.
  */
-function documentOrderRank<Ts extends readonly unknown[], S>(
+function documentOrderRank<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): ReadonlyMap<NodeId, number> {
   const rank = new Map<NodeId, number>();
@@ -127,7 +128,7 @@ function documentOrderRank<Ts extends readonly unknown[], S>(
  * invariant violation `findInvariantViolation` reports; putting it somewhere
  * deterministic beats crashing the drag that discovered it.
  */
-function inDocumentOrder<Ts extends readonly unknown[], S>(
+function inDocumentOrder<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   ids: Iterable<NodeId>,
 ): readonly NodeId[] {
@@ -194,7 +195,7 @@ function inDocumentOrder<Ts extends readonly unknown[], S>(
  * a specific graph, and holding it beyond the command would be a stale index
  * one mutation later.
  */
-function childSlots<Ts extends readonly unknown[], S>(
+function childSlots<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   parentId: NodeId,
   cache: Map<NodeId, ReadonlyMap<NodeId, number>>,
@@ -220,7 +221,7 @@ function childSlots<Ts extends readonly unknown[], S>(
  * id instead of O(n^2), and `ancestorChain` needs no visiting set because the
  * `reference` children state makes the placement forest a genuine tree.
  */
-function pruneDescendants<Ts extends readonly unknown[], S>(
+function pruneDescendants<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   ids: ReadonlySet<NodeId>,
 ): readonly NodeId[] {
@@ -245,7 +246,7 @@ function pruneDescendants<Ts extends readonly unknown[], S>(
  * — so it is exempt from the single-owner rule. A quarantined node has no node type
  * and therefore no key at all.
  */
-function owningSourceKey<Ts extends readonly unknown[], S>(
+function owningSourceKey<Ts extends readonly ErasedNodeType[], S>(
   ctx: EngineContext<S>,
   node: GraphNode<Ts, S>,
 ): string | null {
@@ -286,7 +287,7 @@ type MovePlan = Readonly<{
  * and `resolveDrop` disagree about which coordinate system the caller handed
  * them, and agree about everything else.
  */
-function planMove<Ts extends readonly unknown[], S>(
+function planMove<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   nodeIds: readonly NodeId[],
   toParentId: NodeId,
@@ -450,7 +451,7 @@ function isNoOpMove(moves: readonly Move[]): boolean {
  * later is bounded by `loadChildrenInto`'s own check rather than pre-refused
  * here on a guess about what it might contain.
  */
-function tallestSubtree<Ts extends readonly unknown[], S>(
+function tallestSubtree<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): number {
@@ -463,7 +464,7 @@ function tallestSubtree<Ts extends readonly unknown[], S>(
   return tallest;
 }
 
-function applyMoveNodes<Ts extends readonly unknown[], S>(
+function applyMoveNodes<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   nodeIds: readonly NodeId[],
   toParentId: NodeId,
@@ -553,7 +554,7 @@ function mintFreshId<S>(
 
 /** One frame of the seed walk, plus the ancestor link that turns a cyclic seed
  *  into a rejection rather than a hang. */
-type SeedFrame<Ts extends readonly unknown[], S> = Readonly<{
+type SeedFrame<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   seed: Seed<Ts, S>;
   parentId: NodeId;
   index: number;
@@ -566,12 +567,12 @@ type SeedFrame<Ts extends readonly unknown[], S> = Readonly<{
  * inserting the same seed VALUE twice as two siblings is legitimate (two copies
  * of one thing), while a seed that appears inside itself is a cycle.
  */
-type SeedPath<Ts extends readonly unknown[], S> = Readonly<{
+type SeedPath<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   seed: Seed<Ts, S>;
   parent: SeedPath<Ts, S> | null;
 }>;
 
-function seedPathContains<Ts extends readonly unknown[], S>(
+function seedPathContains<Ts extends readonly ErasedNodeType[], S>(
   path: SeedPath<Ts, S> | null,
   seed: Seed<Ts, S>,
 ): boolean {
@@ -581,7 +582,7 @@ function seedPathContains<Ts extends readonly unknown[], S>(
   return false;
 }
 
-function applyInsertNodes<Ts extends readonly unknown[], S>(
+function applyInsertNodes<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   seeds: readonly Seed<Ts, S>[],
   toParentId: NodeId,
@@ -641,7 +642,7 @@ function applyInsertNodes<Ts extends readonly unknown[], S>(
   return ok({ graph: applyPatch(graph, patch, ctx), patch });
 }
 
-function checkInsertTarget<Ts extends readonly unknown[], S>(
+function checkInsertTarget<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   toParentId: NodeId,
 ): Result<void, Rejection> {
@@ -685,7 +686,7 @@ function checkInsertTarget<Ts extends readonly unknown[], S>(
  * lazy payload is being attached. Stated once here so the reducer and the
  * ingress door cannot drift about what "depth" counts.
  */
-function depthOf<Ts extends readonly unknown[], S>(
+function depthOf<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): number {
@@ -699,7 +700,7 @@ function depthOf<Ts extends readonly unknown[], S>(
  * package is: a seed's children are consumer-supplied and their nesting is not
  * this module's to trust.
  */
-function tallestSeed<Ts extends readonly unknown[], S>(
+function tallestSeed<Ts extends readonly ErasedNodeType[], S>(
   seeds: readonly Seed<Ts, S>[],
 ): number {
   let tallest = 0;
@@ -717,7 +718,7 @@ function tallestSeed<Ts extends readonly unknown[], S>(
   return tallest;
 }
 
-function buildSeedPlacements<Ts extends readonly unknown[], S>(
+function buildSeedPlacements<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   seeds: readonly Seed<Ts, S>[],
   toParentId: NodeId,
@@ -849,7 +850,7 @@ function buildSeedPlacements<Ts extends readonly unknown[], S>(
 // remove-nodes
 // ---------------------------------------------------------------------------
 
-function applyRemoveNodes<Ts extends readonly unknown[], S>(
+function applyRemoveNodes<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   nodeIds: readonly NodeId[],
   allowUnloaded: boolean,
@@ -956,7 +957,7 @@ type EditPlan<S> = Readonly<{
  * `applyIngest`. Same path, same rejections — the two doors differ only in what
  * they leave behind, never in what they accept.
  */
-function planEdits<Ts extends readonly unknown[], S>(
+function planEdits<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   edits: readonly EditOf<Ts>[],
   ctx: EngineContext<S>,
@@ -1215,7 +1216,7 @@ function planEdits<Ts extends readonly unknown[], S>(
   return ok(plans);
 }
 
-function applyEditNodes<Ts extends readonly unknown[], S>(
+function applyEditNodes<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   edits: readonly EditOf<Ts>[],
   ctx: EngineContext<S>,
@@ -1246,7 +1247,7 @@ function applyEditNodes<Ts extends readonly unknown[], S>(
  * post-commit veto corrupts redo, because the push has already cleared the redo
  * branch and the following undo pushes the refused command onto it.
  */
-export function applyCommand<Ts extends readonly unknown[], S>(
+export function applyCommand<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   command: Command<Ts, S>,
   ctx: EngineContext<S>,
@@ -1302,7 +1303,7 @@ export function applyCommand<Ts extends readonly unknown[], S>(
  * It runs the same validity checks as the command it produces, so an illegal
  * gesture is refused while it is still a gesture.
  */
-export function resolveDrop<Ts extends readonly unknown[], S>(
+export function resolveDrop<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   intent: DropIntent<Ts, S>,
   ctx: EngineContext<S>,
@@ -1375,7 +1376,7 @@ export function resolveDrop<Ts extends readonly unknown[], S>(
   });
 }
 
-function resolveInsertDrop<Ts extends readonly unknown[], S>(
+function resolveInsertDrop<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   seeds: readonly Seed<Ts, S>[],
   toParentId: NodeId,
@@ -1450,7 +1451,7 @@ function resolveInsertDrop<Ts extends readonly unknown[], S>(
  * O(historyLimit x changes) — bounded only when a consumer SET a
  * `historyLimit`, which is not the default. See `EngineConfig.historyLimit`.
  */
-export function applyIngestEdits<Ts extends readonly unknown[], S>(
+export function applyIngestEdits<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   history: History<Ts, S>,
   edits: readonly EditOf<Ts>[],

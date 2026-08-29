@@ -232,13 +232,45 @@ export type ConsumerDefinedSummaryType<S> = Readonly<{
   serialize(summary: S): unknown;
 }>;
 
+// ---------------------------------------------------------------------------
+// `Ts extends readonly ErasedNodeType[]` — the constraint every generic below
+// carries, and why it is spelled this way
+// ---------------------------------------------------------------------------
+//
+// `Ts` is the consumer's TUPLE of node types, exactly as passed to
+// `createEngine({ types })`. It is the compile-time half of the two-sided
+// correspondence described on `ErasedNodeType`: the tuple remembers that
+// `"clip"` means `Data = Clip`, while the runtime registry has erased that.
+//
+// THIS USED TO READ `Ts extends readonly unknown[]`, which is not a weaker
+// constraint but NO constraint — everything extends `unknown`. Two costs:
+//
+//   1. It read as a claim about TRUST. In value positions `unknown` is this
+//      package's untrusted marker (`data: unknown`, `raw: unknown`, every
+//      ingress door), so `readonly unknown[]` invited the reading "a tuple of
+//      untrusted things" about the single most trusted input there is.
+//   2. It let nonsense through SILENTLY. `Graph<readonly [string, number], S>`
+//      and `Command<readonly ["a","b"], S>` both compiled: the mapped types
+//      below filter with `Ts[I] extends ConsumerDefinedNodeType<...> ? ... :
+//      never`, so a garbage element collapsed to `never` and vanished instead
+//      of erroring at the instantiation site.
+//
+// Tightening it was verified rather than assumed — 139 sites, and every failure
+// was a missing import. Not one assignability error, which is the evidence that
+// the loose form was never load-bearing.
+//
+// The tuple satisfies this constraint at all only because of the
+// method-shorthand rule on `ConsumerDefinedNodeType`: bivariance is what lets a
+// concrete `ConsumerDefinedNodeType<"clip", Clip, ClipEdit>` be assignable to
+// the erased element type.
+
 /** Every kind literal in the registry: `"clip" | "folder" | ...`. */
-export type KindOf<Ts extends readonly unknown[]> = {
+export type KindOf<Ts extends readonly ErasedNodeType[]> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer _D, infer _E> ? K : never;
 }[number];
 
 /** The `Data` belonging to one kind — used by the React per-kind views. */
-export type DataForKind<Ts extends readonly unknown[], K extends string> = {
+export type DataForKind<Ts extends readonly ErasedNodeType[], K extends string> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer NK, infer D, infer _E>
     ? NK extends K
       ? D
@@ -247,7 +279,7 @@ export type DataForKind<Ts extends readonly unknown[], K extends string> = {
 }[number];
 
 /** The `Edit` belonging to one kind. */
-export type EditForKind<Ts extends readonly unknown[], K extends string> = {
+export type EditForKind<Ts extends readonly ErasedNodeType[], K extends string> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer NK, infer _D, infer E>
     ? NK extends K
       ? E
@@ -302,7 +334,7 @@ export type ChildrenState =
  * `ConsumerDefinedNodeType`, so the tuple cannot be filtered on it. At runtime a container
  * kind never produces a `LeafNode`.
  */
-export type LeafNode<Ts extends readonly unknown[]> = {
+export type LeafNode<Ts extends readonly ErasedNodeType[]> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{
         id: NodeId;
@@ -315,7 +347,7 @@ export type LeafNode<Ts extends readonly unknown[]> = {
     : never;
 }[number];
 
-export type CollectionNode<Ts extends readonly unknown[], S> = {
+export type CollectionNode<Ts extends readonly ErasedNodeType[], S> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{
         id: NodeId;
@@ -423,7 +455,7 @@ export type QuarantinedNode = Readonly<{
  * on the other two. That is why `LeafNode` and `CollectionNode` carry an
  * explicit `quarantined: false`.
  */
-export type GraphNode<Ts extends readonly unknown[], S> =
+export type GraphNode<Ts extends readonly ErasedNodeType[], S> =
   | LeafNode<Ts>
   | CollectionNode<Ts, S>
   | QuarantinedNode;
@@ -433,7 +465,7 @@ export type GraphNode<Ts extends readonly unknown[], S> =
  * Nothing here is mutated in place; `applyPatch` is the only code that
  * rewrites the indexes, so undo/redo cannot drift from forward application.
  */
-export type Graph<Ts extends readonly unknown[], S> = Readonly<{
+export type Graph<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   /** Cross-instance guard. Checked on every mutating call and every ingress. */
   engineId: symbol;
   nodesById: ReadonlyMap<NodeId, GraphNode<Ts, S>>;
@@ -515,7 +547,7 @@ export type Graph<Ts extends readonly unknown[], S> = Readonly<{
  * kind is rejected (`"leaf-seed-with-children"`). Omitted on a container means
  * a `loaded` empty collection.
  */
-export type Seed<Ts extends readonly unknown[], S> = {
+export type Seed<Ts extends readonly ErasedNodeType[], S> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{
         kind: K;
@@ -527,7 +559,7 @@ export type Seed<Ts extends readonly unknown[], S> = {
 }[number];
 
 /** One node's content edit, paired with its own kind's edit type. */
-export type EditOf<Ts extends readonly unknown[]> = {
+export type EditOf<Ts extends readonly ErasedNodeType[]> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer _D, infer E>
     ? Readonly<{ nodeId: NodeId; kind: K; edit: E }>
     : never;
@@ -538,7 +570,7 @@ export type EditOf<Ts extends readonly unknown[]> = {
  * every placement of an asset is a single `edit-nodes` over all of them, which
  * is what keeps Ctrl-Z matching what the user thinks they did.
  */
-export type Command<Ts extends readonly unknown[], S> =
+export type Command<Ts extends readonly ErasedNodeType[], S> =
   | Readonly<{
       type: "move-nodes";
       nodeIds: readonly NodeId[];
@@ -580,7 +612,7 @@ export type Command<Ts extends readonly unknown[], S> =
  * concurrent edits, which v1 does not do, so adding them now doubles the
  * intent surface and buys nothing.
  */
-export type DropIntent<Ts extends readonly unknown[], S> =
+export type DropIntent<Ts extends readonly ErasedNodeType[], S> =
   | Readonly<{
       type: "move";
       nodeIds: readonly NodeId[];
@@ -623,14 +655,14 @@ export type Move = Readonly<{
  * `node` is the FULL node, so a removed subtree is restorable exactly —
  * including a quarantined node's byte-exact `raw`.
  */
-export type Placement<Ts extends readonly unknown[], S> = Readonly<{
+export type Placement<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   node: GraphNode<Ts, S>;
   parentId: NodeId;
   index: number;
 }>;
 
 /** One node's DATA change, structure untouched. Whole values, so inverting is a swap. */
-export type DataChange<Ts extends readonly unknown[]> = {
+export type DataChange<Ts extends readonly ErasedNodeType[]> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{ nodeId: NodeId; kind: K; before: D; after: D }>
     : never;
@@ -648,7 +680,7 @@ export type DataChange<Ts extends readonly unknown[]> = {
  *     `applyPatch` walks it BACKWARD, so children leave before parents and a
  *     later sibling's splice cannot invalidate an earlier one's index.
  */
-export type Patch<Ts extends readonly unknown[], S> =
+export type Patch<Ts extends readonly ErasedNodeType[], S> =
   | Readonly<{ type: "moved"; moves: readonly Move[] }>
   | Readonly<{ type: "inserted"; placements: readonly Placement<Ts, S>[] }>
   | Readonly<{ type: "removed"; placements: readonly Placement<Ts, S>[] }>
@@ -1097,7 +1129,7 @@ export type FoldedChild<A> = Folded<A> &
  * PARAMETER mentioning `A`, so arrow properties would sink the
  * `ConsumerDefinedFold<Ts, S, unknown>` registry constraint.
  */
-export type ConsumerDefinedFold<Ts extends readonly unknown[], S, A> = Readonly<{
+export type ConsumerDefinedFold<Ts extends readonly ErasedNodeType[], S, A> = Readonly<{
   key: string;
   /** A leaf is always `"exact"` — only placeholders and quarantine introduce
    *  uncertainty, so the evaluator wraps this without asking. */
@@ -1123,16 +1155,16 @@ export type ConsumerDefinedFold<Ts extends readonly unknown[], S, A> = Readonly<
  * can only ever return `Folded<unknown>` while `aggregate<K>` promises
  * `Folded<FoldValue<F[K]>>`.
  */
-export type ErasedFold<Ts extends readonly unknown[], S> = ConsumerDefinedFold<Ts, S, unknown>;
+export type ErasedFold<Ts extends readonly ErasedNodeType[], S> = ConsumerDefinedFold<Ts, S, unknown>;
 
-export type FoldRegistry<Ts extends readonly unknown[], S> = Readonly<
+export type FoldRegistry<Ts extends readonly ErasedNodeType[], S> = Readonly<
   Record<string, ErasedFold<Ts, S>>
 >;
 
 /** The `A` of a fold — `Folded<FoldValue<F["duration"]>>` is what `aggregate`
  *  returns. */
 export type FoldValue<X> = X extends ConsumerDefinedFold<
-  infer _Ts extends readonly unknown[],
+  infer _Ts extends readonly ErasedNodeType[],
   infer _S,
   infer A
 >
@@ -1171,7 +1203,7 @@ export type FoldCache = Readonly<{
  * issuing it (currently only a coalesced merge, whose original commands no
  * longer describe the merged patch).
  */
-export type HistoryEntry<Ts extends readonly unknown[], S> = Readonly<{
+export type HistoryEntry<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   command: Command<Ts, S> | null;
   patch: Patch<Ts, S>;
   /** Milliseconds since epoch, for display/inspection only. */
@@ -1187,7 +1219,7 @@ export type HistoryEntry<Ts extends readonly unknown[], S> = Readonly<{
  * new graph, and a mutable history would make that operation unobservable and
  * untestable.
  */
-export type History<Ts extends readonly unknown[], S> = Readonly<{
+export type History<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   /** Oldest first; the newest applied entry is LAST. */
   past: readonly HistoryEntry<Ts, S>[];
   /** The most-recently-undone entry is LAST (it is what `redo` takes next). */
@@ -1205,7 +1237,7 @@ export type History<Ts extends readonly unknown[], S> = Readonly<{
  * `markMissing` emit NOTHING here — they are IO landing, and the consumer
  * already knows about the write it just performed.
  */
-export type Change<Ts extends readonly unknown[], S> = Readonly<{
+export type Change<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   patch: Patch<Ts, S>;
   source: "command" | "undo" | "redo";
   /**
@@ -1235,7 +1267,7 @@ export type SelectionSlice = Readonly<{
 }>;
 
 export type Store<
-  Ts extends readonly unknown[],
+  Ts extends readonly ErasedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{
@@ -1275,7 +1307,7 @@ export type Store<
  * one at runtime yields `undefined`; nothing should.
  */
 export type PhantomTypes<
-  Ts extends readonly unknown[],
+  Ts extends readonly ErasedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{
@@ -1448,7 +1480,7 @@ export type EngineConfig<
 }>;
 
 export type Engine<
-  Ts extends readonly unknown[],
+  Ts extends readonly ErasedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{
@@ -1550,7 +1582,7 @@ export type Engine<
 // out shaped wrong. Casts go through `unknown`, never `any`.
 
 /** Build a leaf whose `data` has already been through `parse`. */
-export function makeLeafNode<Ts extends readonly unknown[]>(
+export function makeLeafNode<Ts extends readonly ErasedNodeType[]>(
   id: NodeId,
   kind: string,
   data: unknown,
@@ -1566,7 +1598,7 @@ export function makeLeafNode<Ts extends readonly unknown[]>(
 }
 
 /** Build a collection whose `data` has already been through `parse`. */
-export function makeCollectionNode<Ts extends readonly unknown[], S>(
+export function makeCollectionNode<Ts extends readonly ErasedNodeType[], S>(
   id: NodeId,
   kind: string,
   data: unknown,
@@ -1634,7 +1666,7 @@ export function makeFolded<A>(folded: Folded<unknown>): Folded<A> {
 }
 
 /** Build a `DataChange` from values the registry erased. Same argument as above. */
-export function makeDataChange<Ts extends readonly unknown[]>(
+export function makeDataChange<Ts extends readonly ErasedNodeType[]>(
   nodeId: NodeId,
   kind: string,
   before: unknown,

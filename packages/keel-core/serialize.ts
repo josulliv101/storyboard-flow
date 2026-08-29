@@ -58,6 +58,7 @@ import {
   type SerializedDocument,
   type SerializedNode,
   type StructuralError,
+  type ErasedNodeType,
 } from "./types";
 
 import {
@@ -639,7 +640,7 @@ function runMigrations(
  * this document's own roots to `null`; `loadChildrenInto` re-points them at
  * the target it is filling.
  */
-type BuiltDocument<Ts extends readonly unknown[], S> = Readonly<{
+type BuiltDocument<Ts extends readonly ErasedNodeType[], S> = Readonly<{
   /** Pre-order, parents first. Also the order the report is written in. */
   order: readonly NodeId[];
   rootIds: readonly NodeId[];
@@ -659,7 +660,7 @@ type BuiltDocument<Ts extends readonly unknown[], S> = Readonly<{
  * sub-document's `rootIds` name the nodes that BECOME some target's children,
  * and a child may perfectly well be a leaf.
  */
-function buildDocument<Ts extends readonly unknown[], S>(
+function buildDocument<Ts extends readonly ErasedNodeType[], S>(
   raw: unknown,
   ctx: EngineContext<S>,
   options: Readonly<{
@@ -1180,7 +1181,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
  * `sourceKeyOf` returns `null` for them, since the key comes from a node type that
  * by definition did not run.
  */
-function findDuplicateOwner<Ts extends readonly unknown[], S>(
+function findDuplicateOwner<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): StructuralError | null {
@@ -1214,7 +1215,7 @@ function findDuplicateOwner<Ts extends readonly unknown[], S>(
  * `StructuralError`; per-node content failures quarantine by default, keeping
  * id, position, children and byte-exact `raw`.
  */
-export function deserializeDocument<Ts extends readonly unknown[], S>(
+export function deserializeDocument<Ts extends readonly ErasedNodeType[], S>(
   raw: unknown,
   ctx: EngineContext<S>,
 ): Result<
@@ -1273,7 +1274,7 @@ export function deserializeDocument<Ts extends readonly unknown[], S>(
  * estimate compounds it on every save, which is how empty collections came to
  * store a duration that was never a measurement.
  */
-export function serializeGraph<Ts extends readonly unknown[], S>(
+export function serializeGraph<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   ctx: EngineContext<S>,
 ): SerializedDocument {
@@ -1444,7 +1445,7 @@ function loadRejection(error: LoadRejection): Result<never, LoadRejection> {
  * what makes `verifyPatchApplies` cheap and dormant history sound: a node that
  * existed when a patch was recorded still exists when it replays.
  */
-export function loadChildrenInto<Ts extends readonly unknown[], S>(
+export function loadChildrenInto<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
   doc: unknown,
@@ -1613,7 +1614,7 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
  * that `makeQuarantinedNode` adds itself, and the boundary constructors are
  * the only sanctioned way to mint a node.
  */
-function withLoadedChildren<Ts extends readonly unknown[], S>(
+function withLoadedChildren<Ts extends readonly ErasedNodeType[], S>(
   node: GraphNode<Ts, S>,
   id: NodeId,
 ): GraphNode<Ts, S> {
