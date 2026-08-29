@@ -35,6 +35,8 @@
 
 import {
   describeThrown,
+  deepFreezeBounded,
+  structurallyEqualBounded,
   describeValue,
   makeCollectionNode,
   makeLeafNode,
@@ -379,6 +381,86 @@ function ingressError(
  * decision, so a check here would either be a tautology or a second opinion
  * that can disagree with the node actually built.
  */
+/**
+ * The two content dev checks, run together because they share a value and an
+ * order: FREEZE FIRST, then round-trip. Freezing first is what makes the
+ * round-trip safe — the extra `serialize` call it introduces is consumer code,
+ * and a codec that normalises in place would otherwise mutate a value the
+ * engine is about to store, making the graph differ between `devChecks: true`
+ * and `false`. Frozen, that mutation throws into the try/catch and is reported.
+ *
+ * REPORTED, NEVER THROWN, and never converted into an `IngressError`. A node
+ * that quarantines under `devChecks: true` and loads clean under `false` would
+ * make the flag change what the document IS, which is the one thing a
+ * diagnostic must not do.
+ *
+ * RE-ENTRY, and nothing structural prevents it: `reparse` MUST call the
+ * codec's own `parse` directly. Routing the second parse back through
+ * `parseNodeData` reaches this same gate and recurses without bound, once per
+ * node, on every load.
+ */
+function runContentDevChecks(
+  devChecks: boolean,
+  what: string,
+  value: unknown,
+  serializeValue: () => unknown,
+  reparse: (raw: unknown) => Result<unknown, readonly Issue[]>,
+  skipRoundTrip: boolean,
+): void {
+  // FIRST STATEMENT, before any allocation — the same discipline `auditIfDev`
+  // follows in ./engine. Everything below is dev-only cost.
+  if (!devChecks) return;
+
+  deepFreezeBounded(value);
+  if (skipRoundTrip) return;
+
+  let wire: unknown;
+  try {
+    wire = serializeValue();
+  } catch (thrown) {
+    console.error(
+      `keel dev check: ${what} threw while serializing during the round-trip audit. ` +
+        `Nothing is stored differently; the audit is skipped for this value. ` +
+        describeThrown(thrown),
+    );
+    return;
+  }
+
+  let again: Result<unknown, readonly Issue[]>;
+  try {
+    again = reparse(wire);
+  } catch (thrown) {
+    console.error(
+      `keel dev check: ${what} threw while re-parsing its own serialize output. ` +
+        describeThrown(thrown),
+    );
+    return;
+  }
+  if (!again.ok) {
+    console.error(
+      `keel dev check: ${what} produced serialize output its own parse refuses. ` +
+        `That is a lossy or malformed codec — the value stored is the ORIGINAL parse, ` +
+        `so nothing is corrupted, but this document will not survive a save/load cycle.`,
+      again.error,
+    );
+    return;
+  }
+
+  const verdict = structurallyEqualBounded(value, again.value);
+  // "unknown" is silence. A comparator that could not see the whole value has
+  // not found a violation, and reporting one would train the reader to ignore
+  // this message.
+  if (verdict !== false) return;
+  // WORDING MATTERS: a non-idempotent `parse` produces this too, and it is a
+  // different bug from a lossy `serialize`. Say what was observed, print both
+  // halves, and let the reader decide which.
+  console.error(
+    `keel dev check: ${what} did not survive a parse(serialize(d)) round trip. ` +
+      `Either serialize drops something parse keeps, or parse is not idempotent. ` +
+      `before=${describeValue(value)} after=${describeValue(again.value)}`,
+  );
+}
+
 export function parseNodeData<S>(
   ctx: EngineContext<S>,
   args: Readonly<{
@@ -388,6 +470,15 @@ export function parseNodeData<S>(
     /** The version the document declares for this kind. */
     schemaVersion: number;
     raw: unknown;
+    /**
+     * DEV CHECKS ONLY. Set by the edit door, where `raw` is already this
+     * codec's own `serialize` output rather than wire data. The generic
+     * `parse(serialize(d))` comparison is provably vacuous there — it would
+     * re-derive a value from the same bytes it just came from — and costs two
+     * consumer codec calls per edited node on the interactive path. The edit
+     * door runs its own, stronger comparison instead.
+     */
+    rawIsSerializeOutput?: boolean;
   }>,
 ): Result<
   Readonly<{
@@ -447,6 +538,29 @@ export function parseNodeData<S>(
   if (!parsed.ok) {
     return ingressError(args.nodeId, args.kind, "parse-failed", parsed.error);
   }
+
+  // Captured, not re-read inside the closures: TypeScript loses the `parsed.ok`
+  // narrowing across a callback boundary, and the ternary that works around it
+  // reads as though the failure case were reachable here. It is not.
+  const parsedValue: unknown = parsed.value;
+  runContentDevChecks(
+    ctx.devChecks,
+    `the ${JSON.stringify(args.kind)} codec (node ${JSON.stringify(args.nodeId)})`,
+    parsedValue,
+    () => type.serialize(parsedValue),
+    // DIRECTLY, never through `parseNodeData` — see the re-entry note above.
+    // The second parse gets a THROWAWAY warn sink: reusing `warnings` would
+    // double the entries `LoadReport.warnings` receives, so the report itself
+    // would differ between dev-check modes.
+    (raw) =>
+      type.parse(raw, {
+        nodeId: args.nodeId,
+        container: args.container,
+        schemaVersion: type.schemaVersion,
+        warn: () => undefined,
+      }),
+    args.rawIsSerializeOutput === true,
+  );
 
   return {
     ok: true,
@@ -935,6 +1049,14 @@ function buildDocument<Ts extends readonly unknown[], S>(
           };
         } else {
           summary = parsedSummary.value;
+          runContentDevChecks(
+            ctx.devChecks,
+            `the summary codec (node ${JSON.stringify(id)})`,
+            parsedSummary.value,
+            () => ctx.summary.serialize(parsedSummary.value),
+            (raw) => ctx.summary.parse(raw),
+            false,
+          );
         }
       }
     }
