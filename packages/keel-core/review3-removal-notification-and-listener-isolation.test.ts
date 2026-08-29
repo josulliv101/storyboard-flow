@@ -512,3 +512,159 @@ describe("a throwing subscriber cannot break the commit sequence", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 4. The same guarantee, through the MOVE door
+// ---------------------------------------------------------------------------
+//
+// Defect 1 above was `subscribeToNode` staying silent when a node was REMOVED,
+// because the rev tombstone compared equal across the commit. A move had the
+// identical hole from the other direction: `applyMoved` bumped the source chain
+// and the destination chain and never the node in between, so the dragged
+// node's own revision did not move and `commitGraph` skipped its listeners.
+//
+// It survived because folds are GRAPH-BLIND — a moved node's own value really
+// does not change, so no aggregate was ever wrong. What was wrong is anything
+// rendering POSITION: a breadcrumb, an inspector naming the parent, the "3 of 7"
+// a consumer reads out of `placementsByContentKey`. A tree view hides it
+// entirely, because the parent re-renders and React reorders the children for
+// free — which is why this needs a test that watches the NODE, not the list.
+//
+// The rule ./engine states over that loop, and the one these pin:
+// EVERY MUTATION MOVES THE REVISION OF EVERY NODE IT AFFECTS.
+
+const folderAId = parseNodeId("a");
+const folderBId = parseNodeId("b");
+const clipPId = parseNodeId("p");
+const clipQId = parseNodeId("q");
+
+/** root -> [ a(loaded)[p, q], b(loaded)[] ] — two real destinations. */
+function twoFolderStore() {
+  const engine = makeEngine();
+  const loaded = engine.deserialize({
+    formatVersion: 1,
+    schemaVersions: { clip: 1, folder: 1 },
+    rootIds: ["root"],
+    nodes: [
+      { id: "root", kind: "folder", data: { name: "Root" }, children: ["a", "b"] },
+      { id: "a", kind: "folder", data: { name: "A" }, children: ["p", "q"] },
+      { id: "b", kind: "folder", data: { name: "B" }, children: [] },
+      { id: "p", kind: "clip", data: { title: "P", seconds: 4 } },
+      { id: "q", kind: "clip", data: { title: "Q", seconds: 2 } },
+    ],
+  });
+  if (!loaded.ok) throw new Error("fixture failed to deserialize");
+  return { engine, store: engine.createStore(loaded.value.graph) };
+}
+
+describe("a moved node's own subscribers fire", () => {
+  it("bumps the moved node's revision, which is what commitGraph compares", () => {
+    const { store } = twoFolderStore();
+    const before = getSubtreeRev(store.getGraph(), clipPId);
+    const moved = store.dispatch({
+      type: "move-nodes",
+      nodeIds: [clipPId],
+      toParentId: folderAId,
+      toIndex: 1,
+    });
+    expect(moved.ok).toBe(true);
+    expect(getSubtreeRev(store.getGraph(), clipPId)).toBeGreaterThan(before);
+  });
+
+  it("wakes the dragged node on a reorder inside one parent", () => {
+    const { store } = twoFolderStore();
+    let dragged = 0;
+    let parent = 0;
+    store.subscribeToNode(clipPId, () => {
+      dragged += 1;
+    });
+    store.subscribeToNode(folderAId, () => {
+      parent += 1;
+    });
+
+    const moved = store.dispatch({
+      type: "move-nodes",
+      nodeIds: [clipPId],
+      toParentId: folderAId,
+      toIndex: 1,
+    });
+    expect(moved.ok).toBe(true);
+
+    // BOTH. The parent alone is exactly what the defect looked like.
+    expect(dragged).toBe(1);
+    expect(parent).toBeGreaterThan(0);
+  });
+
+  it("wakes the node and BOTH chains on a cross-parent move", () => {
+    const { store } = twoFolderStore();
+    let dragged = 0;
+    let source = 0;
+    let destination = 0;
+    store.subscribeToNode(clipPId, () => {
+      dragged += 1;
+    });
+    store.subscribeToNode(folderAId, () => {
+      source += 1;
+    });
+    store.subscribeToNode(folderBId, () => {
+      destination += 1;
+    });
+
+    const moved = store.dispatch({
+      type: "move-nodes",
+      nodeIds: [clipPId],
+      toParentId: folderBId,
+      toIndex: 0,
+    });
+    expect(moved.ok).toBe(true);
+
+    expect(dragged).toBe(1);
+    expect(source).toBe(1);
+    expect(destination).toBe(1);
+  });
+
+  it("wakes every node of a multi-select move exactly once", () => {
+    const { store } = twoFolderStore();
+    let p = 0;
+    let q = 0;
+    store.subscribeToNode(clipPId, () => {
+      p += 1;
+    });
+    store.subscribeToNode(clipQId, () => {
+      q += 1;
+    });
+
+    const moved = store.dispatch({
+      type: "move-nodes",
+      nodeIds: [clipPId, clipQId],
+      toParentId: folderBId,
+      toIndex: 0,
+    });
+    expect(moved.ok).toBe(true);
+
+    // ONCE each. The destination walk short-circuits at the shared parent, so
+    // neither node's chain is walked or incremented twice.
+    expect(p).toBe(1);
+    expect(q).toBe(1);
+  });
+
+  it("wakes it again when the move is UNDONE", () => {
+    const { store } = twoFolderStore();
+    const moved = store.dispatch({
+      type: "move-nodes",
+      nodeIds: [clipPId],
+      toParentId: folderBId,
+      toIndex: 0,
+    });
+    expect(moved.ok).toBe(true);
+
+    // Subscribed AFTER the move, so this counts the undo alone.
+    let dragged = 0;
+    store.subscribeToNode(clipPId, () => {
+      dragged += 1;
+    });
+    const undone = store.undo();
+    expect(undone.ok).toBe(true);
+    expect(dragged).toBe(1);
+  });
+});

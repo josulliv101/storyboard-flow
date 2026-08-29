@@ -683,11 +683,39 @@ function applyMoved<Ts extends readonly ErasedNodeType[], S>(
     parentById: parents,
     subtreeRevById: revs,
   };
-  bumpSubtreeRevsInto(
-    revs,
-    relocated,
-    moves.map((move) => move.toParentId),
-  );
+  // THE MOVED NODES THEMSELVES, and not only their parents.
+  //
+  // `commitGraph` decides whether to wake a node's subscribers by comparing
+  // `getSubtreeRev` across the commit, so a node whose revision does not move is
+  // a node whose listeners do not fire. Bumping only the two PARENT chains left
+  // the moved node out of both — measured through the public store,
+  // `subscribeToNode` on the dragged node fired ZERO times across a reorder
+  // while its parent's fired once.
+  //
+  // The same hole `applyRemoved` was fixed for. The rule ./engine states over
+  // that loop is "EVERY MUTATION MOVES THE REVISION OF EVERY NODE IT AFFECTS",
+  // and a move affects the node it moves. `patchTouchedNodeIds` has always named
+  // `move.nodeId` for exactly this reason; the revision did not agree.
+  //
+  // WHAT GOES STALE WITHOUT IT is not the node's content — folds are
+  // graph-blind, so a moved node's own value genuinely does not change, and that
+  // is why this survived so long. It is anything rendering its POSITION: a
+  // breadcrumb, an inspector naming the parent, the "3 of 7" a consumer reads
+  // out of `placementsByContentKey`. A tree view hides it, because the parent
+  // re-renders and React reorders the children for free.
+  //
+  // The cost is one extra increment per moved node, and one refold of that node
+  // on the next read — O(its children), not O(its subtree), since the
+  // descendants keep their revisions and therefore their cached values.
+  //
+  // Appended to the DESTINATION walk because that is where the node now lives.
+  // Its chain runs straight into `toParentId`, which this same call has already
+  // bumped, so `bumpSubtreeRevsInto` short-circuits there and nothing is walked
+  // or incremented twice.
+  bumpSubtreeRevsInto(revs, relocated, [
+    ...moves.map((move) => move.toParentId),
+    ...moves.map((move) => move.nodeId),
+  ]);
 
   return {
     ...relocated,

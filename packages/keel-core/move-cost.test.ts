@@ -469,13 +469,24 @@ describe("move commit cost — index sharing", () => {
     expect(next.childrenById.get(nid("c7"))).toBe(before);
   });
 
-  it("bumps only the touched chain, not the graph", () => {
+  it("bumps only the touched chain and the moved node, not the graph", () => {
     const graph = wideGraph(20, 20);
     const next = commit(graph, reorderWithin("c0", "c0-m0", 0, 5));
     // Source chain and destination chain are the same chain here, and each is
-    // walked once per phase — but the SET of entries that moved is the chain,
-    // not the 421-node graph.
-    expect(bumpedIds(graph, next)).toEqual(["c0", "root"]);
+    // walked once per phase — but the SET of entries that moved is the chain
+    // plus the node that moved, not the 421-node graph.
+    //
+    // `c0-m0` — THE MOVED NODE — was absent from this list until the move
+    // notification defect was fixed, and its absence is what the defect WAS:
+    // `commitGraph` wakes a node's subscribers by comparing revisions, so a
+    // dragged node whose revision did not move never told its own listeners.
+    // Measured through the public store, `subscribeToNode` on it fired zero
+    // times across this exact reorder.
+    //
+    // This test's subject is unchanged and still holds — three entries out of
+    // 421 is the touched chain, not the graph. It asserted the defect only
+    // incidentally, by enumerating what happened rather than what was intended.
+    expect(bumpedIds(graph, next)).toEqual(["c0", "c0-m0", "root"]);
     expect(next.subtreeRevById.size).toBe(graph.subtreeRevById.size);
   });
 });
