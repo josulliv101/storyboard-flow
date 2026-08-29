@@ -1934,3 +1934,125 @@ describe("scrubPatchForWrite", () => {
     expect(scrubPatchForWrite<TestTypes, Summary>(patch, written)).toBe(patch);
   });
 });
+
+// ---------------------------------------------------------------------------
+// spliceInMany — the batched insertion path, and the fallback it declines to
+// ---------------------------------------------------------------------------
+//
+// `applyInserted` and `applyMoved` used to call `spliceIn` once per node, and
+// each call copied the whole destination array. Removing K of N siblings had
+// already been made linear by `spliceOutMany`; INSERTING them had not, so undo
+// of a bulk delete paid O(K x N) to restore what the delete removed in
+// O(K + N). Measured, undo of a select-all Delete at 32,000 siblings: 6,759 ms
+// against a 76 ms delete.
+//
+// The batched path builds each parent's array in ONE pass. That is only sound
+// where it reproduces sequential splicing exactly, so it DECLINES — equal
+// indices, descending indices, an index out of range — and the caller replays
+// that parent through `spliceIn`, whose behaviour is the definition.
+//
+// These tests are the equivalence proof. They assert STRUCTURE, never wall
+// clock, so they cannot flake: for every shape below, the array `applyPatch`
+// produces must equal the array a naive one-at-a-time splice produces.
+describe("batched insertion equals sequential splicing", () => {
+  /** The reference: what `spliceIn` would have produced, one call at a time. */
+  function sequentially(
+    start: readonly string[],
+    arrivals: readonly Readonly<{ index: number; id: string }>[],
+  ): readonly string[] {
+    const out = [...start];
+    for (const { index, id } of arrivals) {
+      const at = index < 0 ? 0 : index > out.length ? out.length : index;
+      out.splice(at, 0, id);
+    }
+    return out;
+  }
+
+  /** A parent holding `width` clips, plus loose clips ready to be inserted. */
+  function boardWith(width: number, incoming: readonly string[]) {
+    const existing = Array.from({ length: width }, (_, i) => clip(`e${i}`));
+    return buildGraph([
+      folder("root", [
+        folder("dest", existing),
+        folder("pool", incoming.map((id) => clip(id))),
+      ]),
+    ]);
+  }
+
+  const shapes: readonly Readonly<{
+    label: string;
+    width: number;
+    arrivals: readonly Readonly<{ index: number; id: string }>[];
+  }>[] = [
+    // Every shape the reducer itself produces — `buildSeedPlacements` and
+    // `buildMoves` both emit `toIndex + offset`, so these take the fast path.
+    { label: "contiguous at the front", width: 4, arrivals: [
+      { index: 0, id: "n0" }, { index: 1, id: "n1" }, { index: 2, id: "n2" } ] },
+    { label: "contiguous in the middle", width: 4, arrivals: [
+      { index: 2, id: "n0" }, { index: 3, id: "n1" } ] },
+    { label: "contiguous append", width: 3, arrivals: [
+      { index: 3, id: "n0" }, { index: 4, id: "n1" }, { index: 5, id: "n2" } ] },
+    { label: "into an empty parent", width: 0, arrivals: [
+      { index: 0, id: "n0" }, { index: 1, id: "n1" } ] },
+    { label: "single arrival", width: 3, arrivals: [{ index: 1, id: "n0" }] },
+    // Ascending but with gaps — what undoing a SCATTERED delete inverts to.
+    { label: "ascending with gaps", width: 6, arrivals: [
+      { index: 1, id: "n0" }, { index: 4, id: "n1" }, { index: 7, id: "n2" } ] },
+    // Shapes only a hand-built patch can produce. Each one DECLINES, and the
+    // per-id fallback is what makes the answer right.
+    { label: "declines: equal indices", width: 4, arrivals: [
+      { index: 1, id: "n0" }, { index: 1, id: "n1" }, { index: 1, id: "n2" } ] },
+    { label: "declines: descending indices", width: 4, arrivals: [
+      { index: 3, id: "n0" }, { index: 1, id: "n1" }, { index: 0, id: "n2" } ] },
+    { label: "declines: index past the end", width: 2, arrivals: [
+      { index: 99, id: "n0" } ] },
+    { label: "declines: negative index", width: 2, arrivals: [
+      { index: -5, id: "n0" } ] },
+    { label: "declines: ascending then a step back", width: 5, arrivals: [
+      { index: 0, id: "n0" }, { index: 1, id: "n1" }, { index: 0, id: "n2" } ] },
+  ];
+
+  it.each(shapes)("$label", ({ width, arrivals }) => {
+    const incoming = arrivals.map((a) => a.id);
+    const graph = boardWith(width, incoming);
+    const before = kids(graph, "dest");
+
+    // The arriving nodes are lifted out of `pool` and inserted into `dest` in
+    // patch order, which is the order their indices are expressed in.
+    const patch: Patch<TestTypes, Summary> = {
+      type: "inserted",
+      placements: arrivals.map((a) => placementOf(graph, a.id, "dest", a.index)),
+    };
+    // A hand-built patch reuses ids already in the graph, so start from a graph
+    // where `dest` holds only its own children and the arrivals are elsewhere;
+    // `applyInserted` sets `parentById` and splices, which is what is under test.
+    const next = applyPatch<TestTypes, Summary>(graph, patch, makeCtx());
+
+    expect(kids(next, "dest")).toEqual(sequentially(before, arrivals));
+  });
+
+  it("keeps each parent independent when one batch spans several", () => {
+    const graph = buildGraph([
+      folder("root", [
+        folder("a", [clip("a0"), clip("a1")]),
+        folder("b", [clip("b0")]),
+        folder("pool", [clip("x"), clip("y"), clip("z")]),
+      ]),
+    ]);
+    const patch: Patch<TestTypes, Summary> = {
+      type: "inserted",
+      placements: [
+        placementOf(graph, "x", "a", 0),
+        placementOf(graph, "y", "b", 1),
+        placementOf(graph, "z", "a", 3),
+      ],
+    };
+    const next = applyPatch<TestTypes, Summary>(graph, patch, makeCtx());
+    // `a` takes x at 0 then z at 3 — against ITS OWN growing array, not a
+    // global one — and `b` takes y at 1. Grouping must not reorder either.
+    expect(kids(next, "a")).toEqual(sequentially(["a0", "a1"], [
+      { index: 0, id: "x" }, { index: 3, id: "z" },
+    ]));
+    expect(kids(next, "b")).toEqual(sequentially(["b0"], [{ index: 1, id: "y" }]));
+  });
+});

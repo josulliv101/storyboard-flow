@@ -316,6 +316,122 @@ function spliceOutMany(
   }
 }
 
+/** One id arriving at one position. `index` is in the coordinates of the array
+ *  AS IT STANDS when this entry is applied — the same contract `spliceIn` has,
+ *  and the reason these cannot simply be sorted. */
+type Arrival = Readonly<{ index: number; nodeId: NodeId }>;
+
+/**
+ * Copy-on-write insertion of MANY ids into one parent — ONE pass per parent
+ * instead of one per arriving node.
+ *
+ * THE MIRROR OF `spliceOutMany`, and it should have shipped with it. That one
+ * fixed removal, which was three O(siblings) passes per id; insertion kept
+ * doing exactly the same thing — `slice()` the whole destination array, splice
+ * one id in, store it — once per node. So the removal half went linear and the
+ * insertion half stayed O(K x N), and undo of a bulk delete inverts to an
+ * `inserted` patch and paid in full the cost the delete no longer did.
+ *
+ * MEASURED, with a registry declaring neither key so the derived-index paths
+ * short-circuit and this is purely structural:
+ *
+ *      k        delete      undo of that delete      move k into one parent
+ *   4,000      12.6 ms              44 ms                    60 ms
+ *   8,000      19.3 ms             152 ms                   464 ms
+ *  16,000      88.2 ms           1,050 ms                 2,978 ms
+ *  32,000      76.3 ms           6,759 ms                10,018 ms
+ *
+ * Delete grows 6x for 8x the nodes. Undo of the same delete grows 152x. At
+ * 32,000 a select-all/Delete costs 76 ms and Ctrl-Z on it costs 6.8 SECONDS —
+ * the same nodes, the same parent, 89x apart.
+ *
+ * WHY INSERTION CANNOT JUST BE GROUPED AND SORTED, which is what makes this
+ * longer than its removal twin. Removal by identity is order-independent, so
+ * `spliceOutMany` can take a Set and make one pass. Insertion is not: each
+ * `index` is expressed in the coordinates of the array as it stands at that
+ * moment, so entry N's position depends on entries 0..N-1 having already
+ * landed. Applying them in another order, or all at once against the original
+ * array, gives a different answer.
+ *
+ * The single pass below reproduces the sequential result exactly, by building
+ * the output left to right and emitting an arrival the moment the output length
+ * REACHES its index. That is equivalent to sequential splicing whenever a
+ * parent's indices are strictly ascending and in range — which is every patch
+ * this engine builds: `buildSeedPlacements` and `buildMoves` both emit
+ * `toIndex + offset`, and a removal patch records document order, so inverting
+ * one yields ascending indices too.
+ *
+ * It DECLINES rather than guessing when it cannot reach an index — equal
+ * indices (where sequential splicing puts the LATER arrival first), descending
+ * indices, or an index out of range. None of those are reachable from the
+ * reducer; a hand-built patch can produce all three. The caller then falls back
+ * to the per-id `spliceIn` loop, whose behaviour is the definition rather than
+ * an approximation of it. A wrong children array costs far more than the
+ * microseconds this saves, so the fast path runs only where it is provably
+ * identical.
+ */
+function spliceInMany(
+  children: Map<NodeId, readonly NodeId[]>,
+  byParent: ReadonlyMap<NodeId, readonly Arrival[]>,
+): void {
+  for (const [parentId, arrivals] of byParent) {
+    // `?? EMPTY_IDS` cannot fire for a verified patch — the parent is either a
+    // loaded container in the graph or one this patch seeded earlier. It is
+    // here so a hand-built patch produces a wrong array rather than a crash,
+    // exactly as `spliceIn` does.
+    const current = children.get(parentId) ?? EMPTY_IDS;
+    const next: NodeId[] = [];
+    let read = 0;
+    let placed = 0;
+
+    for (const arrival of arrivals) {
+      // Copy originals until the output is exactly as long as this arrival's
+      // index. If the index is behind us, or past what the originals can
+      // supply, this shape is not reproducible in one pass.
+      while (next.length < arrival.index && read < current.length) {
+        const id = current[read];
+        read += 1;
+        // `noUncheckedIndexedAccess` — a real check, not a `!`. The loop bounds
+        // make this unreachable; TypeScript cannot see that and neither should
+        // a reader.
+        if (id !== undefined) next.push(id);
+      }
+      if (next.length !== arrival.index) break;
+      next.push(arrival.nodeId);
+      placed += 1;
+    }
+
+    if (placed !== arrivals.length) {
+      // DECLINED — nothing written yet, so the fallback starts from the
+      // untouched array and the two paths cannot interleave.
+      for (const arrival of arrivals) {
+        spliceIn(children, parentId, arrival.index, arrival.nodeId);
+      }
+      continue;
+    }
+
+    for (; read < current.length; read += 1) {
+      const id = current[read];
+      if (id !== undefined) next.push(id);
+    }
+    children.set(parentId, next);
+  }
+}
+
+/** Group arrivals by destination parent, PRESERVING patch order within each
+ *  parent — which is the order their indices are expressed in. */
+function groupArrivalsByParent(
+  entries: readonly Readonly<{ parentId: NodeId; index: number; nodeId: NodeId }>[],
+): ReadonlyMap<NodeId, readonly Arrival[]> {
+  const byParent = new Map<NodeId, Arrival[]>();
+  for (const { parentId, index, nodeId } of entries) {
+    const bucket = byParent.get(parentId);
+    if (bucket === undefined) byParent.set(parentId, [{ index, nodeId }]);
+    else bucket.push({ index, nodeId });
+  }
+  return byParent;
+}
+
 /** Group ids by the parent they are leaving, so each parent is rewritten once. */
 function groupByParent(
   entries: readonly Readonly<{ parentId: NodeId; nodeId: NodeId }>[],
@@ -463,8 +579,20 @@ function applyMoved<Ts extends readonly ErasedNodeType[], S>(
       moves.map((move) => ({ parentId: move.fromParentId, nodeId: move.nodeId })),
     ),
   );
+  // One pass per DESTINATION parent, mirroring the removal above. A
+  // multi-select drag INTO one strip was the same O(K x N) the removal side
+  // stopped paying — see `spliceInMany`.
+  spliceInMany(
+    children,
+    groupArrivalsByParent(
+      moves.map((move) => ({
+        parentId: move.toParentId,
+        index: move.toIndex,
+        nodeId: move.nodeId,
+      })),
+    ),
+  );
   for (const move of moves) {
-    spliceIn(children, move.toParentId, move.toIndex, move.nodeId);
     // Only write when the link actually changes. In the shared-map case there
     // is nothing to write, and writing anyway — even the value it already
     // holds — would be mutating a map the PREVIOUS graph still references.
@@ -533,13 +661,19 @@ function applyInserted<Ts extends readonly ErasedNodeType[], S>(
   // FORWARD walk. Document order guarantees a placement's parent was either
   // already in the graph or created by an earlier placement in this same array.
   for (const placement of placements) {
-    const { node, parentId, index } = placement;
+    const { node, parentId } = placement;
     nodes.set(node.id, node);
     parents.set(node.id, parentId);
-    spliceIn(children, parentId, index, node.id);
     // Seeding the entry is what gives this node's own children — which arrive
     // as LATER placements — somewhere to land. An empty loaded collection ends
     // up with `[]`, which is the whole point of the loaded/unloaded split.
+    //
+    // It happens HERE while the splices happen after the loop, and the order is
+    // what makes that safe: every container this patch creates has its entry
+    // before any arrival is placed, so a nested insert still finds its parent's
+    // array waiting. Each parent's array is independent and each parent's
+    // arrivals keep their patch order, so hoisting changes nothing except how
+    // many times the array is copied.
     if (isLoadedContainer(node) && !children.has(node.id)) {
       children.set(node.id, EMPTY_IDS);
     }
@@ -552,6 +686,21 @@ function applyInserted<Ts extends readonly ErasedNodeType[], S>(
     // cached — and the bump below carries it the final step.
     if (!revs.has(node.id)) revs.set(node.id, graph.deadRevById.get(node.id) ?? 0);
   }
+
+  // ONE pass per destination parent, after every container this patch creates
+  // has been seeded above. This is the half `spliceOutMany` left behind: undo
+  // of a bulk delete inverts to exactly this patch shape, and it was paying
+  // O(K x N) to restore what the delete removed in O(K + N).
+  spliceInMany(
+    children,
+    groupArrivalsByParent(
+      placements.map((placement) => ({
+        parentId: placement.parentId,
+        index: placement.index,
+        nodeId: placement.node.id,
+      })),
+    ),
+  );
 
   const grown: Graph<Ts, S> = {
     ...graph,
@@ -820,31 +969,65 @@ function applyDataChanged<Ts extends readonly ErasedNodeType[], S>(
 function createChildrenOverlay<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
 ) {
-  const overlay = new Map<NodeId, readonly NodeId[]>();
+  // OWNED AND MUTABLE, copied once per parent on first write — not
+  // copy-on-write per operation.
+  //
+  // This overlay is scratch: it is created inside a verify function, read only
+  // by that function, and discarded when it returns. Nothing it holds is ever
+  // published, so there is no immutability to preserve here — and paying for
+  // one anyway was the whole cost.
+  //
+  // MEASURED, undo of a select-all delete, verification alone:
+  //     k = 8,000     54.1 ms
+  //     k = 16,000   437.5 ms
+  //     k = 32,000 2,858.5 ms      <- 6.5x per doubling
+  //
+  // Three O(siblings) operations ran per call — `slice`, `splice`, and
+  // `indexOf` on the removal side — so verifying K placements against one
+  // parent cost O(K x N), the identical shape `spliceOutMany` and
+  // `spliceInMany` fix on the applying side. `applyPatch` had already been made
+  // linear and verification had not, which is why undo stayed slow after the
+  // apply-side fix: at k = 32,000 the split was 2,858 ms verifying against
+  // 16.6 ms applying.
+  //
+  // Owning the array removes the per-call allocation entirely and leaves one
+  // `splice`. For the shape that actually hurts — undo of a bulk delete, where
+  // the inverted patch inserts at 0, 1, 2, ... into an emptied array — every
+  // one of those splices is an APPEND, so the pass becomes linear rather than
+  // merely cheaper.
+  const owned = new Map<NodeId, NodeId[]>();
   const read = (id: NodeId): readonly NodeId[] => {
-    const local = overlay.get(id);
+    const local = owned.get(id);
     if (local !== undefined) return local;
     return graph.childrenById.get(id) ?? EMPTY_IDS;
+  };
+  /** The overlay's own copy, made once. The graph's array is never touched. */
+  const mutable = (id: NodeId): NodeId[] => {
+    const local = owned.get(id);
+    if (local !== undefined) return local;
+    const copy = [...(graph.childrenById.get(id) ?? EMPTY_IDS)];
+    owned.set(id, copy);
+    return copy;
   };
   return {
     read,
     hasEntry: (id: NodeId): boolean =>
-      overlay.has(id) || graph.childrenById.has(id),
+      owned.has(id) || graph.childrenById.has(id),
     seedLoaded: (id: NodeId): void => {
-      if (!overlay.has(id)) overlay.set(id, EMPTY_IDS);
+      // A FRESH array, never `EMPTY_IDS`. That constant is frozen and shared by
+      // every reader in this module, so seeding it here and splicing into it
+      // later would throw in strict mode — and would be a process-wide
+      // corruption if it did not.
+      if (!owned.has(id)) owned.set(id, []);
     },
     insert: (parentId: NodeId, index: number, id: NodeId): void => {
-      const next = read(parentId).slice();
-      next.splice(index, 0, id);
-      overlay.set(parentId, next);
+      mutable(parentId).splice(index, 0, id);
     },
     remove: (parentId: NodeId, id: NodeId): void => {
-      const current = read(parentId);
+      const current = mutable(parentId);
       const at = current.indexOf(id);
       if (at === -1) return;
-      const next = current.slice();
-      next.splice(at, 1);
-      overlay.set(parentId, next);
+      current.splice(at, 1);
     },
   };
 }
