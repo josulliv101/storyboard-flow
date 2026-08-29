@@ -810,6 +810,33 @@ export type ReplayRejectionCode =
    * member of the same name so a consumer handling one handles the other.
    */
   | "duplicate-owner"
+  /**
+   * Replaying this move patch would make a node its own ancestor.
+   *
+   * Mirrors `RejectionCode`'s member of the same name, and needs no exotic
+   * hand-built patch to reach: two ORDINARY reducer-produced moves converge
+   * into it. Peer A moves Y into X and peer B moves X into Y, each legal
+   * against its own graph; A's patch arriving at B closes the ring. Neither
+   * node is the other's ancestor in B's pre-state, so the check that catches
+   * this must run against the post-removal overlay, not `parentById`.
+   *
+   * The cost of not having it: the cycle detaches from every root, and
+   * `serializeGraph` deliberately emits unreachable nodes rather than dropping
+   * them, so the document saves cleanly and `deserialize` then refuses it
+   * forever with `unreachable-node`.
+   */
+  | "would-create-cycle"
+  /**
+   * Replaying this insert patch would take the graph past `maxNodes`.
+   *
+   * Reachable because `Store.load` does not touch history: a lazy page can
+   * legitimately spend the headroom a delete just freed while that removal
+   * patch still sleeps on the undo stack, and undoing it then grows the graph
+   * into a document `deserialize` refuses at the same config. Mirrors
+   * `RejectionCode`'s member of the same name, and carries `limit`/`actual`
+   * for the same reason it does.
+   */
+  | "would-exceed-max-nodes"
   /** The store was destroyed. Every mutating call refuses rather than writing
    *  into a graph nothing is listening to — see `Store.destroy`. */
   | "store-destroyed";
@@ -820,6 +847,12 @@ export type ReplayRejection = Readonly<{
   nodeId?: NodeId;
   parentId?: NodeId;
   index?: number;
+  /** The ceiling that was hit, on `"would-exceed-max-nodes"`. Named the same as
+   *  `Rejection`'s pair so a consumer reporting a limit to the user reads it the
+   *  same way whichever door refused. */
+  limit?: number;
+  /** What the graph WOULD have reached. */
+  actual?: number;
 }>;
 
 export type LoadRejectionCode =

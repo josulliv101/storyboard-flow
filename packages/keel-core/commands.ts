@@ -55,7 +55,6 @@ import {
   getNode,
   getParent,
   isSameOrAncestor,
-  ownsSubtree,
   rebuildDerivedIndexes,
   sourceKeyOf,
   subtreeIds,
@@ -1176,8 +1175,22 @@ function planEdits<Ts extends readonly ErasedNodeType[], S>(
       ? { children: node.children, summary: node.summary }
       : null;
 
-    // A `reference` owns nothing, so its key cannot collide with anyone.
-    if (collection === null || ownsSubtree(collection.children)) {
+    // DELEGATED, not re-derived — the same correction `owningSourceKey` above
+    // already carries. This used to read
+    // `collection === null || ownsSubtree(collection.children)`, and
+    // `collection === null` IS the leaf case, so it made a leaf an owner. That
+    // is verbatim the predicate review3 deleted from ./graph, and it left this
+    // door disagreeing with the other four: `walkDerivedIndexes`, invariant
+    // check 8, `findDuplicateOwner` in ./serialize, and `owningSourceKey` 900
+    // lines above. Both edit doors share `planEdits`, so a leaf sharing a key
+    // with an owning container could not be edited through `applyEditNodes`
+    // OR `applyNonUndoableWriteEdits` — uneditable on a graph
+    // `findInvariantViolation` returns null for, which is exactly the
+    // unrepairable state `ownsItsSubtree` was made THE SINGLE ANSWER to end.
+    //
+    // Total on its own terms: false for quarantined, for a leaf, and for a
+    // `reference` — subsuming the `ownsSubtree` branch this replaced.
+    if (ownsItsSubtree<Ts, S>(node)) {
       const nextKey = nodeType.sourceKey?.(nextData) ?? null;
       if (nextKey !== null) {
         const owner = graph.ownerBySourceKey.get(nextKey);

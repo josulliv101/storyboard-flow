@@ -81,7 +81,10 @@ const VERIFY_OK: Result<void, ReplayRejection> = { ok: true, value: undefined };
 function replayError(
   code: ReplayRejectionCode,
   message: string,
-  detail?: Readonly<{ nodeId?: NodeId; parentId?: NodeId; index?: number }>,
+  // Derived from `ReplayRejection` rather than re-spelled: this used to list
+  // the three fields by hand, so adding `limit`/`actual` to the rejection made
+  // the type that CONSTRUCTS it reject them. One shape, one place.
+  detail?: Omit<ReplayRejection, "code" | "message">,
 ): Result<void, ReplayRejection> {
   return { ok: false, error: { code, message, ...detail } };
 }
@@ -1109,6 +1112,32 @@ function createChildrenOverlay<Ts extends readonly ErasedNodeType[], S>(
     insert: (parentId: NodeId, index: number, id: NodeId): void => {
       mutable(parentId).splice(index, 0, id);
     },
+    /**
+     * By KNOWN index — the fourth O(siblings) operation, and the one the block
+     * comment above missed when it listed the three it had removed.
+     *
+     * `verifyRemoved` proves the exact slot two lines before it removes
+     * (`siblings[index] !== node.id`, against this same overlay), so the
+     * `indexOf` in `remove` below was re-deriving an index the caller already
+     * held. Removal placements are built in ascending document order and
+     * `verifyRemoved` walks them BACKWARD, so each target sat at the tail of a
+     * shrinking array and `indexOf` rescanned it front-to-back: K^2/2, the
+     * exact quadratic `spliceOutMany` fixes on the applying side.
+     *
+     * MEASURED, undo of a bulk insert through `store.undo()`:
+     *     k =  4,000     19.8 ms  ->   1.1 ms
+     *     k =  8,000    134.5 ms  ->   1.9 ms
+     *     k = 16,000    319.4 ms  ->   2.4 ms
+     *     k = 32,000  1,580.3 ms  ->   4.3 ms
+     * Redo, which takes the `insert` path that was already linear, was 17.5 ms
+     * at k = 32,000 throughout — the 90x gap between the two directions is what
+     * said the removal side had been missed.
+     *
+     * For the backward document-order walk this splice is a `pop`.
+     */
+    removeAt: (parentId: NodeId, index: number): void => {
+      mutable(parentId).splice(index, 1);
+    },
     remove: (parentId: NodeId, id: NodeId): void => {
       const current = mutable(parentId);
       const at = current.indexOf(id);
@@ -1215,6 +1244,50 @@ function verifyMoved<Ts extends readonly ErasedNodeType[], S>(
     overlay.insert(move.toParentId, move.toIndex, move.nodeId);
   }
 
+  // Phase 3: no node may become its own ancestor.
+  //
+  // The forward door has this as `isSameOrAncestor` (./commands), and the
+  // replay door had no twin for it. `applyPatch` is documented above as
+  // deliberately re-checking nothing, so there was no second line of defence:
+  // an accepted cyclic move detaches the ring from every root, `serializeGraph`
+  // emits unreachable nodes rather than dropping them, and the saved document
+  // then fails `deserialize` with `unreachable-node` for good.
+  //
+  // AGAINST THE POST-STATE, not the graph. The reachable case is a converging
+  // swap — A moves Y into X while B moves X into Y — and there neither node is
+  // the other's ancestor BEFORE the patch. A check against `graph.parentById`
+  // answers "no cycle" and waves it through. So this walks the parent map the
+  // whole patch would produce, which is also why it runs once at the end
+  // rather than per move: the moves are atomic, and an intermediate state that
+  // rings is fine as long as the result does not.
+  const nextParent = new Map<NodeId, NodeId | null>(graph.parentById);
+  for (const move of moves) nextParent.set(move.nodeId, move.toParentId);
+
+  for (const move of moves) {
+    // Bounded by the map rather than trusted to terminate: a pre-state cycle
+    // would already be an invariant violation, but a verify door that can hang
+    // on a malformed graph is worse than one that refuses it.
+    let steps = 0;
+    let cursor: NodeId | null | undefined = move.toParentId;
+    while (cursor !== null && cursor !== undefined) {
+      if (cursor === move.nodeId) {
+        return replayError(
+          "would-create-cycle",
+          `Moving ${move.nodeId} into ${move.toParentId} would make it its own ancestor.`,
+          { nodeId: move.nodeId, parentId: move.toParentId },
+        );
+      }
+      if (++steps > nextParent.size) {
+        return replayError(
+          "would-create-cycle",
+          `The parent chain above ${move.toParentId} does not terminate.`,
+          { nodeId: move.nodeId, parentId: move.toParentId },
+        );
+      }
+      cursor = nextParent.get(cursor);
+    }
+  }
+
   return VERIFY_OK;
 }
 
@@ -1312,6 +1385,31 @@ function verifyInserted<Ts extends readonly ErasedNodeType[], S>(
   placements: readonly Placement<Ts, S>[],
   ctx: EngineContext<S>,
 ): Result<void, ReplayRejection> {
+  // THE CEILING, before the per-placement work — the same position and the
+  // same reason as ./serialize's, which calls it "the EARLIEST honest point".
+  //
+  // This is the third growth door and it was the one without the check. The
+  // reducer refuses at `would-exceed-max-nodes`, ingress folds
+  // `existingNodeCount` into the same comparison, and replay counted nothing.
+  // `Store.load` does not touch history, so a lazy page can legitimately spend
+  // the headroom a delete just freed while that removal patch sleeps on the
+  // undo stack; undoing it then walked a `maxNodes: 12` graph to 14, 16, 18 —
+  // the "no single call is ever the one that is too big" shape ingress already
+  // closed. The result is a graph the audit calls valid, `serializeGraph`
+  // writes happily, and `deserialize` refuses at that config forever.
+  //
+  // Refusing the undo is the safe direction and matches the other three doors.
+  // Bounding `loadChildren` more tightly instead would make the ceiling depend
+  // on how deep the undo stack happens to be, which is worse.
+  const wouldHold = graph.nodesById.size + placements.length;
+  if (wouldHold > ctx.maxNodes) {
+    return replayError(
+      "would-exceed-max-nodes",
+      `Replaying this insert would take the graph to ${wouldHold} nodes, past the ${ctx.maxNodes} ceiling.`,
+      { limit: ctx.maxNodes, actual: wouldHold },
+    );
+  }
+
   const overlay = createChildrenOverlay(graph);
   const willExist = new Set<NodeId>();
 
@@ -1445,7 +1543,10 @@ function verifyRemoved<Ts extends readonly ErasedNodeType[], S>(
       }
     }
 
-    overlay.remove(parentId, node.id);
+    // BY INDEX — `siblings[index] === node.id` was just proved against this
+    // same overlay, so scanning for the id again is pure re-derivation, and a
+    // quadratic one on the shape this arm exists to serve.
+    overlay.removeAt(parentId, index);
     removed.add(node.id);
   }
 
