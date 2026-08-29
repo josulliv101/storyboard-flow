@@ -35,7 +35,7 @@ import {
   type Result,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryCodec,
+  type SummaryType,
 } from "@storyboard/keel-core";
 import { createReactBindings } from "./index";
 
@@ -101,7 +101,7 @@ const types = [clipType, folderType] as const;
 type Types = typeof types;
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryCodec<Summary> = {
+const summary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };

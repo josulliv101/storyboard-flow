@@ -20,18 +20,18 @@ import {
   type NodeId,
   type Patch,
   type SomeNodeType,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
 
 // A single commit used to do FIVE pieces of whole-graph work for a change that
 // touched one children array: a clone of `parentById` (one entry per node), two
 // clones of `subtreeRevById` (one entry per node), a document-order DFS, and a
-// from-scratch rebuild of both derived indexes with a codec call per node — the
-// last of these running even when no registered codec defined either key.
+// from-scratch rebuild of both derived indexes with a node-type call per node — the
+// last of these running even when no registered node type defined either key.
 //
 // These tests pin the scaling properties that removed that work. They assert
-// STRUCTURE — reference identity, and how many times a codec was asked — never
+// STRUCTURE — reference identity, and how many times a node type was asked — never
 // wall clock, so they cannot flake on a slow machine. A comment claiming a map
 // is shared is not a guarantee; `toBe` is.
 
@@ -43,7 +43,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Bumped by the KEYED codecs below, so a test can ask how much of the graph a
+/** Bumped by the KEYED node types below, so a test can ask how much of the graph a
  *  commit actually looked at. Reset by `beforeEach`. */
 let contentKeyCalls = 0;
 let sourceKeyCalls = 0;
@@ -151,7 +151,7 @@ const keylessRegistry: ReadonlyMap<string, SomeNodeType> = new Map<string, SomeN
   ["folder", keylessFolderType],
 ]);
 
-const summaryCodec: SummaryCodec<Summary> = {
+const summaryType: SummaryType<Summary> = {
   parse(raw) {
     if (isRecord(raw)) {
       const label = raw["label"];
@@ -171,7 +171,7 @@ function makeCtx(registry: ReadonlyMap<string, SomeNodeType>): EngineContext<Sum
   return {
     engineId: ENGINE_ID,
     registry,
-    summary: summaryCodec,
+    summary: summaryType,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
     maxNodes: DEFAULT_MAX_NODES,
@@ -300,7 +300,7 @@ function commit(
   // scoped reindex that is wrong shows up here as `parent-index-disagrees` or
   // `derived-index-stale`, not as a silently wrong render three commits later.
   //
-  // It walks the whole graph and calls both codecs per node — twice, checks 8
+  // It walks the whole graph and calls both node types per node — twice, checks 8
   // and 9 — so the counters are snapshotted around it. Without this the
   // "how much did the commit look at" tests would be measuring the ASSERTION,
   // which is the one thing production never runs.
@@ -360,16 +360,16 @@ function bumpedIds(before: TestGraph, after: TestGraph): readonly string[] {
 }
 
 /**
- * Zero the codec counters. Called by `beforeEach`, and AGAIN by hand after a
+ * Zero the node-type counters. Called by `beforeEach`, and AGAIN by hand after a
  * fixture is built — `buildGraph` derives its indexes through the real rebuild,
  * so a 400-clip fixture arrives having already asked `contentKey` 400 times.
  */
-function resetCodecCounters(): void {
+function resetNodeTypeCounters(): void {
   contentKeyCalls = 0;
   sourceKeyCalls = 0;
 }
 
-beforeEach(resetCodecCounters);
+beforeEach(resetNodeTypeCounters);
 
 // ---------------------------------------------------------------------------
 // Structural sharing
@@ -485,7 +485,7 @@ describe("move commit cost — index sharing", () => {
 // ---------------------------------------------------------------------------
 
 describe("derived index cost", () => {
-  it("does no index work at all when no codec defines either key", () => {
+  it("does no index work at all when no node type defines either key", () => {
     const ctx = makeCtx(keylessRegistry);
     const graph = wideGraph(10, 10, { registry: keylessRegistry });
     // The shared empties, so a consumer memoising on these fields sees no churn
@@ -498,7 +498,7 @@ describe("derived index cost", () => {
 
   it("never asks for a sourceKey on a move", () => {
     const graph = wideGraph(20, 20);
-    resetCodecCounters();
+    resetNodeTypeCounters();
     commit(graph, {
       type: "moved",
       moves: [
@@ -532,7 +532,7 @@ describe("derived index cost", () => {
     const widths = [5, 20, 50] as const;
     const counts = widths.map((width) => {
       const graph = wideGraph(20, width);
-      resetCodecCounters();
+      resetNodeTypeCounters();
       commit(graph, reorderWithin("c0", "c0-m0", 0, 3));
       return contentKeyCalls;
     });
@@ -546,11 +546,11 @@ describe("derived index cost", () => {
     // whole sibling list while the cross-parent move already cost one.
     const graph = wideGraph(20, 20);
 
-    resetCodecCounters();
+    resetNodeTypeCounters();
     commit(graph, reorderWithin("c0", "c0-m0", 0, 5));
     const withinCalls = contentKeyCalls;
 
-    resetCodecCounters();
+    resetNodeTypeCounters();
     commit(graph, moveAcross("c0", "c1", "c0-m0", 0, 0));
     const acrossCalls = contentKeyCalls;
 
@@ -562,12 +562,12 @@ describe("derived index cost", () => {
     // collection under the root made the scope root the DOCUMENT root, so the
     // cheap path was skipped and every node in the graph was asked for its key.
     const small = wideGraph(10, 20); // 200 clips + 10 folders
-    resetCodecCounters();
+    resetNodeTypeCounters();
     commit(small, reorderWithin("root", "c0", 0, 5));
     const smallCalls = contentKeyCalls;
 
     const large = wideGraph(20, 20); // 400 clips + 20 folders
-    resetCodecCounters();
+    resetNodeTypeCounters();
     commit(large, reorderWithin("root", "c0", 0, 5));
     const largeCalls = contentKeyCalls;
 
@@ -756,7 +756,7 @@ describe("derived index cost", () => {
 
   it("does not walk the document when a clip changes parents", () => {
     const graph = wideGraph(20, 20); // 400 clips, one asset each
-    resetCodecCounters();
+    resetNodeTypeCounters();
     const next = commit(graph, moveAcross("c0", "c1", "c0-m0", 0, 0));
     // ONE key: the clip that travelled. The old path rebuilt the index from a
     // full document walk and asked all 400. Nothing else in the graph moved
@@ -795,7 +795,7 @@ describe("derived index cost", () => {
         ],
       },
     ]);
-    resetCodecCounters();
+    resetNodeTypeCounters();
     commit(graph, moveAcross("c0", "c1", "nested", 0, 0));
     // `nested` itself is a folder and has no content key, so the two clips
     // inside it are the whole bill. `stay` and `far` are never asked.
@@ -1177,7 +1177,7 @@ describe("insert / remove / edit commit cost", () => {
 
   it("shares both indexes for an edit that does not move a key", () => {
     const graph = wideGraph(10, 10);
-    resetCodecCounters();
+    resetNodeTypeCounters();
     const next = commit(graph, {
       type: "data-changed",
       changes: [

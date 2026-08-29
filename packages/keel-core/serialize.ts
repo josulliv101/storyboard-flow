@@ -5,7 +5,7 @@
 // This module owns the only place untrusted content becomes typed `Data`.
 // Every ingress in the engine funnels through `parseNodeData`: `deserialize`,
 // `loadChildren`, `insert-nodes` seeds, and `applyIngest`. One door means one
-// place migrations run, one place a codec's refusal is interpreted, and one
+// place migrations run, one place a node type's refusal is interpreted, and one
 // place to look when forward-incompatible data shows up in production.
 //
 // TWO VERSION AXES, deliberately separate:
@@ -14,7 +14,7 @@
 //     children encoding.
 //   - `schemaVersions` — the CONSUMER's per-kind content schema. One number
 //     per kind, because one number cannot advance three independent schemas
-//     without forcing every codec to bump when any one of them changes.
+//     without forcing every node type to bump when any one of them changes.
 //
 // QUARANTINE, NOT REJECTION, IS THE DEFAULT. An unregistered kind or a failed
 // parse becomes a `QuarantinedNode` that keeps its id, its position and its
@@ -156,13 +156,13 @@ function malformed(message: string): Result<never, StructuralError> {
 }
 
 /**
- * Shape validator for an untrusted document. STRUCTURE ONLY — no codec runs
+ * Shape validator for an untrusted document. STRUCTURE ONLY — no node type runs
  * here, and no referential integrity is checked (dangling children, duplicate
  * ids, unreachable nodes and the forest condition all belong to
  * `deserializeDocument`, which needs the whole node set to judge them).
  *
  * It CONSTRUCTS a normalized document rather than asserting over the input,
- * for the same reason a codec's `parse` must construct: an assertion is a
+ * for the same reason a node type's `parse` must construct: an assertion is a
  * promise the compiler cannot check, and a document that merely *looks* right
  * to a type predicate would then be indexed as if every field were the
  * declared type.
@@ -295,7 +295,7 @@ function parseSerializedNode(
   // `undefined` (a marker node, a kind whose whole content is its id) would
   // round-trip through our own writer and then fail to load. Requiring the key
   // would make the engine unable to read documents it wrote itself. The
-  // codec's `parse` is the thing that decides whether `undefined` is
+  // node type's `parse` is the thing that decides whether `undefined` is
   // acceptable content for that kind — that is its job, not ours.
   const draft: NodeDraft = {
     id: raw.id,
@@ -350,7 +350,7 @@ function parseSerializedNode(
     draft.missingReason = raw.missingReason;
   }
 
-  // Preserved verbatim; the summary CODEC runs later, per node, and a failure
+  // Preserved verbatim; the summary type runs later, per node, and a failure
   // there is per-node content, not a malformed document.
   if ("summary" in raw) draft.summary = raw.summary;
 
@@ -376,7 +376,7 @@ function ingressError(
  *
  * `args.container` is what the engine is ABOUT to treat this node as, and is
  * simply forwarded into `ParseCtx`. This function does not cross-check it
- * against `type.container` — the caller computes it from the registry (for a
+ * against `nodeType.container` — the caller computes it from the registry (for a
  * registered kind) or from the wire (for an unregistered one) and owns that
  * decision, so a check here would either be a tautology or a second opinion
  * that can disagree with the node actually built.
@@ -385,7 +385,7 @@ function ingressError(
  * The two content dev checks, run together because they share a value and an
  * order: FREEZE FIRST, then round-trip. Freezing first is what makes the
  * round-trip safe — the extra `serialize` call it introduces is consumer code,
- * and a codec that normalises in place would otherwise mutate a value the
+ * and a node type that normalises in place would otherwise mutate a value the
  * engine is about to store, making the graph differ between `devChecks: true`
  * and `false`. Frozen, that mutation throws into the try/catch and is reported.
  *
@@ -395,7 +395,7 @@ function ingressError(
  * diagnostic must not do.
  *
  * RE-ENTRY, and nothing structural prevents it: `reparse` MUST call the
- * codec's own `parse` directly. Routing the second parse back through
+ * node type's own `parse` directly. Routing the second parse back through
  * `parseNodeData` reaches this same gate and recurses without bound, once per
  * node, on every load.
  */
@@ -439,7 +439,7 @@ function runContentDevChecks(
   if (!again.ok) {
     console.error(
       `keel dev check: ${what} produced serialize output its own parse refuses. ` +
-        `That is a lossy or malformed codec — the value stored is the ORIGINAL parse, ` +
+        `Its serialize and its parse disagree — the value stored is the ORIGINAL parse, ` +
         `so nothing is corrupted, but this document will not survive a save/load cycle.`,
       again.error,
     );
@@ -472,10 +472,10 @@ export function parseNodeData<S>(
     raw: unknown;
     /**
      * DEV CHECKS ONLY. Set by the edit door, where `raw` is already this
-     * codec's own `serialize` output rather than wire data. The generic
+     * node type's own `serialize` output rather than wire data. The generic
      * `parse(serialize(d))` comparison is provably vacuous there — it would
      * re-derive a value from the same bytes it just came from — and costs two
-     * consumer codec calls per edited node on the interactive path. The edit
+     * consumer node-type calls per edited node on the interactive path. The edit
      * door runs its own, stronger comparison instead.
      */
     rawIsSerializeOutput?: boolean;
@@ -488,8 +488,8 @@ export function parseNodeData<S>(
   }>,
   IngressError
 > {
-  const type = ctx.registry.get(args.kind);
-  if (type === undefined) {
+  const nodeType = ctx.registry.get(args.kind);
+  if (nodeType === undefined) {
     return ingressError(args.nodeId, args.kind, "unknown-kind", [
       {
         path: "$.kind",
@@ -501,8 +501,8 @@ export function parseNodeData<S>(
   const migration = runMigrations(
     args.raw,
     args.schemaVersion,
-    type.schemaVersion,
-    type.migrations,
+    nodeType.schemaVersion,
+    nodeType.migrations,
   );
   if (!migration.ok) {
     return ingressError(args.nodeId, args.kind, "parse-failed", [
@@ -514,18 +514,18 @@ export function parseNodeData<S>(
   const parseCtx: ParseCtx = {
     nodeId: args.nodeId,
     container: args.container,
-    schemaVersion: type.schemaVersion,
+    schemaVersion: nodeType.schemaVersion,
     warn(issue: Issue): void {
       warnings.push(issue);
     },
   };
 
-  // A codec is consumer code, and an ingress door that throws takes the whole
+  // A node type is consumer code, and an ingress door that throws takes the whole
   // document down — the exact failure quarantine exists to prevent. A thrown
   // parse is reported as the refusal it evidently is.
   let parsed: Result<unknown, readonly Issue[]>;
   try {
-    parsed = type.parse(migration.value.data, parseCtx);
+    parsed = nodeType.parse(migration.value.data, parseCtx);
   } catch (thrown) {
     return ingressError(args.nodeId, args.kind, "parse-failed", [
       {
@@ -545,18 +545,18 @@ export function parseNodeData<S>(
   const parsedValue: unknown = parsed.value;
   runContentDevChecks(
     ctx.devChecks,
-    `the ${JSON.stringify(args.kind)} codec (node ${JSON.stringify(args.nodeId)})`,
+    `the ${JSON.stringify(args.kind)} node type (node ${JSON.stringify(args.nodeId)})`,
     parsedValue,
-    () => type.serialize(parsedValue),
+    () => nodeType.serialize(parsedValue),
     // DIRECTLY, never through `parseNodeData` — see the re-entry note above.
     // The second parse gets a THROWAWAY warn sink: reusing `warnings` would
     // double the entries `LoadReport.warnings` receives, so the report itself
     // would differ between dev-check modes.
     (raw) =>
-      type.parse(raw, {
+      nodeType.parse(raw, {
         nodeId: args.nodeId,
         container: args.container,
-        schemaVersion: type.schemaVersion,
+        schemaVersion: nodeType.schemaVersion,
         warn: () => undefined,
       }),
     args.rawIsSerializeOutput === true,
@@ -589,7 +589,7 @@ function runMigrations(
 ): Result<Readonly<{ data: unknown; migratedFrom: number | null }>, Issue> {
   // `from > to` means the document was written by a NEWER build than this one.
   // No migration can walk backwards, so nothing runs and the value goes
-  // straight to `parse` — a codec that tolerates unknown additive fields reads
+  // straight to `parse` — a node type that tolerates unknown additive fields reads
   // it fine, and one that does not quarantines the node loudly. Refusing here
   // instead would turn every rolling deploy into a document that will not open.
   if (migrations === undefined || from >= to) {
@@ -760,14 +760,14 @@ function buildDocument<Ts extends readonly unknown[], S>(
   /** Leaf kinds that arrived carrying children. Quarantined in Pass F. */
   const shapeMismatchById = new Map<NodeId, Issue>();
   for (const [id, node] of wireById) {
-    const type = ctx.registry.get(node.kind);
+    const nodeType = ctx.registry.get(node.kind);
     const hasChildren = node.children !== undefined;
 
     // For a REGISTERED kind the registry is the sole authority: `container` is
     // kind-level and immutable, never a predicate over data, so a wire that
     // disagrees is wrong rather than informative.
     //
-    // For an UNREGISTERED kind there is no codec to ask, so the wire decides —
+    // For an UNREGISTERED kind there is no node type to ask, so the wire decides —
     // and the rule is "a children array or an explicit childrenState makes it
     // a container", NOT the "default to unloaded" rule below. That asymmetry
     // is what keeps quarantine round-tripping: `serializeGraph` writes an
@@ -776,8 +776,8 @@ function buildDocument<Ts extends readonly unknown[], S>(
     // guessing "unloaded container" would silently grow it a subtree it never
     // had.
     const container =
-      type !== undefined
-        ? type.container
+      nodeType !== undefined
+        ? nodeType.container
         : hasChildren || node.childrenState !== undefined;
 
     if (!container) {
@@ -970,7 +970,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
     if (wire === undefined) continue; // `order` came from `wireById`; unreachable.
     const container = containerById.get(id) === true;
     const state = stateById.get(id) ?? { status: "unloaded" };
-    const type = ctx.registry.get(wire.kind);
+    const nodeType = ctx.registry.get(wire.kind);
 
     // A SHAPE MISMATCH SHORT-CIRCUITS THE CONTENT PASSES. There is no point
     // migrating or parsing data for a node already known not to fit its own
@@ -1000,7 +1000,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
       (Object.hasOwn(doc.schemaVersions, wire.kind)
         ? doc.schemaVersions[wire.kind]
         : undefined) ??
-      type?.schemaVersion ??
+      nodeType?.schemaVersion ??
       0;
 
     let failure: IngressError | null =
@@ -1028,7 +1028,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
 
     if (parsedData === null) {
       // A shape mismatch, already recorded above. Its DATA is never parsed:
-      // running the codec on a node known not to fit its own kind reports a
+      // running the node type on a node known not to fit its own kind reports a
       // second, derived failure that tells the reader nothing about the real
       // one. `raw` is carried through byte-exact, as with every quarantine.
     } else if (!parsedData.ok) {
@@ -1038,24 +1038,24 @@ function buildDocument<Ts extends readonly unknown[], S>(
       for (const issue of parsedData.value.warnings) {
         warnings.push({ nodeId: id, issue });
       }
-      if (parsedData.value.migratedFrom !== null && type !== undefined) {
+      if (parsedData.value.migratedFrom !== null && nodeType !== undefined) {
         migrated.push({
           nodeId: id,
           kind: wire.kind,
           from: parsedData.value.migratedFrom,
-          to: type.schemaVersion,
+          to: nodeType.schemaVersion,
         });
       }
 
       // A summary belongs to a collection; a leaf has nothing to summarize.
       // `null` and absent are BOTH read as "no summary" without calling the
-      // codec: our own writer omits the key for a null summary, but a
+      // node type: our own writer omits the key for a null summary, but a
       // hand-written or reformatted document spells it out, and handing `null`
-      // to a codec that expects `S` would quarantine a node for the crime of
+      // to a node type that expects `S` would quarantine a node for the crime of
       // having no rollup yet.
       if (container && wire.summary !== undefined && wire.summary !== null) {
-        // WRAPPED, exactly as `parseNodeData` wraps a node codec's `parse`. The
-    // summary codec is consumer-supplied and runs on untrusted bytes, so a
+        // WRAPPED, exactly as `parseNodeData` wraps a node type's `parse`. The
+    // summary type is consumer-supplied and runs on untrusted bytes, so a
     // throw here is the same class of event as a throw there — and it used to
     // take the whole `deserialize` down instead of quarantining one node,
     // which is the failure quarantine exists to prevent.
@@ -1090,7 +1090,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
           summary = parsedSummary.value;
           runContentDevChecks(
             ctx.devChecks,
-            `the summary codec (node ${JSON.stringify(id)})`,
+            `the summary type (node ${JSON.stringify(id)})`,
             parsedSummary.value,
             () => ctx.summary.serialize(parsedSummary.value),
             (raw) => ctx.summary.parse(raw),
@@ -1177,7 +1177,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
  *
  * Leaves are exempt: `childrenStateOf` returns `null` for them, and a node
  * with no subtree cannot own one. Quarantined nodes are exempt too —
- * `sourceKeyOf` returns `null` for them, since the key comes from a codec that
+ * `sourceKeyOf` returns `null` for them, since the key comes from a node type that
  * by definition did not run.
  */
 function findDuplicateOwner<Ts extends readonly unknown[], S>(
@@ -1284,8 +1284,8 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
     string,
     number
   >;
-  for (const [kind, type] of ctx.registry) {
-    schemaVersions[kind] = type.schemaVersion;
+  for (const [kind, nodeType] of ctx.registry) {
+    schemaVersions[kind] = nodeType.schemaVersion;
   }
 
   const nodes: SerializedNode[] = [];
@@ -1307,28 +1307,28 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
   };
 
   const serializeData = (kind: string, data: unknown): unknown => {
-    const type = ctx.registry.get(kind);
-    // Unreachable: a non-quarantined node was built by a codec found in this
+    const nodeType = ctx.registry.get(kind);
+    // Unreachable: a non-quarantined node was built by a node type found in this
     // very registry. Falling back to the live value rather than throwing keeps
     // this function total — an unserializable node should cost one node's
     // fidelity, never the whole save.
-    if (type === undefined) return data;
+    if (nodeType === undefined) return data;
     // The SAME fallback, for the reachable version of the same problem. The
-    // branch above handles a codec that is missing; this one handles a codec
+    // branch above handles a node type that is missing; this one handles a node type
     // that is present and throws, which is consumer code and therefore not
     // hypothetical. Leaving it bare contradicted this function's own policy one
     // line up and, worse, the module's promise that `serializeGraph` is TOTAL
     // "because a save path that throws loses the user's document".
     //
-    // The live value is the best remaining representation: it is what the codec
+    // The live value is the best remaining representation: it is what the node type
     // was asked to encode, it is usually near-identical to the wire form, and
     // on reload it either parses or quarantines loudly. Both outcomes beat
     // losing the whole save.
     try {
-      return type.serialize(data);
+      return nodeType.serialize(data);
     } catch (thrown) {
       console.error(
-        `keel: the ${JSON.stringify(kind)} codec threw while serializing a node for save. ` +
+        `keel: ${JSON.stringify(kind)}.serialize threw while writing a node for save. ` +
           `That node is being written in its live form instead, which may not round-trip. ` +
           `The rest of the document is unaffected.`,
         thrown,
@@ -1374,11 +1374,11 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
     };
     if (node.container) {
       // `null` is written as an absent key, and read back as `null`. Emitting
-      // an explicit null would round-trip too, but only if the summary codec
+      // an explicit null would round-trip too, but only if the summary type
       // tolerated being handed one.
       if (node.summary !== null) {
         // Guarded like `serializeData`, and for the same reason: the summary
-        // codec is consumer code on the same footing as a node codec, and its
+        // type is consumer code on the same footing as a node type, and its
         // `parse` half is already wrapped at ingress. A summary is a DERIVED
         // rollup, so dropping it costs strictly less than dropping a node —
         // the next reader sees an unloaded container with no stored estimate,
@@ -1387,7 +1387,7 @@ export function serializeGraph<Ts extends readonly unknown[], S>(
           draft.summary = ctx.summary.serialize(node.summary);
         } catch (thrown) {
           console.error(
-            `keel: the summary codec threw while serializing node ${JSON.stringify(id)} for save. ` +
+            `keel: the summary type's serialize threw while writing node ${JSON.stringify(id)} for save. ` +
               `Its stored summary is being omitted; the rest of the document is unaffected.`,
             thrown,
           );
@@ -1469,7 +1469,7 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
 
   // `childrenStateOf` returns null for a leaf, an unknown node, or a
   // QUARANTINED leaf — which is exactly the set that cannot be loaded into. A
-  // quarantined CONTAINER can be: its kind failed a codec, but its subtree is
+  // quarantined CONTAINER can be: its kind failed to parse, but its subtree is
   // still real, still addressable, and refusing to load it would strand every
   // node underneath it.
   const state = childrenStateOf(graph, id);

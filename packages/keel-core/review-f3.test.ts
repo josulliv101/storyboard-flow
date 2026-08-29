@@ -35,7 +35,7 @@ import {
   type ParseCtx,
   type Result,
   type SerializedNode,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 import { buildRegistry } from "./graph";
 
@@ -94,7 +94,7 @@ type Types = typeof TYPES;
 
 type Summary = Readonly<{ count: number }>;
 
-const summaryCodec: SummaryCodec<Summary> = {
+const summaryType: SummaryType<Summary> = {
   parse(raw: unknown): Result<Summary, readonly Issue[]> {
     if (!isRecord(raw) || typeof raw.count !== "number") {
       return { ok: false, error: [{ path: "$.count", message: "count" }] };
@@ -114,7 +114,7 @@ function makeCtx(
   return {
     engineId: ENGINE_ID,
     registry: buildRegistry(TYPES),
-    summary: summaryCodec,
+    summary: summaryType,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
     maxNodes: DEFAULT_MAX_NODES,
@@ -261,7 +261,7 @@ describe("the size bound runs before the document is normalised", () => {
 
     const engine = createEngine({
       types: TYPES,
-      summary: summaryCodec,
+      summary: summaryType,
       folds: {},
       maxNodes: CEILING,
     });
@@ -282,7 +282,7 @@ describe("the size bound runs before the document is normalised", () => {
     // `unknown` precisely because it came from IO.
     const engine = createEngine({
       types: TYPES,
-      summary: summaryCodec,
+      summary: summaryType,
       folds: {},
       maxNodes: CEILING,
     });

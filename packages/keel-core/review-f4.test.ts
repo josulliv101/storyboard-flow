@@ -1,9 +1,9 @@
-// F4 regression: a THROWING summary codec must quarantine, not kill the document.
+// F4 regression: a THROWING summary type must quarantine, not kill the document.
 //
-// `parseNodeData` wraps `type.parse` in try/catch precisely because "a codec is
+// `parseNodeData` wraps `nodeType.parse` in try/catch precisely because "a node type is
 // consumer code, and an ingress door that throws takes the whole document
 // down". `ctx.summary.parse` (serialize.ts, buildDocument, pass F) is the other
-// consumer-supplied codec on the same ingress path, and must get the same
+// consumer-supplied node type on the same ingress path, and must get the same
 // protection. The two CONTROL cases below pass on unfixed code; the three
 // throwing-summary cases fail on unfixed code.
 import { describe, expect, it } from "vitest";
@@ -18,7 +18,7 @@ import {
   type EngineContext,
   type Issue,
   type Result,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 
 type Clip = Readonly<{ title: string }>;
@@ -73,7 +73,7 @@ type Types = typeof types;
 type Summary = Readonly<{ seconds: number }>;
 
 /** The whole point: consumer code on the ingress path that throws. */
-const throwingSummary: SummaryCodec<Summary> = {
+const throwingSummary: SummaryType<Summary> = {
   parse(): Result<Summary, readonly Issue[]> {
     throw new Error("summary parse exploded");
   },
@@ -82,8 +82,8 @@ const throwingSummary: SummaryCodec<Summary> = {
   },
 };
 
-/** Control: the well-behaved codec, same shape, REFUSES instead of throwing. */
-const wellBehavedSummary: SummaryCodec<Summary> = {
+/** Control: the well-behaved node type, same shape, REFUSES instead of throwing. */
+const wellBehavedSummary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -124,7 +124,7 @@ function docWithSummary(summary: unknown): unknown {
   };
 }
 
-function ctxWith(summary: SummaryCodec<Summary>): EngineContext<Summary> {
+function ctxWith(summary: SummaryType<Summary>): EngineContext<Summary> {
   return {
     engineId: Symbol("f4-probe"),
     registry: buildRegistry(types),
@@ -139,8 +139,8 @@ function ctxWith(summary: SummaryCodec<Summary>): EngineContext<Summary> {
   };
 }
 
-describe("a throwing summary codec quarantines rather than crashing", () => {
-  it("CONTROL: a summary codec that RETURNS a failure quarantines the node", () => {
+describe("a throwing summary type quarantines rather than crashing", () => {
+  it("CONTROL: a summary type that RETURNS a failure quarantines the node", () => {
     const ctx = ctxWith(wellBehavedSummary);
     const out = deserializeDocument<Types, Summary>(
       docWithSummary({ seconds: "thirty" }),
@@ -152,7 +152,7 @@ describe("a throwing summary codec quarantines rather than crashing", () => {
     expect(out.value.report.quarantined[0]?.reason).toBe("parse-failed");
   });
 
-  it("CONTROL: a NODE codec that throws is caught and quarantined", () => {
+  it("CONTROL: a NODE node type that throws is caught and quarantined", () => {
     const boomType = defineNodeType<Readonly<{ ok: true }>, never>()({
       kind: "boom",
       container: false,
@@ -222,8 +222,8 @@ describe("a throwing summary codec quarantines rather than crashing", () => {
   });
 
   it("PUBLIC API: store.load returns a Result instead of throwing", () => {
-    // Parent loads with a codec that tolerates the parent summary, then a child
-    // payload whose summary trips the same codec into throwing.
+    // Parent loads with a node type that tolerates the parent summary, then a child
+    // payload whose summary trips the same node type into throwing.
     const engine = createEngine({
       types,
       summary: {
@@ -236,7 +236,7 @@ describe("a throwing summary codec quarantines rather than crashing", () => {
         serialize(value: Summary): unknown {
           return { seconds: value.seconds };
         },
-      } satisfies SummaryCodec<Summary>,
+      } satisfies SummaryType<Summary>,
       folds: {},
     });
     const loaded = engine.deserialize(docWithSummary({ seconds: 30 }));

@@ -21,7 +21,7 @@ import {
   type Result,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ const sparseType = defineNodeType<Readonly<{ v: number }>, never>()({
   },
 });
 
-/** A codec whose migration throws, and whose parse throws. Both are consumer
+/** A node type whose migration throws, and whose parse throws. Both are consumer
  *  code, and an ingress door that propagates either takes the document down. */
 const hostileType = defineNodeType<Readonly<{ ok: true }>, never>()({
   kind: "hostile",
@@ -199,7 +199,7 @@ type Types = typeof TYPES;
 
 type Summary = Readonly<{ count: number }>;
 
-const summaryCodec: SummaryCodec<Summary> = {
+const summaryType: SummaryType<Summary> = {
   parse(raw: unknown): Result<Summary, readonly Issue[]> {
     if (!isRecord(raw) || typeof raw.count !== "number") {
       return { ok: false, error: issue("$.count", "summary.count must be a number") };
@@ -219,7 +219,7 @@ function makeCtx(
   return {
     engineId: ENGINE_ID,
     registry: buildRegistry(TYPES),
-    summary: summaryCodec,
+    summary: summaryType,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
     maxNodes: DEFAULT_MAX_NODES,
@@ -408,7 +408,7 @@ describe("parseNodeData", () => {
     expect(error.kind).toBe("ghost");
   });
 
-  it("relays the codec's own issues on a parse failure", () => {
+  it("relays the node type's own issues on a parse failure", () => {
     const error = expectErr(
       parseNodeData(makeCtx(), {
         nodeId: id("n"),
@@ -439,7 +439,7 @@ describe("parseNodeData", () => {
     ]);
   });
 
-  it("does not throw when a codec's parse throws", () => {
+  it("does not throw when a node type's parse throws", () => {
     // An ingress door that propagates a consumer exception takes the whole
     // document down, which is exactly what quarantine exists to prevent.
     const error = expectErr(
@@ -658,7 +658,7 @@ describe("deserializeDocument", () => {
     expect(graph.childrenById.has(id("root"))).toBe(false);
   });
 
-  it("carries summary through the codec, and absent summary as null", () => {
+  it("carries summary through the node type, and absent summary as null", () => {
     const graph = loadSimple();
     const sub = nodeIn(graph, "sub");
     const root = nodeIn(graph, "root");
@@ -668,9 +668,9 @@ describe("deserializeDocument", () => {
     expect(root.summary).toBeNull();
   });
 
-  it("reads an explicit null summary as no summary, not as codec input", () => {
+  it("reads an explicit null summary as no summary, not as node type input", () => {
     // Our own writer omits the key, but a reformatted document spells it out,
-    // and handing `null` to a codec expecting S would quarantine a node for the
+    // and handing `null` to a node type expecting S would quarantine a node for the
     // crime of having no rollup yet.
     const graph = expectOk(
       deserializeDocument<Types, Summary>(
@@ -781,7 +781,7 @@ describe("deserializeDocument", () => {
     expect(note.data).toEqual({ text: "kept", color: "blue" });
   });
 
-  it("collects codec warnings against their node", () => {
+  it("collects node type warnings against their node", () => {
     const report = expectOk(
       deserializeDocument<Types, Summary>(
         {
@@ -1185,7 +1185,7 @@ describe("quarantine", () => {
     expect(node.children).toBeNull();
   });
 
-  it("quarantines a node whose SUMMARY fails its codec, keeping it raw", () => {
+  it("quarantines a node whose SUMMARY fails its node type, keeping it raw", () => {
     // A failed summary is per-node content, not a malformed document. The node
     // stays movable and deletable and its raw summary survives.
     const loaded = expectOk(
@@ -1271,7 +1271,7 @@ describe("quarantine", () => {
   });
 
   it("does not let a quarantined node claim ownership of a sourceKey", () => {
-    // `sourceKey` comes from a codec that by definition did not run, so a
+    // `sourceKey` comes from a node type that by definition did not run, so a
     // quarantined node cannot be an owner and cannot conflict with one.
     const ctx = makeCtx();
     const graph = expectOk(
@@ -1371,7 +1371,7 @@ describe("serializeGraph", () => {
   });
 
   it("round-trips a quarantined UNLOADED container as a container", () => {
-    // The trap: an unregistered kind has no codec to declare container-ness, so
+    // The trap: an unregistered kind has no node type to declare container-ness, so
     // the wire decides. Without an explicit `childrenState: "unloaded"` this
     // node would reload as a quarantined LEAF and its subtree would become
     // unreachable forever.
@@ -1594,7 +1594,7 @@ describe("loadChildrenInto", () => {
   });
 
   it("can fill a quarantined container", () => {
-    // Its kind failed a codec, but its subtree is real and refusing to load it
+    // Its kind failed a node type, but its subtree is real and refusing to load it
     // would strand every node underneath it.
     const ctx = makeCtx();
     const graph = expectOk(

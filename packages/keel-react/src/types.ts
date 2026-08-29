@@ -67,7 +67,7 @@ export type NodeView<
 
 /**
  * The fallback for forward-incompatible data. `QuarantinedNode` is not generic
- * (there is no codec, so there is no `Data`), so neither is this.
+ * (there is no node type, so there is no `Data`), so neither is this.
  *
  * Registering one is optional; without it a quarantined node renders nothing.
  * That is a deliberate default rather than a placeholder box: the engine

@@ -37,7 +37,7 @@ import {
   type NodeId,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryCodec,
+  type SummaryType,
 } from "@storyboard/keel-core";
 
 import { createReactBindings } from "./index";
@@ -48,8 +48,8 @@ import { createReactBindings } from "./index";
 //
 // Six steps, and they are the whole integration:
 //   1. a `Data` and an `Edit` type per kind
-//   2. `defineNodeType<Data, Edit>()({ ... })` — the codec for that kind
-//   3. a summary codec — the stored rollup a not-yet-loaded collection carries
+//   2. `defineNodeType<Data, Edit>()({ ... })` — the node type for that kind
+//   3. a summary type — the stored rollup a not-yet-loaded collection carries
 //   4. folds — the questions you want answered about a subtree
 //   5. `createEngine({ types, summary, folds })` — PURE, callable from a route
 //      handler; it must not be created inside a `"use client"` module
@@ -98,7 +98,7 @@ function issue(path: string, message: string): readonly Issue[] {
  * `defineNodeType` is CURRIED — `defineNodeType<Shot, ShotEdit>()({ ... })`.
  *
  * That is not decoration. `Edit` has exactly one inference site (`applyEdit`'s
- * second parameter), so an uncurried factory lets a codec whose `applyEdit`
+ * second parameter), so an uncurried factory lets a node type whose `applyEdit`
  * ignores its edit argument silently infer `Edit = unknown`, at which point
  * every dispatched edit for that kind typechecks and the per-kind edit typing
  * is dead. Making `Data` and `Edit` explicit closes that; `K` still infers as
@@ -250,13 +250,13 @@ const sequenceType = defineNodeType<Sequence, SequenceEdit>()({
 type Types = readonly [typeof shotType, typeof noteType, typeof sequenceType];
 
 // ---------------------------------------------------------------------------
-// 3. The summary codec — what a collection remembers about children it has not
+// 3. The summary type — what a collection remembers about children it has not
 //    loaded yet
 // ---------------------------------------------------------------------------
 
 type Summary = Readonly<{ seconds: number; shots: number }>;
 
-const summaryCodec: SummaryCodec<Summary> = {
+const summaryType: SummaryType<Summary> = {
   parse(raw) {
     const record = asRecord(raw);
     if (record === null) {
@@ -379,7 +379,7 @@ function mintId(): string {
 
 const engine = createEngine({
   types: [shotType, noteType, sequenceType] as const,
-  summary: summaryCodec,
+  summary: summaryType,
   folds: { seconds: secondsFold, shots: shotsFold },
   mintId,
   // Deterministic `HistoryEntry.at`, same reasoning as `mintId`.
@@ -1052,7 +1052,7 @@ function certaintyClass(value: Folded<number> | undefined): string {
 
 /**
  * PER KIND, because one number cannot advance three independent schemas.
- * `sticker` is declared even though this build has no codec for it: a document
+ * `sticker` is declared even though this build has no node type for it: a document
  * is allowed to carry kinds you do not understand, and saying so is what lets
  * quarantine round-trip.
  */
@@ -1209,7 +1209,7 @@ const LAZY_PAYLOADS: ReadonlyMap<NodeId, SerializedDocument> = new Map([
 /**
  * Two ways to be un-parseable, side by side.
  *
- *  - `sticker-slate` is an UNKNOWN KIND — no codec is registered for it.
+ *  - `sticker-slate` is an UNKNOWN KIND — no node type is registered for it.
  *  - `shot-broken` is a KNOWN kind whose data fails its own `parse` (empty
  *    slug, non-numeric seconds).
  *
@@ -1384,14 +1384,14 @@ function ReelToolbar() {
  * 4. Editing content.
  *
  * `edit-nodes` is the ONE door into a node's data that the user drives. The
- * codec's `applyEdit` decides, and its refusal comes back as a value — the
+ * node type's `applyEdit` decides, and its refusal comes back as a value — the
  * button below asks for a zero-second shot and prints the rejection instead of
  * throwing it.
  */
 export const EditingContent: Story = {
   render: () => (
     <Stage doc={heterogeneousDoc}>
-      <Lesson title="Edits go through the codec">
+      <Lesson title="Edits go through the node type">
         The engine never interprets a node data field. It hands the edit to that
         kind&apos;s applyEdit and stores whatever comes back — including
         &quot;no&quot;.
@@ -1408,7 +1408,7 @@ export const EditingContent: Story = {
       "Bridge, wide (v2)",
     );
 
-    // A refusal is a Result, not an exception, and it names the codec's code.
+    // A refusal is a Result, not an exception, and it names the node type's code.
     await userEvent.click(canvas.getByTestId("bad-edit"));
     await expect(canvas.getByTestId("edit-result")).toHaveTextContent(
       "edit-rejected",
@@ -1693,7 +1693,7 @@ export const Quarantine: Story = {
   render: () => (
     <Stage doc={quarantineDoc}>
       <Lesson title="Survive the data you do not understand">
-        Two failures here: a kind with no codec, and a known kind whose data is
+        Two failures here: a kind with no node type, and a known kind whose data is
         invalid. Neither kills the document. Rejecting instead is what once made
         a document unwritable forever — and since the trash bin is rewritten on
         every delete, that made deleting anything impossible.

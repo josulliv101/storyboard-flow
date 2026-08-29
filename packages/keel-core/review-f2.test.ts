@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   type Issue,
   type Result,
-  type SummaryCodec,
+  type SummaryType,
   defineNodeType,
   parseNodeId,
 } from "./types";
@@ -90,7 +90,7 @@ type Types = typeof types;
 
 type Summary = Readonly<{ seconds: number }>;
 
-const summary: SummaryCodec<Summary> = {
+const summary: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };

@@ -19,7 +19,7 @@
 //   - every module-local helper, which is the rest of the six modules.
 
 // ---------------------------------------------------------------------------
-// Types, the id door, the codec factory, and the boundary constructors
+// Types, the id door, the node type factory, and the boundary constructors
 // ---------------------------------------------------------------------------
 
 export {
@@ -88,7 +88,7 @@ export {
   type Store,
   type StructuralError,
   type StructuralErrorCode,
-  type SummaryCodec,
+  type SummaryType,
   type ValueOf,
   type Violation,
   type ViolationCode,

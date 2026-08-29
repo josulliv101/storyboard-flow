@@ -242,7 +242,7 @@ function pruneDescendants<Ts extends readonly unknown[], S>(
  * The `sourceKey` this node OWNS, or null.
  *
  * A `reference` placement owns nothing — that is the entire point of the state
- * — so it is exempt from the single-owner rule. A quarantined node has no codec
+ * — so it is exempt from the single-owner rule. A quarantined node has no node type
  * and therefore no key at all.
  */
 function owningSourceKey<Ts extends readonly unknown[], S>(
@@ -754,8 +754,8 @@ function buildSeedPlacements<Ts extends readonly unknown[], S>(
       });
     }
 
-    const type = ctx.registry.get(seed.kind);
-    if (type === undefined) {
+    const nodeType = ctx.registry.get(seed.kind);
+    if (nodeType === undefined) {
       // On the WIRE an unknown kind quarantines, because forward-incompatible
       // stored data has to stay movable and deletable. On the COMMAND path it
       // is refused: the consumer is right here holding a value it just built,
@@ -768,7 +768,7 @@ function buildSeedPlacements<Ts extends readonly unknown[], S>(
     }
 
     const seedChildren = seed.children;
-    if (!type.container && seedChildren !== undefined) {
+    if (!nodeType.container && seedChildren !== undefined) {
       return fail(
         "leaf-seed-with-children",
         `Kind ${JSON.stringify(seed.kind)} is a leaf and cannot be seeded with children.`,
@@ -780,15 +780,15 @@ function buildSeedPlacements<Ts extends readonly unknown[], S>(
     taken.add(nodeId);
 
     // The seed's `data` is already typed as the kind's `Data`, and it STILL goes
-    // through the codec: a normalizing parse must normalize inserts too, and a
+    // through the node type: a normalizing parse must normalize inserts too, and a
     // consumer handing in a value that violates its own invariants deserves to
     // be caught at the same door as wire data. `schemaVersion` is the registry's
     // own, so no migration runs on a value authored against the running code.
     const parsed = parseNodeData<S>(ctx, {
       nodeId,
       kind: seed.kind,
-      container: type.container,
-      schemaVersion: type.schemaVersion,
+      container: nodeType.container,
+      schemaVersion: nodeType.schemaVersion,
       raw: seed.data,
     });
     if (!parsed.ok) {
@@ -799,7 +799,7 @@ function buildSeedPlacements<Ts extends readonly unknown[], S>(
       );
     }
 
-    const node: AnyNode<Ts, S> = type.container
+    const node: AnyNode<Ts, S> = nodeType.container
       ? makeCollectionNode<Ts, S>(
           nodeId,
           seed.kind,
@@ -952,7 +952,7 @@ type EditPlan<S> = Readonly<{
 }>;
 
 /**
- * The shared validation and codec dispatch behind BOTH `edit-nodes` and
+ * The shared validation and dispatch behind BOTH `edit-nodes` and
  * `applyIngest`. Same path, same rejections — the two doors differ only in what
  * they leave behind, never in what they accept.
  */
@@ -998,7 +998,7 @@ function planEdits<Ts extends readonly unknown[], S>(
     }
     if (node.quarantined) {
       // Quarantined nodes move, delete and undo. They do not edit: there is no
-      // codec, and writing through `raw` would forfeit byte-exact re-emit.
+      // node type, and writing through `raw` would forfeit byte-exact re-emit.
       return fail(
         "node-quarantined",
         `Node ${JSON.stringify(edit.nodeId)} is quarantined (${node.reason}) and cannot be edited.`,
@@ -1012,8 +1012,8 @@ function planEdits<Ts extends readonly unknown[], S>(
         { nodeIds: [edit.nodeId], kind: edit.kind },
       );
     }
-    const type = ctx.registry.get(node.kind);
-    if (type === undefined) {
+    const nodeType = ctx.registry.get(node.kind);
+    if (nodeType === undefined) {
       // Defensive: a node of an unregistered kind should already be
       // quarantined, so reaching here means the graph and the registry came
       // from different engines.
@@ -1025,30 +1025,30 @@ function planEdits<Ts extends readonly unknown[], S>(
     }
 
     // WRAPPED for the same reason ./serialize wraps `parse`: `applyEdit` is
-    // consumer code, and a codec that throws must produce the refusal this
+    // consumer code, and a node type that throws must produce the refusal this
     // function is contracted to return rather than an exception out of
     // `dispatch`. A throw and a returned `{ ok: false }` mean the same thing to
-    // the user — the codec would not accept this edit — so they get the same
+    // the user — the node type would not accept this edit — so they get the same
     // code, with the thrown message carried through.
     let applied: Result<unknown, EditRejection>;
     try {
-      applied = type.applyEdit(node.data, edit.edit);
+      applied = nodeType.applyEdit(node.data, edit.edit);
     } catch (thrown) {
       return fail(
         "edit-rejected",
-        `The ${JSON.stringify(node.kind)} codec threw while applying the edit: ${describeThrown(thrown)}`,
+        `${JSON.stringify(node.kind)}.applyEdit threw: ${describeThrown(thrown)}`,
         { nodeIds: [edit.nodeId], kind: node.kind },
       );
     }
     if (!applied.ok) {
       return fail(
         "edit-rejected",
-        `The ${JSON.stringify(node.kind)} codec refused the edit: ${applied.error.message}`,
+        `${JSON.stringify(node.kind)}.applyEdit refused the edit: ${applied.error.message}`,
         { nodeIds: [edit.nodeId], kind: node.kind, editRejection: applied.error },
       );
     }
 
-    // RE-PARSE the codec's own output. `applyEdit` is consumer code, and it is
+    // RE-PARSE the node type's own output. `applyEdit` is consumer code, and it is
     // the one ingress the engine would otherwise trust blind — an edit that
     // walks a clip past its own source length is exactly as invalid as the same
     // value arriving off the wire. Round-tripped through `serialize` because
@@ -1060,11 +1060,11 @@ function planEdits<Ts extends readonly unknown[], S>(
     // side of one expression and as a `Result` from the other.
     let raw: unknown;
     try {
-      raw = type.serialize(applied.value);
+      raw = nodeType.serialize(applied.value);
     } catch (thrown) {
       return fail(
         "parse-failed",
-        `The ${JSON.stringify(node.kind)} codec threw while serializing the edited value: ${describeThrown(thrown)}`,
+        `${JSON.stringify(node.kind)}.serialize threw while re-encoding the edited value: ${describeThrown(thrown)}`,
         {
           nodeIds: [edit.nodeId],
           kind: node.kind,
@@ -1076,10 +1076,10 @@ function planEdits<Ts extends readonly unknown[], S>(
     const reparsed = parseNodeData<S>(ctx, {
       nodeId: edit.nodeId,
       kind: node.kind,
-      container: type.container,
-      schemaVersion: type.schemaVersion,
+      container: nodeType.container,
+      schemaVersion: nodeType.schemaVersion,
       raw,
-      // `raw` IS this codec's serialize output, so the generic
+      // `raw` IS this node type's serialize output, so the generic
       // `parse(serialize(d))` comparison inside `parseNodeData` would re-derive
       // a value from the bytes it just came from and can never fail. The
       // stronger comparison for this door runs below instead.
@@ -1109,7 +1109,7 @@ function planEdits<Ts extends readonly unknown[], S>(
     if (ctx.devChecks) {
       // 1. UPSTREAM VS DOWNSTREAM, and it is FREE — both values already exist.
       //
-      //    `applied.value` is what the codec's own `applyEdit` produced.
+      //    `applied.value` is what the node type's own `applyEdit` produced.
       //    `nextData` is what came back after that value made a round trip
       //    through `serialize` and `parse`, and it is what the engine actually
       //    STORES. If they differ, the edit the consumer asked for is not the
@@ -1117,16 +1117,16 @@ function planEdits<Ts extends readonly unknown[], S>(
       //    dropped on the way out.
       //
       //    THE FIRST DRAFT OF THIS COMPARED `serialize(nextData)` AGAINST `raw`
-      //    and could not fail: for a codec that drops a field, both sides drop
+      //    and could not fail: for a node type that drops a field, both sides drop
       //    it, so the two agree while the field is being lost. The lossy
       //    fixture in ./devchecks-audits caught that, which is the entire
-      //    argument for writing the violating codec before the check.
+      //    argument for writing the violating node type before the check.
       const verdict = structurallyEqualBounded(applied.value, nextData);
       if (verdict === false) {
         console.error(
           `keel dev check: editing a ${JSON.stringify(node.kind)} node stored something ` +
             `different from what its own applyEdit returned. The engine stores parse's ` +
-            `OUTPUT, so a field this codec's serialize omits is dropped on every edit. ` +
+            `OUTPUT, so a field this node type's serialize omits is dropped on every edit. ` +
             `node=${JSON.stringify(edit.nodeId)} produced=${describeValue(applied.value)} ` +
             `stored=${describeValue(nextData)}`,
         );
@@ -1140,16 +1140,16 @@ function planEdits<Ts extends readonly unknown[], S>(
       //    property of a method nothing consults: preparation for the day it is
       //    consulted, not a bug hunt.
       //
-      //    `type.applyEdit` is called DIRECTLY. Building a synthetic
+      //    `nodeType.applyEdit` is called DIRECTLY. Building a synthetic
       //    `edit-nodes` command and dispatching it would re-enter `planEdits`
       //    without bound — one full validation pass per level, ending in a
       //    stack overflow escaping `dispatch` as an exception, from a function
       //    contracted to return a `Result`.
-      const invert = type.invertEdit;
+      const invert = nodeType.invertEdit;
       if (invert !== undefined) {
         try {
           const inverse = invert(edit.edit, node.data);
-          const back = type.applyEdit(applied.value, inverse);
+          const back = nodeType.applyEdit(applied.value, inverse);
           if (!back.ok) {
             console.error(
               `keel dev check: ${JSON.stringify(node.kind)}.invertEdit produced an edit its ` +
@@ -1177,7 +1177,7 @@ function planEdits<Ts extends readonly unknown[], S>(
 
     // A `reference` owns nothing, so its key cannot collide with anyone.
     if (collection === null || ownsSubtree(collection.children)) {
-      const nextKey = type.sourceKey?.(nextData) ?? null;
+      const nextKey = nodeType.sourceKey?.(nextData) ?? null;
       if (nextKey !== null) {
         const owner = graph.ownerBySourceKey.get(nextKey);
         const claimed = claimedSourceKeys.get(nextKey);
@@ -1402,15 +1402,15 @@ function resolveInsertDrop<Ts extends readonly unknown[], S>(
   // CONTENT parse deliberately does not run twice: it happens once, in
   // `applyCommand`, where its output is the value that actually gets stored.
   for (const seed of seeds) {
-    const type = ctx.registry.get(seed.kind);
-    if (type === undefined) {
+    const nodeType = ctx.registry.get(seed.kind);
+    if (nodeType === undefined) {
       return fail(
         "unknown-kind",
         `No node type registered for kind ${JSON.stringify(seed.kind)}.`,
         { kind: seed.kind },
       );
     }
-    if (!type.container && seed.children !== undefined) {
+    if (!nodeType.container && seed.children !== undefined) {
       return fail(
         "leaf-seed-with-children",
         `Kind ${JSON.stringify(seed.kind)} is a leaf and cannot be seeded with children.`,
@@ -1438,7 +1438,7 @@ function resolveInsertDrop<Ts extends readonly unknown[], S>(
  * either Ctrl-Z undoes a thumbnail, or a dormant whole-value `before` silently
  * clobbers the server's write on the next undo. This is the third option.
  *
- * It applies each edit exactly as `edit-nodes` does — same codec path, same
+ * It applies each edit exactly as `edit-nodes` does — same node-type path, same
  * rejections — and then:
  *   - produces NO patch, NO history entry, NO change-feed event;
  *   - bumps `subtreeRev` along each edited node's chain, so rollups and

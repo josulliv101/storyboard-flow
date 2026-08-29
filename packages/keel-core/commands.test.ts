@@ -24,7 +24,7 @@ import {
   type Rejection,
   type Result,
   type Seed,
-  type SummaryCodec,
+  type SummaryType,
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
@@ -55,10 +55,10 @@ type ClipEdit = Readonly<{ title?: string; seconds?: number }>;
  * `parse` is deliberately STRICTER than `applyEdit` and also NORMALIZING:
  *
  *  - it trims `title`, which is how the tests prove the reducer stores parse's
- *    OUTPUT rather than the raw seed or the codec's edit result;
+ *    OUTPUT rather than the raw seed or the node type's edit result;
  *  - it caps `seconds` at 100 while `applyEdit` does not, which is how the
  *    tests reach the "the edit produced a value that no longer parses" branch
- *    without the codec having to refuse the edit itself.
+ *    without the node type having to refuse the edit itself.
  */
 const clipType = defineNodeType<Clip, ClipEdit>()({
   kind: "clip",
@@ -141,7 +141,7 @@ const types = [clipType, folderType] as const;
 type Types = typeof types;
 type Summary = Readonly<{ label: string }>;
 
-const summaryCodec: SummaryCodec<Summary> = {
+const summaryType: SummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -282,14 +282,14 @@ function rebuildFixtureIndexes(
     const node = graph.nodesById.get(nodeId);
     if (node === undefined) return;
     if (!node.quarantined) {
-      const type = registry.get(node.kind);
-      const contentKey = type?.contentKey?.(node.data) ?? null;
+      const nodeType = registry.get(node.kind);
+      const contentKey = nodeType?.contentKey?.(node.data) ?? null;
       if (contentKey !== null) {
         const list = placements.get(contentKey);
         if (list === undefined) placements.set(contentKey, [nodeId]);
         else list.push(nodeId);
       }
-      const sourceKey = type?.sourceKey?.(node.data) ?? null;
+      const sourceKey = nodeType?.sourceKey?.(node.data) ?? null;
       const owns = !node.container || node.children.status !== "reference";
       if (sourceKey !== null && owns && !owners.has(sourceKey)) {
         owners.set(sourceKey, nodeId);
@@ -359,7 +359,7 @@ function makeHarness(
   const ctx: EngineContext<Summary> = {
     engineId,
     registry,
-    summary: summaryCodec,
+    summary: summaryType,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
     maxNodes: DEFAULT_MAX_NODES,
@@ -762,7 +762,7 @@ describe("applyCommand / insert-nodes", () => {
         ctx,
       ),
     );
-    // The seed was typed as `Clip` and still went through the codec, so the
+    // The seed was typed as `Clip` and still went through the node type, so the
     // normalizing parse normalized the insert too.
     expect(labels(next.graph, "dest")).toEqual(["Padded"]);
     expect(getChildren(next.graph, id("dest"))).toEqual([id("mint-1")]);
@@ -1257,7 +1257,7 @@ describe("applyCommand / edit-nodes", () => {
     expectValid(next.graph);
   });
 
-  it("RE-PARSES the codec's own output and stores parse's value", () => {
+  it("RE-PARSES the node type's own output and stores parse's value", () => {
     // `applyEdit` hands back "  Spaced  "; the stored value is the trimmed one,
     // which is only possible if the result went back through `parse`.
     const { graph, ctx } = makeHarness();
@@ -1277,7 +1277,7 @@ describe("applyCommand / edit-nodes", () => {
   });
 
   it("rejects an edit whose RESULT no longer parses", () => {
-    // The codec happily accepts seconds: 500; its own `parse` caps at 100. The
+    // The node type happily accepts seconds: 500; its own `parse` caps at 100. The
     // result of applyEdit is an ingress like any other.
     const { graph, ctx } = makeHarness();
     const error = rejectionOf(
@@ -1294,7 +1294,7 @@ describe("applyCommand / edit-nodes", () => {
     expect(error.issues).toEqual([{ path: "$.seconds", message: "seconds <= 100" }]);
   });
 
-  it("relays the codec's own refusal verbatim", () => {
+  it("relays the node type's own refusal verbatim", () => {
     const { graph, ctx } = makeHarness();
     const error = rejectionOf(
       applyCommand(
@@ -1691,7 +1691,7 @@ describe("applyIngestEdits", () => {
     expectValid(result.graph);
   });
 
-  it("normalizes through the same codec path an edit command uses", () => {
+  it("normalizes through the same node-type path an edit command uses", () => {
     const { graph, ctx } = makeHarness();
     const result = unwrap(
       applyIngestEdits(graph, createHistory(), ingest("a", { title: "  Server  " }), ctx),

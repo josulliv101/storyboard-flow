@@ -9,7 +9,7 @@
 //
 // Layout:
 //   1. Primitives      — NodeId, Result, Issue
-//   2. Node types      — the per-kind codec registry and its factory
+//   2. Node types      — the per-kind registry and its factory
 //   3. The graph       — nodes, children states, derived indexes
 //   4. Commands        — the only user-intent mutation vocabulary
 //   5. Patches         — the reversible record of a mutation
@@ -82,10 +82,10 @@ export function tryParseNodeId(id: string): Result<NodeId, Issue> {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Node types — the per-kind codec registry
+// 2. Node types — the per-kind registry
 // ---------------------------------------------------------------------------
 
-/** Handed to `parse` so a codec can warn without failing, and can see whether
+/** Handed to `parse` so a node type can warn without failing, and can see whether
  *  the engine is about to treat this node as a container. */
 export type ParseCtx = Readonly<{
   nodeId: NodeId;
@@ -95,8 +95,17 @@ export type ParseCtx = Readonly<{
 }>;
 
 /**
- * One kind's codec: how its opaque `Data` is parsed, serialized, edited, and
- * (optionally) keyed for identity.
+ * One kind's node type — everything the engine knows about that kind: how its
+ * opaque `Data` is parsed, serialized, edited, and (optionally) keyed for
+ * identity.
+ *
+ * CONSUMER-DEFINED, and that is the load-bearing fact rather than a note about
+ * authorship. Every member below is code the engine calls but did not write, so
+ * each one is a place a throw has to be caught and a returned value has to be
+ * distrusted — which is why `parse`, `applyEdit` and `serialize` are wrapped at
+ * every door, and why `contentKey` and `sourceKey` deliberately are not (see
+ * ./graph). "Consumer" here means the programmer integrating keel; "user" in
+ * this package always means the person pressing Ctrl-Z.
  *
  * ALL MEMBERS ARE METHOD SHORTHAND, NOT ARROW PROPERTIES. This is load-bearing
  * and it is verified, not assumed: under `strictFunctionTypes` an arrow
@@ -106,12 +115,12 @@ export type ParseCtx = Readonly<{
  * — every real node type rejected at the `createEngine` call. Method shorthand
  * stays bivariant, including through the `Readonly<>` wrapper (I compiled both
  * forms to confirm the wrapper preserves it). That bivariance is also what
- * lets the reducer call `type.applyEdit(node.data, edit.edit)` off an erased
+ * lets the reducer call `nodeType.applyEdit(node.data, edit.edit)` off an erased
  * `SomeNodeType` with no cast anywhere.
  *
- * The price is honest: bivariance is unsound, so a codec that lies about its
+ * The price is honest: bivariance is unsound, so a node type that lies about its
  * own Data type is not caught here. The trust boundary is enforceable; the
- * codec's interior is not.
+ * node type's interior is not.
  */
 export type NodeType<K extends string, Data, Edit> = Readonly<{
   kind: K;
@@ -166,7 +175,7 @@ export type SomeNodeType = NodeType<string, unknown, unknown>;
 
 /**
  * CURRIED, and that is the whole point. `Edit` has exactly one inference site
- * (`applyEdit`'s second parameter), so an uncurried factory lets a codec whose
+ * (`applyEdit`'s second parameter), so an uncurried factory lets a node type whose
  * `applyEdit` ignores its edit argument silently infer `Edit = unknown` — at
  * which point every dispatched edit for that kind typechecks and the per-kind
  * edit typing is dead. Making `Data` and `Edit` explicit closes it while `K`
@@ -186,8 +195,8 @@ export function defineNodeType<Data, Edit = never>(): <K extends string>(
  */
 export type NodeTypeRegistry = ReadonlyMap<string, SomeNodeType>;
 
-/** `S`'s own codec — the summary has its own lifecycle, separate from any kind. */
-export type SummaryCodec<S> = Readonly<{
+/** `S`'s own parse/serialize pair — the summary has its own lifecycle, separate from any kind. */
+export type SummaryType<S> = Readonly<{
   parse(raw: unknown): Result<S, readonly Issue[]>;
   serialize(summary: S): unknown;
 }>;
@@ -335,7 +344,7 @@ export type QuarantineReason =
  * and since the trash bin is rewritten on every delete, deleting *anything*
  * became impossible.
  *
- * `container` comes from the WIRE, not from a codec — there is no codec.
+ * `container` comes from the WIRE, not from a node type — there is no node type.
  */
 export type QuarantinedNode = Readonly<{
   id: NodeId;
@@ -352,7 +361,7 @@ export type QuarantinedNode = Readonly<{
    * `null` on a quarantined leaf.
    */
   children: ChildrenState | null;
-  /** Carried through untouched — the summary codec is not the failing one. */
+  /** Carried through untouched — the summary type is not the failing one. */
   summary: unknown;
 }>;
 
@@ -456,7 +465,7 @@ export type Graph<Ts extends readonly unknown[], S> = Readonly<{
  * by convention.
  *
  * `data` is typed as the kind's `D`, and the engine STILL runs `parse` on it
- * and stores parse's OUTPUT — so a normalizing codec normalizes inserts too,
+ * and stores parse's OUTPUT — so a normalizing node type normalizes inserts too,
  * and a consumer handing in a value that violates its own invariants is caught
  * at the same door as wire data.
  *
@@ -647,7 +656,7 @@ export type RejectionCode =
   | "node-quarantined"
   /** `edit.kind` does not match the target node's kind. */
   | "kind-mismatch"
-  /** The codec's own `applyEdit` said no. See `editRejection`. */
+  /** The node type's own `applyEdit` said no. See `editRejection`. */
   | "edit-rejected"
   /** A seed's data failed its own `parse`. See `issues`. */
   | "parse-failed"
@@ -680,7 +689,7 @@ export type Rejection = Readonly<{
   /** The existing owner, on `"duplicate-owner"`. */
   ownerId?: NodeId;
   issues?: readonly Issue[];
-  /** The codec's verbatim complaint, on `"edit-rejected"`. */
+  /** The node type's verbatim complaint, on `"edit-rejected"`. */
   editRejection?: EditRejection;
   /** The ceiling that was hit, on the two `would-exceed-*` codes. Named the
    *  same as `StructuralError`'s pair so a consumer reporting a limit to the
@@ -691,7 +700,7 @@ export type Rejection = Readonly<{
 }>;
 
 /**
- * A codec's own refusal. Consumer-authored, so `code` is a free string — the
+ * A node type's own refusal. Consumer-authored, so `code` is a free string — the
  * engine only relays it.
  */
 export type EditRejection = Readonly<{
@@ -916,7 +925,7 @@ export type LoadReport = Readonly<{
     from: number;
     to: number;
   }>[];
-  /** Non-fatal complaints a codec raised via `ParseCtx.warn`. */
+  /** Non-fatal complaints a node type raised via `ParseCtx.warn`. */
   warnings: readonly Readonly<{ nodeId: NodeId; issue: Issue }>[];
 }>;
 
@@ -928,7 +937,7 @@ export type LoadReport = Readonly<{
 export type EngineContext<S> = Readonly<{
   engineId: symbol;
   registry: NodeTypeRegistry;
-  summary: SummaryCodec<S>;
+  summary: SummaryType<S>;
   onUnknownKind: "quarantine" | "reject";
   onParseFailure: "quarantine" | "reject";
   /** Ceiling on nodes in one document. See `EngineConfig.maxNodes`. */
@@ -949,11 +958,11 @@ export type EngineContext<S> = Readonly<{
    * as an inventory rather than an intention:
    *
    *   - DEEP-FREEZE of every parsed value, at `parseNodeData`'s success return
-   *     and at the summary codec. Catches a `serialize` that normalises its
+   *     and at the summary type. Catches a `serialize` that normalises its
    *     argument in place. Typed arrays are skipped — freezing one throws.
    *   - `parse(serialize(d))` ROUND-TRIP at those same two doors. Catches a
    *     `serialize` that drops a field `parse` keeps. Both sides of the
-   *     comparison are parse OUTPUTS, so a normalising codec does not
+   *     comparison are parse OUTPUTS, so a normalising node type does not
    *     false-alarm.
    *   - UPSTREAM VS DOWNSTREAM at the edit door: what `applyEdit` returned
    *     against what the engine stored after its own round trip. Free, and
@@ -961,7 +970,7 @@ export type EngineContext<S> = Readonly<{
    *     that door.
    *   - THE OPT-IN `invertEdit`, verified as
    *     `applyEdit(applyEdit(d, e), invertEdit(e, d))` deep-equals `d`. A no-op
-   *     for the many codecs that declare no inverse.
+   *     for the many node types that declare no inverse.
    *   - THE SHADOW COLD REFOLD, on cache HITS ONLY and budgeted. A miss has
    *     nothing memoized to be wrong, so shadowing one buys a comparison that
    *     cannot fail — measured at 80% of executions before the rescope.
@@ -969,7 +978,7 @@ export type EngineContext<S> = Readonly<{
    * A fifth audit runs behind this flag and is not one of the above: the graph
    * invariant walk after every commit. It predates the list.
    *
-   * None of these can prove a consumer's codec actually validates — that is
+   * None of these can prove a consumer's node type actually validates — that is
    * genuinely unenforceable. Two further limits are worth knowing: the
    * comparator treats `Date`, `Map` and `Set` as `{}`, and freezing a `Map`
    * does not stop `map.set`.
@@ -1260,10 +1269,10 @@ export type EngineConfig<
 > = Readonly<{
   /** Duplicate `kind` is REJECTED at runtime — it THROWS, because a duplicate
    *  is a programmer error at module init, not a recoverable condition. Two
-   *  codecs claiming one kind means one silently wins at the trust boundary
+   *  node types claiming one kind means one silently wins at the trust boundary
    *  and the discriminant is dead. */
   types: Ts;
-  summary: SummaryCodec<S>;
+  summary: SummaryType<S>;
   folds: F;
   /** Default `"quarantine"`. */
   onUnknownKind?: "quarantine" | "reject";
@@ -1473,7 +1482,7 @@ export type Engine<
 // permitted.
 //
 // The soundness argument is the same for all four and worth stating once: the
-// caller has just looked a codec up in the registry — where it is erased to
+// caller has just looked a node type up in the registry — where it is erased to
 // `NodeType<string, unknown, unknown>` — and run its `parse`. The value in hand
 // IS that kind's `Data`; the compiler simply cannot see through the erasure to
 // prove it, because the registry is a `Map` and the mapped tuple is a
@@ -1529,7 +1538,7 @@ export function makeCollectionNode<Ts extends readonly unknown[], S>(
 
 /**
  * A quarantined node needs no cast — `QuarantinedNode` is not generic, since
- * there is no codec and therefore no `Data`. Present for symmetry, and to keep
+ * there is no node type and therefore no `Data`. Present for symmetry, and to keep
  * `raw` construction in one place: `raw` MUST be the value exactly as it
  * arrived, or re-emit stops being byte-exact.
  */
@@ -1592,8 +1601,8 @@ export function makeDataChange<Ts extends readonly unknown[]>(
  * returning.
  *
  * It lives HERE, in the module that imports nothing, because all four modules
- * that call into a consumer codec need it — ./serialize wraps `parse` and the
- * summary codec, ./commands wraps `applyEdit` and `serialize`, ./patches wraps
+ * that call into consumer code need it — ./serialize wraps `parse` and the
+ * summary type, ./commands wraps `applyEdit` and `serialize`, ./patches wraps
  * the `serialize` pair that replay verification compares on. One
  * implementation, so the three cannot drift into describing the same throw
  * three different ways.
@@ -1710,7 +1719,7 @@ export function structurallyEqualBounded(
     const frame = stack.pop();
     if (frame === undefined) break;
     const { left, right } = frame;
-    // Object.is, not ===, so a codec that legitimately stores NaN compares
+    // Object.is, not ===, so a node type that legitimately stores NaN compares
     // equal to itself.
     if (Object.is(left, right)) continue;
 
@@ -1729,7 +1738,7 @@ export function structurallyEqualBounded(
     if (leftKeys.length !== Object.keys(right).length) return false;
     for (const key of leftKeys) {
       // An own-key check rather than an undefined test: `{a: undefined}` and
-      // `{}` have different serialized shapes and a codec may care.
+      // `{}` have different serialized shapes and a node type may care.
       if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
       stack.push({ left: left[key], right: right[key] });
     }
@@ -1749,7 +1758,7 @@ function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown
  * FOUR GUARDS, each of which was found by execution rather than by reading:
  *
  *  1. TYPED ARRAYS ARE SKIPPED. `Object.freeze(new Uint8Array([1]))` THROWS
- *     "Cannot freeze array buffer views with elements". A codec returning
+ *     "Cannot freeze array buffer views with elements". A node type returning
  *     binary data is conforming, and without this line turning `devChecks` on
  *     takes the ingress door down.
  *  2. FREEZE BEFORE RECURSING, and skip anything already frozen. That is the

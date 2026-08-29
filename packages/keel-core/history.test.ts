@@ -47,10 +47,10 @@ import {
 type Clip = Readonly<{ title: string }>;
 type ClipEdit = Readonly<{ op: "set-title"; title: string }>;
 
-// The codec VALUE is never registered. This file builds its graph with
+// The node type VALUE is never registered. This file builds its graph with
 // `makeLeafNode<Types>` rather than through an engine, so this exists only so
 // `typeof` can derive the `Types` tuple below — deleting it would mean
-// hand-writing that tuple and letting it drift from the codecs it describes.
+// hand-writing that tuple and letting it drift from the node types it describes.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const clipType = defineNodeType<Clip, ClipEdit>()({
   kind: "clip",

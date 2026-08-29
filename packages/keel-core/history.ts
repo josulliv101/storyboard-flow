@@ -244,7 +244,7 @@ export function clearHistory<Ts extends readonly unknown[], S>(
  *
  * NOT checked: that `previous`'s `after` equals `next`'s `before`. `Data` is
  * opaque to the engine, and the only sanctioned equality on it goes through a
- * codec's `serialize` — which needs an `EngineContext` this function
+ * node type's `serialize` — which needs an `EngineContext` this function
  * deliberately does not take. Coalescing is driven by a caller-supplied key; a
  * caller that reuses one key across unrelated edits gets a merged entry that
  * skips an intermediate value, which is exactly what coalescing is for.

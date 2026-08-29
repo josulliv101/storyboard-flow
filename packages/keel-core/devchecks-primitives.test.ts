@@ -42,13 +42,13 @@ describe("structurallyEqualBounded", () => {
   });
 
   it("treats NaN as equal to itself", () => {
-    // `===` would answer false and report a violation on a codec that
+    // `===` would answer false and report a violation on a node type that
     // legitimately stores NaN. Object.is at the leaves is what prevents it.
     expect(structurallyEqualBounded({ n: Number.NaN }, { n: Number.NaN })).toBe(true);
   });
 
   it("distinguishes a present undefined from an absent key", () => {
-    // `{a: undefined}` and `{}` have different SERIALIZED shapes, and a codec
+    // `{a: undefined}` and `{}` have different SERIALIZED shapes, and a node type
     // is entitled to care. An own-key count plus hasOwnProperty is what keeps
     // them apart; a plain `right[key] === undefined` test would not.
     expect(structurallyEqualBounded({ a: undefined }, {})).toBe(false);
@@ -92,7 +92,7 @@ describe("deepFreezeBounded", () => {
   it("does not throw on a typed array", () => {
     // THE SINGLE MOST IMPORTANT LINE IN THE CHECK. `Object.freeze` on a
     // TypedArray with elements THROWS "Cannot freeze array buffer views with
-    // elements". A codec returning binary data is conforming, so without the
+    // elements". A node type returning binary data is conforming, so without the
     // ArrayBuffer.isView guard, turning devChecks on takes the ingress door
     // down for that consumer. Remove the guard and this test fails with that
     // exact message.

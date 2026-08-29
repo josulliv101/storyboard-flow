@@ -50,10 +50,10 @@ import type {
 } from "./types";
 
 // ---------------------------------------------------------------------------
-// Fixtures: a two-kind registry with real codecs
+// Fixtures: a two-kind registry with real node types
 // ---------------------------------------------------------------------------
 //
-// The codecs CONSTRUCT rather than cast, matching the rule the engine relies
+// The node types CONSTRUCT rather than cast, matching the rule the engine relies
 // on. They are only exercised here through `contentKey` / `sourceKey`, but a
 // permissive `parse` in a fixture is exactly the shape of test double that
 // hides a real bug, so they are written honestly.
@@ -120,7 +120,7 @@ const folderType = defineNodeType<FolderData, FolderEdit>()({
   },
 });
 
-/** Declares NEITHER optional key hook, so it covers the "codec opted out" arm
+/** Declares NEITHER optional key hook, so it covers the "node type opted out" arm
  *  of `contentKeyOf` / `sourceKeyOf` — distinct from "kind not registered". */
 const noteType = defineNodeType<NoteData, NoteEdit>()({
   kind: "note",
@@ -249,14 +249,14 @@ function sampleGraph(): TestGraph {
 // ---------------------------------------------------------------------------
 
 describe("buildRegistry", () => {
-  it("keys every codec by its kind", () => {
+  it("keys every node type by its kind", () => {
     expect([...registry.keys()].sort()).toEqual(["clip", "folder", "note"]);
     expect(registry.get("clip")).toBe(clipType);
   });
 
   it("THROWS on a duplicate kind, naming it", () => {
     // Not Result-shaped on purpose: a duplicate kind is a module-init
-    // programmer error, and there is no partial-success answer — one codec
+    // programmer error, and there is no partial-success answer — one node type
     // would silently win at the trust boundary.
     expect(() => buildRegistry([clipType, folderType, clipType])).toThrow(
       /duplicate node kind "clip"/,
@@ -495,12 +495,12 @@ describe("contentKeyOf / sourceKeyOf", () => {
     return [contentKeyOf(registry, node), sourceKeyOf(registry, node)];
   }
 
-  it("reads the codec's hooks when it declares them", () => {
+  it("reads the node type's hooks when it declares them", () => {
     expect(keysOf("c1")).toEqual(["asset-x", null]);
     expect(keysOf("owned")).toEqual([null, "doc-1"]);
   });
 
-  it("is null when the codec declined the hook", () => {
+  it("is null when the node type declined the hook", () => {
     expect(keysOf("n1")).toEqual([null, null]);
   });
 
@@ -508,7 +508,7 @@ describe("contentKeyOf / sourceKeyOf", () => {
     expect(keysOf("q")).toEqual([null, null]);
   });
 
-  it("is null when no codec is registered for the kind", () => {
+  it("is null when no node type is registered for the kind", () => {
     expect(keysOf("ghost-kind")).toEqual([null, null]);
   });
 });

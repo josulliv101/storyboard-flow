@@ -30,7 +30,7 @@ import {
   type Patch,
   type Placement,
   type SomeNodeType,
-  type SummaryCodec,
+  type SummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
 
@@ -113,7 +113,7 @@ const registry: ReadonlyMap<string, SomeNodeType> = new Map<string, SomeNodeType
   ],
 );
 
-const summaryCodec: SummaryCodec<Summary> = {
+const summaryType: SummaryType<Summary> = {
   parse(raw) {
     if (isRecord(raw)) {
       const label = raw["label"];
@@ -132,7 +132,7 @@ function makeCtx(engineId: symbol = ENGINE_ID): EngineContext<Summary> {
   return {
     engineId,
     registry,
-    summary: summaryCodec,
+    summary: summaryType,
     onUnknownKind: "quarantine",
     onParseFailure: "quarantine",
     maxNodes: DEFAULT_MAX_NODES,

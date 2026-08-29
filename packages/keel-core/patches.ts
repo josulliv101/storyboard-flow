@@ -122,7 +122,7 @@ function isLoadedContainer<Ts extends readonly unknown[], S>(
  * the wire, so its nesting depth is hostile input. This is the same rule the
  * graph walks follow, applied to content.
  *
- * Object.is (not ===) so a codec that legitimately stores NaN compares equal to
+ * Object.is (not ===) so a node type that legitimately stores NaN compares equal to
  * itself; otherwise a `data-changed` undo of a NaN-bearing node would be
  * refused forever with "data-mismatch".
  */
@@ -151,7 +151,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
     if (leftKeys.length !== Object.keys(right).length) return false;
     for (const key of leftKeys) {
       // An own-key check, not just `right[key] !== undefined`: `{a: undefined}`
-      // and `{}` have different serialized shapes and a codec is entitled to
+      // and `{}` have different serialized shapes and a node type is entitled to
       // care about the difference.
       if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
       stack.push({ left: left[key], right: right[key] });
@@ -379,7 +379,7 @@ function placementsAfterMove<Ts extends readonly unknown[], S>(
   previous: ReadonlyMap<string, readonly NodeId[]>,
   moves: readonly Move[],
 ): ReadonlyMap<string, readonly NodeId[]> {
-  // No registered codec defines `contentKey`, so the index is permanently empty
+  // No registered node type defines `contentKey`, so the index is permanently empty
   // and the walk that would rediscover that is pure waste.
   if (!derivedIndexNeed(registry).content) return previous;
   // A patch that moves nothing reorders nothing. Worth stating, because
@@ -786,9 +786,9 @@ function applyDataChanged<Ts extends readonly unknown[], S>(
   };
 
   // `contentKey` and `sourceKey` are read off `data`, so both derived indexes
-  // CAN move under a pure content edit — but usually do not. The keys a codec
+  // CAN move under a pure content edit — but usually do not. The keys a node type
   // exposes are identity ("which asset is this"), and the fields a user edits
-  // are not. Asking the codec whether either key actually moved costs two calls
+  // are not. Asking the node type whether either key actually moved costs two calls
   // per change; rebuilding costs a document-order DFS plus two calls per NODE.
   const movesAKey = changes.some(
     (change) =>
@@ -989,7 +989,7 @@ function requireLoadedParent<Ts extends readonly unknown[], S>(
  * `duplicate-owner` before any patch is built (measured), so nothing on either
  * history stack can carry one. The exemption cost a second `ReadonlyMap` and a
  * `sourceKey` call per changed node on the undo path — the same path the last
- * round worked to get down to zero codec calls for a common replay — to guard a
+ * round worked to get down to zero node-type calls for a common replay — to guard a
  * state the reducer will not produce. Mutation testing is what surfaced it:
  * deleting the exemption failed no test, which is the signature of code that
  * defends nothing.
@@ -1087,7 +1087,7 @@ function verifyInserted<Ts extends readonly unknown[], S>(
   // impossible reports that rather than an ownership complaint about a node it
   // could never have placed. Nothing is vacating a key here — an insert only
   // adds — so the second argument is null.
-  // Gated on the registry, not on the patch: when no codec declares
+  // Gated on the registry, not on the patch: when no node type declares
   // `sourceKey` at all, `ownerBySourceKey` is permanently empty and this check
   // could never fire, so the whole pass — including a `sourceKey` call per
   // arriving node — is skipped rather than run to reach a foregone answer.
@@ -1211,23 +1211,23 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
         { nodeId: change.nodeId },
       );
     }
-    const codec = ctx.registry.get(change.kind);
-    if (codec === undefined) {
+    const nodeType = ctx.registry.get(change.kind);
+    if (nodeType === undefined) {
       return replayError(
         "kind-mismatch",
         `Kind "${change.kind}" is not registered, so its recorded value cannot be compared.`,
         { nodeId: change.nodeId },
       );
     }
-    // Compare on the SERIALIZED form. Parsed values may carry identity a codec
+    // Compare on the SERIALIZED form. Parsed values may carry identity a node type
     // does not consider meaningful (a normalized copy, a cached derivation), and
-    // comparing those would refuse valid undos; the wire form is the codec's own
+    // comparing those would refuse valid undos; the wire form is the node type's own
     // statement of what its value IS.
     // IDENTITY FIRST. `change.before` and the node's live data are usually the
     // very same object — the reducer stores exactly what `applyEdit` returned
     // and the patch records that reference — so the common replay is settled
     // without calling the consumer's `serialize` at all. Sound because same
-    // reference implies same serialization for any deterministic codec, and a
+    // reference implies same serialization for any deterministic node type, and a
     // non-deterministic one already fails the slow path.
     //
     // Worth doing for the same reason the cross-parent move stopped asking for
@@ -1237,7 +1237,7 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
 
     // WRAPPED. `serialize` is consumer code, and this function is contracted to
     // return a `Result` — a throw here escaped `verifyPatchApplies` and took
-    // `undo` and `redo` with it. A codec that cannot serialize its own value
+    // `undo` and `redo` with it. A node type that cannot serialize its own value
     // cannot prove the recorded `before` still stands, so the honest verdict is
     // the same one a genuine difference produces: this patch no longer applies.
     // Refusing is safe (the entry stays on the stack, the graph is untouched);
@@ -1245,13 +1245,13 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
     let matches: boolean;
     try {
       matches = deepEqual(
-        codec.serialize(change.before),
-        codec.serialize(node.data),
+        nodeType.serialize(change.before),
+        nodeType.serialize(node.data),
       );
     } catch (thrown) {
       return replayError(
         "data-mismatch",
-        `Node ${change.nodeId} could not be compared against this patch's recorded "before": the ${JSON.stringify(change.kind)} codec threw while serializing (${describeThrown(thrown)}).`,
+        `Node ${change.nodeId} could not be compared against this patch's recorded "before": ${JSON.stringify(change.kind)}.serialize threw (${describeThrown(thrown)}).`,
         { nodeId: change.nodeId },
       );
     }
@@ -1276,7 +1276,7 @@ function verifyDataChanged<Ts extends readonly unknown[], S>(
   // END UP rather than on one intermediate state that never exists.
   // Gated for the same reason as the insert arm, and it matters more here: undo
   // runs this per changed node, and the last round spent real effort getting a
-  // common replay down to zero consumer-codec calls.
+  // common replay down to zero consumer node-type calls.
   if (derivedIndexNeed(ctx.registry).source) {
     const claims = new Map<NodeId, string | null>();
     for (const change of changes) {
