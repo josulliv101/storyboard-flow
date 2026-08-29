@@ -76,6 +76,9 @@ import {
 import {
   canRedo as historyCanRedo,
   canUndo as historyCanUndo,
+  clearFuture as historyClearFuture,
+  clearHistory as historyClearHistory,
+  clearPast as historyClearPast,
   commitRedo,
   commitUndo,
   createHistory,
@@ -323,6 +326,36 @@ export function createEngine<
         `Omit it entirely for unbounded history — a fractional or non-positive value ` +
         `would silently mean unbounded, which is the opposite of what naming a limit asks for.`,
     );
+  }
+
+  // THE SAME ARGUMENT, for the two ceilings that were not making it.
+  //
+  // `historyLimit` refuses a value that would silently mean unbounded. These
+  // two accepted one. `maxNodes: NaN` and `maxNodes: Infinity` both make every
+  // `count > ctx.maxNodes` comparison false, so the ingress trust boundary and
+  // all three growth doors stop refusing anything — and `NaN` arrives for free
+  // from `Number(fromEnv)` or a `parseInt` of a missing setting, which is
+  // exactly how a production ceiling goes missing without a line of code
+  // looking wrong. The failure is silent in the unsafe direction: the consumer
+  // asked to bound the graph and got no bound.
+  //
+  // `maxDepth` takes `null`/omitted as unbounded BY DESIGN — see its doc on
+  // `EngineConfig` — so the check is on values that are present and not null.
+  // Omitting either field stays silent, which is how a consumer asks for the
+  // default and for unbounded respectively.
+  for (const [name, value] of [
+    ["maxNodes", config.maxNodes],
+    ["maxDepth", config.maxDepth],
+  ] as const) {
+    if (value === undefined || value === null) continue;
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(
+        `keel: ${name} must be a positive integer, received ${String(value)}. ` +
+          `NaN and Infinity make every ceiling comparison false, which disables ` +
+          `the limit entirely — the opposite of what naming one asks for. Omit ` +
+          `the field to take the default.`,
+      );
+    }
   }
 
   // A fresh symbol per call is the whole cross-instance guard: `NodeId` is
@@ -1084,6 +1117,55 @@ export function createEngine<
 
       canUndo: () => historyCanUndo(history),
       canRedo: () => historyCanRedo(history),
+
+      // THE HISTORY DOOR. ./history has exported these three since it was
+      // written — `clearPast` documented as "the only recovery for a dormant
+      // entry whose world moved" — and nothing could reach them: `history` is a
+      // closure variable and no accessor returns a `History`. A consumer could
+      // import the pure function and had nothing to pass it.
+      //
+      // What that cost: `undo()` deliberately leaves the stack intact when
+      // replay is refused, so the entry is not destroyed by a transient
+      // failure. But replay is ordered, so a permanently inapplicable entry
+      // buries everything under it, `canUndo()` keeps answering true, and the
+      // only escape was `destroy()` plus a serialize/deserialize round trip
+      // into a fresh store — losing selection and every subscription.
+      //
+      // THEY NOTIFY GRAPH SUBSCRIBERS, which is not the exception to
+      // `SelectionSlice`'s rule that it looks like. There is no history
+      // subscription, so `canUndo`/`canRedo` are re-read by graph subscribers,
+      // and every history change until now HAS notified them because every one
+      // accompanied a commit. These are the first history changes without one;
+      // staying silent would leave the stale enabled button that is the whole
+      // symptom being cleared. A history slice with its own subscription is the
+      // larger, later change — this keeps the existing invariant true.
+      //
+      // No notify when nothing moved: ./history returns the SAME object when
+      // the stack it would clear is already empty, so identity is the test.
+      // A destroyed store is a silent no-op, matching the subscribe methods
+      // rather than the write ones — there is nothing here to refuse, only
+      // state to drop that no one is listening to.
+      clearPast() {
+        if (destroyed) return;
+        const next = historyClearPast(history);
+        if (next === history) return;
+        history = next;
+        notifyAll("graph", graphListeners);
+      },
+      clearFuture() {
+        if (destroyed) return;
+        const next = historyClearFuture(history);
+        if (next === history) return;
+        history = next;
+        notifyAll("graph", graphListeners);
+      },
+      clearHistory() {
+        if (destroyed) return;
+        const next = historyClearHistory(history);
+        if (next === history) return;
+        history = next;
+        notifyAll("graph", graphListeners);
+      },
 
       /**
        * IO landing. No patch, no history entry, NO change-feed event — the
