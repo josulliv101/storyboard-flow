@@ -23,7 +23,6 @@ import {
   DEFAULT_MAX_NODES,
   deserializeDocument,
   loadChildrenInto,
-  parseSerializedDocument,
 } from "./serialize";
 import { createEngine } from "./engine";
 import {

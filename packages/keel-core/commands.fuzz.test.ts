@@ -49,7 +49,7 @@ import {
   type Issue,
   type NodeId,
   type Patch,
-  type Rejection,
+
   type RejectionCode,
   type Result,
   type Seed,

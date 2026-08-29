@@ -798,7 +798,7 @@ export const TheInsetLandsWhereTheRenderPutsIt: Story = {
     const found: Array<[number, number]> = [];
     for (let x = 0; x < canvas.width; x += 8) {
       for (let y = 0; y < canvas.height; y += 8) {
-        const [r, g, b] = context.getImageData(x, y, 1, 1).data;
+        const [r, , b] = context.getImageData(x, y, 1, 1).data;
         if (b! > 150 && r! < 120) found.push([x, y]);
       }
     }

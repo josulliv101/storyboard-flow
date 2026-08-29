@@ -64,7 +64,6 @@ import {
   dataChangeLeavesDerivedIndexesIntact,
   derivedIndexNeed,
   derivedIndexesAfterRemoval,
-  insertLeavesDerivedIndexesIntact,
   rebuildDerivedIndexes,
   rebuildPlacementIndex,
   reindexPlacementsAcrossMove,
@@ -272,37 +271,30 @@ function spliceIn(
  * the inverse — which is precisely what makes swapping endpoints a complete
  * inversion.
  */
-function spliceOut(
-  children: Map<NodeId, readonly NodeId[]>,
-  parentId: NodeId,
-  id: NodeId,
-): void {
-  const current = children.get(parentId);
-  if (current === undefined) return;
-  const at = current.indexOf(id);
-  if (at === -1) return;
-  const next = current.slice();
-  next.splice(at, 1);
-  children.set(parentId, next);
-}
-
 /**
- * The same copy-on-write removal, for MANY ids at once — ONE pass per parent
- * instead of one per removed node.
+ * Copy-on-write removal for MANY ids at once — ONE pass per parent instead of
+ * one per removed node.
  *
- * `spliceOut` is three O(siblings) passes (`indexOf`, `slice`, `splice`) and
- * allocates a fresh array each time, so calling it per removed node made
- * removing K of N siblings cost O(K x N). The constant is a memcpy, which is
- * why it stayed invisible: free below a thousand siblings, and 5.2 SECONDS
- * measured for select-all-then-Delete on a 40,000-item strip. Both arms that
- * remove in bulk — `applyRemoved` and `applyMoved` — now go through here.
+ * WHAT THIS REPLACED, because the reasoning is the whole justification for the
+ * shape. The per-id predecessor was three O(siblings) passes — `indexOf`,
+ * `slice`, `splice` — allocating a fresh array every call, so removing K of N
+ * siblings cost O(K x N). The constant is a memcpy, which is why it stayed
+ * invisible: free below a thousand siblings, and 5.2 SECONDS measured for
+ * select-all-then-Delete on a 40,000-item strip. Both arms that remove in bulk
+ * — `applyRemoved` and `applyMoved` — go through here.
+ *
+ * That predecessor, `spliceOut`, SAT HERE UNREFERENCED until lint reached this
+ * package for the first time and reported it. Two of the sentences above used
+ * to name it in the present tense, which is how it survived: prose describing
+ * a function nobody calls reads exactly like prose describing one everybody
+ * does. Recovered from `801c286^` if it is ever wanted again.
  *
  * `remaining.delete(id)` rather than `ids.has(id)` is deliberate and preserves
- * `spliceOut`'s exact semantics: `splice(at, 1)` removes AT MOST ONE occurrence
- * of an id, and a `has` filter would remove every copy. That can only differ on
- * a graph already violating "one id in two children arrays", and a bulk removal
- * is not the place to start quietly repairing a corruption the audit exists to
- * report.
+ * the replaced semantics exactly: `splice(at, 1)` removes AT MOST ONE
+ * occurrence of an id, and a `has` filter would remove every copy. That can
+ * only differ on a graph already violating "one id in two children arrays", and
+ * a bulk removal is not the place to start quietly repairing a corruption the
+ * audit exists to report.
  */
 function spliceOutMany(
   children: Map<NodeId, readonly NodeId[]>,

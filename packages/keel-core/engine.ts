@@ -58,7 +58,7 @@ import {
   applyIngestEdits,
   resolveDrop as resolveDropIn,
 } from "./commands";
-import { computeFold, createFoldCache, DEFAULT_FOLD_CACHE_LIMIT } from "./folds";
+import { computeFold, createFoldCache } from "./folds";
 import {
   DEFAULT_MAX_NODES,
   deserializeDocument,

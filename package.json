@@ -10,6 +10,8 @@
     "storybook": "npm run storybook --workspace=apps/storybook",
     "build-storybook": "npm run build-storybook --workspace=apps/storybook",
     "dev:frontend": "npm run dev --workspace=apps/timeline-gstudio001",
+    "lint:packages": "eslint packages",
+    "typecheck:packages": "node scripts/typecheck-packages.mjs",
     "audit:ui": "node scripts/find-unreachable-ui.mjs",
     "audit:app": "node scripts/find-unreachable-app.mjs",
     "audit:loc": "node scripts/count-loc.mjs",

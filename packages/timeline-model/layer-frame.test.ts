@@ -75,11 +75,18 @@ describe("layerFrameForPreset", () => {
   });
 
   it("orders the three sizes, and keeps them all inside the frame", () => {
-    const widths = (["small", "medium", "large"] as const).map(
+    const [small, medium, large] = (["small", "medium", "large"] as const).map(
       (size) => layerFrameForPreset("top-left", size, WIDESCREEN, FRAME).width,
     );
-    expect(widths[0]).toBeLessThan(widths[1]);
-    expect(widths[1]).toBeLessThan(widths[2]);
+    // A real check rather than three `!`s. Under `noUncheckedIndexedAccess`
+    // every element reads as `number | undefined`, and passing that straight to
+    // `toBeLessThan` is what made this package fail `tsc` — unnoticed, because
+    // nothing in CI typechecked it until #572.
+    if (small === undefined || medium === undefined || large === undefined) {
+      throw new Error("layerFrameForPreset did not return three widths");
+    }
+    expect(small).toBeLessThan(medium);
+    expect(medium).toBeLessThan(large);
     for (const position of ["top-left", "top-right", "bottom-left", "bottom-right"] as const) {
       const rect = layerFrameRect(
         layerFrameForPreset(position, "large", WIDESCREEN, FRAME),

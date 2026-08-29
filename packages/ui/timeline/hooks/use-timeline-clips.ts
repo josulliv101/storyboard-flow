@@ -3,7 +3,6 @@ import {
   baseWidth,
   clamp,
   cycle,
-  getPackedDurationBefore,
   getSpec,
 } from "../utils";
 import {
@@ -21,7 +20,7 @@ export function createClip(
   forceVideo?: boolean,
 ): TimelineClip {
   let spec = getSpec(index);
-  
+
   if (forceVideo && spec.kind !== "video") {
     spec = {
       ...spec,
@@ -81,7 +80,7 @@ export function createInitialClips(itemCount: number, pixelsPerSecond: number) {
     const isFirst = index === 0;
     const isLast = index === itemCount - 1;
     const forceVideo = isFirst || isLast;
-    
+
     const clip = createClip(index, nextStartTime, pixelsPerSecond, forceVideo);
     clips.push(clip);
     nextStartTime += clip.duration + CLIP_GAP_SECONDS;
@@ -263,7 +262,6 @@ export function editVideoSourceWindowFromBaseline({
   anchorIndex,
   mode,
   deltaTime = 0,
-  sourceTime = 0,
   minDuration,
 }: {
   baselineClips: TimelineClip[];

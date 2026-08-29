@@ -28,8 +28,6 @@ const neighborsRight = [
   { name: "Interview", seconds: 2, src: new URL("./fixtures/clip-portrait.png", import.meta.url).href },
 ] as const;
 
-const frameCount = (seconds: number) => Math.max(1, Math.min(5, Math.round(seconds / 2)));
-
 /** The bright, visible clip: a frame sequence scaled to `seconds * pps` wide. */
 function Frames({
   seconds,

@@ -49,6 +49,11 @@ function issue(path: string, message: string): readonly Issue[] {
   return [{ path, message }];
 }
 
+// The codec VALUE is never registered. This file builds its graph with
+// `makeLeafNode<Types>` rather than through an engine, so this exists only so
+// `typeof` can derive the `Types` tuple below — deleting it would mean
+// hand-writing that tuple and letting it drift from the codecs it describes.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const clipType = defineNodeType<ClipData, ClipEdit>()({
   kind: "clip",
   container: false,
@@ -73,6 +78,8 @@ const clipType = defineNodeType<ClipData, ClipEdit>()({
   },
 });
 
+// Same as `clipType` above: a value that exists to be `typeof`-ed.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const folderType = defineNodeType<FolderData, FolderEdit>()({
   kind: "folder",
   container: true,

@@ -148,7 +148,6 @@ function makeEngine() {
 }
 
 const clipAId = parseNodeId("a");
-const boxId = parseNodeId("box");
 
 /** root -> [a(clip 4), box(folder, unloaded, summary { seconds: 30 })] */
 function loadedStore() {

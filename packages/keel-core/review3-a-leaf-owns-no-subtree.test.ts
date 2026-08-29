@@ -210,7 +210,7 @@ describe("a leaf never owns a sourceKey", () => {
   });
 
   it("records no owner for a leaf's key in the derived index", () => {
-    const { engine, loaded } = twoLeavesSharingASource();
+    const { loaded } = twoLeavesSharingASource();
     // ASSERTED, not just guarded. An early `return` on a refused load makes
     // this test pass vacuously under exactly the mutation it exists to catch —
     // which is how the first draft of it reported a false green.
