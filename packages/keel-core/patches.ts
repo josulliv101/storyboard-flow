@@ -1682,6 +1682,38 @@ export function isEmptyPatch<Ts extends readonly ErasedNodeType[], S>(
  *
  * Returns null when the patch is left empty, and the caller drops the entry.
  */
+/**
+ * The ids `scrubPatchForWrite` can actually touch in this patch.
+ *
+ * THE COMPANION TO THAT FUNCTION, and it lives here so the two cannot drift.
+ * A caller reporting which ids a scrub affected has to ask the same question
+ * the scrub answers, and ./commands was asking a different one — it used
+ * `patchTouchedNodeIds`, which for an `inserted` or `removed` patch also names
+ * every placement's PARENT. A parent is a node whose rollup changed, which is
+ * the right answer for notification and the wrong one here: the scrub rewrites
+ * a placement's captured `data`, and a parent's data is not in the patch at
+ * all. So `Store.applyNonUndoableWrite` reported ids whose history it had not
+ * touched, and a consumer using that list to tell a user "undo is gone for
+ * these" showed warnings that were not true.
+ *
+ * "moved" yields nothing: structural patches carry no content, which is exactly
+ * why `scrubPatchForWrite` returns them untouched.
+ */
+export function scrubbableNodeIds<Ts extends readonly ErasedNodeType[], S>(
+  patch: Patch<Ts, S>,
+): readonly NodeId[] {
+  switch (patch.type) {
+    case "moved":
+      return EMPTY_IDS;
+    case "data-changed":
+      return patch.changes.map((change) => change.nodeId);
+    case "inserted":
+    case "removed":
+      // The placement's own node, never its parent.
+      return patch.placements.map((placement) => placement.node.id);
+  }
+}
+
 export function scrubPatchForWrite<Ts extends readonly ErasedNodeType[], S>(
   patch: Patch<Ts, S>,
   replacements: ReadonlyMap<NodeId, unknown>,

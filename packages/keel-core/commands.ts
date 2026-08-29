@@ -60,7 +60,7 @@ import {
   sourceKeyOf,
   subtreeIds,
 } from "./graph";
-import { applyPatch, patchTouchedNodeIds } from "./patches";
+import { applyPatch, scrubbableNodeIds } from "./patches";
 import { parseNodeData } from "./serialize";
 import { scrubHistoryForWrite } from "./history";
 
@@ -1547,12 +1547,23 @@ export function applyNonUndoableWriteEdits<Ts extends readonly ErasedNodeType[],
   // (afterwards the evidence is gone — that is what scrubbing means). A "moved"
   // patch carries no content and is skipped, matching `scrubPatchForWrite`,
   // which leaves structural patches alone.
-  const mentioned = new Set<NodeId>();
+  // `scrubbableNodeIds`, NOT `patchTouchedNodeIds`. The two answer different
+  // questions and this wanted the other one: "touched" includes every
+  // placement's PARENT, because a parent's rollup changed and its subscribers
+  // must hear about it. A parent's DATA is not in the patch at all, so the
+  // scrub cannot rewrite it — and this list was naming parents as scrubbed when
+  // nothing of theirs had been. Reproduced: insert a clip into a folder, then
+  // write to the FOLDER, and the folder came back in `scrubbed` with its
+  // history untouched. A consumer using this to tell a user "undo is gone for
+  // these" showed warnings that were not true.
+  //
+  // It shares its definition with `scrubPatchForWrite` so the report and the
+  // scrub cannot drift apart.
+  const scrubbable = new Set<NodeId>();
   for (const entry of [...history.past, ...history.future]) {
-    if (entry.patch.type === "moved") continue;
-    for (const id of patchTouchedNodeIds(entry.patch)) mentioned.add(id);
+    for (const id of scrubbableNodeIds(entry.patch)) scrubbable.add(id);
   }
-  const scrubbed = editedIds.filter((id) => mentioned.has(id));
+  const scrubbed = editedIds.filter((id) => scrubbable.has(id));
 
   return ok({
     graph: nextGraph,

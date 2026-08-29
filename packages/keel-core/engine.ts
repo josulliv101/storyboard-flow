@@ -22,7 +22,6 @@ import type {
   Engine,
   EngineConfig,
   EngineContext,
-  FoldCache,
   Folded,
   FoldRegistry,
   FoldValue,
@@ -63,7 +62,11 @@ import {
   applyNonUndoableWriteEdits,
   resolveDrop as resolveDropIn,
 } from "./commands";
-import { computeFold, createFoldCache } from "./folds";
+import {
+  computeFold,
+  createFoldCache,
+  type ObservableFoldCache,
+} from "./folds";
 import {
   DEFAULT_MAX_NODES,
   deserializeDocument,
@@ -276,6 +279,28 @@ export function createEngine<
     foldKeyOwners.set(fold.key, entryKey);
   }
 
+  /**
+   * The fold registry as a MAP, for the same reason `NodeTypeRegistry` is one.
+   *
+   * `aggregate<K extends keyof F>` constrains its key at compile time and
+   * nothing else did: `config.folds[key]` is a raw object index, so an untyped
+   * or dynamically-built call site asking for `"toString"` found
+   * `Function.prototype.toString`, sailed past the `undefined` guard, and threw
+   * `TypeError: Cannot read properties of undefined (reading 'length')` out of
+   * `cacheKey` — from a function whose doc promises `undefined` for a key that
+   * names no fold, in a package where nothing is supposed to throw after
+   * construction.
+   *
+   * The node type registry closed exactly this hole by being a `Map`, and
+   * ./serialize closes it for wire-controlled kind names with
+   * `Object.create(null)`. The fold registry was the one lookup still reading
+   * through a prototype chain. `Object.entries` takes own enumerable string
+   * keys only, so inherited names simply are not in here.
+   */
+  const foldsByKey: ReadonlyMap<string, ErasedFold<Ts, S>> = new Map(
+    Object.entries(config.folds),
+  );
+
   // `historyLimit` REFUSED rather than reinterpreted, and this is the one place
   // that can. ./history's `effectiveLimit` maps anything that is not a positive
   // integer — `0`, a negative, a fraction, `NaN` — to unbounded, and argues for
@@ -358,13 +383,13 @@ export function createEngine<
     graph: Graph<Ts, S>,
     key: K,
     id: NodeId,
-    cache: FoldCache | undefined,
+    cache: ObservableFoldCache | undefined,
   ): Folded<FoldValue<F[K]>> | undefined => {
     // The registry erases each fold's `A`, so this is `ConsumerDefinedFold<Ts, S, unknown>`
     // however the key was typed. `undefined` is reachable under
     // `noUncheckedIndexedAccess` for a generic key, and it is also the honest
     // answer for a key that names no fold.
-    const fold: ErasedFold<Ts, S> | undefined = config.folds[key];
+    const fold = foldsByKey.get(String(key));
     if (fold === undefined) return undefined;
 
     // ---- THE SHADOW COLD REFOLD, rescoped to CACHE HITS ONLY ---------------
@@ -387,10 +412,31 @@ export function createEngine<
     // correctness, so a stale entry is served silently and forever — and that
     // has shipped twice, both times as a wrong aggregate at the root that never
     // self-healed.
+    // `fold.key`, NOT the registry's record key, and `peek`, NOT `get`. Both
+    // were wrong and each broke something different.
+    //
+    // THE KEY. `computeFold` reads and writes under `fold.key`; this probed
+    // under `String(key)`, which is the key in the `folds` RECORD. Those are
+    // allowed to differ — `{ duration: someFold }` where `someFold.key` is
+    // `"duration-v2"` is legal, and `createEngine` only refuses duplicate
+    // `fold.key`s. Wherever they differed the probe found nothing, `shadowable`
+    // was never true, and THE AUDIT SILENTLY DID NOT RUN. That is the check
+    // ./folds singles out as mattering most, because the memo table's only
+    // invalidation is the rev in its key: a stale entry is served forever and
+    // has shipped twice. Every existing test registers a fold whose two names
+    // agree, so nothing caught it.
+    //
+    // THE READ. `get` counts a hit or a miss and re-inserts for LRU order, so
+    // the probe was scoring itself into `FoldCacheStats` — the one instrument a
+    // consumer has for telling a table that has stopped helping from one that
+    // never helped. Measured on one warm root read with `devChecks: true`:
+    // +2 hits where the honest answer is +1 when the names agree, and
+    // +1 hit / +1 miss when they differ. `peek` answers without touching
+    // either.
     const shadowable =
       ctx.devChecks &&
       cache !== undefined &&
-      cache.get(String(key), id, getSubtreeRev(graph, id)).hit;
+      cache.peek(fold.key, id, getSubtreeRev(graph, id));
 
     const result = computeFold(graph, fold, id, cache);
     if (result === undefined) return undefined;
