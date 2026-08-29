@@ -339,7 +339,7 @@ function randomDocument(
 
   const folderData = (id: string): Readonly<{ name: string; source: string | null }> => ({
     name: `folder ${id}`,
-    // Derived from the id, so no two OWNING placements can collide at ingest.
+    // Derived from the id, so no two OWNING placements can collide at the write.
     // The `duplicate-owner` rejection is reached later, on purpose, by seeds
     // and edits that reuse a key the graph already owns.
     source: rand() < 0.5 ? `src-${id}` : null,
@@ -1441,7 +1441,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
           }
         };
 
-        checkBytes(graph, "after ingest");
+        checkBytes(graph, "after the write");
 
         // --- Phase A: loads only ---------------------------------------------
         //

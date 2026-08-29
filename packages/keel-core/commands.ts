@@ -11,7 +11,7 @@
 //
 //   applyCommand      -> patch + history entry + change-feed event  (user intent)
 //   resolveDrop       -> nothing; it only TRANSLATES a gesture into a command
-//   applyIngestEdits  -> no patch, no history entry, no change-feed event, and
+//   applyNonUndoableWriteEdits  -> no patch, no history entry, no change-feed event, and
 //                        it SCRUBS both history stacks             (server write)
 //
 // PURE. No React, no DOM. Nothing here throws; every failure is Result-shaped.
@@ -62,7 +62,7 @@ import {
 } from "./graph";
 import { applyPatch, patchTouchedNodeIds } from "./patches";
 import { parseNodeData } from "./serialize";
-import { scrubHistoryForIngest } from "./history";
+import { scrubHistoryForWrite } from "./history";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -940,7 +940,7 @@ function applyRemoveNodes<Ts extends readonly ErasedNodeType[], S>(
 
 /**
  * One resolved edit. It carries enough to rebuild the node WITHOUT re-narrowing
- * `GraphNode` later, because `applyIngestEdits` has to reconstruct nodes by hand:
+ * `GraphNode` later, because `applyNonUndoableWriteEdits` has to reconstruct nodes by hand:
  * it deliberately produces no patch for `applyPatch` to consume.
  */
 type EditPlan<S> = Readonly<{
@@ -954,7 +954,7 @@ type EditPlan<S> = Readonly<{
 
 /**
  * The shared validation and dispatch behind BOTH `edit-nodes` and
- * `applyIngest`. Same path, same rejections — the two doors differ only in what
+ * `applyNonUndoableWrite`. Same path, same rejections — the two doors differ only in what
  * they leave behind, never in what they accept.
  */
 function planEdits<Ts extends readonly ErasedNodeType[], S>(
@@ -967,7 +967,7 @@ function planEdits<Ts extends readonly ErasedNodeType[], S>(
   }
 
   // Two edits to one node in one command would produce two `DataChange` entries
-  // for that node, which breaks the per-node independence `scrubPatchForIngest`
+  // for that node, which breaks the per-node independence `scrubPatchForWrite`
   // depends on and leaves the entry's inverse ambiguous.
   const seen = new Set<NodeId>();
   for (const edit of edits) {
@@ -1427,7 +1427,7 @@ function resolveInsertDrop<Ts extends readonly ErasedNodeType[], S>(
 }
 
 // ---------------------------------------------------------------------------
-// applyIngestEdits — the non-undoable content write
+// applyNonUndoableWriteEdits — the non-undoable content write
 // ---------------------------------------------------------------------------
 
 /**
@@ -1451,7 +1451,7 @@ function resolveInsertDrop<Ts extends readonly ErasedNodeType[], S>(
  * O(historyLimit x changes) — bounded only when a consumer SET a
  * `historyLimit`, which is not the default. See `EngineConfig.historyLimit`.
  */
-export function applyIngestEdits<Ts extends readonly ErasedNodeType[], S>(
+export function applyNonUndoableWriteEdits<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   history: History<Ts, S>,
   edits: readonly EditOf<Ts>[],
@@ -1495,7 +1495,7 @@ export function applyIngestEdits<Ts extends readonly ErasedNodeType[], S>(
   const withNodes: Graph<Ts, S> = {
     ...graph,
     nodesById: nextNodes,
-    // Ingest bumps too, even though it emits nothing: an arriving thumbnail has
+    // The non-undoable write bumps too, even though it emits nothing: an arriving thumbnail has
     // to invalidate every ancestor's fold and wake every subscriber, or the
     // rollup summarising it never re-renders. Nothing moved, so there is one
     // chain per node rather than a move's two.
@@ -1509,14 +1509,14 @@ export function applyIngestEdits<Ts extends readonly ErasedNodeType[], S>(
   // become a description of the defect rather than of the code.
   //
   // MEASURED before this guard, counting `contentKey` on a key-preserving
-  // one-node write: ingest asked 1,000 / 10,000 / 40,000 times at those sizes —
+  // one-node write: the non-undoable write asked 1,000 / 10,000 / 40,000 times at those sizes —
   // exactly the reachable node count, a whole document-order DFS — while
   // `edit-nodes` asked 2, flat. Per CALL, not per edit: a batch of twenty still
   // cost one full walk. This is the path an arriving thumbnail lands on, which
   // makes it the highest-frequency write in the system.
   //
   // The soundness argument is the one ./patches already makes for the same
-  // predicate, and it is STRICTLY STRONGER here: ingest touches only `data`, so
+  // predicate, and it is STRICTLY STRONGER here: the non-undoable write touches only `data`, so
   // document order cannot change (no bucket's ORDER can move) and no node's
   // `ownsItsSubtree` can change (no owner can move). Where the patch arm must
   // also tolerate changes it skipped, `planEdits` refuses a quarantined node
@@ -1545,7 +1545,7 @@ export function applyIngestEdits<Ts extends readonly ErasedNodeType[], S>(
 
   // Which ids the scrub actually touched, computed against the PRE-scrub stacks
   // (afterwards the evidence is gone — that is what scrubbing means). A "moved"
-  // patch carries no content and is skipped, matching `scrubPatchForIngest`,
+  // patch carries no content and is skipped, matching `scrubPatchForWrite`,
   // which leaves structural patches alone.
   const mentioned = new Set<NodeId>();
   for (const entry of [...history.past, ...history.future]) {
@@ -1556,7 +1556,7 @@ export function applyIngestEdits<Ts extends readonly ErasedNodeType[], S>(
 
   return ok({
     graph: nextGraph,
-    history: scrubHistoryForIngest(history, replacements),
+    history: scrubHistoryForWrite(history, replacements),
     scrubbed,
   });
 }

@@ -6,7 +6,7 @@ import {
   isEmptyPatch,
   patchDetachedSubtrees,
   patchTouchedNodeIds,
-  scrubPatchForIngest,
+  scrubPatchForWrite,
   verifyPatchApplies,
 } from "./patches";
 import {
@@ -1788,15 +1788,15 @@ describe("isEmptyPatch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// scrubPatchForIngest
+// scrubPatchForWrite
 // ---------------------------------------------------------------------------
 
-describe("scrubPatchForIngest", () => {
-  const ingested: ReadonlyMap<NodeId, unknown> = new Map<NodeId, unknown>([
+describe("scrubPatchForWrite", () => {
+  const written: ReadonlyMap<NodeId, unknown> = new Map<NodeId, unknown>([
     [nid("a"), { title: "from-server", assetId: "asset-1" }],
   ]);
 
-  it("drops only the ingested node's data change", () => {
+  it("drops only the written node's data change", () => {
     const patch: Patch<TestTypes, Summary> = {
       type: "data-changed",
       changes: [
@@ -1814,7 +1814,7 @@ describe("scrubPatchForIngest", () => {
         },
       ],
     };
-    const scrubbed = scrubPatchForIngest<TestTypes, Summary>(patch, ingested);
+    const scrubbed = scrubPatchForWrite<TestTypes, Summary>(patch, written);
     expect(scrubbed).not.toBeNull();
     if (scrubbed === null || scrubbed.type !== "data-changed") return;
     // Content changes are per-node independent, so `b` stays perfectly
@@ -1822,7 +1822,7 @@ describe("scrubPatchForIngest", () => {
     expect(scrubbed.changes.map((change) => String(change.nodeId))).toEqual(["b"]);
   });
 
-  it("returns null when every change was ingested, so the caller drops the entry", () => {
+  it("returns null when every change was written, so the caller drops the entry", () => {
     const patch: Patch<TestTypes, Summary> = {
       type: "data-changed",
       changes: [
@@ -1834,7 +1834,7 @@ describe("scrubPatchForIngest", () => {
         },
       ],
     };
-    expect(scrubPatchForIngest<TestTypes, Summary>(patch, ingested)).toBeNull();
+    expect(scrubPatchForWrite<TestTypes, Summary>(patch, written)).toBeNull();
   });
 
   it("rewrites captured data inside a dormant removal so undo cannot resurrect stale content", () => {
@@ -1843,7 +1843,7 @@ describe("scrubPatchForIngest", () => {
       type: "removed",
       placements: [placementOf(graph, "a", "root", 0), placementOf(graph, "b", "root", 1)],
     };
-    const scrubbed = scrubPatchForIngest<TestTypes, Summary>(patch, ingested);
+    const scrubbed = scrubPatchForWrite<TestTypes, Summary>(patch, written);
     expect(scrubbed).not.toBeNull();
     if (scrubbed === null || scrubbed.type !== "removed") return;
 
@@ -1869,7 +1869,7 @@ describe("scrubPatchForIngest", () => {
       type: "inserted",
       placements: [placementOf(graph, "f2", "f1", 1)],
     };
-    const scrubbed = scrubPatchForIngest(
+    const scrubbed = scrubPatchForWrite(
       patch,
       new Map<NodeId, unknown>([[nid("f2"), { name: "from-server", source: null }]]),
     );
@@ -1895,7 +1895,7 @@ describe("scrubPatchForIngest", () => {
       type: "removed",
       placements: [placementOf(graph, "q", "root", 0)],
     };
-    const scrubbed = scrubPatchForIngest(
+    const scrubbed = scrubPatchForWrite(
       patch,
       new Map<NodeId, unknown>([[nid("q"), { anything: true }]]),
     );
@@ -1915,10 +1915,10 @@ describe("scrubPatchForIngest", () => {
         },
       ],
     };
-    expect(scrubPatchForIngest<TestTypes, Summary>(patch, ingested)).toBe(patch);
+    expect(scrubPatchForWrite<TestTypes, Summary>(patch, written)).toBe(patch);
   });
 
-  it("returns the same patch when nothing was ingested", () => {
+  it("returns the same patch when nothing was written", () => {
     const patch: Patch<TestTypes, Summary> = {
       type: "data-changed",
       changes: [
@@ -1930,7 +1930,7 @@ describe("scrubPatchForIngest", () => {
         },
       ],
     };
-    expect(scrubPatchForIngest<TestTypes, Summary>(patch, new Map())).toBe(patch);
-    expect(scrubPatchForIngest<TestTypes, Summary>(patch, ingested)).toBe(patch);
+    expect(scrubPatchForWrite<TestTypes, Summary>(patch, new Map())).toBe(patch);
+    expect(scrubPatchForWrite<TestTypes, Summary>(patch, written)).toBe(patch);
   });
 });

@@ -1,9 +1,9 @@
-// KEEL — history: pure undo/redo values, dispatch coalescing, and the ingest
-// scrub.
+// KEEL — history: pure undo/redo values, dispatch coalescing, and the
+// non-undoable write's history scrub.
 //
 // PURE. No React, no DOM, no "use client". Imports ./types and ./patches only.
 //
-// `History<Ts, S>` is a VALUE, not a mutable handle. It has to be: `applyIngest`
+// `History<Ts, S>` is a VALUE, not a mutable handle. It has to be: `applyNonUndoableWrite`
 // rewrites both stacks and returns the new history alongside the new graph, and
 // a mutable history would make that operation unobservable and untestable. Every
 // function here returns a fresh value and mutates nothing.
@@ -23,7 +23,7 @@
 //     a trim. Getting the direction backwards is invisible until someone undoes
 //     a drag and lands in the middle of it.
 //
-//  3. `scrubHistoryForIngest` is the history half of `applyIngest`, the
+//  3. `scrubHistoryForWrite` is the history half of `applyNonUndoableWrite`, the
 //     non-undoable content write. Roughly half the fields on a realistic item
 //     have a writer that is not user intent (a thumbnail arriving, a server
 //     stamping provenance). If the only door into `data` were a command, either
@@ -42,7 +42,7 @@ import type {
   ErasedNodeType,
 } from "./types";
 import { makeDataChange } from "./types";
-import { scrubPatchForIngest } from "./patches";
+import { scrubPatchForWrite } from "./patches";
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -299,11 +299,11 @@ export function coalesceEntries<Ts extends readonly ErasedNodeType[], S>(
 }
 
 // ---------------------------------------------------------------------------
-// The ingest scrub
+// The non-undoable write scrub
 // ---------------------------------------------------------------------------
 
 /**
- * Maps `scrubPatchForIngest` over BOTH stacks, dropping entries whose patch is
+ * Maps `scrubPatchForWrite` over BOTH stacks, dropping entries whose patch is
  * left empty.
  *
  * NEVER TRUNCATES AND NEVER REORDERS. That is the whole point of the mechanism:
@@ -317,12 +317,12 @@ export function coalesceEntries<Ts extends readonly ErasedNodeType[], S>(
  * consumer SET one — it defaults to unbounded, so by default the bound named
  * here is the one that does not exist.
  */
-export function scrubHistoryForIngest<Ts extends readonly ErasedNodeType[], S>(
+export function scrubHistoryForWrite<Ts extends readonly ErasedNodeType[], S>(
   history: History<Ts, S>,
   replacements: ReadonlyMap<NodeId, unknown>,
 ): History<Ts, S> {
-  // Nothing was ingested: not merely an optimization, it keeps the History
-  // reference stable so a store can skip notifying on a no-op ingest.
+  // Nothing was written: not merely an optimization, it keeps the History
+  // reference stable so a store can skip notifying on a no-op write.
   if (replacements.size === 0) return history;
 
   const past = scrubStack(history.past, replacements);
@@ -339,9 +339,9 @@ function scrubStack<Ts extends readonly ErasedNodeType[], S>(
   let changed = false;
 
   for (const entry of stack) {
-    const patch = scrubPatchForIngest(entry.patch, replacements);
+    const patch = scrubPatchForWrite(entry.patch, replacements);
     if (patch === null) {
-      // The entry recorded a change to nothing BUT the ingested nodes, so
+      // The entry recorded a change to nothing BUT the written nodes, so
       // inverting it would restore content the server has already replaced.
       changed = true;
       continue;
@@ -357,7 +357,7 @@ function scrubStack<Ts extends readonly ErasedNodeType[], S>(
     kept.push({ ...entry, patch });
   }
 
-  // Identity is only best-effort: it holds when `scrubPatchForIngest` returns
+  // Identity is only best-effort: it holds when `scrubPatchForWrite` returns
   // its input unchanged, which the contract permits but does not promise.
   return changed ? kept : stack;
 }

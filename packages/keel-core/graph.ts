@@ -1178,7 +1178,7 @@ export function ownersAfterInsert<Ts extends readonly ErasedNodeType[], S>(
  * check 8.
  *
  * Takes the PRE-state graph and reads each key off the LIVE node, never off the
- * patch's recorded copy: `applyIngest` is a non-undoable content write, so a
+ * patch's recorded copy: `applyNonUndoableWrite` is a non-undoable content write, so a
  * dormant removal patch can carry a `node` whose `data` — and therefore whose
  * `contentKey` — is no longer what the graph holds. Deleting under the recorded
  * key would leave the real bucket holding a dead id.

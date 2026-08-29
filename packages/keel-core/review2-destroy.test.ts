@@ -109,10 +109,10 @@ describe("a destroyed store refuses every write", () => {
     if (!redone.ok) expect(redone.error.code).toBe("store-destroyed");
   });
 
-  it("refuses ingest", () => {
+  it("refuses the non-undoable write", () => {
     const { store } = makeStore();
     store.destroy();
-    const result = store.ingest([
+    const result = store.applyNonUndoableWrite([
       { nodeId: clipAId, kind: "clip", edit: { title: "from-io" } },
     ]);
     expect(result.ok).toBe(false);
@@ -212,7 +212,7 @@ describe("verifyDataChanged consults the node type only when it must", () => {
 
   it("cannot become a way for a dormant patch to clobber a server write", () => {
     // The fast path must not weaken the guarantee the comparison exists for.
-    // `applyIngest` is the non-undoable write, so it moves a node's data out
+    // `applyNonUndoableWrite` is the non-undoable write, so it moves a node's data out
     // from under a dormant patch. The engine's answer is to SCRUB that entry
     // rather than let the replay refuse later — so the observable guarantee is
     // not a particular rejection code, it is that the server's value survives.
@@ -225,7 +225,7 @@ describe("verifyDataChanged consults the node type only when it must", () => {
     ).toBe(true);
     expect(store.undo().ok).toBe(true);
 
-    const scrubbed = store.ingest([
+    const scrubbed = store.applyNonUndoableWrite([
       { nodeId: clipAId, kind: "clip", edit: { title: "SERVER" } },
     ]);
     expect(scrubbed.ok).toBe(true);

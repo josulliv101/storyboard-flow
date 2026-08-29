@@ -179,7 +179,7 @@ export function createReactBindings<
    * SUBSCRIPTION: `store.subscribeToNode(id)`, which fires when that node's
    * `subtreeRev` changes — one counter doing both jobs, invalidation and
    * notification. It is bumped along the ancestor chain by every mutation,
-   * hydration and ingest included, which closes the predecessor's hole where a
+   * hydration and non-undoable writes included, which closes the predecessor's hole where a
    * move at depth 5 changed no ancestor's children-array identity and therefore
    * re-rendered no ancestor's rollup, ever.
    *
@@ -333,7 +333,8 @@ export function createReactBindings<
     const subscribe = useCallback(
       (onStoreChange: () => void): (() => void) => {
         // BOTH feeds, and both are needed. `dispatch` / `undo` / `redo` move the
-        // stacks and emit on the change feed; `ingest` also moves them — it
+        // stacks and emit on the change feed; `applyNonUndoableWrite` also moves
+        // them — it
         // SCRUBS entries out of both — and emits nothing there by design, since
         // echoing an IO write back to the consumer that just performed it is how
         // a persistence loop starts. Its only signal is the graph commit.

@@ -41,7 +41,7 @@ import {
 } from "./graph";
 import { applyPatch, invertPatch } from "./patches";
 import { createHistory } from "./history";
-import { applyCommand, applyIngestEdits, resolveDrop } from "./commands";
+import { applyCommand, applyNonUndoableWriteEdits, resolveDrop } from "./commands";
 import { DEFAULT_MAX_NODES } from "./serialize";
 
 // ---------------------------------------------------------------------------
@@ -1663,11 +1663,11 @@ describe("resolveDrop", () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyIngestEdits
+// applyNonUndoableWriteEdits
 // ---------------------------------------------------------------------------
 
-describe("applyIngestEdits", () => {
-  const ingest = (nodeId: string, edit: ClipEdit): readonly EditOf<Types>[] => [
+describe("applyNonUndoableWriteEdits", () => {
+  const writeEdits = (nodeId: string, edit: ClipEdit): readonly EditOf<Types>[] => [
     { nodeId: id(nodeId), kind: "clip", edit },
   ];
 
@@ -1676,7 +1676,7 @@ describe("applyIngestEdits", () => {
     const rootBefore = getSubtreeRev(graph, id("root"));
     const boxBefore = getSubtreeRev(graph, id("box"));
     const result = unwrap(
-      applyIngestEdits(graph, createHistory(), ingest("b1", { seconds: 9 }), ctx),
+      applyNonUndoableWriteEdits(graph, createHistory(), writeEdits("b1", { seconds: 9 }), ctx),
     );
     const node = getNode(result.graph, id("b1"));
     expect(node !== undefined && !node.quarantined && node.data).toEqual({
@@ -1694,12 +1694,12 @@ describe("applyIngestEdits", () => {
   it("normalizes through the same node-type path an edit command uses", () => {
     const { graph, ctx } = makeHarness();
     const result = unwrap(
-      applyIngestEdits(graph, createHistory(), ingest("a", { title: "  Server  " }), ctx),
+      applyNonUndoableWriteEdits(graph, createHistory(), writeEdits("a", { title: "  Server  " }), ctx),
     );
     expect(labels(result.graph, "root")[0]).toBe("Server");
   });
 
-  it("drops the ingested node from a dormant data-changed entry, keeping the rest", () => {
+  it("drops the written node from a dormant data-changed entry, keeping the rest", () => {
     // The user loses undo of THEIR edit to that one node — correct, the server
     // has since overwritten it — and keeps every other change in the entry.
     const { graph, ctx } = makeHarness();
@@ -1722,7 +1722,7 @@ describe("applyIngestEdits", () => {
       limit: Number.POSITIVE_INFINITY,
     };
     const result = unwrap(
-      applyIngestEdits(edited.graph, history, ingest("a", { seconds: 99 }), ctx),
+      applyNonUndoableWriteEdits(edited.graph, history, writeEdits("a", { seconds: 99 }), ctx),
     );
     expect(result.scrubbed).toEqual([id("a")]);
     const survivor = result.history.past[0];
@@ -1752,7 +1752,7 @@ describe("applyIngestEdits", () => {
       limit: Number.POSITIVE_INFINITY,
     };
     const result = unwrap(
-      applyIngestEdits(
+      applyNonUndoableWriteEdits(
         inserted.graph,
         history,
         [{ nodeId: id("mint-1"), kind: "clip", edit: { seconds: 77 } }],
@@ -1783,7 +1783,7 @@ describe("applyIngestEdits", () => {
       limit: Number.POSITIVE_INFINITY,
     };
     const result = unwrap(
-      applyIngestEdits(moved.graph, history, ingest("a", { seconds: 5 }), ctx),
+      applyNonUndoableWriteEdits(moved.graph, history, writeEdits("a", { seconds: 5 }), ctx),
     );
     // A "moved" patch carries no content, so there is nothing to scrub — and
     // the entry must survive intact or the user loses an unrelated undo.
@@ -1795,15 +1795,15 @@ describe("applyIngestEdits", () => {
     const { graph, ctx } = makeHarness();
     const history = createHistory<Types, Summary>();
     expect(
-      rejectionOf(applyIngestEdits(graph, history, ingest("qleaf", { seconds: 1 }), ctx)).code,
+      rejectionOf(applyNonUndoableWriteEdits(graph, history, writeEdits("qleaf", { seconds: 1 }), ctx)).code,
     ).toBe("node-quarantined");
     expect(
-      rejectionOf(applyIngestEdits(graph, history, ingest("nope", { seconds: 1 }), ctx)).code,
+      rejectionOf(applyNonUndoableWriteEdits(graph, history, writeEdits("nope", { seconds: 1 }), ctx)).code,
     ).toBe("unknown-node");
     expect(
-      rejectionOf(applyIngestEdits(graph, history, ingest("a", { seconds: 500 }), ctx)).code,
+      rejectionOf(applyNonUndoableWriteEdits(graph, history, writeEdits("a", { seconds: 500 }), ctx)).code,
     ).toBe("parse-failed");
-    expect(rejectionOf(applyIngestEdits(graph, history, [], ctx)).code).toBe(
+    expect(rejectionOf(applyNonUndoableWriteEdits(graph, history, [], ctx)).code).toBe(
       "empty-command",
     );
   });
@@ -1813,7 +1813,7 @@ describe("applyIngestEdits", () => {
     const { ctx } = makeHarness();
     expect(
       rejectionOf(
-        applyIngestEdits(graph, createHistory(), ingest("a", { seconds: 1 }), ctx),
+        applyNonUndoableWriteEdits(graph, createHistory(), writeEdits("a", { seconds: 1 }), ctx),
       ).code,
     ).toBe("foreign-graph");
   });

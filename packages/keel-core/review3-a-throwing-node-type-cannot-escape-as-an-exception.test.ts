@@ -292,7 +292,7 @@ describe("replay verification refuses rather than throwing", () => {
       type: "edit-nodes",
       edits: [{ nodeId: clipAId, kind: "clip", edit: { seconds: 5 } }],
     });
-    store.ingest([{ nodeId: clipAId, kind: "clip", edit: { seconds: 5 } }]);
+    store.applyNonUndoableWrite([{ nodeId: clipAId, kind: "clip", edit: { seconds: 5 } }]);
 
     explode.nodeSerialize = true;
     let thrown: unknown = null;

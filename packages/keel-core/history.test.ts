@@ -21,7 +21,7 @@ import {
   peekRedo,
   peekUndo,
   pushHistory,
-  scrubHistoryForIngest,
+  scrubHistoryForWrite,
 } from "./history";
 import type {
   GraphNode,
@@ -684,27 +684,27 @@ describe("clearing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// scrubHistoryForIngest — the non-undoable write's history half
+// scrubHistoryForWrite — the non-undoable write's history half
 // ---------------------------------------------------------------------------
 
-describe("scrubHistoryForIngest", () => {
+describe("scrubHistoryForWrite", () => {
   const noReplacements: ReadonlyMap<NodeId, unknown> = new Map();
 
-  it("returns the same history when nothing was ingested", () => {
+  it("returns the same history when nothing was written", () => {
     const history = pushHistory(
       createHistory<Types, Summary>(),
       entryOf(dataPatch(titleChange("n1", "a", "b"))),
     );
-    expect(scrubHistoryForIngest(history, noReplacements)).toBe(history);
+    expect(scrubHistoryForWrite(history, noReplacements)).toBe(history);
   });
 
-  it("drops an entry whose only change was to an ingested node", () => {
+  it("drops an entry whose only change was to an written node", () => {
     // Inverting it would restore content the server has already replaced.
     const history = pushHistory(
       createHistory<Types, Summary>(),
       entryOf(dataPatch(titleChange("n1", "a", "b"))),
     );
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -716,7 +716,7 @@ describe("scrubHistoryForIngest", () => {
       createHistory<Types, Summary>(),
       entryOf(dataPatch(titleChange("n1", "a", "b"), titleChange("n2", "x", "y"))),
     );
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -739,7 +739,7 @@ describe("scrubHistoryForIngest", () => {
       limit: Number.POSITIVE_INFINITY,
     };
 
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -759,7 +759,7 @@ describe("scrubHistoryForIngest", () => {
       ],
       limit: Number.POSITIVE_INFINITY,
     };
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -774,7 +774,7 @@ describe("scrubHistoryForIngest", () => {
       future: [],
       limit: Number.POSITIVE_INFINITY,
     };
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -792,7 +792,7 @@ describe("scrubHistoryForIngest", () => {
       future: [],
       limit: Number.POSITIVE_INFINITY,
     };
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -811,7 +811,7 @@ describe("scrubHistoryForIngest", () => {
       limit: 7,
     };
     expect(
-      scrubHistoryForIngest(
+      scrubHistoryForWrite(
         history,
         new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
       ).limit,
@@ -834,7 +834,7 @@ describe("scrubHistoryForIngest", () => {
       future: [],
       limit: Number.POSITIVE_INFINITY,
     };
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -851,7 +851,7 @@ describe("scrubHistoryForIngest", () => {
       limit: Number.POSITIVE_INFINITY,
     };
 
-    scrubHistoryForIngest(
+    scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("n1"), { title: "from-server" }]]),
     );
@@ -866,7 +866,7 @@ describe("scrubHistoryForIngest", () => {
       createHistory<Types, Summary>(),
       entryOf(dataPatch(titleChange("n1", "a", "b"))),
     );
-    const scrubbed = scrubHistoryForIngest(
+    const scrubbed = scrubHistoryForWrite(
       history,
       new Map<NodeId, unknown>([[n("elsewhere"), { title: "from-server" }]]),
     );

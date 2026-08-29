@@ -132,15 +132,15 @@ export {
   isEmptyPatch,
   patchDetachedSubtrees,
   patchTouchedNodeIds,
-  scrubPatchForIngest,
+  scrubPatchForWrite,
   verifyPatchApplies,
 } from "./patches";
 
 // ---------------------------------------------------------------------------
-// Commands — the reducer, drop resolution, the ingest door
+// Commands — the reducer, drop resolution, the non-undoable write door
 // ---------------------------------------------------------------------------
 
-export { applyCommand, applyIngestEdits, resolveDrop } from "./commands";
+export { applyCommand, applyNonUndoableWriteEdits, resolveDrop } from "./commands";
 
 // ---------------------------------------------------------------------------
 // Folds — derived aggregates and the persistence gate
@@ -197,7 +197,7 @@ export {
   peekRedo,
   peekUndo,
   pushHistory,
-  scrubHistoryForIngest,
+  scrubHistoryForWrite,
 } from "./history";
 
 // ---------------------------------------------------------------------------
