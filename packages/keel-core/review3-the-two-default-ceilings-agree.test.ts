@@ -35,7 +35,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type Issue,
   type Result,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
   defineNodeType,
   parseNodeId,
 } from "./types";
@@ -96,7 +96,7 @@ const types = [clipType, folderType] as const;
 type Types = typeof types;
 type Summary = Readonly<{ n: number }>;
 
-const summary: SummaryType<Summary> = {
+const summary: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };

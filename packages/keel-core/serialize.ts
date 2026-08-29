@@ -42,7 +42,7 @@ import {
   makeLeafNode,
   makeQuarantinedNode,
   tryParseNodeId,
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type EngineContext,
   type Graph,
@@ -643,7 +643,7 @@ type BuiltDocument<Ts extends readonly unknown[], S> = Readonly<{
   /** Pre-order, parents first. Also the order the report is written in. */
   order: readonly NodeId[];
   rootIds: readonly NodeId[];
-  nodesById: ReadonlyMap<NodeId, AnyNode<Ts, S>>;
+  nodesById: ReadonlyMap<NodeId, GraphNode<Ts, S>>;
   childrenById: ReadonlyMap<NodeId, readonly NodeId[]>;
   parentById: ReadonlyMap<NodeId, NodeId | null>;
   report: LoadReport;
@@ -955,7 +955,7 @@ function buildDocument<Ts extends readonly unknown[], S>(
   }
 
   // --- Pass F: content -----------------------------------------------------
-  const nodesById = new Map<NodeId, AnyNode<Ts, S>>();
+  const nodesById = new Map<NodeId, GraphNode<Ts, S>>();
   const quarantined: IngressError[] = [];
   const migrated: {
     nodeId: NodeId;
@@ -1614,9 +1614,9 @@ export function loadChildrenInto<Ts extends readonly unknown[], S>(
  * the only sanctioned way to mint a node.
  */
 function withLoadedChildren<Ts extends readonly unknown[], S>(
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
   id: NodeId,
-): AnyNode<Ts, S> {
+): GraphNode<Ts, S> {
   if (node.quarantined) {
     return makeQuarantinedNode({
       id,

@@ -84,6 +84,25 @@ export function tryParseNodeId(id: string): Result<NodeId, Issue> {
 // ---------------------------------------------------------------------------
 // 2. Node types — the per-kind registry
 // ---------------------------------------------------------------------------
+//
+// THE `ConsumerDefined` PREFIX, and where it stops.
+//
+// Exactly three types in this package are authored by the consumer and CALLED
+// by the engine: `ConsumerDefinedNodeType`, `ConsumerDefinedSummaryType` and
+// `ConsumerDefinedFold`. Each one carries the prefix, because each one is a
+// place a throw has to be caught and a returned value has to be distrusted —
+// and because naming only one of the three would have implied the other two
+// were the engine's.
+//
+// The names DERIVED from them deliberately drop it, and that is a convention
+// rather than an oversight: `ErasedNodeType`, `NodeTypeRegistry`,
+// `defineNodeType`, `ErasedFold`, `FoldRegistry`. Each is unambiguous from
+// context — there is no engine-authored node type for `NodeTypeRegistry` to be
+// confused with — and spelling it out yields `defineConsumerDefinedNodeType`,
+// which says "define consumer-defined" and is worse than the thing it clarifies.
+//
+// So: the prefix marks the TRUST BOUNDARY, once, on the three types that cross
+// it. Everything downstream is keel's own.
 
 /** Handed to `parse` so a node type can warn without failing, and can see whether
  *  the engine is about to treat this node as a container. */
@@ -111,18 +130,18 @@ export type ParseCtx = Readonly<{
  * and it is verified, not assumed: under `strictFunctionTypes` an arrow
  * property is contravariant in its parameters, so `serialize: (data: Clip) =>
  * unknown` does NOT satisfy `serialize: (data: unknown) => unknown` and
- * `NodeType<"clip", Clip, ClipEdit>` would fail the `SomeNodeType` constraint
+ * `ConsumerDefinedNodeType<"clip", Clip, ClipEdit>` would fail the `ErasedNodeType` constraint
  * — every real node type rejected at the `createEngine` call. Method shorthand
  * stays bivariant, including through the `Readonly<>` wrapper (I compiled both
  * forms to confirm the wrapper preserves it). That bivariance is also what
  * lets the reducer call `nodeType.applyEdit(node.data, edit.edit)` off an erased
- * `SomeNodeType` with no cast anywhere.
+ * `ErasedNodeType` with no cast anywhere.
  *
  * The price is honest: bivariance is unsound, so a node type that lies about its
  * own Data type is not caught here. The trust boundary is enforceable; the
  * node type's interior is not.
  */
-export type NodeType<K extends string, Data, Edit> = Readonly<{
+export type ConsumerDefinedNodeType<K extends string, Data, Edit> = Readonly<{
   kind: K;
   /**
    * KIND-LEVEL and immutable — never a predicate over data. A kind that is
@@ -168,10 +187,22 @@ export type NodeType<K extends string, Data, Edit> = Readonly<{
 }>;
 
 /**
- * The erased registry element. Writable with `unknown` and no `any` ONLY
- * because of the method-shorthand rule above.
+ * The registry element, with `K`, `Data` and `Edit` all widened away.
+ *
+ * ERASED is the operative word and it is the one this package already uses in
+ * prose — a `Map` cannot hold a tuple's worth of distinct types, so the
+ * registry stores every node type at its widest and the correspondence between
+ * a kind and its `Data` survives only at compile time. That gap is what the
+ * four boundary constructors at the bottom of this file exist to cross, and it
+ * is why they are the only sanctioned casts here.
+ *
+ * Writable with `unknown` and no `any` ONLY because of the method-shorthand
+ * rule above: method shorthand stays bivariant, so a real
+ * `ConsumerDefinedNodeType<"clip", Clip, ClipEdit>` satisfies this. Written as arrow
+ * properties it would not, and every node type would be rejected at the
+ * `createEngine` call.
  */
-export type SomeNodeType = NodeType<string, unknown, unknown>;
+export type ErasedNodeType = ConsumerDefinedNodeType<string, unknown, unknown>;
 
 /**
  * CURRIED, and that is the whole point. `Edit` has exactly one inference site
@@ -184,8 +215,8 @@ export type SomeNodeType = NodeType<string, unknown, unknown>;
  *   const clipType = defineNodeType<Clip, ClipEdit>()({ kind: "clip", ... });
  */
 export function defineNodeType<Data, Edit = never>(): <K extends string>(
-  type: NodeType<K, Data, Edit>,
-) => NodeType<K, Data, Edit> {
+  type: ConsumerDefinedNodeType<K, Data, Edit>,
+) => ConsumerDefinedNodeType<K, Data, Edit> {
   return (type) => type;
 }
 
@@ -193,22 +224,22 @@ export function defineNodeType<Data, Edit = never>(): <K extends string>(
  * The runtime registry, keyed by kind. Built once by `createEngine`; duplicate
  * kinds are rejected there (see `buildRegistry` in ./graph).
  */
-export type NodeTypeRegistry = ReadonlyMap<string, SomeNodeType>;
+export type NodeTypeRegistry = ReadonlyMap<string, ErasedNodeType>;
 
 /** `S`'s own parse/serialize pair — the summary has its own lifecycle, separate from any kind. */
-export type SummaryType<S> = Readonly<{
+export type ConsumerDefinedSummaryType<S> = Readonly<{
   parse(raw: unknown): Result<S, readonly Issue[]>;
   serialize(summary: S): unknown;
 }>;
 
 /** Every kind literal in the registry: `"clip" | "folder" | ...`. */
 export type KindOf<Ts extends readonly unknown[]> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer K, infer _D, infer _E> ? K : never;
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer _D, infer _E> ? K : never;
 }[number];
 
 /** The `Data` belonging to one kind — used by the React per-kind views. */
 export type DataForKind<Ts extends readonly unknown[], K extends string> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer NK, infer D, infer _E>
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer NK, infer D, infer _E>
     ? NK extends K
       ? D
       : never
@@ -217,7 +248,7 @@ export type DataForKind<Ts extends readonly unknown[], K extends string> = {
 
 /** The `Edit` belonging to one kind. */
 export type EditForKind<Ts extends readonly unknown[], K extends string> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer NK, infer _D, infer E>
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer NK, infer _D, infer E>
     ? NK extends K
       ? E
       : never
@@ -268,14 +299,14 @@ export type ChildrenState =
  * Imprecision, called out so nobody chases it: this maps over the WHOLE
  * registry, so it names a `container: false` variant even for kinds declared
  * `container: true`. `container` is kind-level but not a literal type on
- * `NodeType`, so the tuple cannot be filtered on it. At runtime a container
+ * `ConsumerDefinedNodeType`, so the tuple cannot be filtered on it. At runtime a container
  * kind never produces a `LeafNode`.
  */
 export type LeafNode<Ts extends readonly unknown[]> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer K, infer D, infer _E>
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{
         id: NodeId;
-        /** Discriminant #1 of `AnyNode`. See the note on `AnyNode`. */
+        /** Discriminant #1 of `GraphNode`. See the note on `GraphNode`. */
         quarantined: false;
         container: false;
         kind: K;
@@ -285,7 +316,7 @@ export type LeafNode<Ts extends readonly unknown[]> = {
 }[number];
 
 export type CollectionNode<Ts extends readonly unknown[], S> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer K, infer D, infer _E>
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{
         id: NodeId;
         quarantined: false;
@@ -366,9 +397,20 @@ export type QuarantinedNode = Readonly<{
 }>;
 
 /**
- * The read type. `QuarantinedNode` is a member ON PURPOSE: a consumer's
- * exhaustive switch does not compile until forward-incompatible data is
- * handled.
+ * The read type — a node exactly as the graph holds it, in whichever of the
+ * three shapes it turned out to have.
+ *
+ * CLOSED, not permissive, and the name matters because this used to be called
+ * `AnyNode` in a package whose own rule is "never use `any`". Nothing here is
+ * loose: this is the most CONSTRAINING type in the engine. `QuarantinedNode` is
+ * a member ON PURPOSE, so a consumer's exhaustive switch does not compile until
+ * forward-incompatible data is handled.
+ *
+ * `GraphNode` rather than `Node` because @storyboard/keel-react and every
+ * consumer app compile with `lib: ["dom", ...]`, where a bare `Node` export
+ * would shadow the DOM one in exactly the files most likely to need both.
+ * `PhantomTypes` still calls it `Node` — that one is reached as
+ * `engine.types.Node`, so it is namespaced and can keep the better name.
  *
  * DISCRIMINATE ON `quarantined` FIRST, THEN `container`:
  *
@@ -381,7 +423,7 @@ export type QuarantinedNode = Readonly<{
  * on the other two. That is why `LeafNode` and `CollectionNode` carry an
  * explicit `quarantined: false`.
  */
-export type AnyNode<Ts extends readonly unknown[], S> =
+export type GraphNode<Ts extends readonly unknown[], S> =
   | LeafNode<Ts>
   | CollectionNode<Ts, S>
   | QuarantinedNode;
@@ -394,7 +436,7 @@ export type AnyNode<Ts extends readonly unknown[], S> =
 export type Graph<Ts extends readonly unknown[], S> = Readonly<{
   /** Cross-instance guard. Checked on every mutating call and every ingress. */
   engineId: symbol;
-  nodesById: ReadonlyMap<NodeId, AnyNode<Ts, S>>;
+  nodesById: ReadonlyMap<NodeId, GraphNode<Ts, S>>;
   /** EXACTLY the `loaded` collections — no other node has an entry. */
   childrenById: ReadonlyMap<NodeId, readonly NodeId[]>;
   /** Total over `nodesById`. `null` for a root. */
@@ -474,7 +516,7 @@ export type Graph<Ts extends readonly unknown[], S> = Readonly<{
  * a `loaded` empty collection.
  */
 export type Seed<Ts extends readonly unknown[], S> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer K, infer D, infer _E>
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{
         kind: K;
         data: D;
@@ -486,7 +528,7 @@ export type Seed<Ts extends readonly unknown[], S> = {
 
 /** One node's content edit, paired with its own kind's edit type. */
 export type EditOf<Ts extends readonly unknown[]> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer K, infer _D, infer E>
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer _D, infer E>
     ? Readonly<{ nodeId: NodeId; kind: K; edit: E }>
     : never;
 }[number];
@@ -582,14 +624,14 @@ export type Move = Readonly<{
  * including a quarantined node's byte-exact `raw`.
  */
 export type Placement<Ts extends readonly unknown[], S> = Readonly<{
-  node: AnyNode<Ts, S>;
+  node: GraphNode<Ts, S>;
   parentId: NodeId;
   index: number;
 }>;
 
 /** One node's DATA change, structure untouched. Whole values, so inverting is a swap. */
 export type DataChange<Ts extends readonly unknown[]> = {
-  [I in keyof Ts]: Ts[I] extends NodeType<infer K, infer D, infer _E>
+  [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{ nodeId: NodeId; kind: K; before: D; after: D }>
     : never;
 }[number];
@@ -937,7 +979,7 @@ export type LoadReport = Readonly<{
 export type EngineContext<S> = Readonly<{
   engineId: symbol;
   registry: NodeTypeRegistry;
-  summary: SummaryType<S>;
+  summary: ConsumerDefinedSummaryType<S>;
   onUnknownKind: "quarantine" | "reject";
   onParseFailure: "quarantine" | "reject";
   /** Ceiling on nodes in one document. See `EngineConfig.maxNodes`. */
@@ -1051,11 +1093,11 @@ export type FoldedChild<A> = Folded<A> &
  * sufficient. A fold handed the graph would make "drop everything" the only
  * correct invalidation.
  *
- * Method shorthand for the same reason as `NodeType`: `children` is a
+ * Method shorthand for the same reason as `ConsumerDefinedNodeType`: `children` is a
  * PARAMETER mentioning `A`, so arrow properties would sink the
- * `Fold<Ts, S, unknown>` registry constraint.
+ * `ConsumerDefinedFold<Ts, S, unknown>` registry constraint.
  */
-export type Fold<Ts extends readonly unknown[], S, A> = Readonly<{
+export type ConsumerDefinedFold<Ts extends readonly unknown[], S, A> = Readonly<{
   key: string;
   /** A leaf is always `"exact"` — only placeholders and quarantine introduce
    *  uncertainty, so the evaluator wraps this without asking. */
@@ -1072,15 +1114,24 @@ export type Fold<Ts extends readonly unknown[], S, A> = Readonly<{
   quarantined(node: QuarantinedNode): Folded<A>;
 }>;
 
-export type SomeFold<Ts extends readonly unknown[], S> = Fold<Ts, S, unknown>;
+/**
+ * A fold with its `A` widened away — the `ErasedNodeType` of this section, and
+ * erased for the same reason: one `FoldRegistry` holds folds that answer
+ * different questions, so the value type cannot survive the container.
+ *
+ * `makeFolded` is the boundary constructor that crosses back, and `computeFold`
+ * can only ever return `Folded<unknown>` while `aggregate<K>` promises
+ * `Folded<FoldValue<F[K]>>`.
+ */
+export type ErasedFold<Ts extends readonly unknown[], S> = ConsumerDefinedFold<Ts, S, unknown>;
 
 export type FoldRegistry<Ts extends readonly unknown[], S> = Readonly<
-  Record<string, SomeFold<Ts, S>>
+  Record<string, ErasedFold<Ts, S>>
 >;
 
 /** The `A` of a fold — `Folded<FoldValue<F["duration"]>>` is what `aggregate`
  *  returns. */
-export type FoldValue<X> = X extends Fold<
+export type FoldValue<X> = X extends ConsumerDefinedFold<
   infer _Ts extends readonly unknown[],
   infer _S,
   infer A
@@ -1228,7 +1279,13 @@ export type PhantomTypes<
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{
-  Node: AnyNode<Ts, S>;
+  /**
+   * `Node`, not `GraphNode`, and the difference is deliberate rather than
+   * drift. This map is reached as `engine.types.Node`, so it is namespaced and
+   * cannot collide with DOM's `Node` — which is exactly why the exported type
+   * carries the longer name and this one does not. See `GraphNode`.
+   */
+  Node: GraphNode<Ts, S>;
   Leaf: LeafNode<Ts>;
   Collection: CollectionNode<Ts, S>;
   Graph: Graph<Ts, S>;
@@ -1263,7 +1320,7 @@ export type PhantomTypes<
 }>;
 
 export type EngineConfig<
-  Ts extends readonly SomeNodeType[],
+  Ts extends readonly ErasedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{
@@ -1272,7 +1329,7 @@ export type EngineConfig<
    *  node types claiming one kind means one silently wins at the trust boundary
    *  and the discriminant is dead. */
   types: Ts;
-  summary: SummaryType<S>;
+  summary: ConsumerDefinedSummaryType<S>;
   folds: F;
   /** Default `"quarantine"`. */
   onUnknownKind?: "quarantine" | "reject";
@@ -1483,7 +1540,7 @@ export type Engine<
 //
 // The soundness argument is the same for all four and worth stating once: the
 // caller has just looked a node type up in the registry — where it is erased to
-// `NodeType<string, unknown, unknown>` — and run its `parse`. The value in hand
+// `ConsumerDefinedNodeType<string, unknown, unknown>` — and run its `parse`. The value in hand
 // IS that kind's `Data`; the compiler simply cannot see through the erasure to
 // prove it, because the registry is a `Map` and the mapped tuple is a
 // compile-time-only correspondence.
@@ -1562,7 +1619,7 @@ export function makeQuarantinedNode(
  * Re-brand a `Folded<unknown>` as the fold's own value type.
  *
  * Same erasure argument as the node constructors, one level up: `FoldRegistry`
- * is `Record<string, Fold<Ts, S, unknown>>`, so a fold looked up by key has
+ * is `Record<string, ConsumerDefinedFold<Ts, S, unknown>>`, so a fold looked up by key has
  * already lost its `A` — `computeFold` can only return `Folded<unknown>`, while
  * `aggregate<K>` promises `Folded<FoldValue<F[K]>>`. The correspondence between
  * the key and the fold's `A` is real but compile-time only, exactly as with a

@@ -39,7 +39,7 @@ import { describe, expect, test } from "vitest";
 import {
   defineNodeType,
   parseNodeId,
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type Command,
   type EditOf,
@@ -55,7 +55,7 @@ import {
   type Seed,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 import {
   ancestorChain,
@@ -239,7 +239,7 @@ const nodeTypes = [clipType, folderType] as const;
 type Types = typeof nodeTypes;
 type Summary = Readonly<{ label: string }>;
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -265,7 +265,7 @@ const MYSTERY_KIND = "mystery";
 const MYSTERY_SCHEMA_VERSION = 3;
 
 type FuzzGraph = Graph<Types, Summary>;
-type FuzzNode = AnyNode<Types, Summary>;
+type FuzzNode = GraphNode<Types, Summary>;
 type FuzzCommand = Command<Types, Summary>;
 type FuzzPatch = Patch<Types, Summary>;
 type FuzzSeed = Seed<Types, Summary>;

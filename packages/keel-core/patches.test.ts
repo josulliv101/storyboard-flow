@@ -20,7 +20,7 @@ import {
   makeLeafNode,
   makeQuarantinedNode,
   parseNodeId,
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type DataChange,
   type EngineContext,
@@ -29,8 +29,8 @@ import {
   type NodeId,
   type Patch,
   type Placement,
-  type SomeNodeType,
-  type SummaryType,
+  type ErasedNodeType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
 
@@ -106,14 +106,14 @@ const folderType = defineNodeType<FolderData, FolderEdit>()({
 type TestTypes = readonly [typeof clipType, typeof folderType];
 type Summary = Readonly<{ label: string }>;
 
-const registry: ReadonlyMap<string, SomeNodeType> = new Map<string, SomeNodeType>(
+const registry: ReadonlyMap<string, ErasedNodeType> = new Map<string, ErasedNodeType>(
   [
     ["clip", clipType],
     ["folder", folderType],
   ],
 );
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw) {
     if (isRecord(raw)) {
       const label = raw["label"];
@@ -187,7 +187,7 @@ function buildGraph(
   roots: readonly Spec[],
   engineId: symbol = ENGINE_ID,
 ): Graph<TestTypes, Summary> {
-  const nodesById = new Map<NodeId, AnyNode<TestTypes, Summary>>();
+  const nodesById = new Map<NodeId, GraphNode<TestTypes, Summary>>();
   const childrenById = new Map<NodeId, readonly NodeId[]>();
   const parentById = new Map<NodeId, NodeId | null>();
   const subtreeRevById = new Map<NodeId, number>();
@@ -311,7 +311,7 @@ const parentOf = (
 const nodeOf = (
   graph: Graph<TestTypes, Summary>,
   id: string,
-): AnyNode<TestTypes, Summary> | undefined => graph.nodesById.get(nid(id));
+): GraphNode<TestTypes, Summary> | undefined => graph.nodesById.get(nid(id));
 
 /** Structure only, order-normalized, so a remove/restore round trip can be
  *  compared without Map insertion order counting as a difference. */
@@ -341,7 +341,7 @@ function snapshot(graph: Graph<TestTypes, Summary>): unknown {
 function nodeOfOrThrow(
   graph: Graph<TestTypes, Summary>,
   id: string,
-): AnyNode<TestTypes, Summary> {
+): GraphNode<TestTypes, Summary> {
   const node = nodeOf(graph, id);
   if (node === undefined) throw new Error(`fixture is missing node ${id}`);
   return node;

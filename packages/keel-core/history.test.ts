@@ -24,7 +24,7 @@ import {
   scrubHistoryForIngest,
 } from "./history";
 import type {
-  AnyNode,
+  GraphNode,
   Command,
   DataChange,
   History,
@@ -184,7 +184,7 @@ function placementsOf(patch: TestPatch): readonly Placement<Types, Summary>[] {
 }
 
 /** Discriminate on `quarantined` FIRST — `container` alone cannot narrow. */
-function dataOf(node: AnyNode<Types, Summary>): unknown {
+function dataOf(node: GraphNode<Types, Summary>): unknown {
   if (node.quarantined) throw new Error("expected a live node, got a quarantined one");
   return node.data;
 }

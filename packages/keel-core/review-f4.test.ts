@@ -18,7 +18,7 @@ import {
   type EngineContext,
   type Issue,
   type Result,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 
 type Clip = Readonly<{ title: string }>;
@@ -73,7 +73,7 @@ type Types = typeof types;
 type Summary = Readonly<{ seconds: number }>;
 
 /** The whole point: consumer code on the ingress path that throws. */
-const throwingSummary: SummaryType<Summary> = {
+const throwingSummary: ConsumerDefinedSummaryType<Summary> = {
   parse(): Result<Summary, readonly Issue[]> {
     throw new Error("summary parse exploded");
   },
@@ -83,7 +83,7 @@ const throwingSummary: SummaryType<Summary> = {
 };
 
 /** Control: the well-behaved node type, same shape, REFUSES instead of throwing. */
-const wellBehavedSummary: SummaryType<Summary> = {
+const wellBehavedSummary: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -124,7 +124,7 @@ function docWithSummary(summary: unknown): unknown {
   };
 }
 
-function ctxWith(summary: SummaryType<Summary>): EngineContext<Summary> {
+function ctxWith(summary: ConsumerDefinedSummaryType<Summary>): EngineContext<Summary> {
   return {
     engineId: Symbol("f4-probe"),
     registry: buildRegistry(types),
@@ -236,7 +236,7 @@ describe("a throwing summary type quarantines rather than crashing", () => {
         serialize(value: Summary): unknown {
           return { seconds: value.seconds };
         },
-      } satisfies SummaryType<Summary>,
+      } satisfies ConsumerDefinedSummaryType<Summary>,
       folds: {},
     });
     const loaded = engine.deserialize(docWithSummary({ seconds: 30 }));

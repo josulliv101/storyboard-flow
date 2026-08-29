@@ -12,7 +12,7 @@ import {
 import {
   defineNodeType,
   parseNodeId,
-  type AnyNode,
+  type GraphNode,
   type EngineContext,
   type Graph,
   type Issue,
@@ -21,7 +21,7 @@ import {
   type Result,
   type SerializedDocument,
   type SerializedNode,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ type Types = typeof TYPES;
 
 type Summary = Readonly<{ count: number }>;
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw: unknown): Result<Summary, readonly Issue[]> {
     if (!isRecord(raw) || typeof raw.count !== "number") {
       return { ok: false, error: issue("$.count", "summary.count must be a number") };
@@ -252,7 +252,7 @@ function id(raw: string): NodeId {
 function nodeIn(
   graph: Graph<Types, Summary>,
   raw: string,
-): AnyNode<Types, Summary> {
+): GraphNode<Types, Summary> {
   const node = graph.nodesById.get(id(raw));
   if (node === undefined) throw new Error(`no node ${raw} in graph`);
   return node;

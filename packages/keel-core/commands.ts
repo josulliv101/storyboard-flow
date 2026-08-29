@@ -20,7 +20,7 @@ import {
   describeThrown,
   describeValue,
   structurallyEqualBounded,
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type Command,
   type DataChange,
@@ -247,7 +247,7 @@ function pruneDescendants<Ts extends readonly unknown[], S>(
  */
 function owningSourceKey<Ts extends readonly unknown[], S>(
   ctx: EngineContext<S>,
-  node: AnyNode<Ts, S>,
+  node: GraphNode<Ts, S>,
 ): string | null {
   const key = sourceKeyOf<Ts, S>(ctx.registry, node);
   if (key === null) return null;
@@ -799,7 +799,7 @@ function buildSeedPlacements<Ts extends readonly unknown[], S>(
       );
     }
 
-    const node: AnyNode<Ts, S> = nodeType.container
+    const node: GraphNode<Ts, S> = nodeType.container
       ? makeCollectionNode<Ts, S>(
           nodeId,
           seed.kind,
@@ -939,7 +939,7 @@ function applyRemoveNodes<Ts extends readonly unknown[], S>(
 
 /**
  * One resolved edit. It carries enough to rebuild the node WITHOUT re-narrowing
- * `AnyNode` later, because `applyIngestEdits` has to reconstruct nodes by hand:
+ * `GraphNode` later, because `applyIngestEdits` has to reconstruct nodes by hand:
  * it deliberately produces no patch for `applyPatch` to consume.
  */
 type EditPlan<S> = Readonly<{
@@ -1132,7 +1132,7 @@ function planEdits<Ts extends readonly unknown[], S>(
         );
       }
 
-      // 2. THE OPT-IN INVERSE. `invertEdit` is declared on `NodeType` and
+      // 2. THE OPT-IN INVERSE. `invertEdit` is declared on `ConsumerDefinedNodeType` and
       //    documented to satisfy
       //      applyEdit(applyEdit(d, e).value, invertEdit(e, d)) deep-equals d
       //    and the engine never calls it — undo works from whole-value
@@ -1477,7 +1477,7 @@ export function applyIngestEdits<Ts extends readonly unknown[], S>(
   const nextNodes = new Map(graph.nodesById);
   const editedIds: NodeId[] = [];
   for (const plan of plans) {
-    const rebuilt: AnyNode<Ts, S> =
+    const rebuilt: GraphNode<Ts, S> =
       plan.collection === null
         ? makeLeafNode<Ts>(plan.nodeId, plan.kind, plan.after)
         : makeCollectionNode<Ts, S>(

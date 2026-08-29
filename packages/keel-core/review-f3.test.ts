@@ -35,7 +35,7 @@ import {
   type ParseCtx,
   type Result,
   type SerializedNode,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
 } from "./types";
 import { buildRegistry } from "./graph";
 
@@ -94,7 +94,7 @@ type Types = typeof TYPES;
 
 type Summary = Readonly<{ count: number }>;
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw: unknown): Result<Summary, readonly Issue[]> {
     if (!isRecord(raw) || typeof raw.count !== "number") {
       return { ok: false, error: [{ path: "$.count", message: "count" }] };

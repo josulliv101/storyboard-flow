@@ -17,10 +17,10 @@ import {
   parseNodeId,
 } from "./types";
 import type {
-  AnyNode,
+  GraphNode,
   Certainty,
   ChildrenState,
-  Fold,
+  ConsumerDefinedFold,
   Folded,
   Graph,
   Issue,
@@ -131,7 +131,7 @@ type Spec =
 const LOADED: ChildrenState = { status: "loaded" };
 
 function buildGraph(roots: readonly Spec[]): TestGraph {
-  const nodesById = new Map<NodeId, AnyNode<Types, Summary>>();
+  const nodesById = new Map<NodeId, GraphNode<Types, Summary>>();
   const childrenById = new Map<NodeId, readonly NodeId[]>();
   const parentById = new Map<NodeId, NodeId | null>();
   const subtreeRevById = new Map<NodeId, number>();
@@ -235,7 +235,7 @@ const durationMonoid = foldMonoid<Types, Summary, number>({
  *  cannot express because `concat` runs after the subtree is already summed. */
 const EMPTY_COLLECTION_SECONDS = 3;
 
-const durationByHand: Fold<Types, Summary, number> = {
+const durationByHand: ConsumerDefinedFold<Types, Summary, number> = {
   key: "duration-by-hand",
   leaf(node) {
     return node.kind === "clip" ? node.data.seconds : 0;
@@ -272,7 +272,7 @@ const durationByHand: Fold<Types, Summary, number> = {
  * result still wins. Weakest-wins certainty cannot express this, and demoting
  * here is what discarded a just-made edit in the predecessor.
  */
-const firstFrame: Fold<Types, Summary, string | null> = {
+const firstFrame: ConsumerDefinedFold<Types, Summary, string | null> = {
   key: "first-frame",
   leaf(node) {
     return node.kind === "clip" ? node.data.title : null;
@@ -385,7 +385,7 @@ describe("foldMonoid", () => {
   });
 
   it("cannot express an empty-collection floor or a subtree veto", () => {
-    // This is the recorded reason `Fold` is the primitive and the monoid is the
+    // This is the recorded reason `ConsumerDefinedFold` is the primitive and the monoid is the
     // convenience — not a style preference.
     const empty = buildGraph([{ t: "folder", id: "root", children: [] }]);
     expect(computeFold(empty, durationMonoid, id("root"))).toEqual({
@@ -516,7 +516,7 @@ describe("computeFold dispatch", () => {
         ],
       },
     ]);
-    const order: Fold<Types, Summary, string> = {
+    const order: ConsumerDefinedFold<Types, Summary, string> = {
       key: "order",
       leaf(node) {
         return node.kind === "clip" ? node.data.title : "?";
@@ -557,7 +557,7 @@ describe("computeFold dispatch", () => {
         ],
       },
     ]);
-    const flags: Fold<Types, Summary, string> = {
+    const flags: ConsumerDefinedFold<Types, Summary, string> = {
       key: "flags",
       leaf() {
         return "";
@@ -604,7 +604,7 @@ describe("computeFold dispatch", () => {
       },
     ]);
     let leafCalls = 0;
-    const counting: Fold<Types, Summary, number> = {
+    const counting: ConsumerDefinedFold<Types, Summary, number> = {
       ...durationByHand,
       key: "counting-quarantine",
       leaf(node) {
@@ -658,7 +658,7 @@ describe("computeFold dispatch", () => {
 
   it("survives depth that would overflow a recursive evaluator", () => {
     const depth = 5000;
-    const nodesById = new Map<NodeId, AnyNode<Types, Summary>>();
+    const nodesById = new Map<NodeId, GraphNode<Types, Summary>>();
     const childrenById = new Map<NodeId, readonly NodeId[]>();
     const parentById = new Map<NodeId, NodeId | null>();
     const subtreeRevById = new Map<NodeId, number>();
@@ -728,7 +728,7 @@ describe("computeFold dispatch", () => {
   it("terminates on a graph that violates its own acyclicity invariant", () => {
     const a = id("cyc-a");
     const b = id("cyc-b");
-    const nodesById = new Map<NodeId, AnyNode<Types, Summary>>([
+    const nodesById = new Map<NodeId, GraphNode<Types, Summary>>([
       [a, makeCollectionNode<Types, Summary>(a, "folder", { name: "a", disabled: false }, LOADED, null)],
       [b, makeCollectionNode<Types, Summary>(b, "folder", { name: "b", disabled: false }, LOADED, null)],
     ]);
@@ -885,13 +885,13 @@ describe("computeFold caching", () => {
   ];
 
   function countingDuration(): {
-    fold: Fold<Types, Summary, number>;
+    fold: ConsumerDefinedFold<Types, Summary, number>;
     leafCalls: () => number;
     collectionCalls: () => number;
   } {
     let leafCalls = 0;
     let collectionCalls = 0;
-    const fold: Fold<Types, Summary, number> = {
+    const fold: ConsumerDefinedFold<Types, Summary, number> = {
       key: "counting-duration",
       leaf(node) {
         leafCalls += 1;
@@ -984,7 +984,7 @@ describe("computeFold caching", () => {
         ],
       },
     ]);
-    const titles: Fold<Types, Summary, readonly string[]> = {
+    const titles: ConsumerDefinedFold<Types, Summary, readonly string[]> = {
       key: "titles",
       leaf(node) {
         return node.kind === "clip" ? [node.data.title] : [];

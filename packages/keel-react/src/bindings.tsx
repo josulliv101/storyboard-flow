@@ -7,7 +7,7 @@
 // `createContext` cannot be generic. A module-scope
 // `createContext<Store<Ts, S, F> | null>(null)` has nowhere to get `Ts` from, so
 // the only thing that compiles up there is an erased context — at which point
-// `useNode` hands back `AnyNode<never[], never>` and the consumer's exhaustive
+// `useNode` hands back `GraphNode<never[], never>` and the consumer's exhaustive
 // `switch (node.kind)` has nothing left to switch on. The predecessor has six
 // module-scope contexts, including the one carrying its item-content component
 // registry, and every one of them erases. Creating them INSIDE a call where `Ts`
@@ -33,7 +33,7 @@ import {
   getChildren,
   getNode,
   getSubtreeRev,
-  type AnyNode,
+  type GraphNode,
   type Engine,
   type FoldRegistry,
   type FoldValue,
@@ -255,7 +255,7 @@ export function createReactBindings<
     return useNodeSlice(id, select);
   }
 
-  function useNode(id: NodeId): AnyNode<Ts, S> | undefined {
+  function useNode(id: NodeId): GraphNode<Ts, S> | undefined {
     const select = useCallback(
       (store: BoundStore) => getNode(store.getGraph(), id),
       [id],

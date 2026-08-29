@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type AnyNode,
+  type GraphNode,
   type ChildrenState,
   type EditOf,
   type EngineContext,
@@ -24,7 +24,7 @@ import {
   type Rejection,
   type Result,
   type Seed,
-  type SummaryType,
+  type ConsumerDefinedSummaryType,
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
@@ -141,7 +141,7 @@ const types = [clipType, folderType] as const;
 type Types = typeof types;
 type Summary = Readonly<{ label: string }>;
 
-const summaryType: SummaryType<Summary> = {
+const summaryType: ConsumerDefinedSummaryType<Summary> = {
   parse(raw): Result<Summary, readonly Issue[]> {
     if (typeof raw !== "object" || raw === null) {
       return { ok: false, error: [{ path: "$", message: "not an object" }] };
@@ -205,7 +205,7 @@ function folderSpec(
 }
 
 function buildGraph(engineId: symbol, roots: readonly Spec[]): Graph<Types, Summary> {
-  const nodes = new Map<NodeId, AnyNode<Types, Summary>>();
+  const nodes = new Map<NodeId, GraphNode<Types, Summary>>();
   const children = new Map<NodeId, readonly NodeId[]>();
   const parents = new Map<NodeId, NodeId | null>();
   const revs = new Map<NodeId, number>();

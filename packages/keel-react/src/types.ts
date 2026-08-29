@@ -5,15 +5,15 @@
 // or the components it registers should not have to import a `.tsx` module to
 // do it. Nothing here has a runtime representation.
 //
-// Every member below is METHOD SHORTHAND, matching keel-core's `NodeType` and
-// `Fold`. There it is load-bearing (bivariance is what lets the registry
+// Every member below is METHOD SHORTHAND, matching keel-core's `ConsumerDefinedNodeType` and
+// `ConsumerDefinedFold`. There it is load-bearing (bivariance is what lets the registry
 // constraint be written with `unknown` and no `any`); here it is merely
 // consistent, and consistency is worth something when the two packages are read
 // side by side.
 
 import type { FunctionComponent, NamedExoticComponent, ReactNode } from "react";
 import type {
-  AnyNode,
+  GraphNode,
   Command,
   DataForKind,
   FoldRegistry,
@@ -123,7 +123,7 @@ export type ProviderProps<
  * WHY THIS IS A RETURN VALUE AND NOT A SET OF MODULE EXPORTS: `createContext`
  * cannot be generic. A module-scope `createContext<Store<Ts, S, F> | null>` has
  * nowhere to get `Ts` from, so the only thing that compiles at module scope is
- * an erased context — at which point `useNode` returns `AnyNode<never[], never>`
+ * an erased context — at which point `useNode` returns `GraphNode<never[], never>`
  * and every consumer's exhaustive `switch (node.kind)` has nothing to switch on.
  * Creating the contexts INSIDE a call where `Ts` is already bound is what keeps
  * the parameter alive all the way to the call site.
@@ -165,7 +165,7 @@ export type ReactBindings<
 
   /** `undefined` when the node is gone — routine, a card can outlive its node
    *  by a frame. */
-  useNode(id: NodeId): AnyNode<Ts, S> | undefined;
+  useNode(id: NodeId): GraphNode<Ts, S> | undefined;
 
   /**
    * `[]` for anything that is not a LOADED collection.
