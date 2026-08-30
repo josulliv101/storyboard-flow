@@ -21,6 +21,7 @@ import type {
   Command,
   Engine,
   EngineConfig,
+  RequireTupleTypes,
   EngineContext,
   Folded,
   FoldRegistry,
@@ -253,7 +254,9 @@ export function createEngine<
   const Ts extends readonly WidenedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
->(config: EngineConfig<Ts, S, F>): Engine<Ts, S, F> {
+>(
+  config: EngineConfig<Ts, S, F> & RequireTupleTypes<Ts>,
+): Engine<Ts, S, F> {
   const registry = buildRegistry(config.types);
 
   // ConsumerDefinedFold keys must be unique, and this is the check `readCachedFold` in
