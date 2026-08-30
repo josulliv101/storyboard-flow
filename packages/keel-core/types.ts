@@ -1515,15 +1515,75 @@ export type PhantomTypes<
   Folds: F;
 }>;
 
+/**
+ * `createEngine`'s tuple guard, intersected onto its `config` parameter.
+ *
+ * `Ts` is the compile-time half of the kind-to-`Data` correspondence: the TUPLE
+ * is what remembers that `"clip"` means `Data = Clip`. A plain array has no
+ * per-position types, so every mapped type built on `Ts` — `EditOf`,
+ * `DataForKind`, `KindOf`, `Seed` — collapses from a discriminated union into a
+ * cross-product, and a folder's edit under `kind: "clip"` typechecks.
+ *
+ * MEASURED, the same wrong-kind edit through `store.dispatch`:
+ *
+ *   types: [clipType, folderType] as const   ->  error, correctly
+ *   types: [clipType, folderType]            ->  COMPILED CLEAN
+ *
+ * `createEngine`'s `const Ts` already rescues an inline literal, so the hole is
+ * the named variable declared without `as const` — which is how anyone with
+ * more than two node types writes it.
+ *
+ * A tuple's `length` is a literal (`2`); an array's is `number`, so
+ * `number extends Ts["length"]` is true only for the array. It then resolves to
+ * a type whose NAME is the fix, and the consumer reads the instruction in the
+ * error rather than getting a silently weaker engine.
+ *
+ * INTERSECTED at the call door rather than declared on `EngineConfig.types`,
+ * for a reason worth keeping: `config.types` stays assignable to `Ts` inside
+ * the function body, because an intersection is assignable to each of its
+ * members. Putting the conditional on the property instead made
+ * `buildRegistry(config.types)` stop compiling and would have bought a fifth
+ * sanctioned cast to fix — a real cost for the same diagnostic.
+ */
+export type RequireTupleTypes<Ts extends readonly WidenedNodeType[]> =
+  number extends Ts["length"]
+    ? {
+        types: "keel: `types` must be a TUPLE, not an array — add `as const`. Without it every per-kind type collapses and a wrong-kind edit compiles.";
+      }
+    : unknown;
+
 export type EngineConfig<
   Ts extends readonly WidenedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{
-  /** Duplicate `kind` is REJECTED at runtime — it THROWS, because a duplicate
-   *  is a programmer error at module init, not a recoverable condition. Two
-   *  node types claiming one kind means one silently wins at the trust boundary
-   *  and the discriminant is dead. */
+  /**
+   * Duplicate `kind` is REJECTED at runtime — it THROWS, because a duplicate
+   * is a programmer error at module init, not a recoverable condition. Two
+   * node types claiming one kind means one silently wins at the trust boundary
+   * and the discriminant is dead.
+   *
+   * MUST BE A TUPLE, and this type enforces it rather than trusting it. `Ts` is
+   * the compile-time half of the kind-to-`Data` correspondence: the tuple is
+   * what remembers that `"clip"` means `Data = Clip`. A plain ARRAY has no
+   * per-position types, so every mapped type built on `Ts` — `EditOf`,
+   * `DataForKind`, `KindOf`, `Seed` — collapses from a discriminated union to a
+   * cross-product, and a folder's edit under `kind: "clip"` typechecks.
+   *
+   * MEASURED, the same wrong-kind edit through `store.dispatch`:
+   *
+   *   types: [clipType, folderType] as const   ->  error, correctly
+   *   types: [clipType, folderType]            ->  COMPILED CLEAN
+   *
+   * `createEngine`'s `const Ts` already rescues an inline literal, so the hole
+   * is the named variable declared without `as const` — which is how anyone
+   * with more than two node types writes it.
+   *
+   * THE GUARD LIVES ON `createEngine`, not here — see `RequireTupleTypes`. This
+   * type keeps saying `Ts`, honestly, because that is what a config holds once
+   * it exists; the door is where the mistake is made and where it is worth
+   * refusing.
+   */
   types: Ts;
   summary: ConsumerDefinedSummaryType<S>;
   folds: F;
