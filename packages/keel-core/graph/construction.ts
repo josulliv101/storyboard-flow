@@ -1,4 +1,4 @@
-// KEEL graph — the functions that MINT a graph value.
+// KEEL graph — the functions that CREATE a graph value.
 //
 // `emptyGraph` and `buildGraph` produce one from nothing and from already-parsed
 // parts; `markMissing` produces the next one after storage says a subtree is

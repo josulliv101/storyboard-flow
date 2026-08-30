@@ -120,6 +120,12 @@ export {
   rebuildDerivedIndexes,
   sourceKeyOf,
   subtreeIds,
+  // `rebuildDerivedIndexes` RETURNS a `DerivedIndexes`, and leaving the type
+  // unnamed here was the same curation misfire as `FoldCacheStats` below: a
+  // consumer could call the function and could not write down the type of what
+  // it handed back, so the only way to hold the result in a typed local was to
+  // reach past this barrel into ./graph.
+  type DerivedIndexes,
 } from "./graph";
 
 // ---------------------------------------------------------------------------

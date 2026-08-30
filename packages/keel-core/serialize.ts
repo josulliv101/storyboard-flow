@@ -50,6 +50,7 @@ import {
   type Issue,
   type LoadRejection,
   type LoadReport,
+  quoteFromWire,
   type NodeId,
   type NodeTypeRegistry,
   type ParseCtx,
@@ -219,7 +220,7 @@ export function parseSerializedDocument(
     for (const [kind, value] of Object.entries(rawVersions)) {
       if (typeof value !== "number" || !Number.isFinite(value)) {
         return malformed(
-          `schemaVersions[${JSON.stringify(kind)}] must be a finite number`,
+          `schemaVersions[${quoteFromWire(kind)}] must be a finite number`,
         );
       }
       schemaVersions[kind] = value;
@@ -496,7 +497,7 @@ export function parseNodeData<S>(
     return ingressError(args.nodeId, args.kind, "unknown-kind", [
       {
         path: "$.kind",
-        message: `No node type is registered for kind ${JSON.stringify(args.kind)}`,
+        message: `No node type is registered for kind ${quoteFromWire(args.kind)}`,
       },
     ]);
   }
@@ -548,7 +549,7 @@ export function parseNodeData<S>(
   const parsedValue: unknown = parsed.value;
   runContentDevChecks(
     ctx.devChecks,
-    `the ${JSON.stringify(args.kind)} node type (node ${JSON.stringify(args.nodeId)})`,
+    `the ${quoteFromWire(args.kind)} node type (node ${quoteFromWire(args.nodeId)})`,
     parsedValue,
     () => nodeType.serialize(parsedValue),
     // DIRECTLY, never through `parseNodeData` — see the re-entry note above.
@@ -719,7 +720,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
     if (wireById.has(id.value)) {
       return fail({
         code: "duplicate-node-id",
-        message: `Node id ${JSON.stringify(node.id)} appears more than once in nodes`,
+        message: `Node id ${quoteFromWire(node.id)} appears more than once in nodes`,
         nodeId: id.value,
       });
     }
@@ -742,14 +743,14 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
     if (!wireById.has(id.value)) {
       return fail({
         code: "unknown-root",
-        message: `rootIds names ${JSON.stringify(rawRootId)}, which is not in nodes`,
+        message: `rootIds names ${quoteFromWire(rawRootId)}, which is not in nodes`,
         nodeId: id.value,
       });
     }
     if (rootSet.has(id.value)) {
       return fail({
         code: "duplicate-node-id",
-        message: `rootIds names ${JSON.stringify(rawRootId)} more than once`,
+        message: `rootIds names ${quoteFromWire(rawRootId)} more than once`,
         nodeId: id.value,
       });
     }
@@ -800,9 +801,9 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
       // produce. `QuarantinedNode` carries both `container` and a
       // `ChildrenState` precisely so this case has somewhere to land.
       const mismatch = hasChildren
-        ? `carries a children array while kind ${JSON.stringify(node.kind)} is registered as a leaf`
+        ? `carries a children array while kind ${quoteFromWire(node.kind)} is registered as a leaf`
         : node.childrenState !== undefined
-          ? `carries childrenState ${JSON.stringify(node.childrenState)} while kind ${JSON.stringify(node.kind)} is registered as a leaf`
+          ? `carries childrenState ${quoteFromWire(node.childrenState)} while kind ${quoteFromWire(node.kind)} is registered as a leaf`
           : null;
       if (mismatch === null) {
         containerById.set(id, false);
@@ -810,7 +811,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
       }
       shapeMismatchById.set(id, {
         path: "$",
-        message: `Node ${JSON.stringify(node.id)} ${mismatch}`,
+        message: `Node ${quoteFromWire(node.id)} ${mismatch}`,
       });
       // Fall through to the container arm below, so the declared children are
       // walked, counted and attached exactly as a real container's would be.
@@ -853,7 +854,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
       if (!wireById.has(child.value)) {
         return fail({
           code: "dangling-child",
-          message: `Node ${JSON.stringify(node.id)} names child ${JSON.stringify(rawChildId)}, which is not in nodes`,
+          message: `Node ${quoteFromWire(node.id)} names child ${quoteFromWire(rawChildId)}, which is not in nodes`,
           nodeId: child.value,
         });
       }
@@ -866,14 +867,14 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
       if (parentById.has(child.value)) {
         return fail({
           code: "multi-parent",
-          message: `Node ${JSON.stringify(rawChildId)} appears as a child more than once`,
+          message: `Node ${quoteFromWire(rawChildId)} appears as a child more than once`,
           nodeId: child.value,
         });
       }
       if (rootSet.has(child.value)) {
         return fail({
           code: "multi-parent",
-          message: `Node ${JSON.stringify(rawChildId)} is a root and also a child of ${JSON.stringify(node.id)}`,
+          message: `Node ${quoteFromWire(rawChildId)} is a root and also a child of ${quoteFromWire(node.id)}`,
           nodeId: child.value,
         });
       }
@@ -889,7 +890,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
       if (containerById.get(id) !== true) {
         return fail({
           code: "root-not-container",
-          message: `Root ${JSON.stringify(id)} is not a container`,
+          message: `Root ${quoteFromWire(id)} is not a container`,
           nodeId: id,
         });
       }
@@ -949,7 +950,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
       if (id.ok && !seen.has(id.value)) {
         return fail({
           code: "unreachable-node",
-          message: `Node ${JSON.stringify(node.id)} is not reachable from any root`,
+          message: `Node ${quoteFromWire(node.id)} is not reachable from any root`,
           nodeId: id.value,
         });
       }
@@ -1093,7 +1094,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
           summary = parsedSummary.value;
           runContentDevChecks(
             ctx.devChecks,
-            `the summary type (node ${JSON.stringify(id)})`,
+            `the summary type (node ${quoteFromWire(id)})`,
             parsedSummary.value,
             () => ctx.summary.serialize(parsedSummary.value),
             (raw) => ctx.summary.parse(raw),
@@ -1111,7 +1112,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
       if (policy === "reject") {
         return fail({
           code: summaryFailed ? "summary-parse-failed" : "ingress-rejected",
-          message: `Node ${JSON.stringify(wire.id)} (kind ${JSON.stringify(wire.kind)}) failed ingress: ${failure.reason}`,
+          message: `Node ${quoteFromWire(wire.id)} (kind ${quoteFromWire(wire.kind)}) failed ingress: ${failure.reason}`,
           nodeId: id,
           issues: failure.issues,
           ingress: [failure],
@@ -1199,7 +1200,7 @@ function findDuplicateOwner<Ts extends readonly ErasedNodeType[], S>(
     if (existing !== undefined) {
       return {
         code: "duplicate-owner",
-        message: `sourceKey ${JSON.stringify(key)} is owned by both ${JSON.stringify(existing)} and ${JSON.stringify(id)}; the second placement must be a reference`,
+        message: `sourceKey ${quoteFromWire(key)} is owned by both ${quoteFromWire(existing)} and ${quoteFromWire(id)}; the second placement must be a reference`,
         nodeId: id,
       };
     }
@@ -1331,7 +1332,7 @@ export function serializeGraph<Ts extends readonly ErasedNodeType[], S>(
       return nodeType.serialize(data);
     } catch (thrown) {
       console.error(
-        `keel: ${JSON.stringify(kind)}.serialize threw while writing a node for save. ` +
+        `keel: ${quoteFromWire(kind)}.serialize threw while writing a node for save. ` +
           `That node is being written in its live form instead, which may not round-trip. ` +
           `The rest of the document is unaffected.`,
         thrown,
@@ -1390,7 +1391,7 @@ export function serializeGraph<Ts extends readonly ErasedNodeType[], S>(
           draft.summary = ctx.summary.serialize(node.summary);
         } catch (thrown) {
           console.error(
-            `keel: the summary type's serialize threw while writing node ${JSON.stringify(id)} for save. ` +
+            `keel: the summary type's serialize threw while writing node ${quoteFromWire(id)} for save. ` +
               `Its stored summary is being omitted; the rest of the document is unaffected.`,
             thrown,
           );
@@ -1472,7 +1473,7 @@ function loadChildrenIntoUnguarded<Ts extends readonly ErasedNodeType[], S>(
   if (target === undefined) {
     return loadRejection({
       code: "unknown-node",
-      message: `No node ${JSON.stringify(id)} in this graph`,
+      message: `No node ${quoteFromWire(id)} in this graph`,
       nodeId: id,
     });
   }
@@ -1486,14 +1487,14 @@ function loadChildrenIntoUnguarded<Ts extends readonly ErasedNodeType[], S>(
   if (state === null) {
     return loadRejection({
       code: "not-a-container",
-      message: `Node ${JSON.stringify(id)} is not a container`,
+      message: `Node ${quoteFromWire(id)} is not a container`,
       nodeId: id,
     });
   }
   if (state.status !== "unloaded") {
     return loadRejection({
       code: "target-not-unloaded",
-      message: `Node ${JSON.stringify(id)} is ${state.status}, not unloaded; only an unloaded owner can be filled`,
+      message: `Node ${quoteFromWire(id)} is ${state.status}, not unloaded; only an unloaded owner can be filled`,
       nodeId: id,
     });
   }
@@ -1509,7 +1510,7 @@ function loadChildrenIntoUnguarded<Ts extends readonly ErasedNodeType[], S>(
   if (!built.ok) {
     return loadRejection({
       code: "malformed-document",
-      message: `Payload for ${JSON.stringify(id)} is not a usable document: ${built.error.message}`,
+      message: `Payload for ${quoteFromWire(id)} is not a usable document: ${built.error.message}`,
       nodeId: id,
       cause: built.error,
     });
@@ -1523,7 +1524,7 @@ function loadChildrenIntoUnguarded<Ts extends readonly ErasedNodeType[], S>(
   if (colliding.length > 0) {
     return loadRejection({
       code: "id-collision",
-      message: `Payload for ${JSON.stringify(id)} reuses ${colliding.length} id(s) the graph already holds`,
+      message: `Payload for ${quoteFromWire(id)} reuses ${colliding.length} id(s) the graph already holds`,
       nodeId: id,
       collidingIds: colliding,
     });
