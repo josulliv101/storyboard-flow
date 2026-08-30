@@ -1355,8 +1355,15 @@ export type Store<
   applyNonUndoableWrite(edits: readonly EditOf<Ts>[]): Result<readonly NodeId[], Rejection>;
   /** `unknown` for the reason `Engine.loadChildren` gives: the payload came from
    *  IO and is re-validated here, so the signature must not vouch for it. Pass a
-   *  `SerializedDocument`; a structural failure returns `"malformed-document"`. */
-  load(id: NodeId, doc: unknown): Result<void, LoadRejection>;
+   *  `SerializedDocument`; a structural failure returns `"malformed-document"`.
+   *
+   *  Returns the `LoadReport`, because `ok: true` is not the same as "every node
+   *  arrived intact" — quarantine is a success path. This used to be
+   *  `Result<void>` while the report was computed and discarded one call below,
+   *  so a page in which every single node quarantined looked exactly like a
+   *  clean one. Check `report.quarantined` before telling the user the folder
+   *  loaded. */
+  load(id: NodeId, doc: unknown): Result<LoadReport, LoadRejection>;
   markMissing(id: NodeId, reason: string): void;
   /** `undefined` when the node is gone — routine in React, where a card can
    *  outlive its node by a frame. */
@@ -1601,7 +1608,15 @@ export type Engine<
     graph: Graph<Ts, S>,
     id: NodeId,
     doc: unknown,
-  ): Result<Graph<Ts, S>, LoadRejection>;
+  ): Result<
+    // Shaped like `deserialize`'s result, and for the same reason it has one:
+    // quarantine is a SUCCESS path, so `ok: true` alone does not mean every
+    // node arrived intact. This door used to return the bare graph and drop the
+    // report `buildDocument` had already computed, which made a lazy page where
+    // every node quarantined indistinguishable from a clean one.
+    Readonly<{ graph: Graph<Ts, S>; report: LoadReport }>,
+    LoadRejection
+  >;
   markMissing(graph: Graph<Ts, S>, id: NodeId, reason: string): Graph<Ts, S>;
   /**
    * THE NON-UNDOABLE CONTENT WRITE — the door no competing design had, and the

@@ -1000,7 +1000,7 @@ describe("fuzz: undo/redo to arbitrary depth", () => {
               );
               if (loaded.ok) {
                 journal.push(`load ${targetId} <- ${payload.nodeCount} node(s) => ok`);
-                graph = loaded.value;
+                graph = loaded.value.graph;
                 expectValid(graph, "post-load graph");
                 // Every shape recorded so far predates these nodes.
                 shapeFloor = shapes.length - 1;
@@ -1300,18 +1300,18 @@ describe("fuzz: four-state children invariants under load / markMissing", () => 
             } else {
               loadsAccepted += 1;
               expect(stateBefore?.status).toBe("unloaded");
-              expect(childrenStateOf(loaded.value, targetId)?.status).toBe("loaded");
-              expect(loaded.value.childrenById.get(targetId)).toEqual(
+              expect(childrenStateOf(loaded.value.graph, targetId)?.status).toBe("loaded");
+              expect(loaded.value.graph.childrenById.get(targetId)).toEqual(
                 payload.document.rootIds,
               );
-              expect(loaded.value.nodesById.size).toBe(
+              expect(loaded.value.graph.nodesById.size).toBe(
                 graph.nodesById.size + payload.nodeCount,
               );
               // Nothing already resident may be displaced by a load.
               for (const id of graph.nodesById.keys()) {
-                expect(loaded.value.nodesById.has(id)).toBe(true);
+                expect(loaded.value.graph.nodesById.has(id)).toBe(true);
               }
-              graph = loaded.value;
+              graph = loaded.value.graph;
             }
           } else {
             // --- structural churn ---------------------------------------------
@@ -1462,7 +1462,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
           const payload = randomPayload(rand, ids);
           const loaded = loadChildrenInto<Types, Summary>(graph, targetId, payload.document, ctx);
           journal.push(`load ${targetId} => ${loaded.ok ? "ok" : `reject:${loaded.error.code}`}`);
-          if (loaded.ok) graph = loaded.value;
+          if (loaded.ok) graph = loaded.value.graph;
           expectValid(graph, `load ${load}`);
           checkBytes(graph, `load ${load}`);
         }
