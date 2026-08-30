@@ -1706,6 +1706,66 @@ export type Engine<
   >;
   serialize(graph: Graph<Ts, S>): SerializedDocument;
 
+  /**
+   * `serialize`, refusing a graph that would not load back.
+   *
+   * THE FAILURE THIS EXISTS FOR is one this engine has actually produced: a
+   * cyclic move patch detached a document from every root, `serializeGraph`
+   * wrote all of it — it emits unreachable nodes deliberately rather than
+   * dropping them, because dropping is the worse loss — and `deserialize` then
+   * refused that file FOREVER with `unreachable-node`. The write succeeded and
+   * the document was gone.
+   *
+   * `serialize` stays TOTAL and unchanged. It has to: "a save path that throws
+   * loses the user's document" is its own contract, and a save that refuses is
+   * a save that did not happen. This is the door for a caller who would rather
+   * hear about a broken graph BEFORE writing it somewhere, and it hands back
+   * the violation instead of the bytes so that decision is theirs.
+   *
+   *   const written = engine.serializeChecked(store.getGraph());
+   *   if (!written.ok) return reportCorruption(written.error);
+   *   await storage.put(written.value);
+   *
+   * BLOCK, DO NOT WRITE — the decided default, and the reason is worth keeping
+   * next to the door. When this refuses, the PREVIOUSLY saved document is still
+   * loadable; the one in memory is not. Writing anyway trades a good file for a
+   * dead one. Blocking costs the unsaved edits; saving costs the document.
+   *
+   * THE ALERT IS THE CONSUMER'S, and not by omission. This package has no React
+   * and no DOM below `./index` — that separation is what lets a route handler
+   * call `deserialize` without importing a client module — so nothing here can
+   * or should reach a user. What it owes the consumer instead is a violation
+   * worth acting on: `code` to branch on, `nodeId` to name the item in the
+   * consumer's own vocabulary. `message` is written for a developer and belongs
+   * in a log, not in front of a user.
+   *
+   * A REPAIR PATH, if one is ever wanted, is additive and needs nothing here:
+   * a separate `repair(graph)` door returning a corrected `Graph`, and the flow
+   * becomes refuse -> repair -> retry. Recorded so that adopting block-and-alert
+   * now is not a decision that has to be unpicked later.
+   *
+   * WHY SAVE AND NOT EVERY COMMIT. The audit is a full pass — reachability,
+   * one `sourceKey` call per node, and a complete rebuild of both derived
+   * indexes to compare. MEASURED against a single `edit-nodes` on the same
+   * graph:
+   *
+   *     10,501 nodes   commit  3.00 ms   audit   9.18 ms   3.1x
+   *     26,251 nodes   commit  6.05 ms   audit  21.05 ms   3.5x
+   *     52,501 nodes   commit 12.89 ms   audit  53.62 ms   4.2x
+   *
+   * Per keystroke that is a frame gone at the size `DEFAULT_INTERACTIVE_NODE_BUDGET`
+   * already calls expensive, and the multiple GROWS with the document. Per
+   * save it is 53 ms once, against a corruption that is otherwise permanent —
+   * which is the trade `EngineConfig.devChecks` cannot make, because it is off
+   * in production and this is exactly where production needs it.
+   *
+   * Not free and not automatic: `serialize` remains the default, and a consumer
+   * saving on every keystroke should keep using it.
+   */
+  serializeChecked(
+    graph: Graph<Ts, S>,
+  ): Result<SerializedDocument, Violation>;
+
   // ---- the pure core ----
   applyCommand(
     graph: Graph<Ts, S>,
