@@ -12,7 +12,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   ancestorChain,
-  buildGraph,
   buildRegistry,
   bumpSubtreeRevs,
   childrenStateOf,
@@ -33,6 +32,11 @@ import {
   sourceKeyOf,
   subtreeIds,
 } from "./graph";
+// NOT from the barrel. `buildGraph` is deliberately not re-exported there —
+// assembling a graph from already-parsed nodes is an ingress author's tool, and
+// the sanctioned ingress is `deserialize`. A test of that internal reaches the
+// internal, and the import path is the signal that it is doing so.
+import { buildGraph } from "./graph/construction";
 import {
   defineNodeType,
   makeCollectionNode,
