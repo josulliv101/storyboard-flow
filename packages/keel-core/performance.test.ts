@@ -2048,64 +2048,41 @@ describe("depth", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 12. The axis the suite used to hold constant
+// 12. Why there is no section 12
 // ---------------------------------------------------------------------------
 //
-// Every cost gate above varies GRAPH SIZE. The one below varies the thing the
-// operation is actually proportional to — the cache LIMIT — and the suite was
-// blind to a live 27x regression until it did, because every fold fixture here
-// either never evicts or uses `createFoldCache(512)`, where the scaling cannot
-// show.
+// Three wall-clock cost gates were written for this round's findings and all
+// three were deleted. Recording that here so a fourth starts from the evidence
+// rather than from scratch.
 //
-// It asserts a RATIO rather than a wall-clock budget, for the reason section 10
-// gives: a ratio survives a loaded CI box.
+//   UNDO OF A BULK INSERT (quadratic `indexOf` in the verify overlay). A
+//   2K-vs-K growth ratio separates the implementations 2.19 to 1.0 — but only
+//   on a registry declaring no content or source key. On THIS file's engine,
+//   which mints a unique `assetId` per clip, the same ratio reads 0.57 on the
+//   BROKEN code. Deleted before shipping.
 //
-// THE MISSING SIBLING, written down because the next person will reach for it.
-// `verifyRemoved`'s overlay had the same shape of defect (an `indexOf` making
-// undo of a K-placement patch quadratic, 1,836 ms against 37 ms at k = 32,000),
-// and it has no gate here. A 2K-vs-K growth ratio DOES separate the two
-// implementations — 2.19 quadratic against ~1.0 linear — but only on a registry
-// whose node types declare no content or source key. This file's engine
-// declares both and mints a unique `assetId` per clip, and that per-node index
-// work dominates: the same ratio reads 0.57 on the quadratic code, which passes
-// any threshold that the fixed code also passes. A gate that cannot fail on the
-// defect it names is worse than none, so this one was written, measured,
-// and removed rather than left green. Reinstating it needs its own minimal
-// registry, not a lower threshold.
-describe("cost scales with the work, not with what is nearby", () => {
-  it("evicting from the fold cache costs the same at the default limit as at a small one", () => {
-    // The LRU always deletes from the FRONT, and V8 leaves a tombstone per
-    // delete, so a fresh `entries.keys()` per eviction scans past every one of
-    // them: the cost of ONE eviction scaled with the LIMIT. The default limit
-    // is the worst case, and every existing fold fixture either never evicts or
-    // uses `createFoldCache(512)`, where the scaling is invisible.
-    //
-    // Measured before the fix, 50,000 evictions in every row: 25ms at limit
-    // 1,000 against 682ms at the default. After: 11ms against 26ms.
-    const EVICTIONS = 20_000;
-
-    const cost = (limit: number): number => {
-      const cache = createFoldCache(limit);
-      for (let i = 0; i < limit; i += 1) {
-        cache.set("k", parseNodeId(`fill-${i}`), 0, i);
-      }
-      expect(cache.size()).toBe(limit);
-      const started = performance.now();
-      for (let i = 0; i < EVICTIONS; i += 1) {
-        cache.set("k", parseNodeId(`evict-${i}`), 0, i);
-      }
-      const elapsed = performance.now() - started;
-      // The work is identical in both runs; only the limit differs.
-      expect(cache.stats().evictions).toBe(EVICTIONS);
-      return elapsed;
-    };
-
-    const small = cost(1_000);
-    const atDefault = cost(DEFAULT_FOLD_CACHE_LIMIT);
-
-    // Guard against a clock too coarse to divide by.
-    const ratio = small <= 0 ? 1 : atDefault / small;
-    noteCount("eviction, default vs 1k limit", "cache", EVICTIONS, "ratio", ratio);
-    expect(ratio).toBeLessThan(5);
-  }, 120_000);
-});
+//   SHARED-KEY INSERT vs UNIQUE-KEY INSERT (quadratic `includes` in
+//   `placementsAfterInsert`'s survivor tail). Discriminated locally at 1.13/0.95
+//   against 1.89/2.19, then failed on CI at 1.95 ON THE FIXED BUILD. The null
+//   hypothesis was false: with a shared key the merge really does build an
+//   N-element bucket, with unique keys it does almost nothing, so the two are
+//   different work by construction and a ratio near 1.0 was this machine's
+//   accident. Deleted after CI disproved it.
+//
+//   FOLD-CACHE EVICTION AT THE DEFAULT LIMIT vs A SMALL ONE. Measured here at
+//   1.83 fixed against 8.6-11.6 broken, which looked like ample separation, and
+//   shipped with a threshold of 5. CI then read 7.44 ON THE FIXED BUILD —
+//   INSIDE the broken range. No threshold separates them, so the gate was not
+//   mistuned, it was unsound. It had been flaking main since it landed.
+//
+// THE COMMON FAILURE is not noise, and widening thresholds is not the fix. Each
+// gate assumed two measurements were comparable when the work behind them was
+// not, and a shared CI runner exposes that where a quiet laptop hides it. The
+// gates in sections 1-11 above survive because they count OPERATIONS —
+// `countOnce`, `noteCount`, the `Counters` harness — which is exact and
+// machine-independent. That is the shape a fourth attempt should take: give the
+// hot path a counter, assert the count. It costs an instrumentation hook in
+// production code, which is a real decision, not a drive-by.
+//
+// The measurements themselves are not lost. Each fix carries its numbers in the
+// file that owns it, where anyone can re-run them.
