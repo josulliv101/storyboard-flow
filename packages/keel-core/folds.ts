@@ -31,6 +31,7 @@ import type {
   ExactFolded,
   ConsumerDefinedFold,
   FoldCache,
+  FoldCacheStats,
   Folded,
   FoldedChild,
   Graph,
@@ -277,27 +278,13 @@ export const DEFAULT_FOLD_CACHE_LIMIT = 8 * 16384;
  * `hits` / `misses` / `evictions` are LIFETIME counts and survive `clear()`;
  * `size` is current occupancy.
  *
- * Structurally duplicated by `EngineConfig.onFoldCacheStats`'s parameter in
- * ./types — that module is the base of the package and imports nothing, so a
- * types -> folds edge would be a cycle. The two must stay identical.
+ * DECLARED IN ./types and re-exported here, so `EngineConfig.onFoldCacheStats`
+ * and `ObservableFoldCache.stats` are the same type rather than two hand-copies
+ * that "must stay identical". Re-exported rather than moved outright because
+ * this is the module the type belongs to conceptually, and a consumer reading
+ * the cache should not have to know it is declared one layer down.
  */
-export type FoldCacheStats = Readonly<{
-  /** Lifetime `get` calls answered from the table. */
-  hits: number;
-  /** Lifetime `get` calls that had to fold. */
-  misses: number;
-  /**
-   * Entries dropped FOR CAPACITY, and only for capacity. `clear()` is not
-   * counted: conflating a deliberate reset with cache pressure would destroy
-   * the only number that says the limit is too low.
-   */
-  evictions: number;
-  /** Entries held right now. */
-  size: number;
-  /** The EFFECTIVE ceiling after flooring and the non-finite fallback, not the
-   *  raw constructor argument. */
-  limit: number;
-}>;
+export type { FoldCacheStats };
 
 /**
  * A `FoldCache` that can also be measured. `createFoldCache` always returns

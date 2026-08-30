@@ -929,7 +929,16 @@ export type StructuralErrorCode =
   | "unknown-root"
   | "root-not-container"
   | "unreachable-node"
-  | "leaf-with-children"
+  // NO `"leaf-with-children"` here, and its absence is the point. Ingress does
+  // not REJECT a leaf that arrived carrying children — it quarantines that node
+  // as `"shape-mismatch"` and keeps the rest of the document, which is the whole
+  // design: one node's confusion must not cost the user their file. The member
+  // sat in this union unreachable, and a consumer writing an exhaustive switch
+  // over `StructuralErrorCode` had to handle a case ./serialize cannot produce.
+  //
+  // `ViolationCode` still declares it, correctly — the AUDIT can find a leaf
+  // with children on a graph built in memory, and `graph/invariants` returns
+  // exactly that. Two unions, two different questions.
   | "duplicate-owner"
   | "summary-parse-failed"
   /** `onUnknownKind` / `onParseFailure` was set to `"reject"`. */
@@ -1264,6 +1273,39 @@ export type ValueOf<X> = FoldValue<X>;
  * collapse to `unknown`, and a legitimately-cached `undefined` would be
  * indistinguishable from a miss.
  */
+/**
+ * What a fold cache will tell you about itself.
+ *
+ * DECLARED HERE, not in ./folds, and that is the correction rather than a
+ * preference. This shape used to live in ./folds and be hand-copied into
+ * `EngineConfig.onFoldCacheStats`'s parameter, on the argument that "this module
+ * is the base of the package and imports nothing, so a types -> folds edge would
+ * be a cycle." The premise is true and the conclusion did not follow: the fix is
+ * the other direction. `FoldCache` directly below has always lived here and been
+ * imported BY ./folds, which is the same relationship — so this can be too, and
+ * the two copies that "must stay identical" become one that cannot drift.
+ *
+ * `hits` / `misses` / `evictions` are LIFETIME counts and survive `clear()`;
+ * `size` is current occupancy.
+ */
+export type FoldCacheStats = Readonly<{
+  /** Lifetime `get` calls answered from the table. */
+  hits: number;
+  /** Lifetime `get` calls that had to fold. */
+  misses: number;
+  /**
+   * Entries dropped FOR CAPACITY, and only for capacity. `clear()` is not
+   * counted: conflating a deliberate reset with cache pressure would destroy
+   * the only number that says the limit is too low.
+   */
+  evictions: number;
+  /** Entries held right now. */
+  size: number;
+  /** The EFFECTIVE ceiling after flooring and the non-finite fallback, not the
+   *  raw constructor argument. */
+  limit: number;
+}>;
+
 export type FoldCache = Readonly<{
   get(
     foldKey: string,
@@ -1571,25 +1613,12 @@ export type EngineConfig<
    * helped — same answers, more work — so an undersized `foldCacheLimit` has no
    * other symptom.
    *
-   * The parameter shape is spelled out here instead of importing
-   * `FoldCacheStats` from ./folds: this module is the base of the package and
-   * imports nothing, so a types -> folds edge would be a cycle. The two are
-   * structurally identical and must stay so.
+   * Takes `FoldCacheStats` — the type declared above, which ./folds imports —
+   * rather than a hand-copy of its shape. The copy was here on the argument
+   * that importing it from ./folds would be a cycle; true, and beside the
+   * point, since the type can simply live in the module that has no imports.
    */
-  onFoldCacheStats?(
-    readStats: () => Readonly<{
-      /** Lifetime reads answered from the table. */
-      hits: number;
-      /** Lifetime reads that had to fold. */
-      misses: number;
-      /** Entries dropped FOR CAPACITY only — never by `clear()`. */
-      evictions: number;
-      /** Entries held right now. */
-      size: number;
-      /** The effective ceiling, after flooring and the non-finite fallback. */
-      limit: number;
-    }>,
-  ): void;
+  onFoldCacheStats?(readStats: () => FoldCacheStats): void;
   devChecks?: boolean;
 }>;
 
@@ -1884,6 +1913,27 @@ function clamp(text: string): string {
   return text.length > DESCRIBE_LIMIT
     ? `${text.slice(0, DESCRIBE_LIMIT - 3)}...`
     : text;
+}
+
+/**
+ * Quote a string that came OFF THE WIRE, for a refusal message.
+ *
+ * `JSON.stringify(node.id)` was the pattern at every ingress refusal, and a
+ * `NodeId` is any string except whitespace-only — including one the sender chose
+ * the length of. Measured before this existed: a 1 MB id in a `dangling-child`
+ * payload produced a 1,000,049-character `error.message`, which the consumer
+ * then puts in a log line, a toast, or an error report.
+ *
+ * CLAMPS BEFORE IT QUOTES, not after. Quoting first would allocate the full
+ * megabyte and escape every character of it before throwing the result away,
+ * which is most of the cost the bound is for.
+ *
+ * For ids and kinds specifically — `describeValue` is the one for arbitrary
+ * consumer VALUES, and this one keeps the plain `"..."` shape a reader expects
+ * around a name.
+ */
+export function quoteFromWire(value: string): string {
+  return JSON.stringify(clamp(value));
 }
 
 export function describeThrown(thrown: unknown): string {

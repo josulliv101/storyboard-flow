@@ -19,7 +19,7 @@
 //                    full rebuild from it
 //   incremental-indexes  every cheaper updater OF that definition — read as a
 //                    pair with the file above, see its header for why
-//   construction     the functions that mint a Graph
+//   construction     the functions that create a Graph
 //   invariants       the structural audit
 //
 // CURATED, not `export *`. Two things are deliberately not re-exported:
