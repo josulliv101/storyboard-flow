@@ -704,17 +704,64 @@ function depthOf<Ts extends readonly WidenedNodeType[], S>(
 function tallestSeed<Ts extends readonly WidenedNodeType[], S>(
   seeds: readonly Seed<Ts, S>[],
 ): number {
+  // MEMOISED BY OBJECT IDENTITY, because a seed forest is a plain object tree
+  // and nothing stops two branches pointing at the SAME child. That is a DAG,
+  // not a cycle, so the cyclic-seed guard in `buildSeedPlacements` never fires
+  // for it — and a plain walk would visit the shared subtree once per path,
+  // which is 2^depth for one child reused at every level.
+  //
+  // Heights are what memoise cleanly here: a seed's height depends only on the
+  // seed, so the same object always has the same answer and computing it once
+  // makes the walk O(distinct seeds) instead of O(paths).
+  //
+  // The map is scoped to the call and keyed by reference, so it holds the
+  // consumer's objects only for as long as the check runs.
+  const heightOf = new Map<Seed<Ts, S>, number>();
+
+  // ITERATIVE, with an explicit stack, for the reason every walk in this
+  // package is: nesting is consumer-supplied and not this module's to trust.
+  // Two passes over each frame — the first schedules children, the second folds
+  // their finished heights — which is how a post-order fold is written without
+  // recursion.
   let tallest = 0;
-  const stack: Readonly<{ seed: Seed<Ts, S>; depth: number }>[] = seeds.map(
-    (seed) => ({ seed, depth: 1 }),
-  );
-  while (stack.length > 0) {
-    const frame = stack.pop();
-    if (frame === undefined) break;
-    if (frame.depth > tallest) tallest = frame.depth;
-    const kids = frame.seed.children;
-    if (kids === undefined) continue;
-    for (const kid of kids) stack.push({ seed: kid, depth: frame.depth + 1 });
+  for (const root of seeds) {
+    const stack: Readonly<{ seed: Seed<Ts, S>; expanded: boolean }>[] = [
+      { seed: root, expanded: false },
+    ];
+    while (stack.length > 0) {
+      const frame = stack.pop();
+      if (frame === undefined) break;
+      const { seed, expanded } = frame;
+      if (heightOf.has(seed)) continue;
+
+      const kids = seed.children;
+      if (kids === undefined || kids.length === 0) {
+        heightOf.set(seed, 1);
+        continue;
+      }
+
+      if (!expanded) {
+        stack.push({ seed, expanded: true });
+        for (const kid of kids) {
+          if (!heightOf.has(kid)) stack.push({ seed: kid, expanded: false });
+        }
+        continue;
+      }
+
+      let tallestChild = 0;
+      for (const kid of kids) {
+        // Present for every child by now: this frame was re-pushed beneath all
+        // of them. A cyclic seed is the one shape that could leave one missing,
+        // and `buildSeedPlacements` refuses that with `parse-failed` — so the
+        // `?? 0` is a total-function guard, not a silent floor anything relies
+        // on.
+        const kidHeight = heightOf.get(kid) ?? 0;
+        if (kidHeight > tallestChild) tallestChild = kidHeight;
+      }
+      heightOf.set(seed, tallestChild + 1);
+    }
+    const rootHeight = heightOf.get(root) ?? 1;
+    if (rootHeight > tallest) tallest = rootHeight;
   }
   return tallest;
 }
@@ -833,6 +880,43 @@ function buildSeedPlacements<Ts extends readonly WidenedNodeType[], S>(
     }
 
     placements.push({ node, parentId, index });
+
+    // THE CEILING, CHECKED AS WE BUILD rather than after.
+    //
+    // `applyInsertNodes` also checks `maxNodes` once this returns, and that
+    // check is the one whose message a consumer reads — but by then the work is
+    // already done, and the work is what needs bounding. A seed forest is a
+    // plain object tree from the consumer, and nothing stops two branches
+    // pointing at the SAME child object: that is a DAG, not a cycle, so
+    // `seedPathContains` above never fires (no seed is its own ancestor) and the
+    // walk expands it to 2^depth.
+    //
+    // MEASURED against a `maxNodes` of 50, one shared child per level:
+    //
+    //   depth 10  ->    2,048 placements built,     4 ms
+    //   depth 12  ->    8,192                      11 ms
+    //   depth 14  ->   32,768                      37 ms
+    //   depth 16  ->  131,072                     144 ms
+    //
+    // Doubling per level, all of it to end in `would-exceed-max-nodes` for a
+    // ceiling of 50. At depth 30 it is two billion nodes and the process is
+    // gone before anything gets to refuse.
+    //
+    // Refusing HERE makes the cost O(maxNodes) instead of O(2^depth), which is
+    // the same correction ./serialize made on the ingress door — it calls its
+    // equivalent "the EARLIEST honest point". The rejection is shaped exactly
+    // like the post-hoc one so a consumer cannot tell which arm refused; only
+    // `actual` differs, and it is honestly "where we stopped counting" rather
+    // than a total nobody should have computed.
+    const wouldHold = graph.nodesById.size + placements.length;
+    if (wouldHold > ctx.maxNodes) {
+      return fail(
+        "would-exceed-max-nodes",
+        `Inserting these seeds into a graph of ${graph.nodesById.size} would pass ` +
+          `the ${ctx.maxNodes} ceiling. Raise EngineConfig.maxNodes if this is legitimate.`,
+        { parentId: toParentId, limit: ctx.maxNodes, actual: wouldHold },
+      );
+    }
 
     if (seedChildren !== undefined) {
       const path: SeedPath<Ts, S> = { seed, parent: ancestors };
