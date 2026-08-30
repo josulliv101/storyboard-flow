@@ -15,7 +15,7 @@ import type {
   NodeTypeRegistry,
 } from "../types";
 import { describeThrown } from "../types";
-import { ownsSubtree } from "./queries";
+import { stateOwnsSubtree } from "./queries";
 
 // Both return `null` for a quarantined node, and that is not a shortcut. A
 // quarantined node holds `raw`, not parsed `Data`; no node type is willing to vouch
@@ -112,22 +112,27 @@ export function sourceKeyOf<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): string | null {
   if (node.quarantined) return null;
-  return sourceKeyOfKindData(registry, node.kind, node.data, node.id);
+  return sourceKeyForData(registry, node.kind, node.data, node.id);
 }
 
 /**
- * The same `sourceKey` call, for a caller holding a value the node does not
- * hold YET.
+ * The key a piece of DATA would claim — for a caller holding a value no node
+ * holds yet.
  *
  * `verifyDataChanged` needs exactly this: it must know what key a patch's
  * `after` would claim before deciding whether replaying it is safe, and the
- * node in the graph still carries the old value. Split out rather than
- * duplicated so the two cannot disagree about which node-type hook answers, and so
- * the deliberate absence of a try/catch stays in ONE place — see the block
- * comment above `contentKeyOf` for why a throwing key function is not swallowed
- * into `null`.
+ * node in the graph still carries the old value.
+ *
+ * `Of` a node, `For` raw data — that is the whole distinction between this and
+ * `sourceKeyOf` above. It was `sourceKeyOfKindData`, which listed its
+ * parameters instead of saying what it answers.
+ *
+ * Split out rather than duplicated so the two cannot disagree about which
+ * node-type hook answers, and so the `KeyHookFailure` wrapping stays in ONE
+ * place — see the block comment at the top of this file for why a throwing key
+ * function is neither swallowed into `null` nor allowed to travel raw.
  */
-export function sourceKeyOfKindData(
+export function sourceKeyForData(
   registry: NodeTypeRegistry,
   kind: string,
   data: unknown,
@@ -169,6 +174,12 @@ export function sourceKeyOfKindData(
  *     have made a stored document stop loading, which is the failure quarantine
  *     exists to prevent and which this repo has already paid for once.
  *
+ * Reads a bare `ChildrenState` through `stateOwnsSubtree` in ./queries, which is
+ * the same question one layer down. Prefer THIS one at every call site that has
+ * a node: it rules out the two cases that have no state to ask about before
+ * delegating, and keeping the pair distinguishable is why that one is named for
+ * its argument.
+ *
  * A quarantined node owns nothing either: its key would have to come from a
  * node type that by definition did not run, so `sourceKeyOf` already answers `null`
  * for it. Stated here as well so the predicate is total on its own terms rather
@@ -179,7 +190,7 @@ export function ownsItsSubtree<Ts extends readonly WidenedNodeType[], S>(
 ): boolean {
   if (node.quarantined) return false;
   if (!node.container) return false;
-  return ownsSubtree(node.children);
+  return stateOwnsSubtree(node.children);
 }
 
 // ---------------------------------------------------------------------------

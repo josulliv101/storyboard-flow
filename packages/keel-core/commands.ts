@@ -1263,7 +1263,7 @@ function planEdits<Ts extends readonly WidenedNodeType[], S>(
 
     // DELEGATED, not re-derived — the same correction `owningSourceKey` above
     // already carries. This used to read
-    // `collection === null || ownsSubtree(collection.children)`, and
+    // `collection === null || stateOwnsSubtree(collection.children)`, and
     // `collection === null` IS the leaf case, so it made a leaf an owner. That
     // is verbatim the predicate review3 deleted from ./graph, and it left this
     // door disagreeing with the other four: `walkDerivedIndexes`, invariant
@@ -1275,7 +1275,7 @@ function planEdits<Ts extends readonly WidenedNodeType[], S>(
     // unrepairable state `ownsItsSubtree` was made THE SINGLE ANSWER to end.
     //
     // Total on its own terms: false for quarantined, for a leaf, and for a
-    // `reference` — subsuming the `ownsSubtree` branch this replaced.
+    // `reference` — subsuming the `stateOwnsSubtree` branch this replaced.
     if (ownsItsSubtree<Ts, S>(node)) {
       const nextKey = nodeType.sourceKey?.(nextData) ?? null;
       if (nextKey !== null) {

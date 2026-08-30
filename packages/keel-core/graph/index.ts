@@ -49,7 +49,7 @@ export {
   isLoaded,
   isSameOrAncestor,
   nodeCount,
-  ownsSubtree,
+  stateOwnsSubtree,
   subtreeIds,
 } from "./queries";
 
@@ -59,7 +59,7 @@ export {
   keyHookMessage,
   ownsItsSubtree,
   sourceKeyOf,
-  sourceKeyOfKindData,
+  sourceKeyForData,
 } from "./keys";
 
 export { bumpSubtreeRevs, bumpSubtreeRevsInto } from "./revisions";
