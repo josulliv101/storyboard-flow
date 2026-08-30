@@ -1086,6 +1086,22 @@ function createChildrenOverlay<Ts extends readonly ErasedNodeType[], S>(
   // the inverted patch inserts at 0, 1, 2, ... into an emptied array — every
   // one of those splices is an APPEND, so the pass becomes linear rather than
   // merely cheaper.
+  //
+  // WHICH ARM IS WHICH, because this comment listed `indexOf` among the costs
+  // it had removed while `indexOf` was still running, and that reading cost a
+  // later round a second look at an already-"fixed" quadratic:
+  //
+  //   removed  ->  `removeAt`, by the index `verifyRemoved` just proved. LINEAR.
+  //   inserted ->  `insert`, appending into an emptied array.        LINEAR.
+  //   moved    ->  `remove`, which still SCANS with `indexOf`.
+  //
+  // The move arm is deliberate, not missed. Its `fromIndex` is a PRE-state
+  // index checked against the untouched graph (see `verifyMoved`), so it is not
+  // an index into the overlay and cannot be spliced by. Making that arm linear
+  // means grouping by source parent and doing one filtering pass each, mirroring
+  // `spliceOutMany` — worth doing if a patch is ever measured moving thousands
+  // of nodes out of ONE parent, which no gesture produces today: a multi-select
+  // drag is bounded by what is on screen, where a select-all delete is not.
   const owned = new Map<NodeId, NodeId[]>();
   const read = (id: NodeId): readonly NodeId[] => {
     const local = owned.get(id);
