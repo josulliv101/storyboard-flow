@@ -73,9 +73,9 @@ export {
 } from "./derived-indexes";
 
 export {
-  dataChangeLeavesDerivedIndexesIntact,
+  derivedIndexesSurviveDataChange,
   derivedIndexesAfterRemoval,
-  insertLeavesDerivedIndexesIntact,
+  derivedIndexesSurviveInsert,
   ownersAfterInsert,
   placementsAfterInsert,
   reindexPlacementsAcrossMove,

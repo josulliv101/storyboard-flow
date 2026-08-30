@@ -294,7 +294,7 @@ export function placementsAfterInsert<Ts extends readonly WidenedNodeType[], S>(
     else bucket.push(node.id);
   }
   // Nothing arriving carries a key, so the index is exactly what it was. By
-  // reference, which is what `insertLeavesDerivedIndexesIntact` bought before
+  // reference, which is what `derivedIndexesSurviveInsert` bought before
   // this function existed and is worth keeping.
   if (arrivalsByKey.size === 0) return previous;
 
@@ -486,8 +486,16 @@ export function derivedIndexesAfterRemoval<Ts extends readonly WidenedNodeType[]
  * can disturb are the ones it would contribute itself. A batch that contributes
  * no key at all (a new folder, in a registry where only clips carry keys) leaves
  * both maps exactly as they were, and both can be handed on by reference.
+ *
+ * "SURVIVE", not the "leaves ... intact" this and its data-change sibling used
+ * to be called. `insertLeavesDerivedIndexesIntact` meant "leaves" as the verb,
+ * but this package has `LeafNode`, `leaf-seed-with-children`, and a comment
+ * titled "a leaf owns nothing" — leaf is a NOUN here, so the name parsed as
+ * "insert leaves" before it parsed as "insert leaves them intact". A word that
+ * garden-paths in the one codebase it lives in is the wrong word, however
+ * correct its grammar.
  */
-export function insertLeavesDerivedIndexesIntact<Ts extends readonly WidenedNodeType[], S>(
+export function derivedIndexesSurviveInsert<Ts extends readonly WidenedNodeType[], S>(
   registry: NodeTypeRegistry,
   nodes: readonly GraphNode<Ts, S>[],
 ): boolean {
@@ -510,7 +518,7 @@ export function insertLeavesDerivedIndexesIntact<Ts extends readonly WidenedNode
  * `data-changed` cannot move a node, so document order is untouched and equal
  * keys really do mean an untouched index.
  */
-export function dataChangeLeavesDerivedIndexesIntact(
+export function derivedIndexesSurviveDataChange(
   registry: NodeTypeRegistry,
   kind: string,
   before: unknown,

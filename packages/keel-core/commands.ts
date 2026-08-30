@@ -45,7 +45,7 @@ import {
   type WidenedNodeType,
 } from "./types";
 import {
-  dataChangeLeavesDerivedIndexesIntact,
+  derivedIndexesSurviveDataChange,
   KeyHookFailure,
   keyHookMessage,
   ownsItsSubtree,
@@ -1644,7 +1644,7 @@ function applyNonUndoableWriteEditsUnguarded<Ts extends readonly WidenedNodeType
   // `placementsByContentKey` stops churning on every server write.
   const movesAKey = plans.some(
     (plan) =>
-      !dataChangeLeavesDerivedIndexesIntact(
+      !derivedIndexesSurviveDataChange(
         ctx.registry,
         plan.kind,
         plan.before,
