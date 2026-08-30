@@ -3,7 +3,7 @@
 // WHY A SCRIPT and not seven CI steps: the list is derived from what is on
 // disk, so a new package is covered the day it is created rather than the day
 // someone remembers to add a step. CI had four packages uncovered — including
-// both keel packages and `timeline-model`, which did not compile at all and
+// both graph packages and `timeline-model`, which did not compile at all and
 // had not for long enough that nobody knew.
 import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";

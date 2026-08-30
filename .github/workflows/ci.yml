@@ -48,7 +48,7 @@ jobs:
 
       # EVERY package with a tsconfig, discovered from disk rather than listed
       # here. This step used to be `packages/ui` alone, which left four packages
-      # unchecked — including both keel packages and `timeline-model`, which did
+      # unchecked — including both graph packages and `timeline-model`, which did
       # not compile at all and had not for long enough that nobody knew.
       - name: Typecheck packages
         run: npm run typecheck:packages
@@ -61,7 +61,7 @@ jobs:
       # against a workspace package answered "File ignored because outside of
       # base path" — a WARNING and exit 0, which reads as a pass. Nothing in
       # `packages/` had ever been linted; the first run found three unreferenced
-      # production symbols in keel-core alone.
+      # production symbols in graph-core alone.
       - name: Lint packages
         run: npm run lint:packages
 

@@ -10,16 +10,16 @@
 // A warning and a zero exit — which reads as a pass and is not one. Six
 // packages, including the only two that ship JSX, had never been linted once.
 // `react/display-name` is an ERROR in this repo's app config and has failed a
-// Vercel build before; `keel-react` is the package that actually ships JSX.
+// Vercel build before; `graph-react` is the package that actually ships JSX.
 //
-// WHY A SEPARATE CONFIG rather than widening the app's base path: `keel-core`,
+// WHY A SEPARATE CONFIG rather than widening the app's base path: `graph-core`,
 // `collections-core`, `timeline-model` and `timeline-domain` are
 // framework-agnostic by rule, and inheriting the Next preset would subject them
 // to React rules they cannot violate and Next rules about a framework they must
 // never import.
 //
 // TURNING THIS ON FOUND DEAD CODE ON THE FIRST RUN — three unreferenced
-// production symbols in keel-core alone, two of them left behind by the fix
+// production symbols in graph-core alone, two of them left behind by the fix
 // that replaced them, with comments still describing them as live. That is the
 // argument for the file.
 import { defineConfig } from "eslint/config";
@@ -81,7 +81,7 @@ export default defineConfig([
     },
   },
 
-  // React rules reach ONLY the files that can violate them. `keel-core` and
+  // React rules reach ONLY the files that can violate them. `graph-core` and
   // the other framework-free packages are excluded by the glob, not by an
   // override, so a React rule can never fire on a package whose whole contract
   // is that it does not import React.
