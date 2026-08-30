@@ -21,7 +21,7 @@
 // is a rejection the engine reports.
 
 import type {
-  ErasedNodeType,
+  WidenedNodeType,
   Graph,
   GraphNode,
   NodeId,
@@ -53,7 +53,7 @@ import { type DerivedIndexes } from "./derived-indexes";
  * — nothing here is a rejection the engine reports; it is an optimisation
  * declining to apply.
  */
-export function reindexPlacementsWithinSubtree<Ts extends readonly ErasedNodeType[], S>(
+export function reindexPlacementsWithinSubtree<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
@@ -140,7 +140,7 @@ export function reindexPlacementsWithinSubtree<Ts extends readonly ErasedNodeTyp
  * rebuild, and for every realistic bucket it is not close.
  */
 
-export function reindexPlacementsAcrossMove<Ts extends readonly ErasedNodeType[], S>(
+export function reindexPlacementsAcrossMove<Ts extends readonly WidenedNodeType[], S>(
   post: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
@@ -276,7 +276,7 @@ export function reindexPlacementsAcrossMove<Ts extends readonly ErasedNodeType[]
  * cannot rank two ids, or an arriving id already sitting in the bucket, which
  * would mean this was not an insert of new nodes.
  */
-export function placementsAfterInsert<Ts extends readonly ErasedNodeType[], S>(
+export function placementsAfterInsert<Ts extends readonly WidenedNodeType[], S>(
   post: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
@@ -386,7 +386,7 @@ export function placementsAfterInsert<Ts extends readonly ErasedNodeType[], S>(
  * rebuild, the audit already names the real defect rather than a stale-index
  * symptom of it.
  */
-export function ownersAfterInsert<Ts extends readonly ErasedNodeType[], S>(
+export function ownersAfterInsert<Ts extends readonly WidenedNodeType[], S>(
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, NodeId>,
   arrived: readonly GraphNode<Ts, S>[],
@@ -420,7 +420,7 @@ export function ownersAfterInsert<Ts extends readonly ErasedNodeType[], S>(
  * `contentKey` — is no longer what the graph holds. Deleting under the recorded
  * key would leave the real bucket holding a dead id.
  */
-export function derivedIndexesAfterRemoval<Ts extends readonly ErasedNodeType[], S>(
+export function derivedIndexesAfterRemoval<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   removedIds: readonly NodeId[],
@@ -487,7 +487,7 @@ export function derivedIndexesAfterRemoval<Ts extends readonly ErasedNodeType[],
  * no key at all (a new folder, in a registry where only clips carry keys) leaves
  * both maps exactly as they were, and both can be handed on by reference.
  */
-export function insertLeavesDerivedIndexesIntact<Ts extends readonly ErasedNodeType[], S>(
+export function insertLeavesDerivedIndexesIntact<Ts extends readonly WidenedNodeType[], S>(
   registry: NodeTypeRegistry,
   nodes: readonly GraphNode<Ts, S>[],
 ): boolean {

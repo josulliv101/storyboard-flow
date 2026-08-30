@@ -9,7 +9,7 @@
 // who is entitled to claim it.
 
 import type {
-  ErasedNodeType,
+  WidenedNodeType,
   GraphNode,
   NodeId,
   NodeTypeRegistry,
@@ -93,7 +93,7 @@ export function keyHookMessage(failure: KeyHookFailure): string {
   return failure.message;
 }
 
-export function contentKeyOf<Ts extends readonly ErasedNodeType[], S>(
+export function contentKeyOf<Ts extends readonly WidenedNodeType[], S>(
   registry: NodeTypeRegistry,
   node: GraphNode<Ts, S>,
 ): string | null {
@@ -107,7 +107,7 @@ export function contentKeyOf<Ts extends readonly ErasedNodeType[], S>(
   }
 }
 
-export function sourceKeyOf<Ts extends readonly ErasedNodeType[], S>(
+export function sourceKeyOf<Ts extends readonly WidenedNodeType[], S>(
   registry: NodeTypeRegistry,
   node: GraphNode<Ts, S>,
 ): string | null {
@@ -174,7 +174,7 @@ export function sourceKeyOfKindData(
  * for it. Stated here as well so the predicate is total on its own terms rather
  * than relying on a caller having checked first.
  */
-export function ownsItsSubtree<Ts extends readonly ErasedNodeType[], S>(
+export function ownsItsSubtree<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): boolean {
   if (node.quarantined) return false;

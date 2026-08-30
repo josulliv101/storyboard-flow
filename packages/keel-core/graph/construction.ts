@@ -12,7 +12,7 @@
 
 import type {
   ChildrenState,
-  ErasedNodeType,
+  WidenedNodeType,
   Graph,
   GraphNode,
   NodeId,
@@ -23,7 +23,7 @@ import { rebuildDerivedIndexes } from "./derived-indexes";
 import { childrenStateOf } from "./queries";
 import { bumpSubtreeRevs } from "./revisions";
 
-export function emptyGraph<Ts extends readonly ErasedNodeType[], S>(
+export function emptyGraph<Ts extends readonly WidenedNodeType[], S>(
   engineId: symbol,
 ): Graph<Ts, S> {
   return {
@@ -56,7 +56,7 @@ export function emptyGraph<Ts extends readonly ErasedNodeType[], S>(
  * `subtreeRevs` carries revisions forward when a graph is rebuilt around
  * existing nodes; a node with no carried revision starts at 0.
  */
-export function buildGraph<Ts extends readonly ErasedNodeType[], S>(
+export function buildGraph<Ts extends readonly WidenedNodeType[], S>(
   args: Readonly<{
     engineId: symbol;
     nodesById: ReadonlyMap<NodeId, GraphNode<Ts, S>>;
@@ -103,7 +103,7 @@ export function buildGraph<Ts extends readonly ErasedNodeType[], S>(
 
 // ---------------------------------------------------------------------------
 
-export function markMissing<Ts extends readonly ErasedNodeType[], S>(
+export function markMissing<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
   reason: string,

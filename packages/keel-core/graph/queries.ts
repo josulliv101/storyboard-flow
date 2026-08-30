@@ -15,7 +15,7 @@
 import type {
   ChildrenState,
   CollectionNode,
-  ErasedNodeType,
+  WidenedNodeType,
   Graph,
   GraphNode,
   NodeId,
@@ -23,7 +23,7 @@ import type {
 } from "../types";
 import { NO_IDS } from "./internals";
 
-export function getNode<Ts extends readonly ErasedNodeType[], S>(
+export function getNode<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): GraphNode<Ts, S> | undefined {
@@ -39,7 +39,7 @@ export function getNode<Ts extends readonly ErasedNodeType[], S>(
  * in its own source, and every downstream uncertainty flag it grew is scar
  * tissue from that one missing bit. Use `childrenStateOf`.
  */
-export function getChildren<Ts extends readonly ErasedNodeType[], S>(
+export function getChildren<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): readonly NodeId[] {
@@ -56,13 +56,13 @@ export function getChildren<Ts extends readonly ErasedNodeType[], S>(
  * counted — `deadRevById` is a separate store, and "how big is this document"
  * has never meant "plus everything ever deleted from it".
  */
-export function nodeCount<Ts extends readonly ErasedNodeType[], S>(
+export function nodeCount<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): number {
   return graph.nodesById.size;
 }
 
-export function getParent<Ts extends readonly ErasedNodeType[], S>(
+export function getParent<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): NodeId | null {
@@ -71,7 +71,7 @@ export function getParent<Ts extends readonly ErasedNodeType[], S>(
 
 /** 0 for an unknown node, so a subscriber comparing revisions across a removal
  *  sees a change rather than an exception. */
-export function getSubtreeRev<Ts extends readonly ErasedNodeType[], S>(
+export function getSubtreeRev<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): number {
@@ -86,7 +86,7 @@ export function getSubtreeRev<Ts extends readonly ErasedNodeType[], S>(
 /** `null` for a leaf, an unknown node, or a QUARANTINED leaf — the three cases
  *  where "what is this subtree's load state" has no answer, because there is no
  *  subtree. */
-export function childrenStateOf<Ts extends readonly ErasedNodeType[], S>(
+export function childrenStateOf<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): ChildrenState | null {
@@ -111,13 +111,13 @@ export function childrenStateOf<Ts extends readonly ErasedNodeType[], S>(
  * sound in both branches, and it reads as "may own children", which is what
  * every call site actually wants to know.
  */
-export function isCollection<Ts extends readonly ErasedNodeType[], S>(
+export function isCollection<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): node is CollectionNode<Ts, S> | QuarantinedNode {
   return node.quarantined || node.container;
 }
 
-export function isLoaded<Ts extends readonly ErasedNodeType[], S>(
+export function isLoaded<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): boolean {
@@ -150,7 +150,7 @@ export function ownsSubtree(state: ChildrenState): boolean {
  * instead of hanging a render loop. `findInvariantViolation` is what names the
  * corruption.
  */
-export function ancestorChain<Ts extends readonly ErasedNodeType[], S>(
+export function ancestorChain<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): readonly NodeId[] {
@@ -175,7 +175,7 @@ export function ancestorChain<Ts extends readonly ErasedNodeType[], S>(
  * lookup here would only make an unknown id answer "no relation", which is the
  * more dangerous answer for a cycle test to give.
  */
-export function isSameOrAncestor<Ts extends readonly ErasedNodeType[], S>(
+export function isSameOrAncestor<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   maybeAncestorId: NodeId,
   id: NodeId,
@@ -204,7 +204,7 @@ export function isSameOrAncestor<Ts extends readonly ErasedNodeType[], S>(
  * once, so the walk length is exactly the number of reachable nodes. It bounds
  * the damage when the graph is not valid.
  */
-function walkPreOrder<Ts extends readonly ErasedNodeType[], S>(
+function walkPreOrder<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   roots: readonly NodeId[],
 ): NodeId[] {
@@ -232,7 +232,7 @@ function walkPreOrder<Ts extends readonly ErasedNodeType[], S>(
 
 /** Pre-order, INCLUDES `id`. `[]` for an unknown node — an id the graph does
  *  not hold has no subtree, not a one-element one. */
-export function subtreeIds<Ts extends readonly ErasedNodeType[], S>(
+export function subtreeIds<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
 ): readonly NodeId[] {
@@ -243,7 +243,7 @@ export function subtreeIds<Ts extends readonly ErasedNodeType[], S>(
 /** Pre-order across every root, in `rootIds` order. Backs `selectRange`, which
  *  is inclusive in DOCUMENT order — the reason selection is engine-owned rather
  *  than a consumer concern. */
-export function documentOrder<Ts extends readonly ErasedNodeType[], S>(
+export function documentOrder<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): readonly NodeId[] {
   return walkPreOrder(graph, graph.rootIds);
@@ -251,7 +251,7 @@ export function documentOrder<Ts extends readonly ErasedNodeType[], S>(
 
 // ---------------------------------------------------------------------------
 
-export function documentOrderComparator<Ts extends readonly ErasedNodeType[], S>(
+export function documentOrderComparator<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): (a: NodeId, b: NodeId) => number | null {
   const pathCache = new Map<NodeId, readonly NodeId[]>();

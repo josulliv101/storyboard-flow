@@ -244,7 +244,7 @@ const sequenceType = defineNodeType<Sequence, SequenceEdit>()({
 
 /**
  * The registry tuple, named once so the folds below can be written against it.
- * It has to be a TUPLE (not `ErasedNodeType[]`) — that is what makes
+ * It has to be a TUPLE (not `WidenedNodeType[]`) — that is what makes
  * `node.kind === "shot"` narrow `node.data` to `Shot` downstream.
  */
 type Types = readonly [typeof shotType, typeof noteType, typeof sequenceType];

@@ -29,7 +29,7 @@ import type {
   Result,
   SelectionSlice,
   Store,
-  ErasedNodeType,
+  WidenedNodeType,
 } from "@storyboard/keel-core";
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ import type {
  * itself. A view that wants its children calls `useChildren(id)`.
  */
 export type NodeViewProps<
-  Ts extends readonly ErasedNodeType[],
+  Ts extends readonly WidenedNodeType[],
   K extends string,
 > = Readonly<{
   id: NodeId;
@@ -62,7 +62,7 @@ export type NodeViewProps<
  * `memo()` ever sees.
  */
 export type NodeView<
-  Ts extends readonly ErasedNodeType[],
+  Ts extends readonly WidenedNodeType[],
   K extends string,
 > = FunctionComponent<NodeViewProps<Ts, K>>;
 
@@ -93,20 +93,20 @@ export type QuarantinedView = FunctionComponent<QuarantinedViewProps>;
  * stack is a `Result` rejection, not a throw, but a disabled button beats a
  * rejection nobody reads.
  */
-export type HistoryControls<Ts extends readonly ErasedNodeType[], S> = Readonly<{
+export type HistoryControls<Ts extends readonly WidenedNodeType[], S> = Readonly<{
   canUndo: boolean;
   canRedo: boolean;
   undo(): Result<Patch<Ts, S>, ReplayRejection>;
   redo(): Result<Patch<Ts, S>, ReplayRejection>;
 }>;
 
-export type DispatchFn<Ts extends readonly ErasedNodeType[], S> = (
+export type DispatchFn<Ts extends readonly WidenedNodeType[], S> = (
   command: Command<Ts, S>,
   options?: Readonly<{ coalesceKey?: string }>,
 ) => Result<Patch<Ts, S>, Rejection>;
 
 export type ProviderProps<
-  Ts extends readonly ErasedNodeType[],
+  Ts extends readonly WidenedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{
@@ -134,7 +134,7 @@ export type ProviderProps<
  * is reachable from the one returned object.
  */
 export type ReactBindings<
-  Ts extends readonly ErasedNodeType[],
+  Ts extends readonly WidenedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 > = Readonly<{

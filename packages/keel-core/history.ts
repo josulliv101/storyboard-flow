@@ -39,7 +39,7 @@ import type {
   HistoryEntry,
   NodeId,
   Patch,
-  ErasedNodeType,
+  WidenedNodeType,
 } from "./types";
 import { makeDataChange } from "./types";
 import { scrubPatchForWrite } from "./patches";
@@ -63,7 +63,7 @@ function effectiveLimit(limit: number | undefined): number {
   return Number.isInteger(limit) && limit > 0 ? limit : Number.POSITIVE_INFINITY;
 }
 
-export function createHistory<Ts extends readonly ErasedNodeType[], S>(
+export function createHistory<Ts extends readonly WidenedNodeType[], S>(
   limit?: number,
 ): History<Ts, S> {
   return { past: [], future: [], limit: effectiveLimit(limit) };
@@ -71,7 +71,7 @@ export function createHistory<Ts extends readonly ErasedNodeType[], S>(
 
 /** Drops the OLDEST entries — `past` is oldest-first, and the entry a user is
  *  most likely to want back is the newest. */
-function trimPast<Ts extends readonly ErasedNodeType[], S>(
+function trimPast<Ts extends readonly WidenedNodeType[], S>(
   past: readonly HistoryEntry<Ts, S>[],
   limit: number,
 ): readonly HistoryEntry<Ts, S>[] {
@@ -98,7 +98,7 @@ function trimPast<Ts extends readonly ErasedNodeType[], S>(
  * `undefined === undefined` counted as a match, every consecutive edit in the
  * whole application would silently collapse into a single undo step.
  */
-export function pushHistory<Ts extends readonly ErasedNodeType[], S>(
+export function pushHistory<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
   entry: HistoryEntry<Ts, S>,
 ): History<Ts, S> {
@@ -124,13 +124,13 @@ export function pushHistory<Ts extends readonly ErasedNodeType[], S>(
 // Peek / commit — deliberately separate, see the header
 // ---------------------------------------------------------------------------
 
-export function peekUndo<Ts extends readonly ErasedNodeType[], S>(
+export function peekUndo<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): HistoryEntry<Ts, S> | null {
   return history.past.at(-1) ?? null;
 }
 
-export function peekRedo<Ts extends readonly ErasedNodeType[], S>(
+export function peekRedo<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): HistoryEntry<Ts, S> | null {
   return history.future.at(-1) ?? null;
@@ -144,7 +144,7 @@ export function peekRedo<Ts extends readonly ErasedNodeType[], S>(
  * Returns `null` rather than an empty-ish value when there is nothing to undo,
  * so a caller cannot accidentally apply an undefined patch.
  */
-export function commitUndo<Ts extends readonly ErasedNodeType[], S>(
+export function commitUndo<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): Readonly<{ history: History<Ts, S>; entry: HistoryEntry<Ts, S> }> | null {
   const entry = history.past.at(-1);
@@ -165,7 +165,7 @@ export function commitUndo<Ts extends readonly ErasedNodeType[], S>(
  * re-merging a redone entry into the one below it would destroy an undo step
  * that the user has already seen as separate.
  */
-export function commitRedo<Ts extends readonly ErasedNodeType[], S>(
+export function commitRedo<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): Readonly<{ history: History<Ts, S>; entry: HistoryEntry<Ts, S> }> | null {
   const entry = history.future.at(-1);
@@ -180,13 +180,13 @@ export function commitRedo<Ts extends readonly ErasedNodeType[], S>(
   };
 }
 
-export function canUndo<Ts extends readonly ErasedNodeType[], S>(
+export function canUndo<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): boolean {
   return history.past.length > 0;
 }
 
-export function canRedo<Ts extends readonly ErasedNodeType[], S>(
+export function canRedo<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): boolean {
   return history.future.length > 0;
@@ -196,7 +196,7 @@ export function canRedo<Ts extends readonly ErasedNodeType[], S>(
 // Clearing
 // ---------------------------------------------------------------------------
 
-export function clearFuture<Ts extends readonly ErasedNodeType[], S>(
+export function clearFuture<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): History<Ts, S> {
   if (history.future.length === 0) return history;
@@ -208,14 +208,14 @@ export function clearFuture<Ts extends readonly ErasedNodeType[], S>(
  * order, so one inapplicable entry makes everything beneath it unreachable too —
  * there is no way to skip past a broken entry and keep undoing.
  */
-export function clearPast<Ts extends readonly ErasedNodeType[], S>(
+export function clearPast<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): History<Ts, S> {
   if (history.past.length === 0) return history;
   return { past: [], future: history.future, limit: history.limit };
 }
 
-export function clearHistory<Ts extends readonly ErasedNodeType[], S>(
+export function clearHistory<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
 ): History<Ts, S> {
   if (history.past.length === 0 && history.future.length === 0) return history;
@@ -250,7 +250,7 @@ export function clearHistory<Ts extends readonly ErasedNodeType[], S>(
  * caller that reuses one key across unrelated edits gets a merged entry that
  * skips an intermediate value, which is exactly what coalescing is for.
  */
-export function coalesceEntries<Ts extends readonly ErasedNodeType[], S>(
+export function coalesceEntries<Ts extends readonly WidenedNodeType[], S>(
   previous: HistoryEntry<Ts, S>,
   next: HistoryEntry<Ts, S>,
 ): HistoryEntry<Ts, S> | null {
@@ -317,7 +317,7 @@ export function coalesceEntries<Ts extends readonly ErasedNodeType[], S>(
  * consumer SET one — it defaults to unbounded, so by default the bound named
  * here is the one that does not exist.
  */
-export function scrubHistoryForWrite<Ts extends readonly ErasedNodeType[], S>(
+export function scrubHistoryForWrite<Ts extends readonly WidenedNodeType[], S>(
   history: History<Ts, S>,
   replacements: ReadonlyMap<NodeId, unknown>,
 ): History<Ts, S> {
@@ -331,7 +331,7 @@ export function scrubHistoryForWrite<Ts extends readonly ErasedNodeType[], S>(
   return { past, future, limit: history.limit };
 }
 
-function scrubStack<Ts extends readonly ErasedNodeType[], S>(
+function scrubStack<Ts extends readonly WidenedNodeType[], S>(
   stack: readonly HistoryEntry<Ts, S>[],
   replacements: ReadonlyMap<NodeId, unknown>,
 ): readonly HistoryEntry<Ts, S>[] {

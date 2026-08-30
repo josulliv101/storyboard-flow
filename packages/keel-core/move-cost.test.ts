@@ -19,7 +19,7 @@ import {
   type Graph,
   type NodeId,
   type Patch,
-  type ErasedNodeType,
+  type WidenedNodeType,
   type ConsumerDefinedSummaryType,
 } from "./types";
 import { DEFAULT_MAX_NODES } from "./serialize";
@@ -141,12 +141,12 @@ type TestTypes = readonly [typeof clipType, typeof folderType];
 type Summary = Readonly<{ label: string }>;
 type TestGraph = Graph<TestTypes, Summary>;
 
-const keyedRegistry: ReadonlyMap<string, ErasedNodeType> = new Map<string, ErasedNodeType>([
+const keyedRegistry: ReadonlyMap<string, WidenedNodeType> = new Map<string, WidenedNodeType>([
   ["clip", clipType],
   ["folder", folderType],
 ]);
 
-const keylessRegistry: ReadonlyMap<string, ErasedNodeType> = new Map<string, ErasedNodeType>([
+const keylessRegistry: ReadonlyMap<string, WidenedNodeType> = new Map<string, WidenedNodeType>([
   ["clip", keylessClipType],
   ["folder", keylessFolderType],
 ]);
@@ -167,7 +167,7 @@ const summaryType: ConsumerDefinedSummaryType<Summary> = {
 const ENGINE_ID = Symbol("keel-move-cost-engine");
 const LOADED: ChildrenState = { status: "loaded" };
 
-function makeCtx(registry: ReadonlyMap<string, ErasedNodeType>): EngineContext<Summary> {
+function makeCtx(registry: ReadonlyMap<string, WidenedNodeType>): EngineContext<Summary> {
   return {
     engineId: ENGINE_ID,
     registry,
@@ -201,7 +201,7 @@ type Spec =
  */
 function buildGraph(
   roots: readonly Spec[],
-  registry: ReadonlyMap<string, ErasedNodeType> = keyedRegistry,
+  registry: ReadonlyMap<string, WidenedNodeType> = keyedRegistry,
 ): TestGraph {
   const nodesById = new Map<NodeId, GraphNode<TestTypes, Summary>>();
   const childrenById = new Map<NodeId, readonly NodeId[]>();
@@ -261,7 +261,7 @@ function wideGraph(
   perCollection: number,
   options?: Readonly<{
     assetOf?: (collection: number, index: number) => string;
-    registry?: ReadonlyMap<string, ErasedNodeType>;
+    registry?: ReadonlyMap<string, WidenedNodeType>;
   }>,
 ): TestGraph {
   const roots: Spec[] = [];

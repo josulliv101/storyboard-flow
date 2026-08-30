@@ -20,7 +20,7 @@
 // the file boundary.
 
 import type {
-  ErasedNodeType,
+  WidenedNodeType,
   Graph,
   NodeId,
   NodeTypeRegistry,
@@ -30,7 +30,7 @@ import { documentOrder } from "./queries";
 import { contentKeyOf, ownsItsSubtree, sourceKeyOf } from "./keys";
 
 /** The derived pair, as `applyPatch` splices it onto a graph. */
-export type DerivedIndexes<Ts extends readonly ErasedNodeType[], S> = Pick<
+export type DerivedIndexes<Ts extends readonly WidenedNodeType[], S> = Pick<
   Graph<Ts, S>,
   "placementsByContentKey" | "ownerBySourceKey"
 >;
@@ -71,7 +71,7 @@ export function derivedIndexNeed(registry: NodeTypeRegistry): DerivedIndexNeed {
  * invalid one, indexing an orphan would give a detached subtree a vote on
  * ownership.
  */
-function walkDerivedIndexes<Ts extends readonly ErasedNodeType[], S>(
+function walkDerivedIndexes<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   want: DerivedIndexNeed,
@@ -132,7 +132,7 @@ function walkDerivedIndexes<Ts extends readonly ErasedNodeType[], S>(
  * placement. So the rule is: update only where the patch's own shape PROVES what
  * cannot have moved, and rebuild otherwise.
  */
-export function rebuildDerivedIndexes<Ts extends readonly ErasedNodeType[], S>(
+export function rebuildDerivedIndexes<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): DerivedIndexes<Ts, S> {
@@ -159,7 +159,7 @@ export function rebuildDerivedIndexes<Ts extends readonly ErasedNodeType[], S>(
  * `placementsByContentKey` gets no such reprieve: its values are in DOCUMENT
  * order, so a pure reorder moves it even though no data did.
  */
-export function rebuildPlacementIndex<Ts extends readonly ErasedNodeType[], S>(
+export function rebuildPlacementIndex<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): ReadonlyMap<string, readonly NodeId[]> {
