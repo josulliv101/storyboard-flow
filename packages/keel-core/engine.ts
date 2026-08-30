@@ -49,6 +49,8 @@ import {
   findInvariantViolation as findInvariantViolationIn,
   getNode,
   getSubtreeRev,
+  KeyHookFailure,
+  keyHookMessage,
   markMissing as markMissingIn,
 } from "./graph";
 import {
@@ -764,6 +766,37 @@ export function createEngine<
       }
     };
 
+    /**
+     * `applyPatch` returns a `Graph`, not a `Result`, and is documented as
+     * deliberately re-checking nothing because verify ran first. But verify does
+     * NOT read the two key hooks on every path `applyPatch` does — measured, a
+     * throwing `contentKey` cleared `verifyPatchApplies` and then threw out of
+     * `applyPatch`, so `undo()` broke its own `Result` contract even after the
+     * verify door was guarded.
+     *
+     * `instanceof` the private tag, like every other guard here.
+     */
+    const applyReplayPatch = (
+      from: Graph<Ts, S>,
+      patch: Patch<Ts, S>,
+    ): Result<Graph<Ts, S>, ReplayRejection> => {
+      try {
+        return { ok: true, value: applyPatchTo(from, patch, ctx) };
+      } catch (thrown) {
+        if (thrown instanceof KeyHookFailure) {
+          return {
+            ok: false,
+            error: {
+              code: "node-type-threw",
+              message: keyHookMessage(thrown),
+              ...(thrown.nodeId === null ? {} : { nodeId: thrown.nodeId }),
+            },
+          };
+        }
+        throw thrown;
+      }
+    };
+
     const notifyAll = (
       label: string,
       listeners: ReadonlySet<() => void>,
@@ -1075,10 +1108,20 @@ export function createEngine<
         if (committed === null) {
           return { ok: false, error: nothingToReplay("undo") };
         }
+        // APPLIED BEFORE THE STACK MOVES, and that order is the fix rather than
+        // a detail. `history = committed.history` used to run first, so an
+        // `applyPatch` that threw left the entry CONSUMED and the graph
+        // untouched: the change is gone, and so is the record of how to make
+        // it. Computing the next graph first makes the whole call atomic —
+        // either the stack moves and the graph moves with it, or neither does
+        // and the entry is still there to retry.
+        const applied = applyReplayPatch(graph, inverse);
+        if (!applied.ok) return applied;
+
         history = committed.history;
 
         const at = ctx.now();
-        commitGraph(applyPatchTo(graph, inverse, ctx), "undo");
+        commitGraph(applied.value, "undo");
         emitChange({
           patch: inverse,
           source: "undo",
@@ -1124,10 +1167,14 @@ export function createEngine<
         if (committed === null) {
           return { ok: false, error: nothingToReplay("redo") };
         }
+        // Applied before the stack moves, for the reason `undo` gives.
+        const applied = applyReplayPatch(graph, forward);
+        if (!applied.ok) return applied;
+
         history = committed.history;
 
         const at = ctx.now();
-        commitGraph(applyPatchTo(graph, forward, ctx), "redo");
+        commitGraph(applied.value, "redo");
         emitChange({
           patch: forward,
           source: "redo",

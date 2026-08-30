@@ -734,6 +734,15 @@ export type RejectionCode =
   | "edit-rejected"
   /** A seed's data failed its own `parse`. See `issues`. */
   | "parse-failed"
+  /**
+   * A consumer `contentKey`/`sourceKey` threw.
+   *
+   * NOT swallowed into `null` — that would silently disable the single-owner
+   * rule — and no longer allowed to travel raw out of a door that promises a
+   * `Result`. Named identically on every rejection family for the reason
+   * `duplicate-owner` is: a consumer handling one handles them all.
+   */
+  | "node-type-threw"
   | "leaf-seed-with-children"
   /**
    * A gesture that would push the graph past `EngineConfig.maxNodes` or
@@ -826,6 +835,8 @@ export type ReplayRejectionCode =
    * forever with `unreachable-node`.
    */
   | "would-create-cycle"
+  /** A consumer `contentKey`/`sourceKey` threw. See `RejectionCode`. */
+  | "node-type-threw"
   /**
    * Replaying this insert patch would take the graph past `maxNodes`.
    *
@@ -864,6 +875,8 @@ export type LoadRejectionCode =
   | "target-not-unloaded"
   /** The incoming document reuses an id the host graph already holds. */
   | "id-collision"
+  /** A consumer `contentKey`/`sourceKey` threw. See `RejectionCode`. */
+  | "node-type-threw"
   | "malformed-document"
   /** The store was destroyed. Every mutating call refuses rather than writing
    *  into a graph nothing is listening to — see `Store.destroy`. */
@@ -902,7 +915,9 @@ export type StructuralErrorCode =
   /** More nodes than `EngineConfig.maxNodes`. See `DEFAULT_MAX_NODES`. */
   | "document-too-large"
   /** Nested deeper than `EngineConfig.maxDepth`, which is opt-in. */
-  | "document-too-deep";
+  | "document-too-deep"
+  /** A consumer `contentKey`/`sourceKey` threw. See `RejectionCode`. */
+  | "node-type-threw";
 
 export type StructuralError = Readonly<{
   code: StructuralErrorCode;
@@ -951,7 +966,10 @@ export type ViolationCode =
   | "missing-parent-entry"
   | "missing-subtree-rev"
   | "duplicate-owner"
-  | "derived-index-stale";
+  | "derived-index-stale"
+  /** A consumer `contentKey`/`sourceKey` threw while the audit read it. See
+   *  `RejectionCode`. */
+  | "node-type-threw";
 
 export type Violation = Readonly<{
   code: ViolationCode;
