@@ -35,6 +35,7 @@ import type {
   ErasedNodeType,
   Violation,
 } from "./types";
+import { describeThrown } from "./types";
 
 // ---------------------------------------------------------------------------
 // Shared empties
@@ -403,11 +404,75 @@ export function documentOrder<Ts extends readonly ErasedNodeType[], S>(
 // `Data` to read something that failed to become `Data`. A node whose content
 // could not be understood has no content identity.
 //
-// Neither wraps the call in try/catch. A throwing `contentKey` is a
-// consumer bug, and swallowing it into `null` would silently disable the
-// single-owner rule — the invariant that stops two placements from both
-// claiming one stored subtree, which is the condition the predecessor's server
-// had to answer with a 409 because nothing upstream enforced it.
+// Neither swallows the call into `null`, and that part of the original
+// decision stands: swallowing would silently disable the single-owner rule —
+// the invariant that stops two placements from both claiming one stored
+// subtree, which is the condition the predecessor's server had to answer with
+// a 409 because nothing upstream enforced it. `null` means "this node has no
+// key", and a node type that threw has not said that.
+//
+// But letting the throw travel RAW was the other half of a choice with only
+// two options in it, and it is the half review3 already ruled out for every
+// other consumer hook: "dispatch promises a `Result`. A node type that throws
+// ... turned that into an unhandled exception out of a React event handler, at
+// every call site that correctly wrote `if (!result.ok)`." Measured before this
+// change, one throwing `contentKey`:
+//
+//   deserialize                     THREW
+//   dispatch (edit / insert / remove)  THREW
+//   undo, through verifyPatchApplies   THREW
+//   store.load                      THREW
+//   findInvariantViolation          THREW
+//   serializeGraph                  survived (it does not read these keys)
+//
+// Seven of eight doors, five of them promising a `Result` and one promising to
+// be total.
+//
+// THE THIRD OPTION: refuse. The consumer's throw is caught here and re-thrown
+// as `KeyHookFailure`, a private tag no consumer can construct, and each
+// Result-typed door catches THAT TAG ONLY and turns it into a rejection naming
+// the node and the hook. Nothing is swallowed, nothing silently loses a key,
+// and — because the catch is `instanceof` a private class rather than a bare
+// `catch` around a door — a genuine bug inside this engine still crashes
+// loudly instead of being reported as a consumer's fault.
+
+/**
+ * A consumer `contentKey`/`sourceKey` threw.
+ *
+ * PRIVATE BY CONSTRUCTION: not exported from ./index, so a consumer cannot
+ * construct one and a door catching it cannot be spoofed into reporting an
+ * engine bug as a node-type failure.
+ */
+export class KeyHookFailure extends Error {
+  readonly kind: string;
+  readonly hook: "contentKey" | "sourceKey";
+  readonly nodeId: NodeId | null;
+  readonly cause: unknown;
+
+  constructor(
+    kind: string,
+    hook: "contentKey" | "sourceKey",
+    nodeId: NodeId | null,
+    cause: unknown,
+  ) {
+    super(
+      `keel: ${JSON.stringify(kind)}.${hook} threw` +
+        (nodeId === null ? "" : ` for node ${JSON.stringify(nodeId)}`) +
+        `. ${describeThrown(cause)}`,
+    );
+    this.name = "KeyHookFailure";
+    this.kind = kind;
+    this.hook = hook;
+    this.nodeId = nodeId;
+    this.cause = cause;
+  }
+}
+
+/** The rejection message every door reports this failure with, so the consumer
+ *  reads the same sentence whichever door refused. */
+export function keyHookMessage(failure: KeyHookFailure): string {
+  return failure.message;
+}
 
 export function contentKeyOf<Ts extends readonly ErasedNodeType[], S>(
   registry: NodeTypeRegistry,
@@ -416,7 +481,11 @@ export function contentKeyOf<Ts extends readonly ErasedNodeType[], S>(
   if (node.quarantined) return null;
   const nodeType = registry.get(node.kind);
   if (nodeType === undefined || nodeType.contentKey === undefined) return null;
-  return nodeType.contentKey(node.data);
+  try {
+    return nodeType.contentKey(node.data);
+  } catch (thrown) {
+    throw new KeyHookFailure(node.kind, "contentKey", node.id, thrown);
+  }
 }
 
 export function sourceKeyOf<Ts extends readonly ErasedNodeType[], S>(
@@ -424,7 +493,7 @@ export function sourceKeyOf<Ts extends readonly ErasedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): string | null {
   if (node.quarantined) return null;
-  return sourceKeyOfKindData(registry, node.kind, node.data);
+  return sourceKeyOfKindData(registry, node.kind, node.data, node.id);
 }
 
 /**
@@ -443,10 +512,17 @@ export function sourceKeyOfKindData(
   registry: NodeTypeRegistry,
   kind: string,
   data: unknown,
+  /** Only for the failure message — this overload exists precisely for a caller
+   *  holding a value no node holds yet, so there may be no id to name. */
+  nodeId: NodeId | null = null,
 ): string | null {
   const nodeType = registry.get(kind);
   if (nodeType === undefined || nodeType.sourceKey === undefined) return null;
-  return nodeType.sourceKey(data);
+  try {
+    return nodeType.sourceKey(data);
+  } catch (thrown) {
+    throw new KeyHookFailure(kind, "sourceKey", nodeId, thrown);
+  }
 }
 
 /**
@@ -1281,10 +1357,31 @@ export function dataChangeLeavesDerivedIndexesIntact(
 ): boolean {
   const nodeType = registry.get(kind);
   if (nodeType === undefined) return true;
-  if (nodeType.contentKey !== undefined && nodeType.contentKey(before) !== nodeType.contentKey(after)) {
+  // TAGGED like the two key accessors above, because these are the same two
+  // consumer hooks and this was the ONE place that called them directly rather
+  // than through `contentKeyOf`/`sourceKeyOfKindData`. That is exactly why it
+  // was still leaking after those were wrapped: measured, a throwing
+  // `contentKey` reached here from `applyPatch` and escaped BOTH `dispatch` and
+  // `undo` — the two doors review3 names — while every other door was already
+  // refusing cleanly.
+  //
+  // No `nodeId`: this predicate is handed a kind and two data values by a
+  // caller comparing a `data-changed` patch, and the node it belongs to is not
+  // in scope. The kind and the hook name are what the consumer needs.
+  const compare = (
+    hook: "contentKey" | "sourceKey",
+    read: (data: unknown) => string | null,
+  ): boolean => {
+    try {
+      return read(before) === read(after);
+    } catch (thrown) {
+      throw new KeyHookFailure(kind, hook, null, thrown);
+    }
+  };
+  if (nodeType.contentKey !== undefined && !compare("contentKey", nodeType.contentKey)) {
     return false;
   }
-  if (nodeType.sourceKey !== undefined && nodeType.sourceKey(before) !== nodeType.sourceKey(after)) {
+  if (nodeType.sourceKey !== undefined && !compare("sourceKey", nodeType.sourceKey)) {
     return false;
   }
   return true;
@@ -1382,7 +1479,7 @@ export function markMissing<Ts extends readonly ErasedNodeType[], S>(
  * by the reachability walk's re-visit guard, which in a graph that passed 2 and
  * 4 is unreachable, and which exists to TERMINATE rather than to detect.
  */
-export function findInvariantViolation<Ts extends readonly ErasedNodeType[], S>(
+function findInvariantViolationUnguarded<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): Violation | null {
@@ -1665,4 +1762,38 @@ function findStaleDerivedIndex<Ts extends readonly ErasedNodeType[], S>(
   }
 
   return null;
+}
+
+/**
+ * The audit, guarded.
+ *
+ * It returns `Violation | null` rather than a `Result`, so the guard has a
+ * different job here than at the mutation doors: this function is a
+ * DIAGNOSTIC, and a diagnostic that crashes on the graph it was asked to
+ * inspect is the least useful failure available. Checks 8 and 9 read the
+ * consumer's key hooks over every node, so a throwing hook took out the one
+ * tool a consumer has for asking "is my document sound?" — including inside a
+ * dev-check, where it turned an advisory into a crash.
+ *
+ * Reported AS a violation, not swallowed: the graph genuinely cannot be audited
+ * while a node type refuses to answer for one of its nodes, and saying so with
+ * the node's id is the honest answer. `instanceof` the private tag, so a real
+ * bug in the audit still surfaces as itself.
+ */
+export function findInvariantViolation<Ts extends readonly ErasedNodeType[], S>(
+  graph: Graph<Ts, S>,
+  registry: NodeTypeRegistry,
+): Violation | null {
+  try {
+    return findInvariantViolationUnguarded<Ts, S>(graph, registry);
+  } catch (thrown) {
+    if (thrown instanceof KeyHookFailure) {
+      return {
+        code: "node-type-threw",
+        message: keyHookMessage(thrown),
+        ...(thrown.nodeId === null ? {} : { nodeId: thrown.nodeId }),
+      };
+    }
+    throw thrown;
+  }
 }

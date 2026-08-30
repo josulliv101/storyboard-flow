@@ -61,6 +61,8 @@ import {
   ownsItsSubtree,
   sourceKeyOf,
   sourceKeyOfKindData,
+  KeyHookFailure,
+  keyHookMessage,
   bumpSubtreeRevsInto,
   dataChangeLeavesDerivedIndexesIntact,
   derivedIndexNeed,
@@ -1160,7 +1162,7 @@ function createChildrenOverlay<Ts extends readonly ErasedNodeType[], S>(
  * naming the recorded node; kind agreement; `before` still matching on the
  * SERIALIZED form; and that a node about to be un-inserted is childless.
  */
-export function verifyPatchApplies<Ts extends readonly ErasedNodeType[], S>(
+function verifyPatchAppliesUnguarded<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
   patch: Patch<Ts, S>,
   ctx: EngineContext<S>,
@@ -1865,5 +1867,32 @@ export function scrubPatchForWrite<Ts extends readonly ErasedNodeType[], S>(
         ? { type: "inserted", placements: next }
         : { type: "removed", placements: next };
     }
+  }
+}
+
+/**
+ * The key-hook guard, for the same reason ./commands has one and with the same
+ * `instanceof` discipline — see `guardKeyHooks` there.
+ *
+ * This door in particular: undo runs the consumer's key hooks to prove a
+ * recorded `before` still stands, so a throwing `contentKey` took out undo
+ * exactly the way it took out `dispatch`. review3 names both by name.
+ */
+export function verifyPatchApplies<Ts extends readonly ErasedNodeType[], S>(
+  graph: Graph<Ts, S>,
+  patch: Patch<Ts, S>,
+  ctx: EngineContext<S>,
+): Result<void, ReplayRejection> {
+  try {
+    return verifyPatchAppliesUnguarded<Ts, S>(graph, patch, ctx);
+  } catch (thrown) {
+    if (thrown instanceof KeyHookFailure) {
+      return replayError(
+        "node-type-threw",
+        keyHookMessage(thrown),
+        thrown.nodeId === null ? undefined : { nodeId: thrown.nodeId },
+      );
+    }
+    throw thrown;
   }
 }
