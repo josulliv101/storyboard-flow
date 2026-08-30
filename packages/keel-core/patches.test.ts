@@ -30,7 +30,7 @@ import {
   type NodeId,
   type Patch,
   type Placement,
-  type ErasedNodeType,
+  type WidenedNodeType,
   type Issue,
   type Result,
   type ConsumerDefinedSummaryType,
@@ -109,7 +109,7 @@ const folderType = defineNodeType<FolderData, FolderEdit>()({
 type TestTypes = readonly [typeof clipType, typeof folderType];
 type Summary = Readonly<{ label: string }>;
 
-const registry: ReadonlyMap<string, ErasedNodeType> = new Map<string, ErasedNodeType>(
+const registry: ReadonlyMap<string, WidenedNodeType> = new Map<string, WidenedNodeType>(
   [
     ["clip", clipType],
     ["folder", folderType],
@@ -2110,7 +2110,7 @@ describe("a cyclic serialize output is compared, not fatal", () => {
 
   function ctxWithCyclic(shape: (n: number) => Record<string, unknown>) {
     const nodeType = cyclicType(shape);
-    const reg = new Map<string, ErasedNodeType>([["cyc", nodeType as ErasedNodeType]]);
+    const reg = new Map<string, WidenedNodeType>([["cyc", nodeType as WidenedNodeType]]);
     return { ...makeCtx(), registry: reg };
   }
 

@@ -4,7 +4,7 @@
 // is on its own: everything else in this folder is total, and burying the single
 // exception among them is how a reader comes to believe the rule has holes.
 
-import type { ErasedNodeType, NodeTypeRegistry } from "../types";
+import type { WidenedNodeType, NodeTypeRegistry } from "../types";
 
 
 /**
@@ -18,8 +18,8 @@ import type { ErasedNodeType, NodeTypeRegistry } from "../types";
  * partial-success answer worth returning — the consumer's module graph is
  * wrong, and it is wrong before any data has been read.
  */
-export function buildRegistry(types: readonly ErasedNodeType[]): NodeTypeRegistry {
-  const registry = new Map<string, ErasedNodeType>();
+export function buildRegistry(types: readonly WidenedNodeType[]): NodeTypeRegistry {
+  const registry = new Map<string, WidenedNodeType>();
   for (const nodeType of types) {
     if (registry.has(nodeType.kind)) {
       throw new Error(

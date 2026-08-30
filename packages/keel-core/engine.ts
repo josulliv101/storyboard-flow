@@ -33,8 +33,8 @@ import type {
   ReplayRejection,
   Result,
   SelectionSlice,
-  ErasedFold,
-  ErasedNodeType,
+  WidenedFold,
+  WidenedNodeType,
   Store,
 } from "./types";
 import {
@@ -250,7 +250,7 @@ function nothingToReplay(direction: "undo" | "redo"): ReplayRejection {
  * ./folds), `devChecks` off.
  */
 export function createEngine<
-  const Ts extends readonly ErasedNodeType[],
+  const Ts extends readonly WidenedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 >(config: EngineConfig<Ts, S, F>): Engine<Ts, S, F> {
@@ -302,7 +302,7 @@ export function createEngine<
    * through a prototype chain. `Object.entries` takes own enumerable string
    * keys only, so inherited names simply are not in here.
    */
-  const foldsByKey: ReadonlyMap<string, ErasedFold<Ts, S>> = new Map(
+  const foldsByKey: ReadonlyMap<string, WidenedFold<Ts, S>> = new Map(
     Object.entries(config.folds),
   );
 
@@ -491,7 +491,7 @@ export function createEngine<
   let shadowsLeft = SHADOW_REFOLD_BUDGET;
   const shadowCheck = (
     graph: Graph<Ts, S>,
-    fold: ErasedFold<Ts, S>,
+    fold: WidenedFold<Ts, S>,
     id: NodeId,
     cachedValue: unknown,
     key: string,

@@ -43,7 +43,7 @@ import {
   type NodeId,
   type SelectionSlice,
   type Store,
-  type ErasedNodeType,
+  type WidenedNodeType,
 } from "@storyboard/keel-core";
 import type {
   DispatchFn,
@@ -60,6 +60,19 @@ import type {
 
 /**
  * A registered view with its `Data` erased, as it is stored in the registry.
+ *
+ * STILL "ERASED" while keel-core's equivalent is now `WidenedNodeType`, and the
+ * difference is real rather than a missed rename. A concrete
+ * `ConsumerDefinedNodeType<"clip", Clip, ClipEdit>` IS assignable to the widened
+ * node type — method shorthand keeps it bivariant, and no cast is needed
+ * anywhere. `FunctionComponent`'s call signature is a FUNCTION type, so under
+ * `strictFunctionTypes` its props parameter is contravariant and
+ * `FC<{ data: Clip }>` is genuinely not assignable to `FC<{ data: unknown }>`.
+ * That gap can only be crossed by throwing the type away, which is what
+ * `eraseNodeView` below does and why it is the only cast in this package.
+ *
+ * Widening is something the type system permits; erasure is something you do to
+ * it. Two words for two operations.
  */
 type ErasedNodeView = FunctionComponent<
   Readonly<{ id: NodeId; data: unknown }>
@@ -80,7 +93,7 @@ type ErasedNodeView = FunctionComponent<
  * props parameter is contravariant and `FC<{ data: Clip }>` is genuinely not
  * assignable to `FC<{ data: unknown }>`. Through `unknown`, never `any`.
  */
-function eraseNodeView<Ts extends readonly ErasedNodeType[], K extends string>(
+function eraseNodeView<Ts extends readonly WidenedNodeType[], K extends string>(
   view: NodeView<Ts, K>,
 ): ErasedNodeView {
   return view as unknown as ErasedNodeView;
@@ -102,7 +115,7 @@ function eraseNodeView<Ts extends readonly ErasedNodeType[], K extends string>(
  * throws the "must be used inside the Provider" error with no other clue.
  */
 export function createReactBindings<
-  Ts extends readonly ErasedNodeType[],
+  Ts extends readonly WidenedNodeType[],
   S,
   F extends FoldRegistry<Ts, S>,
 >(engine: Engine<Ts, S, F>): ReactBindings<Ts, S, F> {

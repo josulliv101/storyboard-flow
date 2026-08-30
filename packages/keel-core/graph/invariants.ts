@@ -9,7 +9,7 @@
 // derived indexes, and nothing reads it.
 
 import type {
-  ErasedNodeType,
+  WidenedNodeType,
   Graph,
   NodeId,
   NodeTypeRegistry,
@@ -47,7 +47,7 @@ import { rebuildDerivedIndexes } from "./derived-indexes";
  * by the reachability walk's re-visit guard, which in a graph that passed 2 and
  * 4 is unreachable, and which exists to TERMINATE rather than to detect.
  */
-function findInvariantViolationUnguarded<Ts extends readonly ErasedNodeType[], S>(
+function findInvariantViolationUnguarded<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): Violation | null {
@@ -280,7 +280,7 @@ function findInvariantViolationUnguarded<Ts extends readonly ErasedNodeType[], S
 }
 
 /** Split out only so `findInvariantViolation` stays readable; it is check 9. */
-function findStaleDerivedIndex<Ts extends readonly ErasedNodeType[], S>(
+function findStaleDerivedIndex<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   fresh: Pick<Graph<Ts, S>, "placementsByContentKey" | "ownerBySourceKey">,
 ): Violation | null {
@@ -348,7 +348,7 @@ function findStaleDerivedIndex<Ts extends readonly ErasedNodeType[], S>(
  * the node's id is the honest answer. `instanceof` the private tag, so a real
  * bug in the audit still surfaces as itself.
  */
-export function findInvariantViolation<Ts extends readonly ErasedNodeType[], S>(
+export function findInvariantViolation<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): Violation | null {

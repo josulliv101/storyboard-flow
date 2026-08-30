@@ -44,7 +44,7 @@ import {
   type DataChange,
   type EngineContext,
   type Graph,
-  type ErasedNodeType,
+  type WidenedNodeType,
   type Move,
   type NodeId,
   type NodeTypeRegistry,
@@ -104,7 +104,7 @@ function replayError(
  * (it comes off the wire), so it is not disjoint from the `true` / `false`
  * literals on the other two and cannot discriminate on its own.
  */
-function containerChildrenState<Ts extends readonly ErasedNodeType[], S>(
+function containerChildrenState<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): ChildrenState | null {
   if (node.quarantined) return node.children;
@@ -114,7 +114,7 @@ function containerChildrenState<Ts extends readonly ErasedNodeType[], S>(
 
 /** `true` when this node owns a `childrenById` entry — i.e. it is a `loaded`
  *  container. Exactly one state has an entry; the other three have none. */
-function isLoadedContainer<Ts extends readonly ErasedNodeType[], S>(
+function isLoadedContainer<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): boolean {
   const state = containerChildrenState(node);
@@ -249,7 +249,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
  * exactly. `applyCommand` emits moves in document order, which is that
  * ascending order, so the same forward walk serves both directions.
  */
-export function invertPatch<Ts extends readonly ErasedNodeType[], S>(
+export function invertPatch<Ts extends readonly WidenedNodeType[], S>(
   patch: Patch<Ts, S>,
 ): Patch<Ts, S> {
   switch (patch.type) {
@@ -292,7 +292,7 @@ export function invertPatch<Ts extends readonly ErasedNodeType[], S>(
  * validates anyway", which is exactly how the dormant-patch corruptions
  * happened.
  */
-export function applyPatch<Ts extends readonly ErasedNodeType[], S>(
+export function applyPatch<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   patch: Patch<Ts, S>,
   ctx: EngineContext<S>,
@@ -553,7 +553,7 @@ function soleReorderParent(moves: readonly Move[]): NodeId | null {
   return parentId;
 }
 
-function placementsAfterMove<Ts extends readonly ErasedNodeType[], S>(
+function placementsAfterMove<Ts extends readonly WidenedNodeType[], S>(
   post: Graph<Ts, S>,
   registry: NodeTypeRegistry,
   previous: ReadonlyMap<string, readonly NodeId[]>,
@@ -607,7 +607,7 @@ function placementsAfterMove<Ts extends readonly ErasedNodeType[], S>(
   return rebuildPlacementIndex(post, registry);
 }
 
-function applyMoved<Ts extends readonly ErasedNodeType[], S>(
+function applyMoved<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   moves: readonly Move[],
   ctx: EngineContext<S>,
@@ -739,7 +739,7 @@ function applyMoved<Ts extends readonly ErasedNodeType[], S>(
   };
 }
 
-function applyInserted<Ts extends readonly ErasedNodeType[], S>(
+function applyInserted<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   placements: readonly Placement<Ts, S>[],
   ctx: EngineContext<S>,
@@ -866,7 +866,7 @@ function applyInserted<Ts extends readonly ErasedNodeType[], S>(
   return { ...grown, ...derived };
 }
 
-function applyRemoved<Ts extends readonly ErasedNodeType[], S>(
+function applyRemoved<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   placements: readonly Placement<Ts, S>[],
   ctx: EngineContext<S>,
@@ -982,7 +982,7 @@ function applyRemoved<Ts extends readonly ErasedNodeType[], S>(
   };
 }
 
-function applyDataChanged<Ts extends readonly ErasedNodeType[], S>(
+function applyDataChanged<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   changes: readonly DataChange<Ts>[],
   ctx: EngineContext<S>,
@@ -1057,7 +1057,7 @@ function applyDataChanged<Ts extends readonly ErasedNodeType[], S>(
  * same patch creates two entries earlier. The removal side needs the same
  * overlay to answer "is this node empty yet".
  */
-function createChildrenOverlay<Ts extends readonly ErasedNodeType[], S>(
+function createChildrenOverlay<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
 ) {
   // OWNED AND MUTABLE, copied once per parent on first write — not
@@ -1178,7 +1178,7 @@ function createChildrenOverlay<Ts extends readonly ErasedNodeType[], S>(
  * naming the recorded node; kind agreement; `before` still matching on the
  * SERIALIZED form; and that a node about to be un-inserted is childless.
  */
-function verifyPatchAppliesUnguarded<Ts extends readonly ErasedNodeType[], S>(
+function verifyPatchAppliesUnguarded<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   patch: Patch<Ts, S>,
   ctx: EngineContext<S>,
@@ -1201,7 +1201,7 @@ function verifyPatchAppliesUnguarded<Ts extends readonly ErasedNodeType[], S>(
   }
 }
 
-function verifyMoved<Ts extends readonly ErasedNodeType[], S>(
+function verifyMoved<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   moves: readonly Move[],
 ): Result<void, ReplayRejection> {
@@ -1309,7 +1309,7 @@ function verifyMoved<Ts extends readonly ErasedNodeType[], S>(
   return VERIFY_OK;
 }
 
-function requireLoadedParent<Ts extends readonly ErasedNodeType[], S>(
+function requireLoadedParent<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   parentId: NodeId,
 ): Result<void, ReplayRejection> {
@@ -1358,7 +1358,7 @@ function requireLoadedParent<Ts extends readonly ErasedNodeType[], S>(
  * A hand-built patch could still reach it, and would be refused rather than
  * applied. A refusal on an exotic hand-built patch is the safe direction.
  */
-function ownershipConflict<Ts extends readonly ErasedNodeType[], S>(
+function ownershipConflict<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   claims: ReadonlyMap<NodeId, string | null>,
 ): ReplayRejection | null {
@@ -1398,7 +1398,7 @@ function ownershipConflict<Ts extends readonly ErasedNodeType[], S>(
   return null;
 }
 
-function verifyInserted<Ts extends readonly ErasedNodeType[], S>(
+function verifyInserted<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   placements: readonly Placement<Ts, S>[],
   ctx: EngineContext<S>,
@@ -1490,7 +1490,7 @@ function verifyInserted<Ts extends readonly ErasedNodeType[], S>(
   return VERIFY_OK;
 }
 
-function verifyRemoved<Ts extends readonly ErasedNodeType[], S>(
+function verifyRemoved<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   placements: readonly Placement<Ts, S>[],
 ): Result<void, ReplayRejection> {
@@ -1571,7 +1571,7 @@ function verifyRemoved<Ts extends readonly ErasedNodeType[], S>(
   return VERIFY_OK;
 }
 
-function verifyDataChanged<Ts extends readonly ErasedNodeType[], S>(
+function verifyDataChanged<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   changes: readonly DataChange<Ts>[],
   ctx: EngineContext<S>,
@@ -1702,7 +1702,7 @@ function verifyDataChanged<Ts extends readonly ErasedNodeType[], S>(
  *  included: a move's endpoints and a placement's parent are nodes whose
  *  rollups changed, and a caller notifying only the named nodes reproduces the
  *  "deep move never re-renders any ancestor" hole. */
-export function patchTouchedNodeIds<Ts extends readonly ErasedNodeType[], S>(
+export function patchTouchedNodeIds<Ts extends readonly WidenedNodeType[], S>(
   patch: Patch<Ts, S>,
 ): readonly NodeId[] {
   const seen = new Set<NodeId>();
@@ -1745,7 +1745,7 @@ export function patchTouchedNodeIds<Ts extends readonly ErasedNodeType[], S>(
  * either is wrong — the only id in this list that names storage worth deleting
  * is an `unloaded` owner. Read the node's state before acting on the id.
  */
-export function patchDetachedSubtrees<Ts extends readonly ErasedNodeType[], S>(
+export function patchDetachedSubtrees<Ts extends readonly WidenedNodeType[], S>(
   patch: Patch<Ts, S>,
 ): readonly NodeId[] {
   if (patch.type !== "removed") return EMPTY_IDS;
@@ -1759,7 +1759,7 @@ export function patchDetachedSubtrees<Ts extends readonly ErasedNodeType[], S>(
   return detached;
 }
 
-export function isEmptyPatch<Ts extends readonly ErasedNodeType[], S>(
+export function isEmptyPatch<Ts extends readonly WidenedNodeType[], S>(
   patch: Patch<Ts, S>,
 ): boolean {
   switch (patch.type) {
@@ -1818,7 +1818,7 @@ export function isEmptyPatch<Ts extends readonly ErasedNodeType[], S>(
  * "moved" yields nothing: structural patches carry no content, which is exactly
  * why `scrubPatchForWrite` returns them untouched.
  */
-export function scrubbableNodeIds<Ts extends readonly ErasedNodeType[], S>(
+export function scrubbableNodeIds<Ts extends readonly WidenedNodeType[], S>(
   patch: Patch<Ts, S>,
 ): readonly NodeId[] {
   switch (patch.type) {
@@ -1833,7 +1833,7 @@ export function scrubbableNodeIds<Ts extends readonly ErasedNodeType[], S>(
   }
 }
 
-export function scrubPatchForWrite<Ts extends readonly ErasedNodeType[], S>(
+export function scrubPatchForWrite<Ts extends readonly WidenedNodeType[], S>(
   patch: Patch<Ts, S>,
   replacements: ReadonlyMap<NodeId, unknown>,
 ): Patch<Ts, S> | null {
@@ -1894,7 +1894,7 @@ export function scrubPatchForWrite<Ts extends readonly ErasedNodeType[], S>(
  * recorded `before` still stands, so a throwing `contentKey` took out undo
  * exactly the way it took out `dispatch`. review3 names both by name.
  */
-export function verifyPatchApplies<Ts extends readonly ErasedNodeType[], S>(
+export function verifyPatchApplies<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   patch: Patch<Ts, S>,
   ctx: EngineContext<S>,

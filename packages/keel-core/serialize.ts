@@ -59,7 +59,7 @@ import {
   type SerializedDocument,
   type SerializedNode,
   type StructuralError,
-  type ErasedNodeType,
+  type WidenedNodeType,
 } from "./types";
 
 import {
@@ -643,7 +643,7 @@ function runMigrations(
  * this document's own roots to `null`; `loadChildrenInto` re-points them at
  * the target it is filling.
  */
-type BuiltDocument<Ts extends readonly ErasedNodeType[], S> = Readonly<{
+type BuiltDocument<Ts extends readonly WidenedNodeType[], S> = Readonly<{
   /** Pre-order, parents first. Also the order the report is written in. */
   order: readonly NodeId[];
   rootIds: readonly NodeId[];
@@ -663,7 +663,7 @@ type BuiltDocument<Ts extends readonly ErasedNodeType[], S> = Readonly<{
  * sub-document's `rootIds` name the nodes that BECOME some target's children,
  * and a child may perfectly well be a leaf.
  */
-function buildDocument<Ts extends readonly ErasedNodeType[], S>(
+function buildDocument<Ts extends readonly WidenedNodeType[], S>(
   raw: unknown,
   ctx: EngineContext<S>,
   options: Readonly<{
@@ -1184,7 +1184,7 @@ function buildDocument<Ts extends readonly ErasedNodeType[], S>(
  * `sourceKeyOf` returns `null` for them, since the key comes from a node type that
  * by definition did not run.
  */
-function findDuplicateOwner<Ts extends readonly ErasedNodeType[], S>(
+function findDuplicateOwner<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   registry: NodeTypeRegistry,
 ): StructuralError | null {
@@ -1218,7 +1218,7 @@ function findDuplicateOwner<Ts extends readonly ErasedNodeType[], S>(
  * `StructuralError`; per-node content failures quarantine by default, keeping
  * id, position, children and byte-exact `raw`.
  */
-function deserializeDocumentUnguarded<Ts extends readonly ErasedNodeType[], S>(
+function deserializeDocumentUnguarded<Ts extends readonly WidenedNodeType[], S>(
   raw: unknown,
   ctx: EngineContext<S>,
 ): Result<
@@ -1277,7 +1277,7 @@ function deserializeDocumentUnguarded<Ts extends readonly ErasedNodeType[], S>(
  * estimate compounds it on every save, which is how empty collections came to
  * store a duration that was never a measurement.
  */
-export function serializeGraph<Ts extends readonly ErasedNodeType[], S>(
+export function serializeGraph<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   ctx: EngineContext<S>,
 ): SerializedDocument {
@@ -1452,7 +1452,7 @@ function loadRejection(error: LoadRejection): Result<never, LoadRejection> {
  * what makes `verifyPatchApplies` cheap and dormant history sound: a node that
  * existed when a patch was recorded still exists when it replays.
  */
-function loadChildrenIntoUnguarded<Ts extends readonly ErasedNodeType[], S>(
+function loadChildrenIntoUnguarded<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
   doc: unknown,
@@ -1640,7 +1640,7 @@ function loadChildrenIntoUnguarded<Ts extends readonly ErasedNodeType[], S>(
  * that `makeQuarantinedNode` adds itself, and the boundary constructors are
  * the only sanctioned way to mint a node.
  */
-function withLoadedChildren<Ts extends readonly ErasedNodeType[], S>(
+function withLoadedChildren<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
   id: NodeId,
 ): GraphNode<Ts, S> {
@@ -1687,7 +1687,7 @@ function withLoadedChildren<Ts extends readonly ErasedNodeType[], S>(
 // payload for the engine's mistake, on the one door whose whole job is telling
 // those two apart.
 
-export function deserializeDocument<Ts extends readonly ErasedNodeType[], S>(
+export function deserializeDocument<Ts extends readonly WidenedNodeType[], S>(
   raw: unknown,
   ctx: EngineContext<S>,
 ): Result<
@@ -1711,7 +1711,7 @@ export function deserializeDocument<Ts extends readonly ErasedNodeType[], S>(
   }
 }
 
-export function loadChildrenInto<Ts extends readonly ErasedNodeType[], S>(
+export function loadChildrenInto<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   id: NodeId,
   doc: unknown,

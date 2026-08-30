@@ -9,7 +9,7 @@
 // rely on it without re-checking: every mutation moves the revision of every
 // node it affects, INCLUDING a node it affects by deleting.
 
-import type { ErasedNodeType, Graph, NodeId } from "../types";
+import type { WidenedNodeType, Graph, NodeId } from "../types";
 
 /**
  * Bump `id` AND every ancestor of it, for each id in `fromIds`.
@@ -29,7 +29,7 @@ import type { ErasedNodeType, Graph, NodeId } from "../types";
  * stray revision entry for an id that no longer exists is inert by comparison —
  * nothing reads a revision for a node it cannot find.
  */
-export function bumpSubtreeRevs<Ts extends readonly ErasedNodeType[], S>(
+export function bumpSubtreeRevs<Ts extends readonly WidenedNodeType[], S>(
   revs: ReadonlyMap<NodeId, number>,
   graph: Graph<Ts, S>,
   fromIds: readonly NodeId[],
@@ -64,7 +64,7 @@ export function bumpSubtreeRevs<Ts extends readonly ErasedNodeType[], S>(
  * redundant. Breaking at the first already-bumped id makes the cost proportional
  * to the NEW part of each chain.
  */
-export function bumpSubtreeRevsInto<Ts extends readonly ErasedNodeType[], S>(
+export function bumpSubtreeRevsInto<Ts extends readonly WidenedNodeType[], S>(
   revs: Map<NodeId, number>,
   graph: Graph<Ts, S>,
   fromIds: readonly NodeId[],
