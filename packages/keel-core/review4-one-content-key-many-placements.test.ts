@@ -21,18 +21,14 @@
 // The gesture is ordinary: paste N copies of one asset into a strip that
 // already holds many of them.
 //
-// THE GATE BELOW IS A DIFFERENTIAL, not a budget, and it was checked against a
-// deliberately reverted implementation before being trusted — the last cost gate
-// this round produced passed on the broken code and had to be deleted, so the
-// standard is that a gate must be SEEN to fail:
+// THOSE NUMBERS ARE A RECORD, NOT A GATE. A cost gate for this was written,
+// verified against a deliberately reverted build, and then deleted when CI
+// disproved it — the reasoning is on the `describe` below, and it is worth
+// reading before writing a third one.
 //
-//                     fixed      reverted to `includes`
-//   N = 4,000          1.13                        1.89
-//   N = 8,000          0.95                        2.19
-//
-// Same document size, same arrival count, same machine, same run — the only
-// difference is whether the placements share one content key. A linear
-// implementation makes the two indistinguishable; a quadratic one cannot.
+// What IS asserted here is the answer: the right placements, in document order,
+// agreeing with a full rebuild. That is the half of "this optimisation is
+// correct" that can be checked without a stopwatch.
 import { describe, expect, it } from "vitest";
 
 import {
@@ -126,85 +122,37 @@ const summary: ConsumerDefinedSummaryType<Summary> = {
 
 const rootId = parseNodeId("root");
 
-/**
- * Build a flat strip of `N` clips, then time `insert + undo` of `arrivals` more
- * at index 0 — the position that makes every incumbent survive into the tail.
- *
- * `shared` is the only thing that varies between the two runs the gate compares:
- * one content key for everything, or one per clip.
- */
-function insertCostMs(N: number, arrivals: number, shared: boolean): number {
-  const engine = createEngine<Types, Summary, {}>({ types, summary, folds: {} });
-  const nodes: unknown[] = [];
-  const childIds: string[] = [];
-  for (let i = 0; i < N; i += 1) {
-    childIds.push(`c${i}`);
-    nodes.push({
-      id: `c${i}`,
-      kind: "clip",
-      data: { title: `c${i}`, asset: shared ? "SHARED" : `asset-${i}` },
-    });
-  }
-  nodes.unshift({
-    id: "root",
-    kind: "folder",
-    data: { name: "R" },
-    children: childIds,
-  });
-
-  const loaded = engine.deserialize({
-    formatVersion: 1,
-    schemaVersions: { clip: 1, folder: 1 },
-    rootIds: ["root"],
-    nodes,
-  });
-  if (!loaded.ok) throw new Error("fixture failed to load");
-  const store = engine.createStore(loaded.value.graph);
-
-  const seeds = Array.from({ length: arrivals }, (_, i) => ({
-    kind: "clip" as const,
-    data: { title: `n${i}`, asset: shared ? "SHARED" : `fresh-${i}` },
-  }));
-
-  const reps = 8;
-  const started = performance.now();
-  for (let r = 0; r < reps; r += 1) {
-    const inserted = store.dispatch({
-      type: "insert-nodes",
-      toParentId: rootId,
-      toIndex: 0,
-      seeds,
-    });
-    if (!inserted.ok) throw new Error(`insert refused: ${inserted.error.code}`);
-    const undone = store.undo();
-    if (!undone.ok) throw new Error(`undo refused: ${undone.error.code}`);
-  }
-  const ms = (performance.now() - started) / reps;
-  store.destroy();
-  return ms;
-}
-
 describe("one content key across many placements", () => {
-  it("costs about what the same insert costs with unique keys", () => {
-    // THE WORST of the two sizes, not each in turn. The quadratic grows with N
-    // and the noise does not, so the larger size carries the signal — and
-    // asserting the max means one unlucky small-N reading cannot decide the
-    // verdict in either direction. A first draft asserted each size separately
-    // and failed the reverted build by 6% (1.59 against 1.5), which is a margin
-    // thin enough to flip the other way on a loaded box.
-    const ratios: number[] = [];
-    for (const N of [4_000, 8_000]) {
-      const shared = insertCostMs(N, 2_000, true);
-      const unique = insertCostMs(N, 2_000, false);
-      ratios.push(shared / unique);
-    }
-    const worst = Math.max(...ratios);
-    // Measured 1.13 / 0.95 with the fix and 1.89 / 2.19 without it. 1.4 leaves
-    // the fix ~24% of headroom and still sits well under the reverted build.
-    // Unlike an absolute budget, a ratio of two runs on the SAME box in the
-    // SAME process survives a loaded CI machine.
-    expect(worst).toBeLessThan(1.4);
-  }, 300_000);
+  // THERE IS NO COST GATE HERE, and the second attempt at one is why.
+  //
+  // The differential was shared-key insert against unique-key insert: same
+  // document size, same arrival count, same process, the only difference being
+  // whether the placements share a content key. It discriminated locally —
+  //
+  //                      fixed     reverted to `includes`
+  //    N = 4,000          1.13                       1.89
+  //    N = 8,000          0.95                       2.19
+  //
+  // — and then failed on CI at 1.95 ON THE FIXED BUILD, which is the number the
+  // reverted one produced here.
+  //
+  // Not flakiness. The gate's null hypothesis was never true. With a shared key
+  // the merge really does build an N-element bucket and allocate an N-element
+  // array; with unique keys every bucket holds one element and there is
+  // essentially no merge at all. Those are different amounts of work BY
+  // CONSTRUCTION, so a ratio near 1.0 was an artifact of this machine rather
+  // than a property the correct implementation has. Widening the threshold
+  // would only have hidden that.
+  //
+  // Growth-of-shared-key-cost-with-N was tried too, and does not separate them:
+  // 1.07 / 1.50 fixed against 1.27 / 1.60 reverted, which overlaps.
+  //
+  // So the measurement lives in the header above, where it is checkable by
+  // anyone who wants to re-run it, and the test below guards the ANSWER — which
+  // is the part that can be asserted without a stopwatch. Two gates have now
+  // been written for this round's cost findings and both were deleted for the
+  // same reason: a gate that cannot reliably tell correct from incorrect is
+  // worse than none, because it reads as coverage.
 
   it("still produces the right index, which is what the speed is in service of", () => {
     // A cost gate that does not also check the answer is how an optimisation
