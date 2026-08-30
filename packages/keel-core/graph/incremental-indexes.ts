@@ -340,10 +340,23 @@ export function placementsAfterInsert<Ts extends readonly ErasedNodeType[], S>(
         right += 1;
       }
     }
+    // A SET, not `ordered.includes`. This tail runs once per surviving
+    // incumbent and the scan inside it is proportional to the arrivals, so the
+    // pair was O(incumbents x arrivals) — and it is the tail that carries the
+    // whole bucket whenever the arrivals sort first, which is what inserting at
+    // index 0 does. Invisible to the cost suite because every fixture there
+    // gives each clip a unique `assetId`, so every bucket has length 1 and this
+    // loop never runs more than once.
+    //
+    // The membership question is the same one the merge above answers with
+    // `incumbent === arrival`: an arriving id already in the bucket means this
+    // was not an insert of new nodes. Built once per key rather than rescanned
+    // per incumbent.
+    const arriving = new Set(ordered);
     for (; left < bucket.length; left += 1) {
       const incumbent = bucket[left];
       if (incumbent === undefined) continue;
-      if (ordered.includes(incumbent)) return null;
+      if (arriving.has(incumbent)) return null;
       merged.push(incumbent);
     }
     for (; right < ordered.length; right += 1) {
