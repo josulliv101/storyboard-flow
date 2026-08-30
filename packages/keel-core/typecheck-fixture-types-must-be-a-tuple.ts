@@ -123,13 +123,16 @@ const nodeId = parseNodeId("x");
 
 const tupleTypes = [clipType, folderType] as const;
 
-const tupleEngine = createEngine<typeof tupleTypes, Summary, {}>({
+// `_`-prefixed because the rule asks for it: the binding is read only in a TYPE
+// position below, and this fixture needs it to exist for exactly that reason —
+// `typeof` is how the store gets the engine's inferred parameters.
+const _tupleEngine = createEngine<typeof tupleTypes, Summary, {}>({
   types: tupleTypes,
   summary,
   folds: {},
 });
 
-declare const tupleStore: ReturnType<typeof tupleEngine.createStore>;
+declare const tupleStore: ReturnType<typeof _tupleEngine.createStore>;
 
 // The RIGHT edit for the kind compiles, which is half the assertion — a fixture
 // that only proved things fail would also pass against a type that rejects
@@ -187,13 +190,13 @@ createEngine<typeof arrayTypes, Summary, {}>({
 // worked — which is exactly why the defect survived review: the documented
 // example is the one case that was fine.
 
-const inlineEngine = createEngine({
+const _inlineEngine = createEngine({
   types: [clipType, folderType],
   summary,
   folds: {},
 });
 
-declare const inlineStore: ReturnType<typeof inlineEngine.createStore>;
+declare const inlineStore: ReturnType<typeof _inlineEngine.createStore>;
 
 inlineStore.dispatch({
   type: "edit-nodes",
