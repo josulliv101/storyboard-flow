@@ -64,7 +64,7 @@ import {
   KeyHookFailure,
   keyHookMessage,
   bumpSubtreeRevsInto,
-  dataChangeLeavesDerivedIndexesIntact,
+  derivedIndexesSurviveDataChange,
   derivedIndexNeed,
   derivedIndexesAfterRemoval,
   rebuildDerivedIndexes,
@@ -831,7 +831,7 @@ function applyInserted<Ts extends readonly WidenedNodeType[], S>(
   // bucket stays sorted, and the only new entries are the arrivals' own.
   //
   // This used to fall back to a whole-document rebuild whenever ANY arriving
-  // node carried a key — and `insertLeavesDerivedIndexesIntact` short-circuits
+  // node carried a key — and `derivedIndexesSurviveInsert` short-circuits
   // on the first keyed node, so one keyed seed condemned the whole batch.
   // MEASURED, counting `contentKey`: inserting ONE clip cost 1,002 / 10,002 /
   // 40,002 calls at those board sizes, while removing one cost 1, because the
@@ -1033,7 +1033,7 @@ function applyDataChanged<Ts extends readonly WidenedNodeType[], S>(
   // per change; rebuilding costs a document-order DFS plus two calls per NODE.
   const movesAKey = changes.some(
     (change) =>
-      !dataChangeLeavesDerivedIndexesIntact(
+      !derivedIndexesSurviveDataChange(
         ctx.registry,
         change.kind,
         change.before,
