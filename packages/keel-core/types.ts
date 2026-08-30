@@ -518,9 +518,31 @@ export type Graph<Ts extends readonly ErasedNodeType[], S> = Readonly<{
    * writer (`applyRemoved`) and is shared by reference by every commit that
    * removes nothing, which is nearly all of them.
    *
-   * DISJOINT from `subtreeRevById` by construction: an id is live or dead,
-   * never both. `getSubtreeRev` reads live first regardless, and invariant
-   * check 6 asserts the disjointness rather than trusting it.
+   * NOT disjoint from `subtreeRevById`, and an earlier version of this comment
+   * claimed it was — "an id is live or dead, never both", backed by "invariant
+   * check 6 asserts the disjointness rather than trusting it." Both halves were
+   * false. Check 6 requires every LIVE node to have a rev and never reads this
+   * map at all, and the overlap is reachable by the most ordinary gesture there
+   * is: remove a node, then undo. Measured through the public store —
+   *
+   *   after remove : live=false dead=true
+   *   after undo   : live=true  dead=true
+   *
+   * — because `applyRemoved` writes the tombstone and `applyInserted` seeds the
+   * returning id ABOVE it without clearing it, which is exactly what the
+   * high-water rule requires.
+   *
+   * The overlap is INERT rather than merely tolerated: `getSubtreeRev` reads
+   * `subtreeRevById` first and only falls through to this map for an id with no
+   * live entry, so a stale dead number can never be the answer for a live node.
+   * What it costs is one number per ever-removed id for the store's lifetime,
+   * which is the trade `applyRemoved` argues for at length.
+   *
+   * Stated here as an observation rather than an assertion because nothing
+   * checks it. If a future check wants to police this map, the property worth
+   * asserting is the high-water rule — a tombstone sits strictly above every
+   * rev its dead lineage cached — not disjointness, which is neither true nor
+   * needed.
    */
   deadRevById: ReadonlyMap<NodeId, number>;
   /** Derived from `contentKey`. Values are in document order. */

@@ -1315,8 +1315,25 @@ function applyCommandUnguarded<Ts extends readonly ErasedNodeType[], S>(
  * shift its indices. Re-deriving this arithmetic anywhere else is how the
  * predecessor came to silently append on cut+paste.
  *
- * It runs the same validity checks as the command it produces, so an illegal
- * gesture is refused while it is still a gesture.
+ * IT RUNS THE STRUCTURAL CHECKS, NOT THE BUDGETS, and the distinction matters
+ * because an earlier version of this line claimed both: "It runs the same
+ * validity checks as the command it produces, so an illegal gesture is refused
+ * while it is still a gesture." The first half is what it does — unknown node,
+ * unknown parent, not-a-container, target-not-loaded, cycle, root moves — and
+ * those really are refused while the drag is still a drag.
+ *
+ * The CEILINGS are not among them. Measured, `maxNodes: 3` on a 3-node graph:
+ *
+ *   resolveDrop(insert intent)   -> ok
+ *   dispatch(that command)       -> would-exceed-max-nodes
+ *
+ * So a drop that cannot commit still reads as a legal drop target, and the
+ * refusal arrives one step later than the sentence above promised. That is a
+ * gap in the gesture layer rather than a correctness bug — the command door
+ * still refuses, nothing is written, and `maxNodes` is a trust boundary whose
+ * job is bounding the graph, not shaping a drag. Closing it means teaching this
+ * function the budgets, which is a deliberate UX change and not a comment fix;
+ * until someone makes that call, this says what is true.
  */
 export function resolveDrop<Ts extends readonly ErasedNodeType[], S>(
   graph: Graph<Ts, S>,
