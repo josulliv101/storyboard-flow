@@ -193,18 +193,40 @@ export function isSameOrAncestor<Ts extends readonly WidenedNodeType[], S>(
 }
 
 /**
- * Pre-order walk from `roots`, children in array order.
+ * Walk from `roots` in DOCUMENT ORDER, children in array order.
+ *
+ * Document order is PRE-ORDER — each node, then its whole subtree, then its
+ * next sibling — which is the order the rows appear in a fully expanded tree,
+ * top to bottom. That equivalence is the definition; this function is named for
+ * the result rather than the traversal because the result is what the rest of
+ * the package talks about. `documentOrder` and `documentOrderComparator` are
+ * public, `selectRange`'s contract is stated in document order, and the derived
+ * index buckets are sorted by it. A private helper called `walkPreOrder` made a
+ * reader translate twice to reach a word the package uses everywhere.
+ *
+ * WHAT DEPENDS ON THE ORDER, not just on visiting everything:
+ *   - `selectRange` is inclusive in document order, so shift-click selects what
+ *     the user sees between two rows.
+ *   - `walkDerivedIndexes` iterates this, so every `placementsByContentKey`
+ *     bucket comes out already sorted — which is what lets
+ *     `placementsAfterInsert` merge two sorted runs instead of re-sorting.
+ *   - `subtreeIds` includes its own root FIRST, and a pre-order root precedes
+ *     all of its descendants both before and after a permutation confined to
+ *     that subtree. `reindexPlacementsWithinSubtree` rests on exactly that.
  *
  * EXPLICIT STACK, never recursion: depth is hostile input — a document is a
  * flat node list off the wire, so nothing bounds nesting except whoever wrote
  * the document.
+ *
+ * Children are pushed in REVERSE so the LIFO pops them front-to-back; push them
+ * forward and every node's children come out mirrored.
  *
  * The `budget` is the same termination guard as `ancestorChain`'s. In a valid
  * graph it is never reached: every reachable id is a node and each is reached
  * once, so the walk length is exactly the number of reachable nodes. It bounds
  * the damage when the graph is not valid.
  */
-function walkPreOrder<Ts extends readonly WidenedNodeType[], S>(
+function walkInDocumentOrder<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   roots: readonly NodeId[],
 ): NodeId[] {
@@ -237,7 +259,7 @@ export function subtreeIds<Ts extends readonly WidenedNodeType[], S>(
   id: NodeId,
 ): readonly NodeId[] {
   if (!graph.nodesById.has(id)) return NO_IDS;
-  return walkPreOrder(graph, [id]);
+  return walkInDocumentOrder(graph, [id]);
 }
 
 /** Pre-order across every root, in `rootIds` order. Backs `selectRange`, which
@@ -246,7 +268,7 @@ export function subtreeIds<Ts extends readonly WidenedNodeType[], S>(
 export function documentOrder<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
 ): readonly NodeId[] {
-  return walkPreOrder(graph, graph.rootIds);
+  return walkInDocumentOrder(graph, graph.rootIds);
 }
 
 // ---------------------------------------------------------------------------
