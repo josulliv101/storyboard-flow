@@ -1209,6 +1209,54 @@ function findDuplicateOwner<Ts extends readonly WidenedNodeType[], S>(
   return null;
 }
 
+/**
+ * The duplicate-owner check a LAZY PAGE needs, over the ARRIVALS alone.
+ *
+ * `findDuplicateOwner` answers the same question by walking every node in the
+ * merged graph and calling `sourceKeyOf` on each — O(resident) node-type calls
+ * to admit a page of 200. This is O(arrivals), and sound for the reason the
+ * incremental index updaters are: a load ADDS nodes and changes no existing
+ * node's `data`, so no incumbent's `sourceKey` moves, and the target's own
+ * ownership is unchanged because `unloaded` and `loaded` BOTH own — only
+ * `reference` disclaims (`stateOwnsSubtree`). The only conflicts a load can
+ * create are therefore arrival-vs-incumbent and arrival-vs-arrival, and both
+ * are visible from the arrivals plus the pre-load `ownerBySourceKey`.
+ *
+ * WHAT THIS DELIBERATELY STOPS DOING: re-auditing the WHOLE graph on every page
+ * load. A duplicate already sitting among resident nodes is not this door's to
+ * find — `ownerBySourceKey` cannot represent one, `findInvariantViolation`
+ * check 8 is what names it, and `applyInserted` has always trusted that map the
+ * same way.
+ *
+ * Message and shape are identical to `findDuplicateOwner`'s, so which door
+ * refused is not something a consumer can tell from the rejection.
+ */
+function findDuplicateOwnerAmongArrivals<
+  Ts extends readonly WidenedNodeType[],
+  S,
+>(
+  ownerBySourceKey: ReadonlyMap<string, NodeId>,
+  registry: NodeTypeRegistry,
+  arrived: readonly GraphNode<Ts, S>[],
+): StructuralError | null {
+  const claimed = new Map<string, NodeId>();
+  for (const node of arrived) {
+    if (!ownsItsSubtree<Ts, S>(node)) continue;
+    const key = sourceKeyOf<Ts, S>(registry, node);
+    if (key === null) continue;
+    const existing = ownerBySourceKey.get(key) ?? claimed.get(key);
+    if (existing !== undefined) {
+      return {
+        code: "duplicate-owner",
+        message: `sourceKey ${quoteFromWire(key)} is owned by both ${quoteFromWire(existing)} and ${quoteFromWire(node.id)}; the second placement must be a reference`,
+        nodeId: node.id,
+      };
+    }
+    claimed.set(key, node.id);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // 4. deserializeDocument
 // ---------------------------------------------------------------------------
@@ -1599,10 +1647,16 @@ function loadChildrenIntoUnguarded<Ts extends readonly WidenedNodeType[], S>(
     ownerBySourceKey: new Map(),
   };
 
-  // Checked over the MERGED graph: the payload may name a sourceKey some other
-  // placement already owns, which is a conflict that only exists once the two
-  // documents are in the same graph.
-  const duplicate = findDuplicateOwner(base, ctx.registry);
+  // The payload may name a sourceKey some other placement already owns — a
+  // conflict that only exists once the two documents are in the same graph, and
+  // still refused here. Over the ARRIVALS rather than the merged graph: see
+  // `findDuplicateOwnerAmongArrivals` for why that is the same answer.
+  const arrived = [...payload.nodesById.values()];
+  const duplicate = findDuplicateOwnerAmongArrivals<Ts, S>(
+    graph.ownerBySourceKey,
+    ctx.registry,
+    arrived,
+  );
   if (duplicate !== null) {
     return loadRejection({
       code: "malformed-document",
