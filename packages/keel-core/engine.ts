@@ -1320,6 +1320,15 @@ export function createEngine<
     deserialize: (raw) => deserializeDocument<Ts, S>(raw, ctx),
     serialize: (graph) => serializeGraph(graph, ctx),
 
+    // THE AUDIT FIRST, then the bytes. Ordered that way on purpose: computing
+    // the document and then discarding it would pay the whole serialize cost
+    // for a graph already known to be unwritable.
+    serializeChecked: (graph) => {
+      const violation = findInvariantViolationIn(graph, registry);
+      if (violation !== null) return { ok: false, error: violation };
+      return { ok: true, value: serializeGraph(graph, ctx) };
+    },
+
     applyCommand: (graph, command) => applyCommandWithPolicy(graph, command),
     applyPatch: (graph, patch) => applyPatchTo(graph, patch, ctx),
     invertPatch: (patch) => invertPatchOf(patch),
