@@ -1726,6 +1726,24 @@ export type Engine<
    *   if (!written.ok) return reportCorruption(written.error);
    *   await storage.put(written.value);
    *
+   * BLOCK, DO NOT WRITE — the decided default, and the reason is worth keeping
+   * next to the door. When this refuses, the PREVIOUSLY saved document is still
+   * loadable; the one in memory is not. Writing anyway trades a good file for a
+   * dead one. Blocking costs the unsaved edits; saving costs the document.
+   *
+   * THE ALERT IS THE CONSUMER'S, and not by omission. This package has no React
+   * and no DOM below `./index` — that separation is what lets a route handler
+   * call `deserialize` without importing a client module — so nothing here can
+   * or should reach a user. What it owes the consumer instead is a violation
+   * worth acting on: `code` to branch on, `nodeId` to name the item in the
+   * consumer's own vocabulary. `message` is written for a developer and belongs
+   * in a log, not in front of a user.
+   *
+   * A REPAIR PATH, if one is ever wanted, is additive and needs nothing here:
+   * a separate `repair(graph)` door returning a corrected `Graph`, and the flow
+   * becomes refuse -> repair -> retry. Recorded so that adopting block-and-alert
+   * now is not a decision that has to be unpicked later.
+   *
    * WHY SAVE AND NOT EVERY COMMIT. The audit is a full pass — reachability,
    * one `sourceKey` call per node, and a complete rebuild of both derived
    * indexes to compare. MEASURED against a single `edit-nodes` on the same
