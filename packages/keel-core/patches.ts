@@ -60,7 +60,7 @@ import {
   ownersAfterInsert,
   ownsItsSubtree,
   sourceKeyOf,
-  sourceKeyOfKindData,
+  sourceKeyForData,
   KeyHookFailure,
   keyHookMessage,
   bumpSubtreeRevsInto,
@@ -1684,7 +1684,7 @@ function verifyDataChanged<Ts extends readonly WidenedNodeType[], S>(
       if (node === undefined || !ownsItsSubtree<Ts, S>(node)) continue;
       claims.set(
         change.nodeId,
-        sourceKeyOfKindData(ctx.registry, change.kind, change.after),
+        sourceKeyForData(ctx.registry, change.kind, change.after),
       );
     }
     const conflict = ownershipConflict(graph, claims);

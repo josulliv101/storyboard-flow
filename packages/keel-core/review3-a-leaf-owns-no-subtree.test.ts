@@ -5,11 +5,11 @@
 // non-`reference` one. Three call sites decided who counts as an owner, and
 // they did not agree about LEAVES:
 //
-//   graph.ts    isOwningPlacement   `state === null || ownsSubtree(state)`
+//   graph.ts    isOwningPlacement   `state === null || stateOwnsSubtree(state)`
 //                                   -> a leaf (state null) IS an owner
-//   commands.ts owningSourceKey     `if (node.container && !ownsSubtree(...))`
+//   commands.ts owningSourceKey     `if (node.container && !stateOwnsSubtree(...))`
 //                                   -> the check is skipped for a leaf, so it IS
-//   serialize.ts findDuplicateOwner `if (state === null || !ownsSubtree(state))`
+//   serialize.ts findDuplicateOwner `if (state === null || !stateOwnsSubtree(state))`
 //                                   -> a leaf is SKIPPED, so it is NOT
 //
 // Two against one, and the one was right. Measured before the fix, with two

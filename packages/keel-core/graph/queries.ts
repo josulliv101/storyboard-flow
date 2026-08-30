@@ -125,15 +125,27 @@ export function isLoaded<Ts extends readonly WidenedNodeType[], S>(
 }
 
 /**
- * Does this placement own the subtree beneath it?
+ * Does a placement in this CHILDREN-STATE own the subtree beneath it?
  *
  * `loaded`, `unloaded` and `missing` all own it — `missing` included, because
  * confirmed-gone is knowledge about a subtree you own, not a handoff to someone
  * else. Only `reference` disclaims ownership, and that single fact is what
  * makes the placement forest a genuine tree: a reference is structurally
  * childless forever, so no walk can descend through one into a cycle.
+ *
+ * NAMED FOR ITS ARGUMENT, because the other half of this question lives one
+ * layer up as `ownsItsSubtree(node)` in ./keys and the two were previously one
+ * word apart — `ownsSubtree` and `ownsItsSubtree`, 42 uses between them, taking
+ * different types and answering different questions. Getting ownership wrong in
+ * more than one place is the exact bug ./keys' own history is about, so the
+ * names should not invite it.
+ *
+ * THE DIVISION: this one asks about a STATE and knows nothing about the node
+ * holding it. `ownsItsSubtree` asks about a NODE, and rules out the two cases
+ * that have no state to ask about — quarantined, and leaf — before delegating
+ * here. Call that one unless you are holding a bare `ChildrenState`.
  */
-export function ownsSubtree(state: ChildrenState): boolean {
+export function stateOwnsSubtree(state: ChildrenState): boolean {
   return state.status !== "reference";
 }
 

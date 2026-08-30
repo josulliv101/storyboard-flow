@@ -116,7 +116,7 @@ export {
   isSameOrAncestor,
   markMissing,
   nodeCount,
-  ownsSubtree,
+  stateOwnsSubtree,
   rebuildDerivedIndexes,
   sourceKeyOf,
   subtreeIds,

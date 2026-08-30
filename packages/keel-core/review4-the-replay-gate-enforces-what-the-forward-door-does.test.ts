@@ -414,7 +414,7 @@ describe("the replay gate refuses an insert that would breach maxNodes", () => {
 describe("a leaf owns no sourceKey when it is edited", () => {
   // review3-a-leaf-owns-no-subtree.test.ts fixed three sites and this was the
   // fourth: `planEdits` spelled the rule out again as
-  // `collection === null || ownsSubtree(collection.children)`, and
+  // `collection === null || stateOwnsSubtree(collection.children)`, and
   // `collection === null` IS the leaf case. That is verbatim the predicate
   // review3 deleted. Both edit doors share `planEdits`, so a server-side
   // `applyNonUndoableWrite` could not repair it either.

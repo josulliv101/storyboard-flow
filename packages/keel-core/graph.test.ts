@@ -27,7 +27,7 @@ import {
   isLoaded,
   isSameOrAncestor,
   markMissing,
-  ownsSubtree,
+  stateOwnsSubtree,
   rebuildDerivedIndexes,
   sourceKeyOf,
   subtreeIds,
@@ -346,7 +346,7 @@ describe("queries are total", () => {
   });
 });
 
-describe("childrenStateOf / isCollection / isLoaded / ownsSubtree", () => {
+describe("childrenStateOf / isCollection / isLoaded / stateOwnsSubtree", () => {
   const graph = graphOf({
     nodes: [
       folder("root", LOADED),
@@ -400,10 +400,10 @@ describe("childrenStateOf / isCollection / isLoaded / ownsSubtree", () => {
   });
 
   it("only `reference` disclaims ownership", () => {
-    expect(ownsSubtree({ status: "loaded" })).toBe(true);
-    expect(ownsSubtree({ status: "unloaded" })).toBe(true);
-    expect(ownsSubtree({ status: "missing", reason: "404" })).toBe(true);
-    expect(ownsSubtree({ status: "reference" })).toBe(false);
+    expect(stateOwnsSubtree({ status: "loaded" })).toBe(true);
+    expect(stateOwnsSubtree({ status: "unloaded" })).toBe(true);
+    expect(stateOwnsSubtree({ status: "missing", reason: "404" })).toBe(true);
+    expect(stateOwnsSubtree({ status: "reference" })).toBe(false);
   });
 });
 

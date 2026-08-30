@@ -520,7 +520,7 @@ export function dataChangeLeavesDerivedIndexesIntact(
   if (nodeType === undefined) return true;
   // TAGGED like the two key accessors above, because these are the same two
   // consumer hooks and this was the ONE place that called them directly rather
-  // than through `contentKeyOf`/`sourceKeyOfKindData`. That is exactly why it
+  // than through `contentKeyOf`/`sourceKeyForData`. That is exactly why it
   // was still leaking after those were wrapped: measured, a throwing
   // `contentKey` reached here from `applyPatch` and escaped BOTH `dispatch` and
   // `undo` — the two doors review3 names — while every other door was already
