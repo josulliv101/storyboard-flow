@@ -10,8 +10,8 @@
     "test:dnd-collections:coverage": "vitest --run --coverage ../../packages/ui/dnd-collections --coverage.reportsDirectory=coverage/dnd-collections --testNamePattern=\"^(?!.*Render Efficiency During Drag).*$\" && vitest --project=storybook --run ../../packages/ui/dnd-collections/DndCollections.stories.tsx --testNamePattern=\"Render Efficiency During Drag\""
   },
   "dependencies": {
-    "@storyboard/keel-core": "*",
-    "@storyboard/keel-react": "*",
+    "@storyboard/graph-core": "*",
+    "@storyboard/graph-react": "*",
     "@storyboard/ui": "*",
     "next": "^16.3.1",
     "react": "^19.2.1",

@@ -15,8 +15,8 @@
     "baseUrl": ".",
     "paths": {
       "@gstudio/*": ["../timeline-gstudio001/*"],
-      "@storyboard/keel-core": ["../../packages/keel-core"],
-      "@storyboard/keel-react": ["../../packages/keel-react"],
+      "@storyboard/graph-core": ["../../packages/graph-core"],
+      "@storyboard/graph-react": ["../../packages/graph-react"],
       "@storyboard/ui": ["../../packages/ui"],
       "@storyboard/ui/*": ["../../packages/ui/*"]
     }
@@ -28,9 +28,9 @@
     "../timeline-gstudio001/components/**/*.tsx",
     "../../packages/ui/**/*.ts",
     "../../packages/ui/**/*.tsx",
-    "../../packages/keel-core/**/*.ts",
-    "../../packages/keel-react/**/*.ts",
-    "../../packages/keel-react/**/*.tsx"
+    "../../packages/graph-core/**/*.ts",
+    "../../packages/graph-react/**/*.ts",
+    "../../packages/graph-react/**/*.tsx"
   ],
   "exclude": ["node_modules"]
 }
