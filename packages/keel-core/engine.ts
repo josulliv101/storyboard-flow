@@ -844,7 +844,29 @@ export function createEngine<
       // The rule this loop actually depends on, and the only one to preserve:
       // EVERY MUTATION MOVES THE REVISION OF EVERY NODE IT AFFECTS, including a
       // node it affects by deleting.
-      for (const [id, listeners] of nodeListeners) {
+      // SNAPSHOT, for the reason `notifyAll` copies its set — this was the one
+      // notification loop that read a LIVE collection while calling consumer
+      // code allowed to mutate it, and the map is the half where that does not
+      // merely skip an entry but fails to terminate.
+      //
+      // A listener that re-subscribes to its own id during notification (the
+      // ordinary `useSyncExternalStore` teardown-and-resubscribe, which React
+      // runs whenever the subscribe callback identity changes) unsubscribes
+      // first: the set empties and `subscribeToNode`'s cleanup DELETES the map
+      // entry to keep this loop proportional to what is mounted. Re-subscribing
+      // then re-inserts that id at the END of the map's iteration order, where
+      // the live iterator has not been yet. Its rev still differs across the
+      // commit, so it is notified again, and re-subscribes again. The commit
+      // never finishes and the tab locks up.
+      //
+      // Snapshotting also settles what a subscription created DURING a commit
+      // observes, and settles it the same way the flat sets already do: it was
+      // not subscribed when the change happened, so it is not told about it.
+      //
+      // One array per commit, sized by MOUNTED CARDS rather than by the graph —
+      // the same order this loop already costs, and the inner `[...listeners]`
+      // already pays it per changed node.
+      for (const [id, listeners] of [...nodeListeners]) {
         if (getSubtreeRev(previous, id) === getSubtreeRev(next, id)) continue;
         for (const listener of [...listeners]) notifyOne("node", listener);
       }
@@ -1203,8 +1225,11 @@ export function createEngine<
         }
         const loaded = loadChildrenInto<Ts, S>(graph, id, doc, ctx);
         if (!loaded.ok) return loaded;
-        commitGraph(loaded.value, "load");
-        return { ok: true, value: undefined };
+        commitGraph(loaded.value.graph, "load");
+        // The report is handed BACK rather than swallowed. Quarantine is a
+        // success path, so `ok: true` does not mean the page arrived intact —
+        // see `Store.load`.
+        return { ok: true, value: loaded.value.report };
       },
 
       markMissing(id, reason) {

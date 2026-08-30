@@ -1454,7 +1454,10 @@ export function loadChildrenInto<Ts extends readonly ErasedNodeType[], S>(
   id: NodeId,
   doc: unknown,
   ctx: EngineContext<S>,
-): Result<Graph<Ts, S>, LoadRejection> {
+): Result<
+  Readonly<{ graph: Graph<Ts, S>; report: LoadReport }>,
+  LoadRejection
+> {
   if (graph.engineId !== ctx.engineId) {
     return loadRejection({
       code: "foreign-graph",
@@ -1606,9 +1609,25 @@ export function loadChildrenInto<Ts extends readonly ErasedNodeType[], S>(
     });
   }
 
+  // THE REPORT IS RETURNED, not recomputed and not dropped.
+  //
+  // `buildDocument` has always produced one — the same one `deserialize`
+  // returns — and this door threw it away, so `Store.load` answered
+  // `Result<void>` and a lazy page in which EVERY node quarantined was
+  // indistinguishable from a clean one. The consumer's own retry, telemetry and
+  // "some items could not be read" affordances all hang off `report.quarantined`
+  // on the eager door and had nothing to hang off here, on the door that runs
+  // repeatedly against a live document rather than once at startup.
+  //
+  // Shaped like `deserialize`'s `{ graph, report }` deliberately: the two are
+  // the same operation against a different destination, and a consumer handling
+  // one should not have to learn a second shape for the other.
   return {
     ok: true,
-    value: { ...base, ...rebuildDerivedIndexes(base, ctx.registry) },
+    value: {
+      graph: { ...base, ...rebuildDerivedIndexes(base, ctx.registry) },
+      report: payload.report,
+    },
   };
 }
 

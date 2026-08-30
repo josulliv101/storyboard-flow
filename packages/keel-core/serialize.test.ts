@@ -1513,7 +1513,7 @@ describe("loadChildrenInto", () => {
   it("fills an unloaded owner and keeps every invariant", () => {
     const ctx = makeCtx();
     const graph = loadSimple(ctx);
-    const next = expectOk(loadChildrenInto<Types, Summary>(graph, id("sub"), simplePayload(), ctx));
+    const next = expectOk(loadChildrenInto<Types, Summary>(graph, id("sub"), simplePayload(), ctx)).graph;
 
     const sub = nodeIn(next, "sub");
     if (sub.quarantined || !sub.container) throw new Error("expected a collection");
@@ -1537,7 +1537,7 @@ describe("loadChildrenInto", () => {
     // re-render an ancestor's rollup.
     const ctx = makeCtx();
     const graph = loadSimple(ctx);
-    const next = expectOk(loadChildrenInto<Types, Summary>(graph, id("sub"), simplePayload(), ctx));
+    const next = expectOk(loadChildrenInto<Types, Summary>(graph, id("sub"), simplePayload(), ctx)).graph;
     expect(next.subtreeRevById.get(id("sub"))).toBe(1);
     expect(next.subtreeRevById.get(id("root"))).toBe(1);
     expect(next.subtreeRevById.get(id("a"))).toBe(0);
@@ -1554,7 +1554,7 @@ describe("loadChildrenInto", () => {
         payload([{ id: "p1", kind: "clip", data: { name: "P1", asset: null } }], ["p1"]),
         ctx,
       ),
-    );
+    ).graph;
     expect(next.childrenById.get(id("sub"))).toEqual([id("p1")]);
   });
 
@@ -1571,7 +1571,7 @@ describe("loadChildrenInto", () => {
         payload([{ id: "n", kind: "note", data: { body: "lazy" } }], ["n"]),
         ctx,
       ),
-    );
+    ).graph;
     expect(migrationLog).toEqual([2, 3]);
     const note = nodeIn(next, "n");
     if (note.quarantined) throw new Error("note should not have quarantined");
@@ -1587,7 +1587,7 @@ describe("loadChildrenInto", () => {
         payload([{ id: "bad", kind: "clip", data: { name: 1 } }], ["bad"]),
         ctx,
       ),
-    );
+    ).graph;
     const node = nodeIn(next, "bad");
     if (!node.quarantined) throw new Error("expected quarantine");
     expect(node.reason).toBe("parse-failed");
@@ -1618,7 +1618,7 @@ describe("loadChildrenInto", () => {
         payload([{ id: "p1", kind: "clip", data: { name: "P1", asset: null } }], ["p1"]),
         ctx,
       ),
-    );
+    ).graph;
     const q = nodeIn(next, "q");
     if (!q.quarantined) throw new Error("expected the node to stay quarantined");
     expect(q.children).toEqual({ status: "loaded" });
@@ -1769,7 +1769,7 @@ describe("loadChildrenInto", () => {
     const ctx = makeCtx();
     const next = expectOk(
       loadChildrenInto<Types, Summary>(loadSimple(ctx), id("sub"), simplePayload(), ctx),
-    );
+    ).graph;
     const wire = serializeGraph(next, ctx);
     expect(wireNode(wire, "sub").children).toEqual(["p1", "p2"]);
     expect(wire.nodes).toHaveLength(5);
@@ -1970,7 +1970,7 @@ describe("the size bound across lazy loads", () => {
     const graph = loadSimple(ctx);
     const next = expectOk(
       loadChildrenInto<Types, Summary>(graph, id("sub"), clips("p", 2), ctx),
-    );
+    ).graph;
     expect(next.nodesById.size).toBe(BASE_NODES + 2);
     expect(findInvariantViolation(next, ctx.registry)).toBeNull();
   });
