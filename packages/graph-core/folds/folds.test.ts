@@ -8,14 +8,14 @@ import {
   foldedExact,
   summaryFrom,
   weakestCertainty,
-} from "./folds";
+} from "./index";
 import {
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
   makeQuarantinedNode,
   parseNodeId,
-} from "./types";
+} from "../types";
 import type {
   GraphNode,
   Certainty,
@@ -26,7 +26,7 @@ import type {
   Issue,
   NodeId,
   Result,
-} from "./types";
+} from "../types";
 
 // ---------------------------------------------------------------------------
 // Fixture registry
