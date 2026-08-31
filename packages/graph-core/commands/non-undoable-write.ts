@@ -23,7 +23,8 @@ import {
 import { scrubbableNodeIds } from "../patches";
 import { scrubHistoryForWrite } from "../history";
 
-import { foreignGraph, ok } from "./internals";
+import { foreignGraph } from "./queries";
+import { ok } from "./results";
 import { planEdits } from "./edit";
 
 // applyNonUndoableWriteEdits — the non-undoable content write

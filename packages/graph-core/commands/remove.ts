@@ -19,7 +19,8 @@ import {
 } from "../graph";
 import { applyPatch } from "../patches";
 
-import { childSlots, fail, inDocumentOrder, ok, pruneDescendants } from "./internals";
+import { childSlots, inDocumentOrder, pruneDescendants } from "./queries";
+import { fail, ok } from "./results";
 
 // remove-nodes
 // ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ import type {
   NodeId,
   NodeTypeRegistry,
 } from "../types";
-import { NO_DEAD_REVS, NO_IDS, NO_OWNERS, NO_PLACEMENTS } from "./internals";
+import { NO_DEAD_REVS, NO_IDS, NO_OWNERS, NO_PLACEMENTS } from "./constants";
 import { rebuildDerivedIndexes } from "./derived-indexes";
 import { childrenStateOf } from "./queries";
 import { bumpSubtreeRevs } from "./revisions";

@@ -26,7 +26,7 @@ import {
 import { applyPatch } from "../patches";
 import { parseNodeData } from "../serialize";
 
-import { fail, ok } from "./internals";
+import { fail, ok } from "./results";
 
 // edit-nodes
 // ---------------------------------------------------------------------------

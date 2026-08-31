@@ -20,7 +20,8 @@ import {
 } from "../graph";
 import { applyPatch } from "../patches";
 
-import { childSlots, depthOf, fail, inDocumentOrder, isValidIndex, ok, pruneDescendants } from "./internals";
+import { childSlots, depthOf, inDocumentOrder, isValidIndex, pruneDescendants } from "./queries";
+import { fail, ok } from "./results";
 
 // move-nodes
 // ---------------------------------------------------------------------------

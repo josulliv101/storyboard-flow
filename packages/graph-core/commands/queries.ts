@@ -1,6 +1,6 @@
-// Graph — shared helpers every arm of the reducer leans on.
+// Graph — the questions the arms ask about a graph before touching it.
 //
-// Split out of the former single-file `commands.ts`; see ./index.ts.
+// Split out of the former `commands/internals.ts`; see ./index.ts.
 
 import {
   type GraphNode,
@@ -8,8 +8,6 @@ import {
   type Graph,
   type NodeId,
   type Rejection,
-  type RejectionCode,
-  type Result,
   type WidenedNodeType,
 } from "../types";
 import {
@@ -24,22 +22,6 @@ import {
 
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Everything on a `Rejection` except the two fields every rejection has. */
-type RejectionContext = Omit<Rejection, "code" | "message">;
-
-export function fail<T>(
-  code: RejectionCode,
-  message: string,
-  context?: RejectionContext,
-): Result<T, Rejection> {
-  // Spreading `undefined` yields `{}`, so the optional argument needs no branch.
-  return { ok: false, error: { code, message, ...context } };
-}
-
-export function ok<T>(value: T): Result<T, Rejection> {
-  return { ok: true, value };
-}
 
 /**
  * The cross-instance guard. `NodeId` is branded GLOBALLY, not per engine, so an

@@ -8,7 +8,8 @@ import {
   type Patch,
 } from "../types";
 
-import { EMPTY_IDS, containerChildrenState } from "./internals";
+import { EMPTY_IDS } from "./constants";
+import { containerChildrenState } from "./predicates";
 
 // Patch queries
 // ---------------------------------------------------------------------------

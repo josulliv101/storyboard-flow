@@ -24,7 +24,8 @@ import {
 import { applyPatch } from "../patches";
 import { parseNodeData } from "../serialize";
 
-import { depthOf, fail, isValidIndex, ok, owningSourceKey } from "./internals";
+import { depthOf, isValidIndex, owningSourceKey } from "./queries";
+import { fail, ok } from "./results";
 
 // insert-nodes
 // ---------------------------------------------------------------------------

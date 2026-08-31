@@ -21,7 +21,7 @@ import type {
   NodeId,
   QuarantinedNode,
 } from "../types";
-import { NO_IDS } from "./internals";
+import { NO_IDS } from "./constants";
 
 export function getNode<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,

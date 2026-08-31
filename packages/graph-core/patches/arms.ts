@@ -30,8 +30,9 @@ import {
   type DerivedIndexes,
 } from "../graph";
 
-import { groupArrivalsByParent, groupByParent, spliceInMany, spliceOutMany } from "./internals";
-import { EMPTY_IDS, isLoadedContainer } from "./internals";
+import { groupArrivalsByParent, groupByParent, spliceInMany, spliceOutMany } from "./splicing";
+import { EMPTY_IDS } from "./constants";
+import { isLoadedContainer } from "./predicates";
 
 // The commit cost rules, stated once because all four arms obey them
 // ---------------------------------------------------------------------------

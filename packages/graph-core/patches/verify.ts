@@ -22,7 +22,9 @@ import {
   derivedIndexNeed,
 } from "../graph";
 
-import { EMPTY_IDS, VERIFY_OK, deepEqual, isLoadedContainer, replayError } from "./internals";
+import { EMPTY_IDS, VERIFY_OK } from "./constants";
+import { deepEqual, isLoadedContainer } from "./predicates";
+import { replayError } from "./results";
 
 // verifyPatchApplies — the gate in front of every dormant patch
 // ---------------------------------------------------------------------------

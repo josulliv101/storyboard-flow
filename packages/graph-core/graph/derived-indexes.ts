@@ -25,7 +25,7 @@ import type {
   NodeId,
   NodeTypeRegistry,
 } from "../types";
-import { NO_OWNERS, NO_PLACEMENTS } from "./internals";
+import { NO_OWNERS, NO_PLACEMENTS } from "./constants";
 import { documentOrder } from "./queries";
 import { contentKeyOf, ownsItsSubtree, sourceKeyOf } from "./keys";
 

@@ -1,4 +1,4 @@
-// Graph — shared frozen empties.
+// Graph — the shared frozen empties.
 //
 // The bottom of this folder's dependency order: imports `../types` and nothing
 // else, and every other module here may import it.
