@@ -14,8 +14,8 @@
 //     `Object.prototype`, and `??` does not catch it, so the documented
 //     "undeclared reads as this build's current version" fallback never runs.
 //   - `!(node.kind in schemaVersions)` in `serializeGraph` walks the prototype
-//     chain, so a quarantined `"constructor"` node's declared version is never
-//     re-emitted — breaking the stated byte-exact quarantine round-trip.
+//     chain, so a sealed `"constructor"` node's declared version is never
+//     re-emitted — breaking the stated byte-exact seal round-trip.
 //
 // Everything below goes through `createEngine` / `engine.serialize` /
 // `engine.deserialize` / `parseSerializedDocument` — the public surface.
@@ -197,17 +197,17 @@ describe("schemaVersions survives reserved object keys", () => {
     // eslint-disable-next-line no-console
     console.log(
       "[F6] migrations that ran:", JSON.stringify(migrationLog),
-      "| quarantined:", node?.quarantined,
-      "| quarantine count:", loaded.value.report.quarantined.length,
+      "| sealed:", node?.sealed,
+      "| seal count:", loaded.value.report.sealed.length,
     );
 
     expect(migrationLog).toEqual([2]);
-    expect(node?.quarantined).toBe(false);
+    expect(node?.sealed).toBe(false);
   });
 
   it("an UNDECLARED 'constructor' kind reads as undefined, not a function", () => {
     const engine = makeEngine();
-    // `constructor` is not registered, so this node quarantines as unknown-kind
+    // `constructor` is not registered, so this node seals as unknown-kind
     // and carries `declaredVersion` verbatim. The document declares no version
     // for it, so the documented fallback is "this build's current version",
     // and for an unregistered kind that bottoms out at 0.
@@ -222,12 +222,12 @@ describe("schemaVersions survives reserved object keys", () => {
     if (!loaded.ok) return;
 
     const node = loaded.value.graph.nodesById.get(parseNodeId("c"));
-    expect(node?.quarantined).toBe(true);
-    if (node === undefined || !node.quarantined) return;
+    expect(node?.sealed).toBe(true);
+    if (node === undefined || !node.sealed) return;
 
     // eslint-disable-next-line no-console
     console.log(
-      "[F6] quarantined 'constructor'.schemaVersion typeof:",
+      "[F6] sealed 'constructor'.schemaVersion typeof:",
       typeof node.schemaVersion,
       "| value:",
       String(node.schemaVersion).slice(0, 40),
@@ -237,7 +237,7 @@ describe("schemaVersions survives reserved object keys", () => {
     expect(node.schemaVersion).toBe(0);
   });
 
-  it("a quarantined 'constructor' node re-emits its declared version", () => {
+  it("a sealed 'constructor' node re-emits its declared version", () => {
     const engine = makeEngine();
     const loaded = engine.deserialize(
       wire(
@@ -250,10 +250,10 @@ describe("schemaVersions survives reserved object keys", () => {
     if (!loaded.ok) return;
 
     const node = loaded.value.graph.nodesById.get(parseNodeId("c"));
-    expect(node?.quarantined).toBe(true);
+    expect(node?.sealed).toBe(true);
     // The read side got this one right — `constructor` is a writable DATA
     // property on Object.prototype, so the own-property shadow took.
-    if (node !== undefined && node.quarantined) {
+    if (node !== undefined && node.sealed) {
       expect(node.schemaVersion).toBe(7);
     }
 
@@ -266,7 +266,7 @@ describe("schemaVersions survives reserved object keys", () => {
       JSON.stringify(Object.getOwnPropertyNames(written.schemaVersions)),
     );
 
-    // Quarantine's contract is a byte-exact re-emit, version included.
+    // Seal's contract is a byte-exact re-emit, version included.
     expect(JSON.parse(JSON.stringify(written.schemaVersions))).toMatchObject({
       folder: 1,
       constructor: 7,

@@ -24,7 +24,7 @@ type WireChildrenState = "unloaded" | "reference" | "missing";
  * A mutable draft of `SerializedNode`. Optional keys are assigned only when
  * they were actually present, so a node that carried no `summary` re-emits
  * with no `summary` key rather than an explicit `undefined` — which matters
- * because the quarantine contract is byte-exact re-emit and a spurious key is
+ * because the seal contract is byte-exact re-emit and a spurious key is
  * a byte.
  */
 export type NodeDraft = {
@@ -33,7 +33,7 @@ export type NodeDraft = {
   children?: readonly string[];
   childrenState?: WireChildrenState;
   missingReason?: string;
-  /** Written only for a quarantined node — see `SerializedNode.schemaVersion`. */
+  /** Written only for a sealed node — see `SerializedNode.schemaVersion`. */
   schemaVersion?: number;
   summary?: unknown;
   data: unknown;

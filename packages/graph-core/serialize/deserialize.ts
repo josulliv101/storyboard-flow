@@ -26,7 +26,7 @@ import { buildDocument, findDuplicateOwner } from "./document";
 
 /**
  * Whole-document load. Structural failures are fatal and return a
- * `StructuralError`; per-node content failures quarantine by default, keeping
+ * `StructuralError`; per-node content failures seal by default, keeping
  * id, position, children and byte-exact `raw`.
  */
 export function deserializeDocumentUnguarded<Ts extends readonly WidenedNodeType[], S>(

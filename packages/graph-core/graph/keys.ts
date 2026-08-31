@@ -17,8 +17,8 @@ import type {
 import { describeThrown } from "../types";
 import { stateOwnsSubtree } from "./queries";
 
-// Both return `null` for a quarantined node, and that is not a shortcut. A
-// quarantined node holds `raw`, not parsed `Data`; no node type is willing to vouch
+// Both return `null` for a sealed node, and that is not a shortcut. A
+// sealed node holds `raw`, not parsed `Data`; no node type is willing to vouch
 // for it, so handing `raw` to `contentKey` would ask a function typed against
 // `Data` to read something that failed to become `Data`. A node whose content
 // could not be understood has no content identity.
@@ -97,7 +97,7 @@ export function contentKeyOf<Ts extends readonly WidenedNodeType[], S>(
   registry: NodeTypeRegistry,
   node: GraphNode<Ts, S>,
 ): string | null {
-  if (node.quarantined) return null;
+  if (node.sealed) return null;
   const nodeType = registry.get(node.kind);
   if (nodeType === undefined || nodeType.contentKey === undefined) return null;
   try {
@@ -111,7 +111,7 @@ export function sourceKeyOf<Ts extends readonly WidenedNodeType[], S>(
   registry: NodeTypeRegistry,
   node: GraphNode<Ts, S>,
 ): string | null {
-  if (node.quarantined) return null;
+  if (node.sealed) return null;
   return sourceKeyForData(registry, node.kind, node.data, node.id);
 }
 
@@ -171,7 +171,7 @@ export function sourceKeyForData(
  *   - `contentKey` already answers the question a repeated clip is actually
  *     asking ("same asset"), and it permits many placements by design.
  *   - The alternative fix — making ingress agree with the other two — would
- *     have made a stored document stop loading, which is the failure quarantine
+ *     have made a stored document stop loading, which is the failure seal
  *     exists to prevent and which this repo has already paid for once.
  *
  * Reads a bare `ChildrenState` through `stateOwnsSubtree` in ./queries, which is
@@ -180,7 +180,7 @@ export function sourceKeyForData(
  * delegating, and keeping the pair distinguishable is why that one is named for
  * its argument.
  *
- * A quarantined node owns nothing either: its key would have to come from a
+ * A sealed node owns nothing either: its key would have to come from a
  * node type that by definition did not run, so `sourceKeyOf` already answers `null`
  * for it. Stated here as well so the predicate is total on its own terms rather
  * than relying on a caller having checked first.
@@ -188,7 +188,7 @@ export function sourceKeyForData(
 export function ownsItsSubtree<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): boolean {
-  if (node.quarantined) return false;
+  if (node.sealed) return false;
   if (!node.container) return false;
   return stateOwnsSubtree(node.children);
 }

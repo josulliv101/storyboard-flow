@@ -27,13 +27,13 @@ export type SerializedNode = Readonly<{
    * and writing a per-node copy on every node would bloat every document to
    * restate a fact it already carries.
    *
-   * It exists for QUARANTINE. A node quarantined because its migration was
+   * It exists for SEAL. A node sealed because its migration was
    * missing or threw still holds bytes from the version it was written at,
    * while `schemaVersions[kind]` says what the REGISTRY is at now. Re-emitting
-   * those bytes under the registry's number is what made a quarantined node
+   * those bytes under the registry's number is what made a sealed node
    * permanently unrepairable: the next build's `runMigrations` sees
    * `from >= to`, runs nothing, and hands old bytes to a new `parse`. This is
-   * the escape hatch that keeps quarantine's promise — raw bytes AND the
+   * the escape hatch that keeps seal's promise — raw bytes AND the
    * version they belong to.
    */
   schemaVersion?: number;
@@ -42,7 +42,7 @@ export type SerializedNode = Readonly<{
 }>;
 
 /**
- * A FLAT node list — no recursion, no depth limit, and a quarantined
+ * A FLAT node list — no recursion, no depth limit, and a sealed
  * container's children stay addressable and movable.
  *
  * Used for the whole graph AND for a lazily-loaded subtree. In the
@@ -74,8 +74,8 @@ export type SerializedGraph = SerializedDocument;
 
 export type LoadReport = Readonly<{
   nodeCount: number;
-  /** Nodes that landed as `QuarantinedNode`. Empty is the happy path. */
-  quarantined: readonly IngressError[];
+  /** Nodes that landed as `SealedNode`. Empty is the happy path. */
+  sealed: readonly IngressError[];
   migrated: readonly Readonly<{
     nodeId: NodeId;
     kind: string;
@@ -95,8 +95,8 @@ export type EngineContext<S> = Readonly<{
   engineId: symbol;
   registry: NodeTypeRegistry;
   summary: ConsumerDefinedSummaryType<S>;
-  onUnknownKind: "quarantine" | "reject";
-  onParseFailure: "quarantine" | "reject";
+  onUnknownKind: "seal" | "reject";
+  onParseFailure: "seal" | "reject";
   /** Ceiling on nodes in one document. See `EngineConfig.maxNodes`. */
   maxNodes: number;
   /** Ceiling on nesting depth, or `null` for unbounded. See

@@ -299,10 +299,10 @@ function buildSeedPlacements<Ts extends readonly WidenedNodeType[], S>(
 
     const nodeType = ctx.registry.get(seed.kind);
     if (nodeType === undefined) {
-      // On the WIRE an unknown kind quarantines, because forward-incompatible
+      // On the WIRE an unknown kind seals, because forward-incompatible
       // stored data has to stay movable and deletable. On the COMMAND path it
       // is refused: the consumer is right here holding a value it just built,
-      // and quarantining a brand-new insert would be nonsense.
+      // and sealing a brand-new insert would be nonsense.
       return fail(
         "unknown-kind",
         `No node type registered for kind ${JSON.stringify(seed.kind)}.`,

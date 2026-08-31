@@ -99,10 +99,10 @@ export type Store<
    *  `SerializedDocument`; a structural failure returns `"malformed-document"`.
    *
    *  Returns the `LoadReport`, because `ok: true` is not the same as "every node
-   *  arrived intact" — quarantine is a success path. This used to be
+   *  arrived intact" — sealing is a success path. This used to be
    *  `Result<void>` while the report was computed and discarded one call below,
-   *  so a page in which every single node quarantined looked exactly like a
-   *  clean one. Check `report.quarantined` before telling the user the folder
+   *  so a page in which every single node sealed looked exactly like a
+   *  clean one. Check `report.sealed` before telling the user the folder
    *  loaded. */
   load(id: NodeId, doc: unknown): Result<LoadReport, LoadRejection>;
   markMissing(id: NodeId, reason: string): void;
@@ -238,10 +238,10 @@ export type EngineConfig<
   types: Ts;
   summary: ConsumerDefinedSummaryType<S>;
   folds: F;
-  /** Default `"quarantine"`. */
-  onUnknownKind?: "quarantine" | "reject";
-  /** Default `"quarantine"`. */
-  onParseFailure?: "quarantine" | "reject";
+  /** Default `"seal"`. */
+  onUnknownKind?: "seal" | "reject";
+  /** Default `"seal"`. */
+  onParseFailure?: "seal" | "reject";
   /**
    * PRE-commit veto — it stops the pipeline before anything is pushed. A
    * post-commit veto corrupts redo: the push clears the redo branch, then the
@@ -458,10 +458,10 @@ export type Engine<
     doc: unknown,
   ): Result<
     // Shaped like `deserialize`'s result, and for the same reason it has one:
-    // quarantine is a SUCCESS path, so `ok: true` alone does not mean every
+    // sealing is a SUCCESS path, so `ok: true` alone does not mean every
     // node arrived intact. This door used to return the bare graph and drop the
     // report `buildDocument` had already computed, which made a lazy page where
-    // every node quarantined indistinguishable from a clean one.
+    // every node sealed indistinguishable from a clean one.
     Readonly<{ graph: Graph<Ts, S>; report: LoadReport }>,
     LoadRejection
   >;

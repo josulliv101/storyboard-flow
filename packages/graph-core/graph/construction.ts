@@ -120,7 +120,7 @@ export function markMissing<Ts extends readonly WidenedNodeType[], S>(
   // A spread, not one of the boundary constructors: nothing here came out of
   // the erased registry, so no cast is warranted, and a spread cannot silently
   // drop a field the node type grows later.
-  const next: GraphNode<Ts, S> = node.quarantined
+  const next: GraphNode<Ts, S> = node.sealed
     ? { ...node, children }
     : { ...node, children };
 

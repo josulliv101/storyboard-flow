@@ -77,7 +77,7 @@ export function foldMonoid<Ts extends readonly WidenedNodeType[], S, A>(
       // held a 133-document branch at "no duration" indefinitely.
       return { value: m.empty, certainty: "exact" };
     },
-    quarantined() {
+    sealed() {
       return { value: m.empty, certainty: "partial" };
     },
   };

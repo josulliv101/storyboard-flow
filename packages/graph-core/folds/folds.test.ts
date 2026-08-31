@@ -13,7 +13,7 @@ import {
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
-  makeQuarantinedNode,
+  makeSealedNode,
   parseNodeId,
 } from "../types";
 import type {
@@ -156,7 +156,7 @@ function buildGraph(roots: readonly Spec[]): TestGraph {
       const container = spec.container ?? false;
       nodesById.set(
         id,
-        makeQuarantinedNode({
+        makeSealedNode({
           id,
           kind: "kind-nobody-registered",
           container,
@@ -261,7 +261,7 @@ const durationByHand: ConsumerDefinedFold<Types, Summary, number> = {
   missing() {
     return { value: 0, certainty: "exact" };
   },
-  quarantined() {
+  sealed() {
     return { value: 0, certainty: "partial" };
   },
 };
@@ -295,7 +295,7 @@ const firstFrame: ConsumerDefinedFold<Types, Summary, string | null> = {
   missing() {
     return { value: null, certainty: "exact" };
   },
-  quarantined() {
+  sealed() {
     return { value: null, certainty: "partial" };
   },
 };
@@ -418,7 +418,7 @@ describe("foldMonoid", () => {
           { t: "folder", id: "unloaded", state: { status: "unloaded" }, summary: { seconds: 4 } },
           { t: "folder", id: "reference", state: { status: "reference" } },
           { t: "folder", id: "missing", state: { status: "missing", reason: "deleted" } },
-          { t: "bad", id: "quarantined" },
+          { t: "bad", id: "sealed" },
         ],
       },
     ]);
@@ -439,7 +439,7 @@ describe("foldMonoid", () => {
       value: 0,
       certainty: "exact",
     });
-    expect(computeFold(graph, durationMonoid, id("quarantined"))).toEqual({
+    expect(computeFold(graph, durationMonoid, id("sealed"))).toEqual({
       value: 0,
       certainty: "partial",
     });
@@ -533,7 +533,7 @@ describe("computeFold dispatch", () => {
       missing() {
         return { value: "", certainty: "exact" };
       },
-      quarantined() {
+      sealed() {
         return { value: "", certainty: "partial" };
       },
     };
@@ -553,7 +553,7 @@ describe("computeFold dispatch", () => {
           { t: "folder", id: "unloaded", state: { status: "unloaded" } },
           { t: "folder", id: "reference", state: { status: "reference" } },
           { t: "folder", id: "missing", state: { status: "missing", reason: "gone" } },
-          { t: "bad", id: "quarantined" },
+          { t: "bad", id: "sealed" },
         ],
       },
     ]);
@@ -576,19 +576,19 @@ describe("computeFold dispatch", () => {
       missing() {
         return { value: "", certainty: "exact" };
       },
-      quarantined() {
+      sealed() {
         return { value: "", certainty: "partial" };
       },
     };
     // `missing` is NOT a placeholder — it is a confirmed answer. Neither is a
-    // quarantined node: it was answered by `fold.quarantined`, and conflating
+    // sealed node: it was answered by `fold.sealed`, and conflating
     // the two would make the flag mean two things at once.
     expect(computeFold(graph, flags, id("root"))?.value).toBe(
-      "leaf:no loaded:no unloaded:yes reference:yes missing:no quarantined:no",
+      "leaf:no loaded:no unloaded:yes reference:yes missing:no sealed:no",
     );
   });
 
-  it("never folds a quarantined container's children", () => {
+  it("never folds a sealed container's children", () => {
     const graph = buildGraph([
       {
         t: "folder",
@@ -606,7 +606,7 @@ describe("computeFold dispatch", () => {
     let leafCalls = 0;
     const counting: ConsumerDefinedFold<Types, Summary, number> = {
       ...durationByHand,
-      key: "counting-quarantine",
+      key: "counting-seal",
       leaf(node) {
         leafCalls += 1;
         return node.kind === "clip" ? node.data.seconds : 0;
@@ -913,7 +913,7 @@ describe("computeFold caching", () => {
       missing() {
         return { value: 0, certainty: "exact" };
       },
-      quarantined() {
+      sealed() {
         return { value: 0, certainty: "partial" };
       },
     };
@@ -1001,7 +1001,7 @@ describe("computeFold caching", () => {
       missing() {
         return { value: [], certainty: "exact" };
       },
-      quarantined() {
+      sealed() {
         return { value: [], certainty: "partial" };
       },
     };

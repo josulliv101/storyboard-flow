@@ -19,7 +19,7 @@
 //   4. undo/redo to arbitrary depth and back is identity;
 //   5. the four children states hold across load/markMissing sequences, and
 //      loading is monotone;
-//   6. quarantined nodes survive arbitrary structural churn and still re-emit
+//   6. sealed nodes survive arbitrary structural churn and still re-emit
 //      their original bytes.
 //
 // SEEDED. Every run of a given seed produces the same command sequence, so a
@@ -30,7 +30,7 @@
 //
 // FIXTURES COME THROUGH THE REAL INGRESS. Graphs are built by
 // `deserializeDocument` on generated wire documents rather than by a local
-// node-assembler, so quarantine arises the way it does in production (an
+// node-assembler, so sealing arises the way it does in production (an
 // unregistered kind, data its own node type refuses) instead of being hand-planted
 // — and the ingress door is fuzzed along with the reducer.
 
@@ -258,9 +258,9 @@ const summaryType: ConsumerDefinedSummaryType<Summary> = {
 
 const registry = buildRegistry(nodeTypes);
 
-/** The kind no build has ever heard of — the `unknown-kind` quarantine door. */
+/** The kind no build has ever heard of — the `unknown-kind` seal door. */
 const MYSTERY_KIND = "mystery";
-/** Declared on the wire so a quarantined mystery node carries a real version
+/** Declared on the wire so a sealed mystery node carries a real version
  *  through the round-trip instead of the 0 an undeclared kind would get. */
 const MYSTERY_SCHEMA_VERSION = 3;
 
@@ -277,8 +277,8 @@ function makeCtx(): Ctx {
     engineId: Symbol("graph-fuzz"),
     registry,
     summary: summaryType,
-    onUnknownKind: "quarantine",
-    onParseFailure: "quarantine",
+    onUnknownKind: "seal",
+    onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
     mintId: () => {
@@ -312,9 +312,9 @@ function makeIdMinter(prefix: string): IdMinter {
 type GeneratedDocument = Readonly<{
   document: SerializedDocument;
   nodeCount: number;
-  /** Ids the generator expects to land as `QuarantinedNode`s, with the exact
+  /** Ids the generator expects to land as `SealedNode`s, with the exact
    *  wire `data` they must re-emit. */
-  quarantined: ReadonlyMap<string, unknown>;
+  sealed: ReadonlyMap<string, unknown>;
 }>;
 
 /**
@@ -324,7 +324,7 @@ type GeneratedDocument = Readonly<{
  * multi-parent, unreachable node) belong to `serialize.test.ts`, which can
  * name the exact malformation it means. What this generator varies is the
  * shape the rest of the fuzz has to survive — all four children states, both
- * quarantine reasons, quarantined containers as well as leaves, and nesting.
+ * seal reasons, sealed containers as well as leaves, and nesting.
  *
  * Recursion is fine here: the trees are authored by this file and depth-capped.
  * The engine's own walks use explicit stacks because THEIR depth is input.
@@ -335,7 +335,7 @@ function randomDocument(
   options: Readonly<{ rootCount: number; maxDepth: number }>,
 ): GeneratedDocument {
   const nodes: SerializedNode[] = [];
-  const quarantined = new Map<string, unknown>();
+  const sealed = new Map<string, unknown>();
 
   const folderData = (id: string): Readonly<{ name: string; source: string | null }> => ({
     name: `folder ${id}`,
@@ -383,7 +383,7 @@ function randomDocument(
       return id;
     }
     if (roll < 0.54) {
-      // Unregistered kind WITH children on the wire ⇒ a quarantined CONTAINER
+      // Unregistered kind WITH children on the wire ⇒ a sealed CONTAINER
       // whose subtree stays addressable. Distinctive nested bytes so a lossy
       // re-emit cannot hide behind a scalar comparison.
       const childCount = depth > 0 ? Math.floor(rand() * 3) : 0;
@@ -391,21 +391,21 @@ function randomDocument(
       for (let i = 0; i < childCount; i += 1) children.push(emit(depth - 1));
       const data = { blob: [1, 2, 3], nested: { deep: true, tag: id }, note: null };
       nodes.push({ id, kind: MYSTERY_KIND, data, children });
-      quarantined.set(id, data);
+      sealed.set(id, data);
       return id;
     }
     if (roll < 0.60) {
       const data = { unknownShape: `leaf-${id}`, list: [id, null, 7] };
       nodes.push({ id, kind: MYSTERY_KIND, data });
-      quarantined.set(id, data);
+      sealed.set(id, data);
       return id;
     }
     if (roll < 0.66) {
       // Registered kind, data its own node type refuses ⇒ `parse-failed`
-      // quarantine. Byte-exact re-emit is the same promise either way.
+      // seal. Byte-exact re-emit is the same promise either way.
       const data = { title: 42, seconds: "nope" };
       nodes.push({ id, kind: "clip", data });
-      quarantined.set(id, data);
+      sealed.set(id, data);
       return id;
     }
     nodes.push({
@@ -427,7 +427,7 @@ function randomDocument(
     const children: string[] = [];
     for (let i = 0; i < childCount; i += 1) children.push(emit(options.maxDepth));
     // Roots must be containers for a whole-document load, and a registered
-    // container kind keeps the root itself out of quarantine so the fuzz
+    // container kind keeps the root itself out of sealing so the fuzz
     // always has a legal drop target to start from.
     nodes.push({ id, kind: "folder", data: { name: `root ${id}`, source: `src-${id}` }, children });
     rootIds.push(id);
@@ -441,14 +441,14 @@ function randomDocument(
       nodes,
     },
     nodeCount: nodes.length,
-    quarantined,
+    sealed,
   };
 }
 
 /** A sub-document for `loadChildrenInto`. Its roots need NOT be containers. */
 function randomPayload(rand: () => number, ids: IdMinter): GeneratedDocument {
   const nodes: SerializedNode[] = [];
-  const quarantined = new Map<string, unknown>();
+  const sealed = new Map<string, unknown>();
   const rootIds: string[] = [];
   const count = 1 + Math.floor(rand() * 3);
 
@@ -458,7 +458,7 @@ function randomPayload(rand: () => number, ids: IdMinter): GeneratedDocument {
     if (roll < 0.25) {
       const data = { payloadBlob: id, arr: [1, null, "x"] };
       nodes.push({ id, kind: MYSTERY_KIND, data });
-      quarantined.set(id, data);
+      sealed.set(id, data);
     } else if (roll < 0.58) {
       // Payloads REPLENISH the unloaded pool on purpose. Loads and
       // `markMissing` both consume it, and a fixture's own ~8% share is
@@ -490,7 +490,7 @@ function randomPayload(rand: () => number, ids: IdMinter): GeneratedDocument {
       nodes,
     },
     nodeCount: nodes.length,
-    quarantined,
+    sealed,
   };
 }
 
@@ -527,14 +527,14 @@ function loadFixture(rand: () => number, ids: IdMinter, ctx: Ctx): FuzzGraph {
 type NodeShape = Readonly<{
   id: string;
   kind: string;
-  quarantined: boolean;
+  sealed: boolean;
   container: boolean;
   childrenState: string | null;
   childIds: readonly string[] | null;
   data: string;
   summary: string;
   parent: string | null;
-  quarantine: string | null;
+  seal: string | null;
 }>;
 
 type GraphShape = Readonly<{
@@ -558,7 +558,7 @@ function stateLabel(state: ChildrenState | null): string | null {
 }
 
 function nodeDataJson(node: FuzzNode): string {
-  if (node.quarantined) return stableJson(node.raw);
+  if (node.sealed) return stableJson(node.raw);
   const nodeType = registry.get(node.kind);
   // Compared on the SERIALIZED form for the same reason `verifyDataChanged`
   // does: a parsed value may carry identity its node type does not consider
@@ -568,7 +568,7 @@ function nodeDataJson(node: FuzzNode): string {
 }
 
 function nodeSummaryJson(node: FuzzNode): string {
-  if (node.quarantined) return stableJson(node.summary);
+  if (node.sealed) return stableJson(node.summary);
   if (!node.container) return "leaf";
   return node.summary === null ? "null" : stableJson(summaryType.serialize(node.summary));
 }
@@ -583,7 +583,7 @@ function graphShape(graph: FuzzGraph): GraphShape {
     nodes.push({
       id,
       kind: node.kind,
-      quarantined: node.quarantined,
+      sealed: node.sealed,
       container: node.container,
       childrenState: stateLabel(childrenStateOf(graph, id)),
       // `null` vs `[]` is the distinction the whole four-state design exists
@@ -592,7 +592,7 @@ function graphShape(graph: FuzzGraph): GraphShape {
       data: nodeDataJson(node),
       summary: nodeSummaryJson(node),
       parent: graph.parentById.get(id) ?? null,
-      quarantine: node.quarantined ? `${node.reason}@${node.schemaVersion}` : null,
+      seal: node.sealed ? `${node.reason}@${node.schemaVersion}` : null,
     });
   }
 
@@ -686,7 +686,7 @@ function randomSeed(rand: () => number, graph: FuzzGraph, depth: number): FuzzSe
 
 function randomEdit(rand: () => number, graph: FuzzGraph, nodeId: NodeId): EditOf<Types> {
   const node = graph.nodesById.get(nodeId);
-  const matchesNode = node !== undefined && !node.quarantined && rand() < 0.8;
+  const matchesNode = node !== undefined && !node.sealed && rand() < 0.8;
   const asClip = matchesNode ? node.kind === "clip" : rand() < 0.5;
 
   if (asClip) {
@@ -1353,12 +1353,12 @@ describe("fuzz: four-state children invariants under load / markMissing", () => 
 });
 
 // ---------------------------------------------------------------------------
-// Property 4 — quarantine survives churn and re-emits its original bytes
+// Property 4 — sealing survives churn and re-emits its original bytes
 // ---------------------------------------------------------------------------
 
-describe("fuzz: quarantined nodes under structural churn", () => {
-  test("a quarantined node keeps its bytes through moves, removals, undo and loads", () => {
-    let churnedQuarantineChecks = 0;
+describe("fuzz: sealed nodes under structural churn", () => {
+  test("a sealed node keeps its bytes through moves, removals, undo and loads", () => {
+    let churnedSealChecks = 0;
     let editRefusals = 0;
 
     for (const seed of SEEDS) {
@@ -1380,26 +1380,26 @@ describe("fuzz: quarantined nodes under structural churn", () => {
 
       // Expected bytes, keyed by id, captured BEFORE anything touches them.
       const expectedBytes = new Map<string, string>();
-      for (const [id, data] of generated.quarantined) expectedBytes.set(id, stableJson(data));
+      for (const [id, data] of generated.sealed) expectedBytes.set(id, stableJson(data));
 
       traced(seed, journal, () => {
-        // The generator is probabilistic; a run with nothing quarantined would
+        // The generator is probabilistic; a run with nothing sealed would
         // pass this test vacuously. Skip rather than assert, and let the
         // aggregate counter below prove the property was exercised overall.
         if (expectedBytes.size === 0) {
-          journal.push("no quarantined nodes generated for this seed");
+          journal.push("no sealed nodes generated for this seed");
           return;
         }
 
-        // Ingress agrees with the generator about WHICH nodes quarantined.
+        // Ingress agrees with the generator about WHICH nodes sealed.
         for (const id of expectedBytes.keys()) {
           const node = graph.nodesById.get(parseNodeId(id));
-          if (node === undefined || !node.quarantined) {
-            throw new Error(`generator expected ${id} to quarantine; ingress did not`);
+          if (node === undefined || !node.sealed) {
+            throw new Error(`generator expected ${id} to seal; ingress did not`);
           }
         }
 
-        /** Every surviving quarantined node still holds — and still WRITES —
+        /** Every surviving sealed node still holds — and still WRITES —
          *  exactly the bytes it arrived with. */
         const checkBytes = (g: FuzzGraph, label: string): void => {
           const document = serializeGraph<Types, Summary>(g, ctx);
@@ -1410,12 +1410,12 @@ describe("fuzz: quarantined nodes under structural churn", () => {
             const id = parseNodeId(rawId);
             const node = g.nodesById.get(id);
             if (node === undefined) continue; // legitimately removed by churn
-            if (!node.quarantined) {
-              throw new Error(`${label}: node ${rawId} lost its quarantine`);
+            if (!node.sealed) {
+              throw new Error(`${label}: node ${rawId} lost its seal`);
             }
             if (stableJson(node.raw) !== bytes) {
               throw new Error(
-                `${label}: quarantined node ${rawId} no longer holds its original raw data\n` +
+                `${label}: sealed node ${rawId} no longer holds its original raw data\n` +
                   `  expected ${bytes}\n  actual   ${stableJson(node.raw)}`,
               );
             }
@@ -1426,7 +1426,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
             }
             const wire = emitted.get(rawId);
             if (wire === undefined) {
-              throw new Error(`${label}: quarantined node ${rawId} was not emitted by serialize`);
+              throw new Error(`${label}: sealed node ${rawId} was not emitted by serialize`);
             }
             if (stableJson(wire.data) !== bytes) {
               throw new Error(
@@ -1437,7 +1437,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
             if (wire.kind !== node.kind) {
               throw new Error(`${label}: re-emitted kind for ${rawId} changed`);
             }
-            churnedQuarantineChecks += 1;
+            churnedSealChecks += 1;
           }
         };
 
@@ -1451,7 +1451,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
         // commands would make the "a full unwind restores the starting graph"
         // assertion below simply false, and weakening that assertion to
         // accommodate them would throw away the strongest check in this test.
-        // Running them first still puts every quarantined node through a graph
+        // Running them first still puts every sealed node through a graph
         // that grew underneath it.
         for (let load = 0; load < 4; load += 1) {
           const unloaded = [...graph.nodesById.keys()].filter(
@@ -1475,28 +1475,28 @@ describe("fuzz: quarantined nodes under structural churn", () => {
           const roll = rand();
 
           if (roll < 0.2) {
-            // Editing a quarantined node must always be refused: it holds
+            // Editing a sealed node must always be refused: it holds
             // `raw`, not parsed data, and writing to it would destroy exactly
             // the byte-exactness this test asserts.
-            const quarantinedIds = [...expectedBytes.keys()]
+            const sealedIds = [...expectedBytes.keys()]
               .map((rawId) => parseNodeId(rawId))
               .filter((id) => graph.nodesById.has(id));
-            if (quarantinedIds.length > 0) {
-              const targetId = pick(rand, quarantinedIds);
+            if (sealedIds.length > 0) {
+              const targetId = pick(rand, sealedIds);
               const command: FuzzCommand = {
                 type: "edit-nodes",
                 edits: [{ nodeId: targetId, kind: "clip", edit: { title: "hijacked" } }],
               };
               const result = applyCommand<Types, Summary>(graph, command, ctx);
               journal.push(
-                `edit-nodes [${targetId}] (quarantined) => ${
+                `edit-nodes [${targetId}] (sealed) => ${
                   result.ok ? "ok" : `reject:${result.error.code}`
                 }`,
               );
               if (result.ok) {
-                throw new Error(`editing quarantined node ${targetId} was accepted`);
+                throw new Error(`editing sealed node ${targetId} was accepted`);
               }
-              expect(result.error.code).toBe("node-quarantined");
+              expect(result.error.code).toBe("node-sealed");
               editRefusals += 1;
               continue;
             }
@@ -1517,7 +1517,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
           checkBytes(graph, `step ${step}`);
         }
 
-        // Unwind everything. A quarantined node that was REMOVED during churn
+        // Unwind everything. A sealed node that was REMOVED during churn
         // has to come back byte-exact too — the patch records the whole node,
         // `raw` included, which is what makes "delete then undo" safe for data
         // no node type in this build can read.
@@ -1536,7 +1536,7 @@ describe("fuzz: quarantined nodes under structural churn", () => {
 
         for (const rawId of expectedBytes.keys()) {
           if (!graph.nodesById.has(parseNodeId(rawId))) {
-            throw new Error(`after a full unwind, quarantined node ${rawId} did not come back`);
+            throw new Error(`after a full unwind, sealed node ${rawId} did not come back`);
           }
         }
         checkBytes(graph, "after full unwind");
@@ -1545,8 +1545,8 @@ describe("fuzz: quarantined nodes under structural churn", () => {
     }
 
     // ANTI-VACUITY. Measured on these six seeds: 904 byte comparisons against a
-    // surviving quarantined node, 75 refused edits.
-    expect(churnedQuarantineChecks).toBeGreaterThan(400);
+    // surviving sealed node, 75 refused edits.
+    expect(churnedSealChecks).toBeGreaterThan(400);
     expect(editRefusals).toBeGreaterThanOrEqual(20);
   });
 });

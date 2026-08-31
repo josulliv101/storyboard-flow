@@ -220,8 +220,8 @@ function makeCtx(
     engineId: ENGINE_ID,
     registry: buildRegistry(TYPES),
     summary: summaryType,
-    onUnknownKind: "quarantine",
-    onParseFailure: "quarantine",
+    onUnknownKind: "seal",
+    onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
     mintId: () => "minted",
@@ -441,7 +441,7 @@ describe("parseNodeData", () => {
 
   it("does not throw when a node type's parse throws", () => {
     // An ingress door that propagates a consumer exception takes the whole
-    // document down, which is exactly what quarantine exists to prevent.
+    // document down, which is exactly what sealing exists to prevent.
     const error = expectErr(
       parseNodeData(makeCtx(), {
         nodeId: id("n"),
@@ -522,7 +522,7 @@ describe("parseNodeData", () => {
   it("runs nothing for a document written by a NEWER build", () => {
     // No migration walks backwards. Refusing here would make every rolling
     // deploy produce documents that will not open; letting `parse` decide means
-    // an additive change reads fine and a breaking one quarantines loudly.
+    // an additive change reads fine and a breaking one seals loudly.
     migrationLog.length = 0;
     const parsed = expectOk(
       parseNodeData(makeCtx(), {
@@ -626,7 +626,7 @@ describe("deserializeDocument", () => {
 
     const states = ["root", "u", "r", "m"].map((raw) => {
       const node = nodeIn(graph, raw);
-      if (node.quarantined || !node.container) throw new Error("expected a collection");
+      if (node.sealed || !node.container) throw new Error("expected a collection");
       return node.children;
     });
     expect(states).toEqual([
@@ -653,7 +653,7 @@ describe("deserializeDocument", () => {
       ),
     ).graph;
     const root = nodeIn(graph, "root");
-    if (root.quarantined || !root.container) throw new Error("expected a collection");
+    if (root.sealed || !root.container) throw new Error("expected a collection");
     expect(root.children).toEqual({ status: "unloaded" });
     expect(graph.childrenById.has(id("root"))).toBe(false);
   });
@@ -662,15 +662,15 @@ describe("deserializeDocument", () => {
     const graph = loadSimple();
     const sub = nodeIn(graph, "sub");
     const root = nodeIn(graph, "root");
-    if (sub.quarantined || !sub.container) throw new Error("expected a collection");
-    if (root.quarantined || !root.container) throw new Error("expected a collection");
+    if (sub.sealed || !sub.container) throw new Error("expected a collection");
+    if (root.sealed || !root.container) throw new Error("expected a collection");
     expect(sub.summary).toEqual({ count: 4 });
     expect(root.summary).toBeNull();
   });
 
   it("reads an explicit null summary as no summary, not as node type input", () => {
     // Our own writer omits the key, but a reformatted document spells it out,
-    // and handing `null` to a node type expecting S would quarantine a node for the
+    // and handing `null` to a node type expecting S would seal a node for the
     // crime of having no rollup yet.
     const graph = expectOk(
       deserializeDocument<Types, Summary>(
@@ -692,7 +692,7 @@ describe("deserializeDocument", () => {
       ),
     ).graph;
     const root = nodeIn(graph, "root");
-    if (root.quarantined) throw new Error("summary null must not quarantine");
+    if (root.sealed) throw new Error("summary null must not seal");
     if (!root.container) throw new Error("expected a collection");
     expect(root.summary).toBeNull();
   });
@@ -754,7 +754,7 @@ describe("deserializeDocument", () => {
   it("reads an UNDECLARED schema version as current, never as 0", () => {
     // Guessing 0 replays every migration over data that may already be current,
     // which corrupts it silently and permanently. Guessing current means old
-    // data fails `parse` and quarantines — loud and repairable.
+    // data fails `parse` and seals — loud and repairable.
     migrationLog.length = 0;
     const graph = expectOk(
       deserializeDocument<Types, Summary>(
@@ -777,7 +777,7 @@ describe("deserializeDocument", () => {
     ).graph;
     expect(migrationLog).toEqual([]);
     const note = nodeIn(graph, "n");
-    if (note.quarantined) throw new Error("note should not have quarantined");
+    if (note.sealed) throw new Error("note should not have sealed");
     expect(note.data).toEqual({ text: "kept", color: "blue" });
   });
 
@@ -941,10 +941,10 @@ describe("deserializeDocument structural failures", () => {
 
   // THESE TWO USED TO ASSERT REJECTION, and the change is deliberate. A leaf
   // kind arriving with children was the last shape failure that took the WHOLE
-  // DOCUMENT down, while a node whose DATA failed to parse quarantined and
+  // DOCUMENT down, while a node whose DATA failed to parse sealed and
   // everything around it loaded. Nothing justified the asymmetry: both are one
   // node's wire form disagreeing with this build.
-  it("QUARANTINES a leaf kind carrying a children array, and keeps the children", () => {
+  it("SEALS a leaf kind carrying a children array, and keeps the children", () => {
     const loaded = expectOk(
       loadNodes(
         ["root"],
@@ -955,11 +955,11 @@ describe("deserializeDocument structural failures", () => {
         ],
       ),
     );
-    expect(loaded.report.quarantined).toHaveLength(1);
-    expect(loaded.report.quarantined[0]?.reason).toBe("shape-mismatch");
+    expect(loaded.report.sealed).toHaveLength(1);
+    expect(loaded.report.sealed[0]?.reason).toBe("shape-mismatch");
 
     const bad = loaded.graph.nodesById.get(parseNodeId("a"));
-    expect(bad?.quarantined).toBe(true);
+    expect(bad?.sealed).toBe(true);
     // HELD AS A CONTAINER, which is the whole point. The node declared a
     // child; something has to own it.
     expect(bad?.container).toBe(true);
@@ -973,7 +973,7 @@ describe("deserializeDocument structural failures", () => {
     expect(getChildren(loaded.graph, parseNodeId("root"))).toEqual([parseNodeId("a")]);
   });
 
-  it("QUARANTINES a leaf kind carrying a childrenState", () => {
+  it("SEALS a leaf kind carrying a childrenState", () => {
     const loaded = expectOk(
       loadNodes(
         ["root"],
@@ -983,18 +983,18 @@ describe("deserializeDocument structural failures", () => {
         ],
       ),
     );
-    expect(loaded.report.quarantined).toHaveLength(1);
-    expect(loaded.report.quarantined[0]?.reason).toBe("shape-mismatch");
+    expect(loaded.report.sealed).toHaveLength(1);
+    expect(loaded.report.sealed[0]?.reason).toBe("shape-mismatch");
     const bad = loaded.graph.nodesById.get(parseNodeId("a"));
-    expect(bad?.quarantined).toBe(true);
-    // The declared load state survives, so a round trip through quarantine does
+    expect(bad?.sealed).toBe(true);
+    // The declared load state survives, so a round trip through seal does
     // not forget that the subtree was never fetched.
-    expect(bad?.quarantined === true ? bad.children?.status : null).toBe("unloaded");
+    expect(bad?.sealed === true ? bad.children?.status : null).toBe("unloaded");
   });
 
   it("still REJECTS a shape mismatch when the consumer asked for strictness", () => {
     // A shape mismatch routes through `onParseFailure`, because a consumer who
-    // said "reject on a content failure at ingress" means this too. Quarantine
+    // said "reject on a content failure at ingress" means this too. Seal
     // is the DEFAULT, not the only behaviour.
     const error = expectErr(
       deserializeDocument<Types, Summary>(
@@ -1013,7 +1013,7 @@ describe("deserializeDocument structural failures", () => {
     expect(error.code).toBe("ingress-rejected");
   });
 
-  it("a document with NO shape mismatch quarantines nothing", () => {
+  it("a document with NO shape mismatch seals nothing", () => {
     // The false-alarm floor: a healthy leaf with neither signal must still be
     // recorded as a leaf, not swept into the new container arm.
     const loaded = expectOk(
@@ -1025,7 +1025,7 @@ describe("deserializeDocument structural failures", () => {
         ],
       ),
     );
-    expect(loaded.report.quarantined).toHaveLength(0);
+    expect(loaded.report.sealed).toHaveLength(0);
     expect(loaded.graph.nodesById.get(parseNodeId("a"))?.container).toBe(false);
   });
 
@@ -1100,10 +1100,10 @@ describe("deserializeDocument structural failures", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Quarantine
+// Seal
 // ---------------------------------------------------------------------------
 
-describe("quarantine", () => {
+describe("seal", () => {
   /** An unregistered container kind holding a registered clip. */
   function docWithUnknownKind(rawData: unknown): unknown {
     return {
@@ -1118,7 +1118,7 @@ describe("quarantine", () => {
     };
   }
 
-  it("quarantines an unregistered kind instead of failing the document", () => {
+  it("seals an unregistered kind instead of failing the document", () => {
     // The alternative shipped: one refused stored clip made a document
     // unwritable forever, and since the trash bin is rewritten on every delete,
     // deleting anything at all became impossible.
@@ -1127,14 +1127,14 @@ describe("quarantine", () => {
       deserializeDocument<Types, Summary>(docWithUnknownKind({ any: "shape" }), ctx),
     );
     const node = nodeIn(loaded.graph, "q");
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.reason).toBe("unknown-kind");
     expect(node.kind).toBe("mystery");
-    expect(loaded.report.quarantined).toHaveLength(1);
+    expect(loaded.report.sealed).toHaveLength(1);
     expect(findInvariantViolation(loaded.graph, ctx.registry)).toBeNull();
   });
 
-  it("keeps a quarantined node's id, position, children and summary", () => {
+  it("keeps a sealed node's id, position, children and summary", () => {
     const graph = expectOk(
       deserializeDocument<Types, Summary>(docWithUnknownKind({ any: "shape" }), makeCtx()),
     ).graph;
@@ -1145,7 +1145,7 @@ describe("quarantine", () => {
     expect(graph.childrenById.get(id("q"))).toEqual([id("kid")]);
     expect(graph.parentById.get(id("kid"))).toBe(id("q"));
     const node = nodeIn(graph, "q");
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.children).toEqual({ status: "loaded" });
     expect(node.summary).toEqual({ count: 2 });
     expect(node.schemaVersion).toBe(9);
@@ -1157,11 +1157,11 @@ describe("quarantine", () => {
       deserializeDocument<Types, Summary>(docWithUnknownKind(payload), makeCtx()),
     ).graph;
     const node = nodeIn(graph, "q");
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.raw).toBe(payload);
   });
 
-  it("quarantines a failed parse of a REGISTERED kind", () => {
+  it("seals a failed parse of a REGISTERED kind", () => {
     const loaded = expectOk(
       deserializeDocument<Types, Summary>(
         {
@@ -1177,15 +1177,15 @@ describe("quarantine", () => {
       ),
     );
     const node = nodeIn(loaded.graph, "a");
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.reason).toBe("parse-failed");
-    // container comes from the REGISTRY for a registered kind, so a quarantined
+    // container comes from the REGISTRY for a registered kind, so a sealed
     // leaf carries no children state at all.
     expect(node.container).toBe(false);
     expect(node.children).toBeNull();
   });
 
-  it("quarantines a node whose SUMMARY fails its node type, keeping it raw", () => {
+  it("seals a node whose SUMMARY fails its node type, keeping it raw", () => {
     // A failed summary is per-node content, not a malformed document. The node
     // stays movable and deletable and its raw summary survives.
     const loaded = expectOk(
@@ -1209,7 +1209,7 @@ describe("quarantine", () => {
       ),
     );
     const node = nodeIn(loaded.graph, "s");
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.reason).toBe("parse-failed");
     expect(node.issues[0]?.path).toBe("$.summary.count");
     expect(node.summary).toEqual({ count: "four" });
@@ -1270,9 +1270,9 @@ describe("quarantine", () => {
     expect(error.code).toBe("summary-parse-failed");
   });
 
-  it("does not let a quarantined node claim ownership of a sourceKey", () => {
+  it("does not let a sealed node claim ownership of a sourceKey", () => {
     // `sourceKey` comes from a node type that by definition did not run, so a
-    // quarantined node cannot be an owner and cannot conflict with one.
+    // sealed node cannot be an owner and cannot conflict with one.
     const ctx = makeCtx();
     const graph = expectOk(
       deserializeDocument<Types, Summary>(
@@ -1342,7 +1342,7 @@ describe("serializeGraph", () => {
     expect(wireNode(wire, "sub").summary).toEqual({ count: 4 });
   });
 
-  it("re-emits a quarantined node's raw data byte-exact", () => {
+  it("re-emits a sealed node's raw data byte-exact", () => {
     const ctx = makeCtx();
     const payload = { unreadable: { by: ["this", "build"] } };
     const graph = expectOk(
@@ -1370,10 +1370,10 @@ describe("serializeGraph", () => {
     expect(wire.schemaVersions.mystery).toBe(9);
   });
 
-  it("round-trips a quarantined UNLOADED container as a container", () => {
+  it("round-trips a sealed UNLOADED container as a container", () => {
     // The trap: an unregistered kind has no node type to declare container-ness, so
     // the wire decides. Without an explicit `childrenState: "unloaded"` this
-    // node would reload as a quarantined LEAF and its subtree would become
+    // node would reload as a sealed LEAF and its subtree would become
     // unreachable forever.
     const ctx = makeCtx();
     const graph = expectOk(
@@ -1395,12 +1395,12 @@ describe("serializeGraph", () => {
 
     const reloaded = expectOk(deserializeDocument<Types, Summary>(wire, ctx)).graph;
     const node = nodeIn(reloaded, "q");
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.container).toBe(true);
     expect(node.children).toEqual({ status: "unloaded" });
   });
 
-  it("round-trips a quarantined LEAF as a leaf", () => {
+  it("round-trips a sealed LEAF as a leaf", () => {
     const ctx = makeCtx();
     const graph = expectOk(
       deserializeDocument<Types, Summary>(
@@ -1424,7 +1424,7 @@ describe("serializeGraph", () => {
       expectOk(deserializeDocument<Types, Summary>(wire, ctx)).graph,
       "q",
     );
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.container).toBe(false);
     expect(node.children).toBeNull();
   });
@@ -1516,7 +1516,7 @@ describe("loadChildrenInto", () => {
     const next = expectOk(loadChildrenInto<Types, Summary>(graph, id("sub"), simplePayload(), ctx)).graph;
 
     const sub = nodeIn(next, "sub");
-    if (sub.quarantined || !sub.container) throw new Error("expected a collection");
+    if (sub.sealed || !sub.container) throw new Error("expected a collection");
     expect(sub.children).toEqual({ status: "loaded" });
     expect(next.childrenById.get(id("sub"))).toEqual([id("p1"), id("p2")]);
     expect(next.parentById.get(id("p1"))).toBe(id("sub"));
@@ -1574,11 +1574,11 @@ describe("loadChildrenInto", () => {
     ).graph;
     expect(migrationLog).toEqual([2, 3]);
     const note = nodeIn(next, "n");
-    if (note.quarantined) throw new Error("note should not have quarantined");
+    if (note.sealed) throw new Error("note should not have sealed");
     expect(note.data).toEqual({ text: "lazy", color: "yellow" });
   });
 
-  it("quarantines a bad payload node instead of failing the load", () => {
+  it("seals a bad payload node instead of failing the load", () => {
     const ctx = makeCtx();
     const next = expectOk(
       loadChildrenInto<Types, Summary>(
@@ -1589,11 +1589,11 @@ describe("loadChildrenInto", () => {
       ),
     ).graph;
     const node = nodeIn(next, "bad");
-    if (!node.quarantined) throw new Error("expected quarantine");
+    if (!node.sealed) throw new Error("expected seal");
     expect(node.reason).toBe("parse-failed");
   });
 
-  it("can fill a quarantined container", () => {
+  it("can fill a sealed container", () => {
     // Its kind failed a node type, but its subtree is real and refusing to load it
     // would strand every node underneath it.
     const ctx = makeCtx();
@@ -1620,7 +1620,7 @@ describe("loadChildrenInto", () => {
       ),
     ).graph;
     const q = nodeIn(next, "q");
-    if (!q.quarantined) throw new Error("expected the node to stay quarantined");
+    if (!q.sealed) throw new Error("expected the node to stay sealed");
     expect(q.children).toEqual({ status: "loaded" });
     expect(q.raw).toEqual({ opaque: 1 });
     expect(next.childrenById.get(id("q"))).toEqual([id("p1")]);

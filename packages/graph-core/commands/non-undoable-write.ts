@@ -119,7 +119,7 @@ export function applyNonUndoableWriteEditsUnguarded<Ts extends readonly WidenedN
   // predicate, and it is STRICTLY STRONGER here: the non-undoable write touches only `data`, so
   // document order cannot change (no bucket's ORDER can move) and no node's
   // `ownsItsSubtree` can change (no owner can move). Where the patch arm must
-  // also tolerate changes it skipped, `planEdits` refuses a quarantined node
+  // also tolerate changes it skipped, `planEdits` refuses a sealed node
   // outright — so every plan here really was applied, and the predicate is
   // evaluated over exactly the nodes that changed.
   //

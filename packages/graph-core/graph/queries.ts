@@ -19,7 +19,7 @@ import type {
   Graph,
   GraphNode,
   NodeId,
-  QuarantinedNode,
+  SealedNode,
 } from "../types";
 import { NO_IDS } from "./constants";
 
@@ -83,7 +83,7 @@ export function getSubtreeRev<Ts extends readonly WidenedNodeType[], S>(
   return graph.subtreeRevById.get(id) ?? graph.deadRevById.get(id) ?? 0;
 }
 
-/** `null` for a leaf, an unknown node, or a QUARANTINED leaf — the three cases
+/** `null` for a leaf, an unknown node, or a SEALD leaf — the three cases
  *  where "what is this subtree's load state" has no answer, because there is no
  *  subtree. */
 export function childrenStateOf<Ts extends readonly WidenedNodeType[], S>(
@@ -92,29 +92,29 @@ export function childrenStateOf<Ts extends readonly WidenedNodeType[], S>(
 ): ChildrenState | null {
   const node = graph.nodesById.get(id);
   if (node === undefined) return null;
-  // Discriminate on `quarantined` FIRST: `container` is a plain `boolean` on
-  // the quarantined arm (it comes off the wire), so it is not disjoint from the
+  // Discriminate on `sealed` FIRST: `container` is a plain `boolean` on
+  // the sealed arm (it comes off the wire), so it is not disjoint from the
   // literal `true` / `false` on the other two and cannot discriminate alone.
-  if (node.quarantined) return node.children;
+  if (node.sealed) return node.children;
   if (node.container) return node.children;
   return null;
 }
 
 /**
- * True for every collection AND every quarantined node.
+ * True for every collection AND every sealed node.
  *
- * The quarantined half looks over-broad until you check the alternative. The
+ * The sealed half looks over-broad until you check the alternative. The
  * declared predicate narrows the FALSE branch to `LeafNode`, so returning
- * `node.container` alone would let a quarantined node whose wire `container`
+ * `node.container` alone would let a sealed node whose wire `container`
  * was `false` land in that branch and be read as a parsed leaf — with a `data`
- * field it does not have. `quarantined || container` is the only implementation
+ * field it does not have. `sealed || container` is the only implementation
  * sound in both branches, and it reads as "may own children", which is what
  * every call site actually wants to know.
  */
 export function isCollection<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
-): node is CollectionNode<Ts, S> | QuarantinedNode {
-  return node.quarantined || node.container;
+): node is CollectionNode<Ts, S> | SealedNode {
+  return node.sealed || node.container;
 }
 
 export function isLoaded<Ts extends readonly WidenedNodeType[], S>(
@@ -142,7 +142,7 @@ export function isLoaded<Ts extends readonly WidenedNodeType[], S>(
  *
  * THE DIVISION: this one asks about a STATE and knows nothing about the node
  * holding it. `ownsItsSubtree` asks about a NODE, and rules out the two cases
- * that have no state to ask about — quarantined, and leaf — before delegating
+ * that have no state to ask about — sealed, and leaf — before delegating
  * here. Call that one unless you are holding a bare `ChildrenState`.
  */
 export function stateOwnsSubtree(state: ChildrenState): boolean {

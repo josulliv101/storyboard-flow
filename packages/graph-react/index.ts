@@ -27,7 +27,7 @@ export type {
   NodeView,
   NodeViewProps,
   ProviderProps,
-  QuarantinedView,
-  QuarantinedViewProps,
+  SealedView,
+  SealedViewProps,
   ReactBindings,
 } from "./src/types";

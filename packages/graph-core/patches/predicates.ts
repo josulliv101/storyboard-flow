@@ -10,17 +10,17 @@ import {
 
 /**
  * The node's `ChildrenState`, or `null` when it has none (a leaf, or a
- * quarantined leaf).
+ * sealed leaf).
  *
- * Discriminates on `quarantined` FIRST and `container` second, which is the
- * only order that works: `container` is plain `boolean` on the quarantined arm
+ * Discriminates on `sealed` FIRST and `container` second, which is the
+ * only order that works: `container` is plain `boolean` on the sealed arm
  * (it comes off the wire), so it is not disjoint from the `true` / `false`
  * literals on the other two and cannot discriminate on its own.
  */
 export function containerChildrenState<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): ChildrenState | null {
-  if (node.quarantined) return node.children;
+  if (node.sealed) return node.children;
   if (node.container) return node.children;
   return null;
 }

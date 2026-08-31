@@ -357,7 +357,7 @@ const shotsFold: ConsumerDefinedFold<Types, Summary, number> = {
 
   // REQUIRED — there is no default. Data this build cannot parse has to be
   // answered for, and "partial" is the honest answer.
-  quarantined() {
+  sealed() {
     return folded(0, "partial");
   },
 };
@@ -513,11 +513,11 @@ ui.defineNodeView("sequence", function SequenceView({ id, data }) {
 /**
  * The fallback for data this build does not understand.
  *
- * Registering one is optional; without it a quarantined node renders nothing.
+ * Registering one is optional; without it a sealed node renders nothing.
  * The engine keeps it movable, removable and re-emitted byte-exact either way —
  * what it looks like is a product decision graph-core cannot make for you.
  */
-ui.defineQuarantinedView(function QuarantinedView({ id, node }) {
+ui.defineSealedView(function SealedView({ id, node }) {
   const move = useMoveWithinParent();
   const firstIssue = node.issues[0];
 
@@ -528,14 +528,14 @@ ui.defineQuarantinedView(function QuarantinedView({ id, node }) {
         kind {node.kind} — {node.reason}
       </span>
       <span data-testid={`why-${id}`} className={classes.muted}>
-        {/* The engine always attaches at least one Issue, for both quarantine
+        {/* The engine always attaches at least one Issue, for both seal
             reasons — but `issues` is a readonly array and this repo types
             `arr[0]` as possibly undefined, so the empty case is answered rather
             than asserted away. */}
         {firstIssue === undefined ? "(no detail)" : firstIssue.message}
       </span>
       <span className={classes.spacer} />
-      {/* Still movable. That is the point: quarantine is not a tombstone. */}
+      {/* Still movable. That is the point: seal is not a tombstone. */}
       <NudgeButtons id={id} move={move} />
     </div>
   );
@@ -636,14 +636,14 @@ function useMoveToCollection(): (id: NodeId, toParentId: NodeId) => void {
 /**
  * A collection's load state, or `undefined` for anything that is not one.
  *
- * DISCRIMINATE ON `quarantined` FIRST. `container` cannot do it: on the
- * quarantined arm it is a plain `boolean` read off the wire, so it is not
+ * DISCRIMINATE ON `sealed` FIRST. `container` cannot do it: on the
+ * sealed arm it is a plain `boolean` read off the wire, so it is not
  * disjoint from the literal `true` / `false` on the other two arms.
  */
 function useChildrenState(id: NodeId): ChildrenState | undefined {
   const node = ui.useNode(id);
   if (node === undefined) return undefined;
-  if (node.quarantined) return node.children ?? undefined;
+  if (node.sealed) return node.children ?? undefined;
   if (!node.container) return undefined;
   return node.children;
 }
@@ -818,7 +818,7 @@ function ChildOrder({
 /**
  * What this node looks like on the wire RIGHT NOW.
  *
- * Used by the quarantine story to show that a node whose kind this build has
+ * Used by the seal story to show that a node whose kind this build has
  * never heard of is re-emitted byte-exact — nothing is dropped, nothing is
  * normalized, and a round-trip through an old client cannot destroy it.
  */
@@ -1054,7 +1054,7 @@ function certaintyClass(value: Folded<number> | undefined): string {
  * PER KIND, because one number cannot advance three independent schemas.
  * `sticker` is declared even though this build has no node type for it: a document
  * is allowed to carry kinds you do not understand, and saying so is what lets
- * quarantine round-trip.
+ * seal round-trip.
  */
 const SCHEMA_VERSIONS: Readonly<Record<string, number>> = {
   shot: 1,
@@ -1213,12 +1213,12 @@ const LAZY_PAYLOADS: ReadonlyMap<NodeId, SerializedDocument> = new Map([
  *  - `shot-broken` is a KNOWN kind whose data fails its own `parse` (empty
  *    slug, non-numeric seconds).
  *
- * Both quarantine rather than killing the document, and that default exists
+ * Both seal rather than killing the document, and that default exists
  * because the alternative shipped: one refused stored clip made a whole
  * document unwritable forever, and since the trash bin is rewritten on every
  * delete, deleting anything at all became impossible.
  */
-const quarantineDoc = wireDocument(
+const sealDoc = wireDocument(
   ["act-one"],
   [
     wireSequence("act-one", "Act One", [
@@ -1580,7 +1580,7 @@ export const RollupWithCertainty: Story = {
       "13s (exact)",
     );
 
-    // Nothing is unloaded and nothing is quarantined, so the gate opens.
+    // Nothing is unloaded and nothing is sealed, so the gate opens.
     await userEvent.click(canvas.getByTestId("persist"));
     await expect(canvas.getByTestId("persist-result")).toHaveTextContent(
       '{"seconds":13,"shots":3}',
@@ -1677,21 +1677,21 @@ function MissingToolbar() {
 }
 
 /**
- * 8. Quarantine — data this build cannot understand.
+ * 8. Seal — data this build cannot understand.
  *
  * A node whose kind is unregistered, or whose data fails its own parse, becomes
- * a `QuarantinedNode`. It keeps its id, its position and its children. It is
+ * a `SealedNode`. It keeps its id, its position and its children. It is
  * movable, removable and undoable. It is NOT editable. It poisons its
  * ancestors' folds to "partial". And it re-emits byte-exact, so a round-trip
  * through this build cannot destroy what a newer one wrote.
  *
- * `QuarantinedNode` is a member of the READ type on purpose: an exhaustive
+ * `SealedNode` is a member of the READ type on purpose: an exhaustive
  * switch over `GraphNode` does not compile until forward-incompatible data is
  * handled.
  */
-export const Quarantine: Story = {
+export const Seal: Story = {
   render: () => (
-    <Stage doc={quarantineDoc}>
+    <Stage doc={sealDoc}>
       <Lesson title="Survive the data you do not understand">
         Two failures here: a kind with no node type, and a known kind whose data is
         invalid. Neither kills the document. Rejecting instead is what once made
@@ -1724,7 +1724,7 @@ export const Quarantine: Story = {
       "(partial)",
     );
 
-    // Still movable — quarantine is not a tombstone.
+    // Still movable — seal is not a tombstone.
     await userEvent.click(canvas.getByTestId("down-sticker-slate"));
     await expect(canvas.getByTestId("order-act-one")).toHaveTextContent(
       "shot-bridge, shot-reveal, sticker-slate, shot-broken",
@@ -1999,7 +1999,7 @@ function DragRow({
   const { dragId, hover, begin } = useDragApi();
   if (node === undefined) return null;
 
-  const label = node.quarantined
+  const label = node.sealed
     ? "(unreadable " + node.kind + ")"
     : node.kind === "shot"
       ? node.data.slug
@@ -2040,7 +2040,7 @@ function DragRow({
         {"⠿"}
       </span>
       <span className={dndClasses.rowLabel}>{label}</span>
-      {node.quarantined ? (
+      {node.sealed ? (
         <Tag tone="warn">?</Tag>
       ) : (
         <Tag>{node.kind}</Tag>
@@ -2064,7 +2064,7 @@ function DragCollection({
   const node = ui.useNode(id);
   const children = ui.useChildren(id);
   const { dragId, hover } = useDragApi();
-  if (node === undefined || node.quarantined || !node.container) return null;
+  if (node === undefined || node.sealed || !node.container) return null;
 
   const loaded = node.children.status === "loaded";
   const name = node.kind === "sequence" ? node.data.name : String(id);
@@ -2115,7 +2115,7 @@ function ChildRow({
 }: Readonly<{ id: NodeId; parentId: NodeId; index: number; depth: number }>) {
   const node = ui.useNode(id);
   if (node === undefined) return null;
-  if (!node.quarantined && node.container) {
+  if (!node.sealed && node.container) {
     return (
       <div>
         <DragRow id={id} parentId={parentId} index={index} />

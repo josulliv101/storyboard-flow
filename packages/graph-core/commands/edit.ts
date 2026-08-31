@@ -90,12 +90,12 @@ export function planEdits<Ts extends readonly WidenedNodeType[], S>(
         { nodeIds: [edit.nodeId] },
       );
     }
-    if (node.quarantined) {
-      // Quarantined nodes move, delete and undo. They do not edit: there is no
+    if (node.sealed) {
+      // Sealed nodes move, delete and undo. They do not edit: there is no
       // node type, and writing through `raw` would forfeit byte-exact re-emit.
       return fail(
-        "node-quarantined",
-        `Node ${JSON.stringify(edit.nodeId)} is quarantined (${node.reason}) and cannot be edited.`,
+        "node-sealed",
+        `Node ${JSON.stringify(edit.nodeId)} is sealed (${node.reason}) and cannot be edited.`,
         { nodeIds: [edit.nodeId], kind: node.kind, issues: node.issues },
       );
     }
@@ -109,7 +109,7 @@ export function planEdits<Ts extends readonly WidenedNodeType[], S>(
     const nodeType = ctx.registry.get(node.kind);
     if (nodeType === undefined) {
       // Defensive: a node of an unregistered kind should already be
-      // quarantined, so reaching here means the graph and the registry came
+      // sealed, so reaching here means the graph and the registry came
       // from different engines.
       return fail(
         "unknown-kind",
@@ -282,7 +282,7 @@ export function planEdits<Ts extends readonly WidenedNodeType[], S>(
     // `findInvariantViolation` returns null for, which is exactly the
     // unrepairable state `ownsItsSubtree` was made THE SINGLE ANSWER to end.
     //
-    // Total on its own terms: false for quarantined, for a leaf, and for a
+    // Total on its own terms: false for sealed, for a leaf, and for a
     // `reference` — subsuming the `stateOwnsSubtree` branch this replaced.
     if (ownsItsSubtree<Ts, S>(node)) {
       const nextKey = nodeType.sourceKey?.(nextData) ?? null;

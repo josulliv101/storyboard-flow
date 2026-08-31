@@ -16,8 +16,8 @@
 //     per kind, because one number cannot advance three independent schemas
 //     without forcing every node type to bump when any one of them changes.
 //
-// QUARANTINE, NOT REJECTION, IS THE DEFAULT. An unregistered kind or a failed
-// parse becomes a `QuarantinedNode` that keeps its id, its position and its
+// SEAL, NOT REJECTION, IS THE DEFAULT. An unregistered kind or a failed
+// parse becomes a `SealedNode` that keeps its id, its position and its
 // children, stays movable/removable/undoable, is NOT editable, poisons its
 // ancestors' folds to `partial`, and re-emits its raw bytes exactly. This is
 // not politeness — the alternative shipped: one refused stored clip made a

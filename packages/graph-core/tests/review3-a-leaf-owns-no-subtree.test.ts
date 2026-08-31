@@ -30,7 +30,7 @@
 //   - `contentKey` already covers leaf-level "same asset", which is the
 //     question a repeated clip is actually asking.
 //   - Tightening the other way would have made a stored document stop loading,
-//     which is the failure this package's quarantine design exists to prevent.
+//     which is the failure this package's seal design exists to prevent.
 import { describe, expect, it } from "vitest";
 
 import {

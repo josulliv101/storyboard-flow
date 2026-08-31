@@ -377,7 +377,7 @@ describe("the save path stays total when a node type throws", () => {
     const reloaded = engine.deserialize(doc);
     expect(reloaded.ok).toBe(true);
     if (!reloaded.ok) return;
-    expect(reloaded.value.report.quarantined.length).toBe(0);
+    expect(reloaded.value.report.sealed.length).toBe(0);
     expect(engine.findInvariantViolation(reloaded.value.graph)).toBeNull();
   });
 });

@@ -123,7 +123,7 @@ describe("a refusal message is bounded by the engine, not by the sender", () => 
 
   it("a huge KIND, which is the other string the wire chooses", () => {
     // Through `schemaVersions`, which formats the kind into a message. An
-    // unknown kind on a NODE quarantines instead of refusing, and the
+    // unknown kind on a NODE seals instead of refusing, and the
     // `IngressError` it produces carries `kind` as a structured FIELD rather
     // than inside a sentence — that one is deliberately not clamped, because a
     // consumer deciding what to do about a failed kind needs the whole kind.

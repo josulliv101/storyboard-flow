@@ -516,10 +516,10 @@ export function applyDataChanged<Ts extends readonly WidenedNodeType[], S>(
 
   for (const change of changes) {
     const node = nodes.get(change.nodeId);
-    // A verified patch never names a missing or quarantined node; skipping
+    // A verified patch never names a missing or sealed node; skipping
     // rather than throwing keeps `applyPatch` total, which is what lets it be
     // the single rewriter.
-    if (node === undefined || node.quarantined) continue;
+    if (node === undefined || node.sealed) continue;
     // Structure, `summary` and `children` are preserved verbatim — a
     // "data-changed" patch changes content and nothing else. The boundary
     // constructors are used instead of a spread so this module contains no cast.

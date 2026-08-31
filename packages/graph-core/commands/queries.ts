@@ -182,7 +182,7 @@ export function pruneDescendants<Ts extends readonly WidenedNodeType[], S>(
  * The `sourceKey` this node OWNS, or null.
  *
  * A `reference` placement owns nothing — that is the entire point of the state
- * — so it is exempt from the single-owner rule. A quarantined node has no node type
+ * — so it is exempt from the single-owner rule. A sealed node has no node type
  * and therefore no key at all.
  */
 export function owningSourceKey<Ts extends readonly WidenedNodeType[], S>(

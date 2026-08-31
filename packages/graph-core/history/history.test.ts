@@ -183,9 +183,9 @@ function placementsOf(patch: TestPatch): readonly Placement<Types, Summary>[] {
   return patch.placements;
 }
 
-/** Discriminate on `quarantined` FIRST — `container` alone cannot narrow. */
+/** Discriminate on `sealed` FIRST — `container` alone cannot narrow. */
 function dataOf(node: GraphNode<Types, Summary>): unknown {
-  if (node.quarantined) throw new Error("expected a live node, got a quarantined one");
+  if (node.sealed) throw new Error("expected a live node, got a sealed one");
   return node.data;
 }
 

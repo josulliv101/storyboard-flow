@@ -30,7 +30,7 @@ export type Move = Readonly<{
  * which is what makes add/remove trivially invertible.
  *
  * `node` is the FULL node, so a removed subtree is restorable exactly —
- * including a quarantined node's byte-exact `raw`.
+ * including a sealed node's byte-exact `raw`.
  */
 export type Placement<Ts extends readonly WidenedNodeType[], S> = Readonly<{
   node: GraphNode<Ts, S>;
