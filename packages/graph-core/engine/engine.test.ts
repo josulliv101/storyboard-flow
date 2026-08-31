@@ -18,10 +18,10 @@ import {
   type ConsumerDefinedSummaryType,
   defineNodeType,
   parseNodeId,
-} from "./types";
-import { foldMonoid } from "./folds";
-import { createEngine } from "./engine";
-import { DEFAULT_MAX_NODES } from "./serialize";
+} from "../types";
+import { foldMonoid } from "../folds";
+import { createEngine } from "./index";
+import { DEFAULT_MAX_NODES } from "../serialize";
 
 type Clip = Readonly<{ title: string; seconds: number }>;
 type ClipEdit = Readonly<{ title?: string; seconds?: number }>;

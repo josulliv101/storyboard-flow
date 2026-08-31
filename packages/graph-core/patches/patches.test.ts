@@ -8,12 +8,12 @@ import {
   patchTouchedNodeIds,
   scrubPatchForWrite,
   verifyPatchApplies,
-} from "./patches";
+} from "./index";
 import {
   findInvariantViolation,
   getSubtreeRev,
   rebuildDerivedIndexes,
-} from "./graph";
+} from "../graph";
 import {
   defineNodeType,
   makeCollectionNode,
@@ -34,8 +34,8 @@ import {
   type Issue,
   type Result,
   type ConsumerDefinedSummaryType,
-} from "./types";
-import { DEFAULT_MAX_NODES } from "./serialize";
+} from "../types";
+import { DEFAULT_MAX_NODES } from "../serialize";
 
 // ---------------------------------------------------------------------------
 // Fixtures
