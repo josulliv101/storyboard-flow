@@ -14,10 +14,10 @@
 //    fails the assertion instead of wedging the suite.
 //
 // 2. A LAZY LOAD COMPUTED A REPORT AND DROPPED IT. `buildDocument` produces the
-//    same `LoadReport` `deserialize` returns — nodeCount, quarantined, migrated,
+//    same `LoadReport` `deserialize` returns — nodeCount, sealed, migrated,
 //    warnings — and `loadChildrenInto` used every other field of its result and
-//    discarded that one, so `Store.load` answered `Result<void>`. Quarantine is
-//    a SUCCESS path, so a page in which every node quarantined was
+//    discarded that one, so `Store.load` answered `Result<void>`. Seal is
+//    a SUCCESS path, so a page in which every node sealed was
 //    indistinguishable from a clean one, on the door that runs repeatedly
 //    against a live document rather than once at startup.
 import { describe, expect, it, vi } from "vitest";
@@ -223,10 +223,10 @@ describe("notification reads a snapshot, not a live collection", () => {
 // 2. The lazy load hands back its report
 // ---------------------------------------------------------------------------
 
-describe("a lazy load reports what it quarantined", () => {
+describe("a lazy load reports what it sealed", () => {
   const lazyId = parseNodeId("lazy");
 
-  it("a clean page reports no quarantine", () => {
+  it("a clean page reports no seal", () => {
     const { store } = loadedStore();
     const loaded = store.load(lazyId, {
       formatVersion: 1,
@@ -239,12 +239,12 @@ describe("a lazy load reports what it quarantined", () => {
     });
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.quarantined).toEqual([]);
+    expect(loaded.value.sealed).toEqual([]);
     expect(loaded.value.nodeCount).toBe(2);
   });
 
-  it("a page where EVERY node quarantined is not reported as clean", () => {
-    // This is the whole defect. `ok: true` is right — quarantine is a success
+  it("a page where EVERY node sealed is not reported as clean", () => {
+    // This is the whole defect. `ok: true` is right — seal is a success
     // path, the nodes are in the graph holding their raw bytes — but the
     // consumer had no way to learn that nothing it asked for is readable.
     const { store, engine } = loadedStore();
@@ -253,7 +253,7 @@ describe("a lazy load reports what it quarantined", () => {
       schemaVersions: { clip: 1, folder: 1 },
       rootIds: ["b1", "b2"],
       nodes: [
-        // `title` must be a string; a number fails `parse` and quarantines.
+        // `title` must be a string; a number fails `parse` and seals.
         { id: "b1", kind: "clip", data: { title: 1 } },
         { id: "b2", kind: "clip", data: { title: 2 } },
       ],
@@ -262,16 +262,16 @@ describe("a lazy load reports what it quarantined", () => {
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
     expect(loaded.value.nodeCount).toBe(2);
-    expect(loaded.value.quarantined).toHaveLength(2);
-    expect(loaded.value.quarantined.map((q) => q.nodeId).sort()).toEqual([
+    expect(loaded.value.sealed).toHaveLength(2);
+    expect(loaded.value.sealed.map((q) => q.nodeId).sort()).toEqual([
       parseNodeId("b1"),
       parseNodeId("b2"),
     ]);
-    for (const failure of loaded.value.quarantined) {
+    for (const failure of loaded.value.sealed) {
       expect(failure.reason).toBe("parse-failed");
     }
 
-    // The graph is still valid and the nodes are still there — quarantine
+    // The graph is still valid and the nodes are still there — seal
     // preserves bytes rather than dropping the subtree.
     expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
     expect(store.getGraph().nodesById.has(parseNodeId("b1"))).toBe(true);
@@ -291,7 +291,7 @@ describe("a lazy load reports what it quarantined", () => {
     if (!loaded.ok) return;
     expect(loaded.value.graph.nodesById.has(parseNodeId("p1"))).toBe(true);
     expect(loaded.value.report.nodeCount).toBe(1);
-    expect(loaded.value.report.quarantined).toEqual([]);
+    expect(loaded.value.report.sealed).toEqual([]);
     expect(engine.findInvariantViolation(loaded.value.graph)).toBeNull();
   });
 
@@ -301,7 +301,7 @@ describe("a lazy load reports what it quarantined", () => {
       formatVersion: 1,
       schemaVersions: { clip: 1, folder: 1 },
       rootIds: ["c1"],
-      // `c1` is already resident, so this is an id collision, not a quarantine.
+      // `c1` is already resident, so this is an id collision, not a seal.
       nodes: [{ id: "c1", kind: "clip", data: { title: "dup" } }],
     });
     expect(loaded.ok).toBe(false);

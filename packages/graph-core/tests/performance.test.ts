@@ -283,7 +283,7 @@ const durationFold: ConsumerDefinedFold<Types, Summary, number> = {
   missing() {
     return { value: 0, certainty: "exact" };
   },
-  quarantined() {
+  sealed() {
     return { value: 0, certainty: "partial" };
   },
 };
@@ -332,16 +332,16 @@ function at<T>(items: readonly T[], index: number, what: string): T {
  * THE ASSERTION THAT WOULD HAVE CAUGHT IT, and the reason it now runs on every
  * fixture in this file rather than on the one that was wrong.
  *
- * A quarantined node is a SUCCESS, by design: the four-state model exists so a
+ * A sealed node is a SUCCESS, by design: the four-state model exists so a
  * node the node type refuses can still be held, named and repaired rather than
- * taking its document down with it. That is exactly what makes a quarantined
+ * taking its document down with it. That is exactly what makes a sealed
  * FIXTURE invisible. `deserialize` returns ok, `report.nodeCount` matches,
  * `expect(loaded.ok).toBe(true)` passes, and every count a benchmark normally
  * checks agrees — while the graph is a field of corpses and the parsed path the
  * gate claims to measure never executes.
  *
  * MEASURED: the flat delete fixture omitted the `assetId` that `clipType.parse`
- * requires, so 1,000/1,000 and 10,000/10,000 clips quarantined, and the timed
+ * requires, so 1,000/1,000 and 10,000/10,000 clips sealed, and the timed
  * path ran roughly 20-28% under the gesture the gate is named after. It went
  * green for three review rounds and its number was the headline row of the
  * survey.
@@ -351,14 +351,14 @@ function at<T>(items: readonly T[], index: number, what: string): T {
  * module-level fixture builders with no `expect` in scope, and because a broken
  * fixture is a harness bug rather than a result.
  */
-function assertNothingQuarantined(
-  report: Readonly<{ quarantined: readonly unknown[] }>,
+function assertNothingSealed(
+  report: Readonly<{ sealed: readonly unknown[] }>,
   label: string,
 ): void {
-  if (report.quarantined.length === 0) return;
+  if (report.sealed.length === 0) return;
   throw new Error(
-    `graph performance fixture: ${label} quarantined ` +
-      `${report.quarantined.length} node(s) — the fixture does not satisfy its ` +
+    `graph performance fixture: ${label} sealed ` +
+      `${report.sealed.length} node(s) — the fixture does not satisfy its ` +
       `own node type, so this measures the unparsed path rather than the gesture`,
   );
 }
@@ -461,9 +461,9 @@ function makeWideFixture(nodeCount: number): WideFixture {
         `${loaded.value.report.nodeCount} of ${nodes.length} nodes`,
     );
   }
-  // `nodeCount` counts quarantined nodes too, so the check above agrees with
+  // `nodeCount` counts sealed nodes too, so the check above agrees with
   // a document that parsed nothing. This is the one that does not.
-  assertNothingQuarantined(loaded.value.report, `wide/${nodeCount}`);
+  assertNothingSealed(loaded.value.report, `wide/${nodeCount}`);
 
   return {
     label: `wide/${nodeCount}`,
@@ -516,7 +516,7 @@ function makeDeepFixture(depth: number): DeepFixture {
       `graph performance fixture: deep/${depth} failed to load: ${loaded.error.message}`,
     );
   }
-  assertNothingQuarantined(loaded.value.report, `deep/${depth}`);
+  assertNothingSealed(loaded.value.report, `deep/${depth}`);
 
   return {
     label: `deep/${depth}`,
@@ -1286,11 +1286,11 @@ describe("mutations", () => {
       for (const id of childIds) {
         // `assetId` IS REQUIRED by `clipType.parse`, and omitting it here cost
         // this gate its meaning for three rounds. Without it every clip failed
-        // ingress and arrived QUARANTINED — 1,000/1,000 and 10,000/10,000,
+        // ingress and arrived SEALD — 1,000/1,000 and 10,000/10,000,
         // reproduced — which is a success path, so `deserialize` returned ok,
         // the assertion below passed, and the gate measured the corpse path at
         // roughly 20-28% under the gesture it is named after. See
-        // `expectNothingQuarantined`, which is why it cannot happen again.
+        // `expectNothingSealed`, which is why it cannot happen again.
         nodes.push({
           id,
           kind: "clip",
@@ -1305,7 +1305,7 @@ describe("mutations", () => {
       });
       expect(loaded.ok).toBe(true);
       if (!loaded.ok) return;
-      assertNothingQuarantined(loaded.value.report, `flat/${siblings}`);
+      assertNothingSealed(loaded.value.report, `flat/${siblings}`);
       const graph = loaded.value.graph;
 
       const command: Command<Types, Summary> = {

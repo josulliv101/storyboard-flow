@@ -50,7 +50,7 @@ import type {
   HistoryControls,
   NodeView,
   ProviderProps,
-  QuarantinedView,
+  SealedView,
   ReactBindings,
 } from "./types";
 
@@ -125,7 +125,7 @@ export function createReactBindings<
   const StoreContext = createContext<BoundStore | null>(null);
 
   const nodeViews = new Map<string, ErasedNodeView>();
-  let quarantinedView: QuarantinedView | null = null;
+  let sealedView: SealedView | null = null;
 
   /**
    * Kinds already reported as having no registered view.
@@ -467,11 +467,11 @@ export function createReactBindings<
     reportedMissingKinds.delete(kind);
   }
 
-  function defineQuarantinedView(view: QuarantinedView): void {
+  function defineSealedView(view: SealedView): void {
     if (view.displayName === undefined || view.displayName === "") {
-      view.displayName = "KeelQuarantinedView";
+      view.displayName = "KeelSealedView";
     }
-    quarantinedView = view;
+    sealedView = view;
   }
 
   /**
@@ -493,13 +493,13 @@ export function createReactBindings<
     // delete.
     if (node === undefined) return null;
 
-    // Discriminate on `quarantined` FIRST. `container` cannot do it — on the
-    // quarantined arm it is a plain `boolean` off the wire, so it is not
+    // Discriminate on `sealed` FIRST. `container` cannot do it — on the
+    // sealed arm it is a plain `boolean` off the wire, so it is not
     // disjoint from the `true` / `false` literals on the other two arms.
-    if (node.quarantined) {
-      if (quarantinedView === null) return null;
-      const Quarantined = quarantinedView;
-      return <Quarantined id={id} node={node} />;
+    if (node.sealed) {
+      if (sealedView === null) return null;
+      const Sealed = sealedView;
+      return <Sealed id={id} node={node} />;
     }
 
     const View = nodeViews.get(node.kind);
@@ -539,7 +539,7 @@ export function createReactBindings<
     useSelectionAnchor,
     useSelectionActions,
     defineNodeView,
-    defineQuarantinedView,
+    defineSealedView,
     NodeSlot,
   };
 }

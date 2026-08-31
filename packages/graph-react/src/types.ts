@@ -23,7 +23,7 @@ import type {
   KindOf,
   NodeId,
   Patch,
-  QuarantinedNode,
+  SealedNode,
   Rejection,
   ReplayRejection,
   Result,
@@ -67,20 +67,20 @@ export type NodeView<
 > = FunctionComponent<NodeViewProps<Ts, K>>;
 
 /**
- * The fallback for forward-incompatible data. `QuarantinedNode` is not generic
+ * The fallback for forward-incompatible data. `SealedNode` is not generic
  * (there is no node type, so there is no `Data`), so neither is this.
  *
- * Registering one is optional; without it a quarantined node renders nothing.
+ * Registering one is optional; without it a sealed node renders nothing.
  * That is a deliberate default rather than a placeholder box: the engine
  * guarantees the node is still movable, removable and re-emitted byte-exact,
  * and inventing a visual for it is a product decision graph-core cannot make.
  */
-export type QuarantinedViewProps = Readonly<{
+export type SealedViewProps = Readonly<{
   id: NodeId;
-  node: QuarantinedNode;
+  node: SealedNode;
 }>;
 
-export type QuarantinedView = FunctionComponent<QuarantinedViewProps>;
+export type SealedView = FunctionComponent<SealedViewProps>;
 
 // ---------------------------------------------------------------------------
 // Hook return shapes
@@ -219,7 +219,7 @@ export type ReactBindings<
    */
   defineNodeView<K extends KindOf<Ts>>(kind: K, view: NodeView<Ts, K>): void;
 
-  defineQuarantinedView(view: QuarantinedView): void;
+  defineSealedView(view: SealedView): void;
 
   /**
    * Props are `{ id }` and NOTHING else.

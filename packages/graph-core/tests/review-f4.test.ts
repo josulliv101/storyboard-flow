@@ -1,4 +1,4 @@
-// F4 regression: a THROWING summary type must quarantine, not kill the document.
+// F4 regression: a THROWING summary type must seal, not kill the document.
 //
 // `parseNodeData` wraps `nodeType.parse` in try/catch precisely because "a node type is
 // consumer code, and an ingress door that throws takes the whole document
@@ -129,8 +129,8 @@ function ctxWith(summary: ConsumerDefinedSummaryType<Summary>): EngineContext<Su
     engineId: Symbol("f4-probe"),
     registry: buildRegistry(types),
     summary,
-    onUnknownKind: "quarantine",
-    onParseFailure: "quarantine",
+    onUnknownKind: "seal",
+    onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
     mintId: () => "minted",
@@ -139,8 +139,8 @@ function ctxWith(summary: ConsumerDefinedSummaryType<Summary>): EngineContext<Su
   };
 }
 
-describe("a throwing summary type quarantines rather than crashing", () => {
-  it("CONTROL: a summary type that RETURNS a failure quarantines the node", () => {
+describe("a throwing summary type seals rather than crashing", () => {
+  it("CONTROL: a summary type that RETURNS a failure seals the node", () => {
     const ctx = ctxWith(wellBehavedSummary);
     const out = deserializeDocument<Types, Summary>(
       docWithSummary({ seconds: "thirty" }),
@@ -148,11 +148,11 @@ describe("a throwing summary type quarantines rather than crashing", () => {
     );
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value.report.quarantined).toHaveLength(1);
-    expect(out.value.report.quarantined[0]?.reason).toBe("parse-failed");
+    expect(out.value.report.sealed).toHaveLength(1);
+    expect(out.value.report.sealed[0]?.reason).toBe("parse-failed");
   });
 
-  it("CONTROL: a NODE node type that throws is caught and quarantined", () => {
+  it("CONTROL: a NODE node type that throws is caught and sealed", () => {
     const boomType = defineNodeType<Readonly<{ ok: true }>, never>()({
       kind: "boom",
       container: false,
@@ -190,13 +190,13 @@ describe("a throwing summary type quarantines rather than crashing", () => {
     );
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value.report.quarantined).toHaveLength(1);
-    expect(out.value.report.quarantined[0]?.issues[0]?.message).toMatch(
+    expect(out.value.report.sealed).toHaveLength(1);
+    expect(out.value.report.sealed[0]?.issues[0]?.message).toMatch(
       /parse threw/,
     );
   });
 
-  it("deserializeDocument quarantines instead of throwing when summary.parse throws", () => {
+  it("deserializeDocument seals instead of throwing when summary.parse throws", () => {
     const ctx = ctxWith(throwingSummary);
     const out = deserializeDocument<Types, Summary>(
       docWithSummary({ seconds: 30 }),
@@ -204,9 +204,9 @@ describe("a throwing summary type quarantines rather than crashing", () => {
     );
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value.report.quarantined).toHaveLength(1);
-    expect(out.value.report.quarantined[0]?.reason).toBe("parse-failed");
-    expect(out.value.report.quarantined[0]?.issues[0]?.path).toMatch(
+    expect(out.value.report.sealed).toHaveLength(1);
+    expect(out.value.report.sealed[0]?.reason).toBe("parse-failed");
+    expect(out.value.report.sealed[0]?.issues[0]?.path).toMatch(
       /^\$\.summary/,
     );
     // The other two nodes still load — a bad summary is per-node content.
@@ -218,7 +218,7 @@ describe("a throwing summary type quarantines rather than crashing", () => {
     const out = engine.deserialize(docWithSummary({ seconds: 30 }));
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value.report.quarantined).toHaveLength(1);
+    expect(out.value.report.sealed).toHaveLength(1);
   });
 
   it("PUBLIC API: store.load returns a Result instead of throwing", () => {

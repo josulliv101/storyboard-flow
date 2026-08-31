@@ -20,7 +20,7 @@ import {
   type Graph,
   type Issue,
   type NodeId,
-  type QuarantineReason,
+  type SealReason,
   type Rejection,
   type Result,
   type Seed,
@@ -28,7 +28,7 @@ import {
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
-  makeQuarantinedNode,
+  makeSealedNode,
   parseNodeId,
 } from "../types";
 import {
@@ -172,7 +172,7 @@ type Spec = Readonly<{
   children?: readonly Spec[];
   state?: ChildrenState;
   summary?: Summary | null;
-  quarantine?: QuarantineReason;
+  seal?: SealReason;
 }>;
 
 function id(raw: string): NodeId {
@@ -216,17 +216,17 @@ function buildGraph(engineId: symbol, roots: readonly Spec[]): Graph<Types, Summ
     const nodeId = id(spec.id);
     const container = spec.container ?? false;
     const state: ChildrenState = spec.state ?? { status: "loaded" };
-    if (spec.quarantine !== undefined) {
+    if (spec.seal !== undefined) {
       nodes.set(
         nodeId,
-        makeQuarantinedNode({
+        makeSealedNode({
           id: nodeId,
           kind: spec.kind,
           container,
           schemaVersion: 1,
           raw: spec.data,
-          reason: spec.quarantine,
-          issues: [{ path: "$", message: "fixture quarantine" }],
+          reason: spec.seal,
+          issues: [{ path: "$", message: "fixture seal" }],
           children: container ? state : null,
           summary: spec.summary ?? null,
         }),
@@ -281,7 +281,7 @@ function rebuildFixtureIndexes(
   const walk = (nodeId: NodeId): void => {
     const node = graph.nodesById.get(nodeId);
     if (node === undefined) return;
-    if (!node.quarantined) {
+    if (!node.sealed) {
       const nodeType = registry.get(node.kind);
       const contentKey = nodeType?.contentKey?.(node.data) ?? null;
       if (contentKey !== null) {
@@ -311,7 +311,7 @@ function rebuildFixtureIndexes(
  *  5 lazy  folder src-lazy  (unloaded)
  *  6 ref   folder src-ref   (reference — owns nothing)
  *  7 ghost folder           (missing)
- *  8 qleaf QUARANTINED leaf
+ *  8 qleaf SEALD leaf
  */
 function fixtureRoots(): readonly Spec[] {
   return [
@@ -335,7 +335,7 @@ function fixtureRoots(): readonly Spec[] {
           id: "qleaf",
           kind: "clip",
           data: { title: 42 },
-          quarantine: "parse-failed",
+          seal: "parse-failed",
         },
       ],
     }),
@@ -360,8 +360,8 @@ function makeHarness(
     engineId,
     registry,
     summary: summaryType,
-    onUnknownKind: "quarantine",
-    onParseFailure: "quarantine",
+    onUnknownKind: "seal",
+    onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
     mintId:
@@ -393,7 +393,7 @@ function labels(graph: Graph<Types, Summary>, parentId: string): readonly string
   return getChildren(graph, id(parentId)).map((childId) => {
     const node = getNode(graph, childId);
     if (node === undefined) return "?";
-    if (node.quarantined) return `!${node.kind}`;
+    if (node.sealed) return `!${node.kind}`;
     if (node.kind === "clip") return node.data.title;
     return node.data.name;
   });
@@ -819,8 +819,8 @@ describe("applyCommand / insert-nodes", () => {
       ),
     );
     const inserted = getNode(next.graph, id("mint-1"));
-    expect(inserted?.quarantined).toBe(false);
-    expect(inserted !== undefined && !inserted.quarantined && inserted.container).toBe(true);
+    expect(inserted?.sealed).toBe(false);
+    expect(inserted !== undefined && !inserted.sealed && inserted.container).toBe(true);
     expect(getChildren(next.graph, id("mint-1"))).toEqual([]);
     expectValid(next.graph);
   });
@@ -923,8 +923,8 @@ describe("applyCommand / insert-nodes", () => {
     ).toBe("leaf-seed-with-children");
   });
 
-  it("rejects an unregistered kind rather than quarantining it", () => {
-    // Quarantine keeps forward-incompatible STORED data usable. A brand-new
+  it("rejects an unregistered kind rather than sealing it", () => {
+    // Seal keeps forward-incompatible STORED data usable. A brand-new
     // insert has a consumer standing right here to be told.
     const { graph, ctx } = makeHarness();
     const seeds: readonly Seed<Types, Summary>[] = [];
@@ -1213,8 +1213,8 @@ describe("applyCommand / remove-nodes", () => {
     ).toBe("empty-command");
   });
 
-  it("removes a quarantined node", () => {
-    // Quarantined nodes move, delete and undo — that is what keeps a document
+  it("removes a sealed node", () => {
+    // Sealed nodes move, delete and undo — that is what keeps a document
     // with one bad clip from becoming permanently unwritable.
     const { graph, ctx } = makeHarness();
     const next = unwrap(
@@ -1336,7 +1336,7 @@ describe("applyCommand / edit-nodes", () => {
     expectValid(next.graph);
   });
 
-  it("refuses to edit a quarantined node", () => {
+  it("refuses to edit a sealed node", () => {
     const { graph, ctx } = makeHarness();
     const error = rejectionOf(
       applyCommand(
@@ -1348,7 +1348,7 @@ describe("applyCommand / edit-nodes", () => {
         ctx,
       ),
     );
-    expect(error.code).toBe("node-quarantined");
+    expect(error.code).toBe("node-sealed");
   });
 
   it("rejects a kind mismatch, an unknown node, a duplicate, and an empty list", () => {
@@ -1679,7 +1679,7 @@ describe("applyNonUndoableWriteEdits", () => {
       applyNonUndoableWriteEdits(graph, createHistory(), writeEdits("b1", { seconds: 9 }), ctx),
     );
     const node = getNode(result.graph, id("b1"));
-    expect(node !== undefined && !node.quarantined && node.data).toEqual({
+    expect(node !== undefined && !node.sealed && node.data).toEqual({
       title: "B1",
       seconds: 9,
     });
@@ -1764,7 +1764,7 @@ describe("applyNonUndoableWriteEdits", () => {
     if (entry === undefined) throw new Error("the entry should survive");
     if (entry.patch.type !== "inserted") throw new Error("expected inserted");
     const placed = entry.patch.placements[0];
-    if (placed === undefined || placed.node.quarantined) throw new Error("bad placement");
+    if (placed === undefined || placed.node.sealed) throw new Error("bad placement");
     expect(placed.node.data).toEqual({ title: "Fresh", seconds: 77 });
   });
 
@@ -1796,7 +1796,7 @@ describe("applyNonUndoableWriteEdits", () => {
     const history = createHistory<Types, Summary>();
     expect(
       rejectionOf(applyNonUndoableWriteEdits(graph, history, writeEdits("qleaf", { seconds: 1 }), ctx)).code,
-    ).toBe("node-quarantined");
+    ).toBe("node-sealed");
     expect(
       rejectionOf(applyNonUndoableWriteEdits(graph, history, writeEdits("nope", { seconds: 1 }), ctx)).code,
     ).toBe("unknown-node");

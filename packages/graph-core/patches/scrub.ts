@@ -101,10 +101,10 @@ export function scrubPatchForWrite<Ts extends readonly WidenedNodeType[], S>(
       const next = patch.placements.map((placement): Placement<Ts, S> => {
         const node = placement.node;
         if (!replacements.has(node.id)) return placement;
-        // A quarantined node carries `raw`, not parsed data, and it is not
+        // A sealed node carries `raw`, not parsed data, and it is not
         // editable — so it can never be a non-undoable write target and its bytes must
         // survive untouched.
-        if (node.quarantined) return placement;
+        if (node.sealed) return placement;
         const replacement = replacements.get(node.id);
         rewrote = true;
         const rebuilt: GraphNode<Ts, S> = node.container

@@ -566,7 +566,7 @@ export function derivedIndexesSurviveDataChange(
  *
  * The no-op cases, each for its own reason:
  *   - unknown id              — the node is already gone.
- *   - leaf / quarantined leaf — no subtree to be missing.
+ *   - leaf / sealed leaf — no subtree to be missing.
  *   - `reference`             — this placement never owned the subtree; the
  *                               owner is the one entitled to hear a 404 about
  *                               it.

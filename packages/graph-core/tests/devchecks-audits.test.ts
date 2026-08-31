@@ -133,7 +133,7 @@ describe("parsed values are frozen under devChecks", () => {
     const loaded = engine.deserialize(docWith({ title: "  spaced  " }));
     expect(loaded.ok).toBe(true);
     expect(spy).toHaveBeenCalled();
-    // Reported, never thrown, and never turned into a quarantine: a document
+    // Reported, never thrown, and never turned into a seal: a document
     // that loads clean with the flag off must load clean with it on.
     expect(messagesFrom(spy)).toContain("graph dev check");
   });

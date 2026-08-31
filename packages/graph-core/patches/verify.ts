@@ -564,13 +564,13 @@ function verifyDataChanged<Ts extends readonly WidenedNodeType[], S>(
         nodeId: change.nodeId,
       });
     }
-    if (node.quarantined) {
-      // A quarantined node holds `raw`, not parsed data: there is nothing the
+    if (node.sealed) {
+      // A sealed node holds `raw`, not parsed data: there is nothing the
       // recorded `before` could match, and writing `after` into it would
-      // destroy the byte-exact re-emit quarantine exists to guarantee.
+      // destroy the byte-exact re-emit sealing exists to guarantee.
       return replayError(
         "data-mismatch",
-        `Node ${change.nodeId} is quarantined and holds no parsed data.`,
+        `Node ${change.nodeId} is sealed and holds no parsed data.`,
         { nodeId: change.nodeId },
       );
     }

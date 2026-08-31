@@ -167,7 +167,7 @@ const titlesFold: ConsumerDefinedFold<Types, Summary, readonly string[]> = {
   missing() {
     return { value: [], certainty: "exact" };
   },
-  quarantined() {
+  sealed() {
     return { value: [], certainty: "partial" };
   },
 };
@@ -214,7 +214,7 @@ type WireNode = Readonly<{
 
 /**
  * `folders` x `clipsPerFolder` under one root. `extras` adds one node of every
- * `computeFold` dispatch arm — unloaded (placeholder), missing, quarantined and
+ * `computeFold` dispatch arm — unloaded (placeholder), missing, sealed and
  * an empty loaded collection — so the eviction-invariance property is checked
  * over every arm rather than over sums alone.
  */
@@ -260,7 +260,7 @@ function buildDocument(
       childrenState: "missing",
       missingReason: "404",
     });
-    // No node type is registered for this kind, so it lands quarantined.
+    // No node type is registered for this kind, so it lands sealed.
     nodes.push({ id: "mystery", kind: "mystery", data: { opaque: true } });
     nodes.push({ id: "empty", kind: "folder", data: { name: "empty" }, children: [] });
     rootChildren.push("unloaded", "gone", "mystery", "empty");
@@ -582,7 +582,7 @@ function countingDuration(): CountingFold {
     missing() {
       return { value: 0, certainty: "exact" };
     },
-    quarantined() {
+    sealed() {
       return { value: 0, certainty: "partial" };
     },
   };
@@ -702,7 +702,7 @@ function idsByKind(graph: TestGraph): Readonly<{
   for (const nodeId of documentOrder(graph)) {
     const node = getNode(graph, nodeId);
     if (node === undefined) continue;
-    if (node.quarantined) continue;
+    if (node.sealed) continue;
     if (!node.container) {
       if (node.kind === "clip") clips.push(nodeId);
       continue;

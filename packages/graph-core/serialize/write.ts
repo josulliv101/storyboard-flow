@@ -61,7 +61,7 @@ export function serializeGraph<Ts extends readonly WidenedNodeType[], S>(
     // Written EXPLICITLY even for "unloaded", which the reader would otherwise
     // default to anyway. The tag is what tells the reader this node is a
     // container at all when its kind is unregistered — without it, a
-    // quarantined unloaded container reloads as a quarantined leaf and its
+    // sealed unloaded container reloads as a sealed leaf and its
     // subtree becomes unreachable forever.
     draft.childrenState = state.status;
     if (state.status === "missing") draft.missingReason = state.reason;
@@ -69,7 +69,7 @@ export function serializeGraph<Ts extends readonly WidenedNodeType[], S>(
 
   const serializeData = (kind: string, data: unknown): unknown => {
     const nodeType = ctx.registry.get(kind);
-    // Unreachable: a non-quarantined node was built by a node type found in this
+    // Unreachable: a non-sealed node was built by a node type found in this
     // very registry. Falling back to the live value rather than throwing keeps
     // this function total — an unserializable node should cost one node's
     // fidelity, never the whole save.
@@ -83,7 +83,7 @@ export function serializeGraph<Ts extends readonly WidenedNodeType[], S>(
     //
     // The live value is the best remaining representation: it is what the node type
     // was asked to encode, it is usually near-identical to the wire form, and
-    // on reload it either parses or quarantines loudly. Both outcomes beat
+    // on reload it either parses or seals loudly. Both outcomes beat
     // losing the whole save.
     try {
       return nodeType.serialize(data);
@@ -103,7 +103,7 @@ export function serializeGraph<Ts extends readonly WidenedNodeType[], S>(
     if (node === undefined) return;
     emitted.add(id);
 
-    if (node.quarantined) {
+    if (node.sealed) {
       const draft: NodeDraft = { id, kind: node.kind, data: node.raw };
       // A kind this build does not know still has a version, and it is the one
       // the document declared. First writer wins so the output is deterministic
@@ -115,11 +115,11 @@ export function serializeGraph<Ts extends readonly WidenedNodeType[], S>(
       // AND on the node itself, unconditionally, because the document-level
       // entry above is only reachable for an UNREGISTERED kind — a registered
       // one had the registry's current version written before any node was
-      // examined, and it wins. That is precisely the case that made quarantine
-      // a one-way door: a node quarantined at v1 because the v2 migration threw
+      // examined, and it wins. That is precisely the case that made sealing
+      // a one-way door: a node sealed at v1 because the v2 migration threw
       // was re-emitted labelled v2, so the fixed build's `runMigrations` saw
       // `from >= to`, ran nothing, and handed v1 bytes to a v2 `parse`. The
-      // node quarantined again, forever, and the mechanism that existed to
+      // node sealed again, forever, and the mechanism that existed to
       // preserve it is what destroyed it.
       draft.schemaVersion = node.schemaVersion;
       if (node.summary !== undefined) draft.summary = node.summary;

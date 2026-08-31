@@ -109,7 +109,7 @@ export { DEFAULT_INTERACTIVE_NODE_BUDGET } from "./constants";
  * is wrong. Everything that can go wrong once DATA is involved returns a
  * `Result` instead.
  *
- * Defaults: `onUnknownKind` and `onParseFailure` quarantine, `mintId` a
+ * Defaults: `onUnknownKind` and `onParseFailure` seal, `mintId` a
  * counter-plus-random id, `now` `Date.now`, `historyLimit` unbounded,
  * `foldCacheLimit` `DEFAULT_FOLD_CACHE_LIMIT` (a folds x nodes product — see
  * ./folds), `devChecks` off.
@@ -237,8 +237,8 @@ export function createEngine<
     engineId,
     registry,
     summary: config.summary,
-    onUnknownKind: config.onUnknownKind ?? "quarantine",
-    onParseFailure: config.onParseFailure ?? "quarantine",
+    onUnknownKind: config.onUnknownKind ?? "seal",
+    onParseFailure: config.onParseFailure ?? "seal",
     // `?? DEFAULT_MAX_NODES` and not `Math.min` with it: a consumer who names a
     // ceiling has named THE ceiling, including one above the default. The
     // default is what applies when nobody chose, not a cap on choosing.
@@ -1068,7 +1068,7 @@ export function createEngine<
         const loaded = loadChildrenInto<Ts, S>(graph, id, doc, ctx);
         if (!loaded.ok) return loaded;
         commitGraph(loaded.value.graph, "load");
-        // The report is handed BACK rather than swallowed. Quarantine is a
+        // The report is handed BACK rather than swallowed. Seal is a
         // success path, so `ok: true` does not mean the page arrived intact —
         // see `Store.load`.
         return { ok: true, value: loaded.value.report };

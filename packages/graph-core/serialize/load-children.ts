@@ -4,7 +4,7 @@
 
 import {
   makeCollectionNode,
-  makeQuarantinedNode,
+  makeSealedNode,
   type GraphNode,
   type EngineContext,
   type Graph,
@@ -85,8 +85,8 @@ export function loadChildrenIntoUnguarded<Ts extends readonly WidenedNodeType[],
   }
 
   // `childrenStateOf` returns null for a leaf, an unknown node, or a
-  // QUARANTINED leaf — which is exactly the set that cannot be loaded into. A
-  // quarantined CONTAINER can be: its kind failed to parse, but its subtree is
+  // SEALD leaf — which is exactly the set that cannot be loaded into. A
+  // sealed CONTAINER can be: its kind failed to parse, but its subtree is
   // still real, still addressable, and refusing to load it would strand every
   // node underneath it.
   const state = childrenStateOf(graph, id);
@@ -228,9 +228,9 @@ export function loadChildrenIntoUnguarded<Ts extends readonly WidenedNodeType[],
   //
   // `buildDocument` has always produced one — the same one `deserialize`
   // returns — and this door threw it away, so `Store.load` answered
-  // `Result<void>` and a lazy page in which EVERY node quarantined was
+  // `Result<void>` and a lazy page in which EVERY node sealed was
   // indistinguishable from a clean one. The consumer's own retry, telemetry and
-  // "some items could not be read" affordances all hang off `report.quarantined`
+  // "some items could not be read" affordances all hang off `report.sealed`
   // on the eager door and had nothing to hang off here, on the door that runs
   // repeatedly against a live document rather than once at startup.
   //
@@ -248,16 +248,16 @@ export function loadChildrenIntoUnguarded<Ts extends readonly WidenedNodeType[],
 
 /**
  * Rebuilds the target with `children: { status: "loaded" }`. Enumerated field
- * by field rather than spread: `QuarantinedNode` carries a `quarantined: true`
- * that `makeQuarantinedNode` adds itself, and the boundary constructors are
+ * by field rather than spread: `SealedNode` carries a `sealed: true`
+ * that `makeSealedNode` adds itself, and the boundary constructors are
  * the only sanctioned way to mint a node.
  */
 function withLoadedChildren<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
   id: NodeId,
 ): GraphNode<Ts, S> {
-  if (node.quarantined) {
-    return makeQuarantinedNode({
+  if (node.sealed) {
+    return makeSealedNode({
       id,
       kind: node.kind,
       container: node.container,

@@ -160,7 +160,7 @@ function findInvariantViolationUnguarded<Ts extends readonly WidenedNodeType[], 
       };
     }
     seenRootIds.add(rootId);
-    // Read straight off the node, not through `isCollection`: a quarantined
+    // Read straight off the node, not through `isCollection`: a sealed
     // root is judged by the `container` flag its document declared, which is
     // the only evidence there is when no node type would parse it.
     if (!node.container) {

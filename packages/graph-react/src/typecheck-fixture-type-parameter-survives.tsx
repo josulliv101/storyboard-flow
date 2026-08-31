@@ -168,7 +168,7 @@ ui.defineNodeView("folder", ({ id, data }) => {
   );
 });
 
-ui.defineQuarantinedView(({ node }) => <pre>{node.reason}</pre>);
+ui.defineSealedView(({ node }) => <pre>{node.reason}</pre>);
 
 // --- assertion 3: `useAggregate` is the same function under the spec's name --
 
@@ -181,7 +181,7 @@ export function FoldAliasProbe(): ReactNode {
 
 // --- assertion 4: `GraphNode` still discriminates ------------------------------
 //
-// Three arms, `quarantined` first. If `Ts` had widened, `node.kind` on the last
+// Three arms, `sealed` first. If `Ts` had widened, `node.kind` on the last
 // arm would be `string` rather than `"clip" | "folder"` and `node.children`
 // would not carry the four-state discriminant.
 
@@ -191,7 +191,7 @@ export function Roots(): ReactNode {
   const label: string =
     node === undefined
       ? "gone"
-      : node.quarantined
+      : node.sealed
         ? node.reason
         : node.container
           ? node.children.status

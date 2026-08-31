@@ -1,7 +1,7 @@
 // Graph — part of the former single-file `types.ts`; see ./index.ts.
 
 import type { Folded } from "./folds";
-import type { ChildrenState, CollectionNode, LeafNode, QuarantineReason, QuarantinedNode } from "./graph";
+import type { ChildrenState, CollectionNode, LeafNode, SealReason, SealedNode } from "./graph";
 import type { WidenedNodeType } from "./node-types";
 import type { DataChange } from "./patches";
 import type { Issue, NodeId } from "./primitives";
@@ -32,11 +32,11 @@ export function makeLeafNode<Ts extends readonly WidenedNodeType[]>(
 ): LeafNode<Ts> {
   const node: Readonly<{
     id: NodeId;
-    quarantined: false;
+    sealed: false;
     container: false;
     kind: string;
     data: unknown;
-  }> = { id, quarantined: false, container: false, kind, data };
+  }> = { id, sealed: false, container: false, kind, data };
   return node as unknown as LeafNode<Ts>;
 }
 
@@ -50,7 +50,7 @@ export function makeCollectionNode<Ts extends readonly WidenedNodeType[], S>(
 ): CollectionNode<Ts, S> {
   const node: Readonly<{
     id: NodeId;
-    quarantined: false;
+    sealed: false;
     container: true;
     kind: string;
     data: unknown;
@@ -58,7 +58,7 @@ export function makeCollectionNode<Ts extends readonly WidenedNodeType[], S>(
     summary: S | null;
   }> = {
     id,
-    quarantined: false,
+    sealed: false,
     container: true,
     kind,
     data,
@@ -69,25 +69,25 @@ export function makeCollectionNode<Ts extends readonly WidenedNodeType[], S>(
 }
 
 /**
- * A quarantined node needs no cast — `QuarantinedNode` is not generic, since
+ * A sealed node needs no cast — `SealedNode` is not generic, since
  * there is no node type and therefore no `Data`. Present for symmetry, and to keep
  * `raw` construction in one place: `raw` MUST be the value exactly as it
  * arrived, or re-emit stops being byte-exact.
  */
-export function makeQuarantinedNode(
+export function makeSealedNode(
   args: Readonly<{
     id: NodeId;
     kind: string;
     container: boolean;
     schemaVersion: number;
     raw: unknown;
-    reason: QuarantineReason;
+    reason: SealReason;
     issues: readonly Issue[];
     children: ChildrenState | null;
     summary: unknown;
   }>,
-): QuarantinedNode {
-  return { quarantined: true, ...args };
+): SealedNode {
+  return { sealed: true, ...args };
 }
 
 /**

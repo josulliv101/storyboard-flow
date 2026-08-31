@@ -41,7 +41,7 @@ import {
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
-  makeQuarantinedNode,
+  makeSealedNode,
   parseNodeId,
 } from "../types";
 import type {
@@ -182,12 +182,12 @@ function folder(
   );
 }
 
-function quarantined(
+function sealed(
   name: string,
   container: boolean,
   children: ChildrenState | null,
 ): TestNode {
-  return makeQuarantinedNode({
+  return makeSealedNode({
     id: nid(name),
     kind: "from-the-future",
     container,
@@ -354,8 +354,8 @@ describe("childrenStateOf / isCollection / isLoaded / stateOwnsSubtree", () => {
       folder("unloaded", UNLOADED),
       folder("ref", REFERENCE),
       clip("leaf"),
-      quarantined("q-container", true, UNLOADED),
-      quarantined("q-leaf", false, null),
+      sealed("q-container", true, UNLOADED),
+      sealed("q-leaf", false, null),
     ],
     children: {
       root: ["loaded", "unloaded", "ref", "leaf", "q-container", "q-leaf"],
@@ -379,9 +379,9 @@ describe("childrenStateOf / isCollection / isLoaded / stateOwnsSubtree", () => {
     expect(childrenStateOf(graph, nid("nope"))).toBeNull();
   });
 
-  it("isCollection is true for EVERY quarantined node, leaf included", () => {
+  it("isCollection is true for EVERY sealed node, leaf included", () => {
     // Over-broad by design: the predicate narrows its false branch to LeafNode,
-    // so admitting a quarantined leaf there would let it be read as a parsed
+    // so admitting a sealed leaf there would let it be read as a parsed
     // leaf with a `data` field it does not have.
     const qLeaf = getNode(graph, nid("q-leaf"));
     const qContainer = getNode(graph, nid("q-container"));
@@ -486,7 +486,7 @@ describe("contentKeyOf / sourceKeyOf", () => {
       folder("owned", UNLOADED, "doc-1"),
       clip("c1", "asset-x"),
       note("n1"),
-      quarantined("q", false, null),
+      sealed("q", false, null),
       makeLeafNode<Types>(nid("ghost-kind"), "not-registered", { assetId: "z" }),
     ],
     children: { root: ["owned", "c1", "n1", "q", "ghost-kind"] },
@@ -508,7 +508,7 @@ describe("contentKeyOf / sourceKeyOf", () => {
     expect(keysOf("n1")).toEqual([null, null]);
   });
 
-  it("is null for a quarantined node — `raw` is not `Data`", () => {
+  it("is null for a sealed node — `raw` is not `Data`", () => {
     expect(keysOf("q")).toEqual([null, null]);
   });
 
@@ -710,9 +710,9 @@ describe("markMissing", () => {
     expect(getSubtreeRev(changed, nid("b"))).toBe(2);
   });
 
-  it("works on a quarantined container", () => {
+  it("works on a sealed container", () => {
     const graph = graphOf({
-      nodes: [folder("root", LOADED), quarantined("q", true, UNLOADED)],
+      nodes: [folder("root", LOADED), sealed("q", true, UNLOADED)],
       children: { root: ["q"] },
       roots: ["root"],
     });
@@ -721,16 +721,16 @@ describe("markMissing", () => {
       status: "missing",
       reason: "404",
     });
-    // The quarantined node's byte-exact `raw` must survive the state change, or
+    // The sealed node's byte-exact `raw` must survive the state change, or
     // re-emit stops being byte-exact.
     const node = getNode(next, nid("q"));
-    expect(node?.quarantined === true && node.raw).toEqual({ anything: true });
+    expect(node?.sealed === true && node.raw).toEqual({ anything: true });
     expect(findInvariantViolation(next, registry)).toBeNull();
   });
 
-  it("is a no-op for a quarantined LEAF (no subtree to be missing)", () => {
+  it("is a no-op for a sealed LEAF (no subtree to be missing)", () => {
     const graph = graphOf({
-      nodes: [folder("root", LOADED), quarantined("q", false, null)],
+      nodes: [folder("root", LOADED), sealed("q", false, null)],
       children: { root: ["q"] },
       roots: ["root"],
     });
@@ -747,16 +747,16 @@ describe("findInvariantViolation: valid graphs", () => {
     expect(findInvariantViolation(sampleGraph(), registry)).toBeNull();
   });
 
-  it("passes a graph with quarantined nodes in it", () => {
+  it("passes a graph with sealed nodes in it", () => {
     const graph = graphOf({
       nodes: [
         folder("root", LOADED),
-        quarantined("qc", true, LOADED),
-        quarantined("ql", false, null),
+        sealed("qc", true, LOADED),
+        sealed("ql", false, null),
         clip("inside"),
       ],
-      // A quarantined container keeps its children addressable and movable —
-      // that is the whole point of quarantining the DATA and not the node.
+      // A sealed container keeps its children addressable and movable —
+      // that is the whole point of sealing the DATA and not the node.
       children: { root: ["qc", "ql"], qc: ["inside"] },
       roots: ["root"],
     });
@@ -866,9 +866,9 @@ describe("findInvariantViolation: children checks", () => {
     expect(violation?.nodeId).toBe(nid("c1"));
   });
 
-  it("leaf-with-children for a QUARANTINED leaf with an entry", () => {
+  it("leaf-with-children for a SEALD leaf with an entry", () => {
     const graph = graphOf({
-      nodes: [folder("root", LOADED), quarantined("ql", false, null)],
+      nodes: [folder("root", LOADED), sealed("ql", false, null)],
       children: { root: ["ql"], ql: [] },
       roots: ["root"],
     });
@@ -937,9 +937,9 @@ describe("findInvariantViolation: root checks", () => {
     expect(violation?.parentId).toBe(nid("root"));
   });
 
-  it("a quarantined node may be a root when the wire said container", () => {
+  it("a sealed node may be a root when the wire said container", () => {
     const graph = graphOf({
-      nodes: [quarantined("qr", true, UNLOADED)],
+      nodes: [sealed("qr", true, UNLOADED)],
       roots: ["qr"],
     });
     expect(findInvariantViolation(graph, registry)).toBeNull();
@@ -947,7 +947,7 @@ describe("findInvariantViolation: root checks", () => {
 
   it("...and may not when it said leaf", () => {
     const graph = graphOf({
-      nodes: [quarantined("qr", false, null)],
+      nodes: [sealed("qr", false, null)],
       roots: ["qr"],
     });
     expect(findInvariantViolation(graph, registry)?.code).toBe("root-not-container");

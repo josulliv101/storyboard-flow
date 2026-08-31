@@ -1,6 +1,6 @@
 // Graph — part of the former single-file `types.ts`; see ./index.ts.
 
-import type { QuarantineReason } from "./graph";
+import type { SealReason } from "./graph";
 import type { Issue, NodeId } from "./primitives";
 
 // ---------------------------------------------------------------------------
@@ -43,8 +43,8 @@ export type RejectionCode =
    *  `reference` instead — that is the typed answer the consumer is meant to
    *  give. */
   | "duplicate-owner"
-  /** Quarantined nodes move and delete, but do not edit. */
-  | "node-quarantined"
+  /** Sealed nodes move and delete, but do not edit. */
+  | "node-sealed"
   /** `edit.kind` does not match the target node's kind. */
   | "kind-mismatch"
   /** The node type's own `applyEdit` said no. See `editRejection`. */
@@ -209,7 +209,7 @@ export type LoadRejection = Readonly<{
 }>;
 
 /** The whole document is unusable. Per-node content failures do NOT land here
- *  by default — they quarantine. */
+ *  by default — they seal. */
 export type StructuralErrorCode =
   | "malformed-document"
   | "unsupported-format-version"
@@ -225,7 +225,7 @@ export type StructuralErrorCode =
   | "root-not-container"
   | "unreachable-node"
   // NO `"leaf-with-children"` here, and its absence is the point. Ingress does
-  // not REJECT a leaf that arrived carrying children — it quarantines that node
+  // not REJECT a leaf that arrived carrying children — it seals that node
   // as `"shape-mismatch"` and keeps the rest of the document, which is the whole
   // design: one node's confusion must not cost the user their file. The member
   // sat in this union unreachable, and a consumer writing an exhaustive switch
@@ -264,13 +264,13 @@ export type StructuralError = Readonly<{
 
 /**
  * One node failed the content trust boundary. Reported in `LoadReport` when
- * quarantined, or lifted into `StructuralError.ingress` when the engine is
+ * sealed, or lifted into `StructuralError.ingress` when the engine is
  * configured to reject.
  */
 export type IngressError = Readonly<{
   nodeId: NodeId;
   kind: string;
-  reason: QuarantineReason;
+  reason: SealReason;
   issues: readonly Issue[];
 }>;
 

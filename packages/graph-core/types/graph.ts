@@ -55,7 +55,7 @@ export type LeafNode<Ts extends readonly WidenedNodeType[]> = {
     ? Readonly<{
         id: NodeId;
         /** Discriminant #1 of `GraphNode`. See the note on `GraphNode`. */
-        quarantined: false;
+        sealed: false;
         container: false;
         kind: K;
         data: D;
@@ -67,7 +67,7 @@ export type CollectionNode<Ts extends readonly WidenedNodeType[], S> = {
   [I in keyof Ts]: Ts[I] extends ConsumerDefinedNodeType<infer K, infer D, infer _E>
     ? Readonly<{
         id: NodeId;
-        quarantined: false;
+        sealed: false;
         container: true;
         kind: K;
         data: D;
@@ -90,7 +90,7 @@ export type CollectionNode<Ts extends readonly WidenedNodeType[], S> = {
  * consumer-visible distinction that matters is "we could not build this", and
  * the Issue carries the detail.
  */
-export type QuarantineReason =
+export type SealReason =
   | "unknown-kind"
   | "parse-failed"
   /**
@@ -98,12 +98,12 @@ export type QuarantineReason =
    * arriving with a children array or a `childrenState`.
    *
    * This used to abort the WHOLE DOCUMENT — the one shape failure that still
-   * did, while a node whose DATA failed to parse quarantined and the document
+   * did, while a node whose DATA failed to parse sealed and the document
    * loaded around it. The asymmetry was not deliberate; the comment two types
    * down already made the argument against it: "one refused stored clip made
    * a whole document unwritable forever."
    *
-   * The node is held as a QUARANTINED CONTAINER carrying the children it
+   * The node is held as a SEALD CONTAINER carrying the children it
    * declared, which is what keeps them from being orphaned — the one thing
    * this engine refuses to do. Repair it by fixing the kind's `container`
    * flag or the document, and it loads clean.
@@ -118,26 +118,26 @@ export type QuarantineReason =
  * removable, undoable; NOT editable; poisons its ancestors' folds to
  * `"partial"`.
  *
- * Quarantine rather than rejection is the default because the alternative
+ * Seal rather than rejection is the default because the alternative
  * shipped: one refused stored clip made a whole document unwritable forever,
  * and since the trash bin is rewritten on every delete, deleting *anything*
  * became impossible.
  *
  * `container` comes from the WIRE, not from a node type — there is no node type.
  */
-export type QuarantinedNode = Readonly<{
+export type SealedNode = Readonly<{
   id: NodeId;
-  quarantined: true;
+  sealed: true;
   kind: string;
   container: boolean;
   schemaVersion: number;
   raw: unknown;
-  reason: QuarantineReason;
+  reason: SealReason;
   issues: readonly Issue[];
   /**
-   * A quarantined CONTAINER still needs its load state, or a document that
-   * round-trips through quarantine would forget that a subtree was unloaded.
-   * `null` on a quarantined leaf.
+   * A sealed CONTAINER still needs its load state, or a document that
+   * round-trips through seal would forget that a subtree was unloaded.
+   * `null` on a sealed leaf.
    */
   children: ChildrenState | null;
   /** Carried through untouched — the summary type is not the failing one. */
@@ -150,7 +150,7 @@ export type QuarantinedNode = Readonly<{
  *
  * CLOSED, not permissive, and the name matters because this used to be called
  * `AnyNode` in a package whose own rule is "never use `any`". Nothing here is
- * loose: this is the most CONSTRAINING type in the engine. `QuarantinedNode` is
+ * loose: this is the most CONSTRAINING type in the engine. `SealedNode` is
  * a member ON PURPOSE, so a consumer's exhaustive switch does not compile until
  * forward-incompatible data is handled.
  *
@@ -160,21 +160,21 @@ export type QuarantinedNode = Readonly<{
  * `PhantomTypes` still calls it `Node` — that one is reached as
  * `engine.types.Node`, so it is namespaced and can keep the better name.
  *
- * DISCRIMINATE ON `quarantined` FIRST, THEN `container`:
+ * DISCRIMINATE ON `sealed` FIRST, THEN `container`:
  *
- *   if (node.quarantined) { ... }        // QuarantinedNode
+ *   if (node.sealed) { ... }        // SealedNode
  *   else if (node.container) { ... }     // CollectionNode
  *   else { ... }                         // LeafNode
  *
- * `container` alone cannot do it — it is `boolean` on the quarantined arm (it
+ * `container` alone cannot do it — it is `boolean` on the sealed arm (it
  * comes off the wire), so it is not disjoint from the literal `true` / `false`
  * on the other two. That is why `LeafNode` and `CollectionNode` carry an
- * explicit `quarantined: false`.
+ * explicit `sealed: false`.
  */
 export type GraphNode<Ts extends readonly WidenedNodeType[], S> =
   | LeafNode<Ts>
   | CollectionNode<Ts, S>
-  | QuarantinedNode;
+  | SealedNode;
 
 /**
  * The normalized graph — a pure value, replaced wholesale on every mutation.

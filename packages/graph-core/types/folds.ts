@@ -1,6 +1,6 @@
 // Graph — part of the former single-file `types.ts`; see ./index.ts.
 
-import type { CollectionNode, LeafNode, QuarantinedNode } from "./graph";
+import type { CollectionNode, LeafNode, SealedNode } from "./graph";
 import type { WidenedNodeType } from "./node-types";
 import type { NodeId } from "./primitives";
 
@@ -75,7 +75,7 @@ export type FoldedChild<A> = Folded<A> &
  */
 export type ConsumerDefinedFold<Ts extends readonly WidenedNodeType[], S, A> = Readonly<{
   key: string;
-  /** A leaf is always `"exact"` — only placeholders and quarantine introduce
+  /** A leaf is always `"exact"` — only placeholders and seal introduce
    *  uncertainty, so the evaluator wraps this without asking. */
   leaf(node: LeafNode<Ts>): A;
   collection(
@@ -87,7 +87,7 @@ export type ConsumerDefinedFold<Ts extends readonly WidenedNodeType[], S, A> = R
   /** MUST return certainty `"exact"`: confirmed-gone is knowledge. */
   missing(node: CollectionNode<Ts, S>): Folded<A>;
   /** REQUIRED — no default. Forward-incompatible data must be answered for. */
-  quarantined(node: QuarantinedNode): Folded<A>;
+  sealed(node: SealedNode): Folded<A>;
 }>;
 
 /**

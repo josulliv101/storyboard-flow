@@ -97,8 +97,8 @@ export function planMove<Ts extends readonly WidenedNodeType[], S>(
   }
   // A post-removal index into children nobody has ever seen has no honest
   // value, so this is a graph-level truth and not an app-level policy. A
-  // quarantined CONTAINER is allowed here when it is loaded: its children array
-  // is real, and the whole point of quarantine is that the subtree stays usable.
+  // sealed CONTAINER is allowed here when it is loaded: its children array
+  // is real, and the whole point of sealing is that the subtree stays usable.
   if (target.children === null || target.children.status !== "loaded") {
     return fail(
       "target-not-loaded",

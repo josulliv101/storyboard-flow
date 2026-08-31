@@ -1,21 +1,21 @@
-// Third review round — saving a quarantined node destroyed the one fact needed
+// Third review round — saving a sealed node destroyed the one fact needed
 // to repair it.
 //
-// QUARANTINE'S WHOLE PROMISE is that a node whose content this build cannot
+// SEAL'S WHOLE PROMISE is that a node whose content this build cannot
 // understand keeps its id, its position, its children and its RAW BYTES, so a
 // later build can read it correctly. The module header states it: "A document
 // that will not load is a document the user cannot repair."
 //
 // `serializeGraph` wrote the REGISTRY's current version for every registered
-// kind, up front, and the quarantined branch only filled in a version for kinds
-// the registry did not know. So a node quarantined at v1 — because the v2
+// kind, up front, and the sealed branch only filled in a version for kinds
+// the registry did not know. So a node sealed at v1 — because the v2
 // migration was missing or threw — was re-emitted labelled v2. On the next load
 // `runMigrations` sees `from >= to`, runs nothing, and hands v1 bytes to a v2
-// `parse`. The node quarantines again, forever, and the mechanism that existed
+// `parse`. The node seals again, forever, and the mechanism that existed
 // to preserve it is what destroyed it.
 //
 // The user gesture is completely ordinary: a build ships a bad migration, one
-// node quarantines, the user keeps working (which is the POINT of quarantine)
+// node seals, the user keeps working (which is the POINT of seal)
 // and saves. That save is the expected outcome, not an edge case.
 import { describe, expect, it } from "vitest";
 
@@ -141,14 +141,14 @@ const v1Document = {
 
 const clipAId = parseNodeId("a");
 
-describe("a quarantined node survives a save-and-reload well enough to be repaired", () => {
-  it("quarantines when the migration is broken, which is the setup, not the bug", () => {
+describe("a sealed node survives a save-and-reload well enough to be repaired", () => {
+  it("seals when the migration is broken, which is the setup, not the bug", () => {
     migrationThrows = true;
     const engine = makeEngineV2();
     const loaded = engine.deserialize(v1Document);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.report.quarantined.length).toBe(2);
+    expect(loaded.value.report.sealed.length).toBe(2);
   });
 
   it("re-emits the version its bytes were actually written at", () => {
@@ -166,19 +166,19 @@ describe("a quarantined node survives a save-and-reload well enough to be repair
     // version its raw bytes belong to. Without that, the v1 bytes are labelled
     // v2 and no migration can ever reach them again.
     expect(clip?.schemaVersion).toBe(1);
-    // And the bytes themselves are untouched — quarantine's byte-exact re-emit.
+    // And the bytes themselves are untouched — seal's byte-exact re-emit.
     expect(clip?.data).toEqual({ title: "A", secs: 4 });
   });
 
-  it("REPAIRS on the next build, which is the whole point of quarantine", () => {
+  it("REPAIRS on the next build, which is the whole point of sealing", () => {
     migrationThrows = true;
     const brokenBuild = makeEngineV2();
     const loadedBroken = brokenBuild.deserialize(v1Document);
     expect(loadedBroken.ok).toBe(true);
     if (!loadedBroken.ok) return;
-    expect(loadedBroken.value.report.quarantined.length).toBe(2);
+    expect(loadedBroken.value.report.sealed.length).toBe(2);
 
-    // The user kept working and saved — the expected outcome, since quarantine
+    // The user kept working and saved — the expected outcome, since seal
     // exists precisely so one bad node does not make the document unwritable.
     const saved = brokenBuild.serialize(loadedBroken.value.graph);
 
@@ -189,13 +189,13 @@ describe("a quarantined node survives a save-and-reload well enough to be repair
     expect(reloaded.ok).toBe(true);
     if (!reloaded.ok) return;
 
-    // Nothing quarantined this time: the migration ran because the node still
+    // Nothing sealed this time: the migration ran because the node still
     // declared v1.
-    expect(reloaded.value.report.quarantined.length).toBe(0);
+    expect(reloaded.value.report.sealed.length).toBe(0);
 
     const node = reloaded.value.graph.nodesById.get(clipAId);
-    expect(node?.quarantined).toBe(false);
-    if (node === undefined || node.quarantined) return;
+    expect(node?.sealed).toBe(false);
+    if (node === undefined || node.sealed) return;
     expect(node.data).toEqual({ title: "A", seconds: 4 });
   });
 
@@ -205,7 +205,7 @@ describe("a quarantined node survives a save-and-reload well enough to be repair
     const loaded = engine.deserialize(v1Document);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.report.quarantined.length).toBe(0);
+    expect(loaded.value.report.sealed.length).toBe(0);
 
     const saved = engine.serialize(loaded.value.graph);
     // A node that parsed cleanly holds CURRENT data, so it needs no per-node
@@ -219,7 +219,7 @@ describe("a quarantined node survives a save-and-reload well enough to be repair
     const again = engine.deserialize(saved);
     expect(again.ok).toBe(true);
     if (!again.ok) return;
-    expect(again.value.report.quarantined.length).toBe(0);
+    expect(again.value.report.sealed.length).toBe(0);
   });
 
   it("refuses a per-node version that is not a finite number", () => {

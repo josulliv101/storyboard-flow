@@ -13,7 +13,7 @@ import {
   quoteFromWire,
   type NodeId,
   type ParseCtx,
-  type QuarantineReason,
+  type SealReason,
   type Result,
 } from "../types";
 
@@ -25,7 +25,7 @@ import {
 function ingressError(
   nodeId: NodeId,
   kind: string,
-  reason: QuarantineReason,
+  reason: SealReason,
   issues: readonly Issue[],
 ): Result<never, IngressError> {
   return { ok: false, error: { nodeId, kind, reason, issues } };
@@ -51,7 +51,7 @@ function ingressError(
  * and `false`. Frozen, that mutation throws into the try/catch and is reported.
  *
  * REPORTED, NEVER THROWN, and never converted into an `IngressError`. A node
- * that quarantines under `devChecks: true` and loads clean under `false` would
+ * that seals under `devChecks: true` and loads clean under `false` would
  * make the flag change what the document IS, which is the one thing a
  * diagnostic must not do.
  *
@@ -182,7 +182,7 @@ export function parseNodeData<S>(
   };
 
   // A node type is consumer code, and an ingress door that throws takes the whole
-  // document down — the exact failure quarantine exists to prevent. A thrown
+  // document down — the exact failure sealing exists to prevent. A thrown
   // parse is reported as the refusal it evidently is.
   let parsed: Result<unknown, readonly Issue[]>;
   try {
@@ -251,7 +251,7 @@ function runMigrations(
   // `from > to` means the document was written by a NEWER build than this one.
   // No migration can walk backwards, so nothing runs and the value goes
   // straight to `parse` — a node type that tolerates unknown additive fields reads
-  // it fine, and one that does not quarantines the node loudly. Refusing here
+  // it fine, and one that does not seals the node loudly. Refusing here
   // instead would turn every rolling deploy into a document that will not open.
   if (migrations === undefined || from >= to) {
     return { ok: true, value: { data: raw, migratedFrom: null } };
@@ -276,7 +276,7 @@ function runMigrations(
       data = migrate(data);
     } catch (thrown) {
       // Reported as a parse failure with an Issue at `$.schemaVersion` rather
-      // than earning a third `QuarantineReason`: the consumer-visible fact is
+      // than earning a third `SealReason`: the consumer-visible fact is
       // "we could not build this node", and the Issue carries which step lost.
       return {
         ok: false,

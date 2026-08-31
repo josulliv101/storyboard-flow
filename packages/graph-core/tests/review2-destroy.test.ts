@@ -236,7 +236,7 @@ describe("verifyDataChanged consults the node type only when it must", () => {
     store.redo();
     const node = store.getGraph().nodesById.get(clipAId);
     const title =
-      node !== undefined && !node.quarantined && node.kind === "clip"
+      node !== undefined && !node.sealed && node.kind === "clip"
         ? node.data.title
         : "?";
     expect(title).toBe("SERVER");

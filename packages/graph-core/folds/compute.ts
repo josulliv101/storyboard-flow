@@ -51,9 +51,9 @@ function readCachedFold<A>(
  * Did this child's value come out of `fold.placeholder` — i.e. is it a stand-in
  * for a subtree nobody has read?
  *
- * TRUE for `unloaded` and `reference` ONLY. A quarantined node is deliberately
+ * TRUE for `unloaded` and `reference` ONLY. A sealed node is deliberately
  * NOT a placeholder even when its own children state says `unloaded`: it was
- * answered by `fold.quarantined`, whose returned certainty is the fold author's
+ * answered by `fold.sealed`, whose returned certainty is the fold author's
  * own signal about forward-incompatible data. Folding the two together would
  * make `placeholder` mean two different things at once and leave neither
  * recoverable from the flag.
@@ -61,9 +61,9 @@ function readCachedFold<A>(
 function isPlaceholderNode<Ts extends readonly WidenedNodeType[], S>(
   node: GraphNode<Ts, S>,
 ): boolean {
-  // Discriminate on `quarantined` FIRST: `container` is plain `boolean` on the
-  // quarantined arm (it comes off the wire), so it cannot separate the three.
-  if (node.quarantined) return false;
+  // Discriminate on `sealed` FIRST: `container` is plain `boolean` on the
+  // sealed arm (it comes off the wire), so it cannot separate the three.
+  if (node.sealed) return false;
   if (!node.container) return false;
   const status = node.children.status;
   return status === "unloaded" || status === "reference";
@@ -76,15 +76,15 @@ function isPlaceholderNode<Ts extends readonly WidenedNodeType[], S>(
  * recoverable.
  *
  * Dispatch, in order:
- *   quarantined         -> fold.quarantined(node)     (children NOT visited)
+ *   sealed         -> fold.sealed(node)     (children NOT visited)
  *   leaf                -> { fold.leaf(node), "exact" }
  *   collection missing  -> fold.missing(node)
  *   collection unloaded
  *     | reference       -> fold.placeholder(node)
  *   collection loaded   -> fold.collection(node, children)
  *
- * A quarantined CONTAINER's children stay addressable and movable in the graph,
- * but they are not folded: quarantine is answered once, by the one hook that
+ * A sealed CONTAINER's children stay addressable and movable in the graph,
+ * but they are not folded: sealing is answered once, by the one hook that
  * exists for it, and a fold that walked into data the engine could not parse
  * would be reporting on values nobody validated.
  *
@@ -156,13 +156,13 @@ export function computeFold<Ts extends readonly WidenedNodeType[], S, A>(
       }
     }
 
-    if (node.quarantined) {
-      commit(node.id, fold.quarantined(node));
+    if (node.sealed) {
+      commit(node.id, fold.sealed(node));
       continue;
     }
 
     if (!node.container) {
-      // A leaf is always exact; only placeholders, quarantine and a fold's own
+      // A leaf is always exact; only placeholders, sealing and a fold's own
       // judgement introduce uncertainty, so the evaluator wraps without asking.
       commit(node.id, { value: fold.leaf(node), certainty: "exact" });
       continue;

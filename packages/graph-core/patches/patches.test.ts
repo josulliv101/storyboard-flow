@@ -19,7 +19,7 @@ import {
   makeCollectionNode,
   makeDataChange,
   makeLeafNode,
-  makeQuarantinedNode,
+  makeSealedNode,
   parseNodeId,
   type GraphNode,
   type ChildrenState,
@@ -136,8 +136,8 @@ function makeCtx(engineId: symbol = ENGINE_ID): EngineContext<Summary> {
     engineId,
     registry,
     summary: summaryType,
-    onUnknownKind: "quarantine",
-    onParseFailure: "quarantine",
+    onUnknownKind: "seal",
+    onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
     mintId: () => "minted",
@@ -162,7 +162,7 @@ type Spec =
       children?: readonly Spec[];
     }>
   | Readonly<{
-      tag: "quarantined";
+      tag: "sealed";
       id: string;
       kind?: string;
       container?: boolean;
@@ -235,7 +235,7 @@ function buildGraph(
     const state = spec.state === undefined ? LOADED : spec.state;
     nodesById.set(
       id,
-      makeQuarantinedNode({
+      makeSealedNode({
         id,
         kind: spec.kind ?? "mystery",
         container: spec.container ?? true,
@@ -899,7 +899,7 @@ describe("applyPatch: data-changed", () => {
     );
     const node = nodeOf(next, "f2");
     expect(node).toBeDefined();
-    if (node === undefined || node.quarantined || !node.container) {
+    if (node === undefined || node.sealed || !node.container) {
       throw new Error("f2 should still be a collection");
     }
     expect(node.data).toEqual({ name: "renamed", source: null });
@@ -1583,14 +1583,14 @@ describe("verifyPatchApplies", () => {
       expect(result.error.code).toBe("kind-mismatch");
     });
 
-    it("rejects editing a quarantined node", () => {
-      // Quarantined nodes move and delete, but do not edit — writing into one
-      // would destroy the byte-exact re-emit quarantine exists to guarantee.
+    it("rejects editing a sealed node", () => {
+      // Sealed nodes move and delete, but do not edit — writing into one
+      // would destroy the byte-exact re-emit sealing exists to guarantee.
       const graph = buildGraph([
         {
           tag: "folder",
           id: "root",
-          children: [{ tag: "quarantined", id: "q", kind: "clip", container: false, state: null }],
+          children: [{ tag: "sealed", id: "q", kind: "clip", container: false, state: null }],
         },
       ]);
       const result = verifyPatchApplies(
@@ -1739,12 +1739,12 @@ describe("patchDetachedSubtrees", () => {
     expect(detached.map((id) => String(id))).toEqual(["lazy", "ref"]);
   });
 
-  it("reports a quarantined container that was never loaded", () => {
+  it("reports a sealed container that was never loaded", () => {
     const graph = buildGraph([
       {
         tag: "folder",
         id: "root",
-        children: [{ tag: "quarantined", id: "q", state: UNLOADED }],
+        children: [{ tag: "sealed", id: "q", state: UNLOADED }],
       },
     ]);
     const detached = patchDetachedSubtrees<TestTypes, Summary>({
@@ -1856,8 +1856,8 @@ describe("scrubPatchForWrite", () => {
     expect(second).toBeDefined();
     if (first === undefined || second === undefined) return;
 
-    expect(first.node.quarantined).toBe(false);
-    if (first.node.quarantined) return;
+    expect(first.node.sealed).toBe(false);
+    if (first.node.sealed) return;
     expect(first.node.data).toEqual({ title: "from-server", assetId: "asset-1" });
     // Position is untouched — scrubbing is a content operation.
     expect(first.index).toBe(0);
@@ -1880,18 +1880,18 @@ describe("scrubPatchForWrite", () => {
     if (scrubbed === null || scrubbed.type !== "inserted") return;
     const node = scrubbed.placements[0]?.node;
     expect(node).toBeDefined();
-    if (node === undefined || node.quarantined || !node.container) return;
+    if (node === undefined || node.sealed || !node.container) return;
     expect(node.data).toEqual({ name: "from-server", source: null });
     expect(node.children).toEqual(UNLOADED);
     expect(node.summary).toEqual({ label: "f2" });
   });
 
-  it("leaves a quarantined placement byte-exact", () => {
+  it("leaves a sealed placement byte-exact", () => {
     const graph = buildGraph([
       {
         tag: "folder",
         id: "root",
-        children: [{ tag: "quarantined", id: "q", state: null, container: false }],
+        children: [{ tag: "sealed", id: "q", state: null, container: false }],
       },
     ]);
     const patch: Patch<TestTypes, Summary> = {

@@ -6,7 +6,7 @@ import {
   describeThrown,
   makeCollectionNode,
   makeLeafNode,
-  makeQuarantinedNode,
+  makeSealedNode,
   tryParseNodeId,
   type GraphNode,
   type ChildrenState,
@@ -159,7 +159,7 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
   // --- Pass C: container-ness and children state ----------------------------
   const containerById = new Map<NodeId, boolean>();
   const stateById = new Map<NodeId, ChildrenState>();
-  /** Leaf kinds that arrived carrying children. Quarantined in Pass F. */
+  /** Leaf kinds that arrived carrying children. Sealed in Pass F. */
   const shapeMismatchById = new Map<NodeId, Issue>();
   for (const [id, node] of wireById) {
     const nodeType = ctx.registry.get(node.kind);
@@ -172,9 +172,9 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
     // For an UNREGISTERED kind there is no node type to ask, so the wire decides —
     // and the rule is "a children array or an explicit childrenState makes it
     // a container", NOT the "default to unloaded" rule below. That asymmetry
-    // is what keeps quarantine round-tripping: `serializeGraph` writes an
+    // is what keeps seal round-tripping: `serializeGraph` writes an
     // explicit `childrenState: "unloaded"` for every non-loaded container, so
-    // a quarantined node arriving with neither signal really was a leaf, and
+    // a sealed node arriving with neither signal really was a leaf, and
     // guessing "unloaded container" would silently grow it a subtree it never
     // had.
     const container =
@@ -183,12 +183,12 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
         : hasChildren || node.childrenState !== undefined;
 
     if (!container) {
-      // A LEAF KIND ARRIVING WITH CHILDREN IS QUARANTINED, NOT REJECTED.
+      // A LEAF KIND ARRIVING WITH CHILDREN IS SEALD, NOT REJECTED.
       //
       // This was the last shape failure that took the whole document down,
-      // while a node whose DATA failed to parse quarantined and everything
+      // while a node whose DATA failed to parse sealed and everything
       // around it loaded. Nothing justified the asymmetry: both are one node's
-      // wire form disagreeing with this build, and `QuarantineReason`'s own
+      // wire form disagreeing with this build, and `SealReason`'s own
       // doc already carried the argument — "one refused stored clip made a
       // whole document unwritable forever."
       //
@@ -196,7 +196,7 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
       // The node declared children; they exist in the flat tree and something
       // must own them. Recording it as a leaf here would leave every one of
       // them parentless, which is the single thing this engine refuses to
-      // produce. `QuarantinedNode` carries both `container` and a
+      // produce. `SealedNode` carries both `container` and a
       // `ChildrenState` precisely so this case has somewhere to land.
       const mismatch = hasChildren
         ? `carries a children array while kind ${quoteFromWire(node.kind)} is registered as a leaf`
@@ -213,7 +213,7 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
       });
       // Fall through to the container arm below, so the declared children are
       // walked, counted and attached exactly as a real container's would be.
-      // Pass F reads `containerById` and `stateById`, so the quarantined node
+      // Pass F reads `containerById` and `stateById`, so the sealed node
       // it builds gets both.
     }
 
@@ -358,7 +358,7 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
 
   // --- Pass F: content -----------------------------------------------------
   const nodesById = new Map<NodeId, GraphNode<Ts, S>>();
-  const quarantined: IngressError[] = [];
+  const sealed: IngressError[] = [];
   const migrated: {
     nodeId: NodeId;
     kind: string;
@@ -384,11 +384,11 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
     // Guessing 0 replays every migration over data that may already be
     // current, which corrupts it silently and permanently. Guessing current
     // means genuinely old data reaches `parse` unmigrated, fails, and
-    // QUARANTINES — loud, byte-exact, and repairable. Between a silent
+    // SEALS — loud, byte-exact, and repairable. Between a silent
     // corruption and a loud refusal, take the refusal.
     const declaredVersion =
       // THE NODE'S OWN VERSION WINS. Present only on a node re-emitted from
-      // quarantine, where the document-level entry describes the registry
+      // seal, where the document-level entry describes the registry
       // rather than these bytes. Absent everywhere else, so the map below stays
       // the answer for every healthy node.
       wire.schemaVersion ??
@@ -432,7 +432,7 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
       // A shape mismatch, already recorded above. Its DATA is never parsed:
       // running the node type on a node known not to fit its own kind reports a
       // second, derived failure that tells the reader nothing about the real
-      // one. `raw` is carried through byte-exact, as with every quarantine.
+      // one. `raw` is carried through byte-exact, as with every seal.
     } else if (!parsedData.ok) {
       failure = parsedData.error;
     } else {
@@ -453,14 +453,14 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
       // `null` and absent are BOTH read as "no summary" without calling the
       // node type: our own writer omits the key for a null summary, but a
       // hand-written or reformatted document spells it out, and handing `null`
-      // to a node type that expects `S` would quarantine a node for the crime of
+      // to a node type that expects `S` would seal a node for the crime of
       // having no rollup yet.
       if (container && wire.summary !== undefined && wire.summary !== null) {
         // WRAPPED, exactly as `parseNodeData` wraps a node type's `parse`. The
     // summary type is consumer-supplied and runs on untrusted bytes, so a
     // throw here is the same class of event as a throw there — and it used to
-    // take the whole `deserialize` down instead of quarantining one node,
-    // which is the failure quarantine exists to prevent.
+    // take the whole `deserialize` down instead of sealing one node,
+    // which is the failure sealing exists to prevent.
     let parsedSummary: Result<S, readonly Issue[]>;
     try {
       parsedSummary = ctx.summary.parse(wire.summary);
@@ -473,11 +473,11 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
       };
     }
         if (!parsedSummary.ok) {
-          // A failed summary is PER-NODE CONTENT, so it quarantines like any
+          // A failed summary is PER-NODE CONTENT, so it seals like any
           // other content failure rather than killing the document. The node
           // keeps its raw summary verbatim, its children stay addressable, and
           // the user can still delete or move it — which is the whole point of
-          // quarantine.
+          // seal.
           summaryFailed = true;
           failure = {
             nodeId: id,
@@ -516,14 +516,14 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
           ingress: [failure],
         });
       }
-      quarantined.push(failure);
+      sealed.push(failure);
       nodesById.set(
         id,
-        makeQuarantinedNode({
+        makeSealedNode({
           id,
           kind: wire.kind,
           container,
-          // Carried from the wire so a round-trip through quarantine re-emits
+          // Carried from the wire so a round-trip through seal re-emits
           // the version the document actually declared, even for a kind this
           // build has never heard of.
           schemaVersion: declaredVersion,
@@ -532,9 +532,9 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
           raw: wire.data,
           reason: failure.reason,
           issues: failure.issues,
-          // A quarantined CONTAINER still needs its load state, or a document
-          // that round-trips through quarantine forgets that a subtree was
-          // unloaded. `null` on a quarantined leaf.
+          // A sealed CONTAINER still needs its load state, or a document
+          // that round-trips through seal forgets that a subtree was
+          // unloaded. `null` on a sealed leaf.
           children: container ? state : null,
           summary: wire.summary,
         }),
@@ -560,7 +560,7 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
       parentById,
       report: {
         nodeCount: order.length,
-        quarantined,
+        sealed,
         migrated,
         warnings,
       },
@@ -578,7 +578,7 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
  * of discovering it later.
  *
  * Leaves are exempt: `childrenStateOf` returns `null` for them, and a node
- * with no subtree cannot own one. Quarantined nodes are exempt too —
+ * with no subtree cannot own one. Sealed nodes are exempt too —
  * `sourceKeyOf` returns `null` for them, since the key comes from a node type that
  * by definition did not run.
  */
