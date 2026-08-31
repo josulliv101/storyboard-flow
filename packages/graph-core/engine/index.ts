@@ -90,16 +90,11 @@ import {
   peekUndo,
   pushHistory,
 } from "../history";
-import {
-  SHADOW_REFOLD_BUDGET,
-  defaultMintId,
-  noop,
-  nothingToReplay,
-  sameIds,
-} from "./defaults";
+import { defaultMintId, noop, nothingToReplay, sameIds } from "./defaults";
+import { SHADOW_REFOLD_BUDGET } from "./constants";
 import { makeCommitWarnings } from "./warnings";
 
-export { DEFAULT_INTERACTIVE_NODE_BUDGET } from "./defaults";
+export { DEFAULT_INTERACTIVE_NODE_BUDGET } from "./constants";
 
 
 // ---------------------------------------------------------------------------

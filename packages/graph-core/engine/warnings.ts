@@ -10,7 +10,7 @@
 // structural rather than a `Graph<Ts, S>` — these are diagnostics about SIZE and
 // have no business being able to see the nodes.
 
-import { DEFAULT_INTERACTIVE_NODE_BUDGET, FOLD_CACHE_HEADROOM } from "./defaults";
+import { DEFAULT_INTERACTIVE_NODE_BUDGET, FOLD_CACHE_HEADROOM } from "./constants";
 
 type SizedGraph = Readonly<{ nodesById: Readonly<{ size: number }> }>;
 

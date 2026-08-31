@@ -17,7 +17,8 @@ import {
   getChildren,
 } from "../graph";
 
-import { fail, foreignGraph, isValidIndex, ok } from "./internals";
+import { foreignGraph, isValidIndex } from "./queries";
+import { fail, ok } from "./results";
 import { buildMoves, isNoOpMove, planMove } from "./move";
 import { checkInsertTarget } from "./insert";
 

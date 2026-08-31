@@ -54,7 +54,8 @@
 // directly rather than widening this list.
 // ---------------------------------------------------------------------------
 
-export { DEFAULT_MAX_NODES, parseSerializedDocument } from "./shape";
+export { parseSerializedDocument } from "./shape";
+export { DEFAULT_MAX_NODES } from "./constants";
 export { parseNodeData } from "./content";
 export { serializeGraph } from "./write";
 export { deserializeDocument, loadChildrenInto } from "./guards";

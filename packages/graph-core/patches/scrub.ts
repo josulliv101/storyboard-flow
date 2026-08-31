@@ -12,7 +12,7 @@ import {
   type Placement,
 } from "../types";
 
-import { EMPTY_IDS } from "./internals";
+import { EMPTY_IDS } from "./constants";
 
 // The non-undoable write scrubbing
 // ---------------------------------------------------------------------------

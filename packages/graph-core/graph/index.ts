@@ -32,7 +32,7 @@
 //     corrupt every empty answer the graph gives. `NO_DEAD_REVS` IS exported,
 //     because ./serialize needs it to build a graph that has removed nothing.
 
-export { NO_DEAD_REVS } from "./internals";
+export { NO_DEAD_REVS } from "./constants";
 
 export { buildRegistry } from "./registry";
 

@@ -19,7 +19,7 @@ import {
   keyHookMessage,
 } from "../graph";
 
-import { fail } from "./internals";
+import { fail } from "./results";
 import { applyCommandUnguarded } from "./reducer";
 import { applyNonUndoableWriteEditsUnguarded } from "./non-undoable-write";
 

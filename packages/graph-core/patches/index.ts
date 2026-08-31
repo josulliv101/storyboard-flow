@@ -64,7 +64,7 @@ import {
   keyHookMessage,
 } from "../graph";
 
-import { replayError } from "./internals";
+import { replayError } from "./results";
 import { verifyPatchAppliesUnguarded } from "./verify";
 
 export { invertPatch } from "./invert";

@@ -12,7 +12,7 @@ import {
   type WidenedNodeType,
 } from "../types";
 
-import { foreignGraph } from "./internals";
+import { foreignGraph } from "./queries";
 import { applyMoveNodes } from "./move";
 import { applyInsertNodes } from "./insert";
 import { applyRemoveNodes } from "./remove";
