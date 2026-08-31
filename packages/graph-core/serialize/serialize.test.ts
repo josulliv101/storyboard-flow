@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { childrenStateOf, buildRegistry, findInvariantViolation, getChildren, getParent } from "./graph";
+import { childrenStateOf, buildRegistry, findInvariantViolation, getChildren, getParent } from "../graph";
 import {
   DEFAULT_MAX_NODES,
   deserializeDocument,
@@ -8,7 +8,7 @@ import {
   parseNodeData,
   parseSerializedDocument,
   serializeGraph,
-} from "./serialize";
+} from "./index";
 import {
   defineNodeType,
   parseNodeId,
@@ -22,7 +22,7 @@ import {
   type SerializedDocument,
   type SerializedNode,
   type ConsumerDefinedSummaryType,
-} from "./types";
+} from "../types";
 
 // ---------------------------------------------------------------------------
 // Fixtures

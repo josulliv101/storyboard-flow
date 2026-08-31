@@ -56,7 +56,7 @@ import {
   type SerializedDocument,
   type SerializedNode,
   type ConsumerDefinedSummaryType,
-} from "./types";
+} from "../types";
 import {
   ancestorChain,
   buildRegistry,
@@ -64,12 +64,12 @@ import {
   findInvariantViolation,
   getSubtreeRev,
   markMissing,
-} from "./graph";
-import { applyCommand } from "./commands";
-import { applyPatch, invertPatch, verifyPatchApplies } from "./patches";
-import { canRedo, canUndo, commitRedo, commitUndo, createHistory, pushHistory } from "./history";
+} from "../graph";
+import { applyCommand } from "./index";
+import { applyPatch, invertPatch, verifyPatchApplies } from "../patches";
+import { canRedo, canUndo, commitRedo, commitUndo, createHistory, pushHistory } from "../history";
 import {
-  DEFAULT_MAX_NODES, deserializeDocument, loadChildrenInto, serializeGraph } from "./serialize";
+  DEFAULT_MAX_NODES, deserializeDocument, loadChildrenInto, serializeGraph } from "../serialize";
 
 // ---------------------------------------------------------------------------
 // Seeded PRNG

@@ -30,7 +30,7 @@ import {
   makeLeafNode,
   makeQuarantinedNode,
   parseNodeId,
-} from "./types";
+} from "../types";
 import {
   buildRegistry,
   findInvariantViolation,
@@ -38,11 +38,11 @@ import {
   getNode,
   getParent,
   getSubtreeRev,
-} from "./graph";
-import { applyPatch, invertPatch } from "./patches";
-import { createHistory } from "./history";
-import { applyCommand, applyNonUndoableWriteEdits, resolveDrop } from "./commands";
-import { DEFAULT_MAX_NODES } from "./serialize";
+} from "../graph";
+import { applyPatch, invertPatch } from "../patches";
+import { createHistory } from "../history";
+import { applyCommand, applyNonUndoableWriteEdits, resolveDrop } from "./index";
+import { DEFAULT_MAX_NODES } from "../serialize";
 
 // ---------------------------------------------------------------------------
 // Fixture node types

@@ -31,19 +31,19 @@ import {
   rebuildDerivedIndexes,
   sourceKeyOf,
   subtreeIds,
-} from "./graph";
+} from "./index";
 // NOT from the barrel. `buildGraph` is deliberately not re-exported there —
 // assembling a graph from already-parsed nodes is an ingress author's tool, and
 // the sanctioned ingress is `deserialize`. A test of that internal reaches the
 // internal, and the import path is the signal that it is doing so.
-import { buildGraph } from "./graph/construction";
+import { buildGraph } from "./construction";
 import {
   defineNodeType,
   makeCollectionNode,
   makeLeafNode,
   makeQuarantinedNode,
   parseNodeId,
-} from "./types";
+} from "../types";
 import type {
   GraphNode,
   ChildrenState,
@@ -51,7 +51,7 @@ import type {
   Issue,
   NodeId,
   Result,
-} from "./types";
+} from "../types";
 
 // ---------------------------------------------------------------------------
 // Fixtures: a two-kind registry with real node types
