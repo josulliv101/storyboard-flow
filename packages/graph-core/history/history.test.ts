@@ -22,7 +22,7 @@ import {
   peekUndo,
   pushHistory,
   scrubHistoryForWrite,
-} from "./history";
+} from "./index";
 import type {
   GraphNode,
   Command,
@@ -32,13 +32,13 @@ import type {
   NodeId,
   Patch,
   Placement,
-} from "./types";
+} from "../types";
 import {
   defineNodeType,
   makeDataChange,
   makeLeafNode,
   parseNodeId,
-} from "./types";
+} from "../types";
 
 // ---------------------------------------------------------------------------
 // Fixtures — two real registered kinds, so `kind` is a genuine discriminant
