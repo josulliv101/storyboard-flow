@@ -204,63 +204,54 @@ export type Graph<Ts extends readonly WidenedNodeType[], S> = Readonly<{
    * identity, so no ancestor rollup ever re-renders.
    *
    * TOTAL OVER `nodesById` AND NOTHING MORE: every live node has an entry, and
-   * no id without a node does. A removed id's revision moves to `deadRevById`
-   * rather than staying here — see there for why it is kept at all, and why
-   * keeping it HERE cost a long session real time.
+   * no id without a node does. A removal DELETES the entry; what stops a
+   * returning id from reusing a revision its dead lineage cached is `revFloor`,
+   * not a per-id tombstone.
+   *
+   * NEVER ZERO FOR A LIVE NODE. Every seed starts at 1 and every bump adds 1,
+   * so `0` is reserved to mean "this graph does not hold that node" — which is
+   * what `getSubtreeRev` answers for an absent id, and what makes a removal
+   * VISIBLE to the removed node's own subscribers without keeping anything
+   * behind for them to compare against. Seeding at 0, as this did, made a
+   * never-edited node read 0 both before and after its own removal.
    */
   subtreeRevById: ReadonlyMap<NodeId, number>;
   /**
-   * The revision each REMOVED id last held. A tombstone store.
+   * A high-water mark: strictly greater than or equal to every revision this
+   * lineage has ever issued, live or since deleted.
    *
-   * WHY THESE ARE KEPT. `subtreeRevById` is the fold cache's only invalidation
-   * mechanism: an entry keyed (foldKey, nodeId, rev) is meant to become
-   * unreachable once the rev moves past it, which is why nothing ever evicts
-   * for correctness. Forgetting a removed id's revision restarts a re-inserted
-   * id at 0, and the store then serves the DEAD lineage's cached values — a
-   * wrong AGGREGATE at the root that does not self-heal. That shipped twice.
+   * WHAT IT REPLACED, and why one number instead of a map. `subtreeRevById` is
+   * the fold cache's only invalidation mechanism — an entry keyed
+   * (foldKey, nodeId, rev) becomes unreachable once the rev moves past it,
+   * which is why nothing ever evicts for correctness. So a re-inserted id must
+   * NOT restart below where it died, or the table serves the dead lineage's
+   * values: a wrong aggregate at the root that does not self-heal. That has
+   * shipped twice.
    *
-   * WHY THEY LIVE HERE RATHER THAN BESIDE THE LIVE ONES. They used to sit in
-   * `subtreeRevById`, which made it a superset of `nodesById` and — the part
-   * that cost — put them inside the map every commit copies. Growth is exactly
-   * one entry per ever-removed id, for the life of the store, so per-commit
-   * cost tracked the number of nodes a session had ever DELETED rather than the
-   * number it currently holds. MEASURED on one `edit-nodes`: 40us at zero
-   * tombstones, 1.7ms at 20,000, 29.4ms at 200,400 — and confirmed to be the
-   * copy, since a bare `new Map` on the same map tracked it at ratio ~1.0.
+   * The previous answer was a per-id tombstone store, `deadRevById`, holding
+   * one entry for every id ever removed. It was correct and it was unbounded:
+   * `applyRemoved` copied it whole on every removal, so a delete cost what the
+   * SESSION had deleted rather than what the document held. MEASURED,
+   * insert-then-remove one node in a loop with the live count pinned at 1 —
+   * 0.045 ms per delete at 1,000 tombstones, 0.195 ms at 4,000, 0.478 ms at
+   * 8,000, and D separate deletions copying D^2/2 entries in total.
    *
-   * Split out, the semantics are byte-for-byte what they were — same numbers,
-   * same high-water rule, no eviction and no threshold — and the copy every
-   * commit makes is proportional to LIVE nodes again. This map has exactly one
-   * writer (`applyRemoved`) and is shared by reference by every commit that
-   * removes nothing, which is nearly all of them.
+   * A FLOOR IS STRICTLY STRONGER THAN A TOMBSTONE. The rule a tombstone
+   * enforced was "a returning id resumes above every rev IT ever had"; this
+   * enforces "above every rev ANY node ever had", which implies it. One number,
+   * O(1) to carry, and a removal now copies exactly what every other commit
+   * copies.
    *
-   * NOT disjoint from `subtreeRevById`, and an earlier version of this comment
-   * claimed it was — "an id is live or dead, never both", backed by "invariant
-   * check 6 asserts the disjointness rather than trusting it." Both halves were
-   * false. Check 6 requires every LIVE node to have a rev and never reads this
-   * map at all, and the overlap is reachable by the most ordinary gesture there
-   * is: remove a node, then undo. Measured through the public store —
-   *
-   *   after remove : live=false dead=true
-   *   after undo   : live=true  dead=true
-   *
-   * — because `applyRemoved` writes the tombstone and `applyInserted` seeds the
-   * returning id ABOVE it without clearing it, which is exactly what the
-   * high-water rule requires.
-   *
-   * The overlap is INERT rather than merely tolerated: `getSubtreeRev` reads
-   * `subtreeRevById` first and only falls through to this map for an id with no
-   * live entry, so a stale dead number can never be the answer for a live node.
-   * What it costs is one number per ever-removed id for the store's lifetime,
-   * which is the trade `applyRemoved` argues for at length.
-   *
-   * Stated here as an observation rather than an assertion because nothing
-   * checks it. If a future check wants to police this map, the property worth
-   * asserting is the high-water rule — a tombstone sits strictly above every
-   * rev its dead lineage cached — not disjointness, which is neither true nor
-   * needed.
+   * THE INVARIANT THIS TRADES FOR, stated plainly because it is the new way to
+   * be wrong: every value in `subtreeRevById` must be <= `revFloor`. An arm that
+   * bumps revisions and forgets to raise the floor lets a returning id collide
+   * with a cached rev, silently, which is the exact failure the tombstones
+   * existed to prevent. `bumpSubtreeRevsInto` returns the highest value it
+   * wrote so a caller cannot compute it independently and drift, and invariant
+   * check 10 in ./graph audits it — the tombstone store had no such check
+   * because it needed none.
    */
-  deadRevById: ReadonlyMap<NodeId, number>;
+  revFloor: number;
   /** Derived from `contentKey`. Values are in document order. */
   placementsByContentKey: ReadonlyMap<string, readonly NodeId[]>;
   /** Derived from `sourceKey`. At most one non-`reference` placement per key. */

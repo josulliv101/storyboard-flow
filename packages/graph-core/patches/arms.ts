@@ -202,7 +202,7 @@ export function applyMoved<Ts extends readonly WidenedNodeType[], S>(
   // against the post-state graph, updates the destination's rollups and leaves
   // the source's silently stale — the node re-renders, the old ancestors never
   // do. Hence two walks against two different graphs.
-  bumpSubtreeRevsInto(
+  const bumpedFromSource = bumpSubtreeRevsInto(
     revs,
     graph,
     moves.map((move) => move.fromParentId),
@@ -242,13 +242,20 @@ export function applyMoved<Ts extends readonly WidenedNodeType[], S>(
   // Its chain runs straight into `toParentId`, which this same call has already
   // bumped, so `bumpSubtreeRevsInto` short-circuits there and nothing is walked
   // or incremented twice.
-  bumpSubtreeRevsInto(revs, relocated, [
+  const bumpedFromTarget = bumpSubtreeRevsInto(revs, relocated, [
     ...moves.map((move) => move.toParentId),
     ...moves.map((move) => move.nodeId),
   ]);
 
   return {
     ...relocated,
+    // THE FLOOR RISES WITH THE HIGHEST REVISION JUST WRITTEN, taken from the
+    // bump rather than re-derived. `Graph.revFloor` is what stops a re-inserted
+    // id from reusing a revision its dead lineage cached, so an arm that bumps
+    // and forgets to raise it is silently wrong in exactly that way — which is
+    // why `bumpSubtreeRevsInto` reports its own maximum and invariant check 10
+    // audits the result.
+    revFloor: Math.max(graph.revFloor, bumpedFromSource, bumpedFromTarget),
     // `ownerBySourceKey` cannot have moved — see `rebuildPlacementIndex` in
     // ./graph.ts for the argument, which turns on the single-owner invariant
     // that check 8 of the audit enforces ahead of check 9.
@@ -295,12 +302,14 @@ export function applyInserted<Ts extends readonly WidenedNodeType[], S>(
     }
     // `subtreeRevById` is TOTAL over `nodesById`. Seeding before the bump means
     // this holds regardless of how `bumpSubtreeRevs` treats an absent id.
-    // The floor comes from the TOMBSTONE STORE now, not from this map: a
-    // removed id's revision moved there, so `revs.has` can no longer answer
-    // "has this id lived here before". The rule is unchanged — a returning id
-    // resumes strictly above every revision its previous lifetime could have
-    // cached — and the bump below carries it the final step.
-    if (!revs.has(node.id)) revs.set(node.id, graph.deadRevById.get(node.id) ?? 0);
+    //
+    // SEEDED AT THE FLOOR, which is what makes a RETURNING id safe. The floor is
+    // at or above every revision this lineage has ever issued, so seeding here
+    // and bumping below lands the id strictly above every rev its previous
+    // lifetime could have cached — the rule a per-id tombstone used to carry,
+    // now enforced by one number for every id at once. A genuinely new id is
+    // unaffected: nothing was ever cached under it at any revision.
+    if (!revs.has(node.id)) revs.set(node.id, graph.revFloor);
   }
 
   // ONE pass per destination parent, after every container this patch creates
@@ -338,11 +347,22 @@ export function applyInserted<Ts extends readonly WidenedNodeType[], S>(
   // Written INTO the copy made above rather than through the copying form: the
   // map is private to this call until `grown` escapes, and the alternative
   // copied `subtreeRevById` twice for one insert.
-  bumpSubtreeRevsInto(
+  const bumpedTo = bumpSubtreeRevsInto(
     revs,
     grown,
     placements.map((placement) => placement.node.id),
   );
+
+  const grownWithFloor: Graph<Ts, S> = {
+    ...grown,
+    // THE FLOOR RISES WITH THE HIGHEST REVISION JUST WRITTEN, taken from the
+    // bump rather than re-derived. `Graph.revFloor` is what stops a re-inserted
+    // id from reusing a revision its dead lineage cached, so an arm that bumps
+    // and forgets to raise it is silently wrong in exactly that way — which is
+    // why `bumpSubtreeRevsInto` reports its own maximum and invariant check 10
+    // audits the result.
+    revFloor: Math.max(graph.revFloor, bumpedTo),
+  };
 
   // An insert never reorders what was already there, so when the arriving nodes
   // contribute no key of their own, BOTH indexes are exactly the maps the
@@ -388,7 +408,7 @@ export function applyInserted<Ts extends readonly WidenedNodeType[], S>(
           ),
         };
 
-  return { ...grown, ...derived };
+  return { ...grownWithFloor, ...derived };
 }
 
 export function applyRemoved<Ts extends readonly WidenedNodeType[], S>(
@@ -406,51 +426,33 @@ export function applyRemoved<Ts extends readonly WidenedNodeType[], S>(
   // only here. Redundant bumps of soon-to-be-deleted ids are harmless; their
   // entries are dropped below. One copy of the rev map, written into — the
   // copying form would have made a second.
-  bumpSubtreeRevsInto(
+  const bumpedParents = bumpSubtreeRevsInto(
     revs,
     graph,
     placements.map((placement) => placement.parentId),
   );
 
-  // THE ONE WRITER of the tombstone store, and the only place a graph's
-  // `deadRevById` is ever a fresh map. Every other commit shares the previous
-  // graph's by reference, which is the whole point of the split: the map that
-  // grows with a session's total deletions is no longer inside the map every
-  // commit copies.
+  // NO TOMBSTONE STORE. The entry is simply deleted, and `Graph.revFloor` — a
+  // single number already at or above every revision this lineage has issued —
+  // is what stops a returning id from reusing one its dead lineage cached.
   //
-  // IT IS STILL INSIDE THE MAP EVERY *REMOVAL* COMMIT COPIES, and that is the
-  // cost this line owns. The split moved the growth off the other three arms,
-  // not off this one. MEASURED, insert-then-remove one node in a loop with the
-  // live count pinned at 1:
+  // WHAT THAT REPLACED. This used to write a per-id tombstone into a map holding
+  // one entry for every id ever removed, copied whole on every removal. Correct,
+  // and unbounded: a delete cost what the SESSION had deleted rather than what
+  // the document held. MEASURED, insert-then-remove one node in a loop with the
+  // live count pinned at 1 — 0.045 ms per delete at 1,000 tombstones, 0.195 ms
+  // at 4,000, 0.478 ms at 8,000, with D separate deletions copying D^2/2 entries
+  // in total. A removal now copies exactly what every other commit copies.
   //
-  //     cycles   live   tombstoned   one removal
-  //      1,000      1        1,000      0.045 ms
-  //      4,000      1        4,000      0.195 ms
-  //      8,000      1        8,000      0.478 ms
+  // THE FLOOR IS STRICTLY STRONGER than the tombstone it replaced: "above every
+  // rev ANY node ever had" implies "above every rev THIS id ever had".
   //
-  // Linear in the tombstone count, so a session of D separate deletions copies
-  // D^2/2 entries in total — 32.0 M for the 8,000 above. Per operation that is
-  // still well inside a frame at any size a session realistically reaches; the
-  // part that mattered was that NOTHING SAID SO. The interactive-cost warning
-  // read `nodesById.size`, which is 1 in the table above, so the one shape where
-  // commit cost is invisible from the document was also the one shape the
-  // diagnostic could not see. It now counts this map too.
-  //
-  // EVICTING FROM HERE IS NOT THE FIX, and it is worth writing down because it
-  // is the obvious one. A tombstone is what stops a RETURNING id from restarting
-  // at 0 and walking back onto revs its dead lineage already cached —
-  // `applyInserted` reads `deadRevById.get(node.id) ?? 0` — so dropping an entry
-  // reintroduces exactly the staleness this store exists to prevent, silently
-  // and permanently, and no eviction policy here can know whether the fold cache
-  // still holds an entry under one of those revs. The cache is a different
-  // structure with a different limit and no ordering relationship to this one.
-  //
-  // What WOULD remove the quadratic is replacing per-id tombstones with a single
-  // monotonic rev floor on the graph: a returning id starts above every rev ever
-  // issued, which is strictly stronger than starting above its own. That is a
-  // change to the fold cache's only invalidation mechanism — the one this file
-  // notes has shipped wrong twice — and it needs its own round, not a line here.
-  const deadRevs = new Map<NodeId, number>(graph.deadRevById);
+  // AND THE REMOVAL IS STILL VISIBLE, which the tombstone was also load-bearing
+  // for. `commitGraph` wakes a node's subscribers by comparing `getSubtreeRev`
+  // across the commit, and that answers 0 for an id the graph does not hold. No
+  // live node is ever at 0 — every seed is `INITIAL_REV` and every bump adds one
+  // — so deleting the entry moves the number for certain. Seeding at 0 is what
+  // made the previous design need something left behind to compare against.
 
   const removedIds: NodeId[] = [];
   // BACKWARD walk: children leave before parents, and a later sibling's splice
@@ -465,48 +467,16 @@ export function applyRemoved<Ts extends readonly WidenedNodeType[], S>(
     nodes.delete(id);
     parents.delete(id);
     children.delete(id);
-    // `revs` KEEPS ITS ENTRY AND MOVES IT. Two separate requirements, and the
-    // first version of this tombstone met only the first of them.
+    // THE ENTRY IS DELETED, and that is all a removal has to do to its own
+    // revision now.
     //
-    // KEEPING it is a correctness requirement rather than an optimisation.
-    //
-    // `subtreeRevById` is the fold cache's ONLY invalidation mechanism: an
-    // entry keyed (foldKey, nodeId, rev) is meant to become UNREACHABLE once
-    // the node's rev moves past it, which is why nothing ever has to evict.
-    // Dropping the entry here restarted a re-inserted id at 0, and undo then
-    // walked it back up through revs the DEAD lineage had already cached under
-    // different data. Measured, through the public store: edit a clip twice,
-    // remove it, undo — the ROOT aggregate then answers with the dead
-    // lineage's value, and it does not self-heal, because each later edit
-    // lands on the next already-poisoned rev.
-    //
-    // The cost is one number per ever-removed id for the store's lifetime,
-    // against ~232 bytes for each of the k fold-cache entries per node it
-    // protects. `subtreeRevById` becomes a SUPERSET of `nodesById` rather than
-    // exactly total, which invariant check 6 permits: it requires every live
-    // node to HAVE a rev, not that every rev has a node.
-    //
-    // MOVING it is what makes the removal VISIBLE. The store decides whether to
-    // wake a node's subscribers by comparing `getSubtreeRev` across the commit,
-    // so a tombstone frozen at its last live value compares EQUAL and the card
-    // mounted on the node that just disappeared is never told. Insertion had no
-    // such hole — `applyInserted` bumps every arriving id — so removal was the
-    // one direction that went unannounced. Measured: subscribe to a node,
-    // remove it, and its listener fired zero times while its parent's fired
-    // once. A tree view hides that (the parent re-renders and React unmounts
-    // the child); anything addressing a node directly — a detail pane, an
-    // inspector, a flattened list — renders the deleted node forever.
-    //
-    // `+ 1` rather than a bump through `bumpSubtreeRevsInto`: the ancestors are
-    // already bumped above, against the PRE-state graph, and walking again from
-    // here would double-count them for no gain. The node's own entry is the
-    // only one still standing still.
-    //
-    // This also STRENGTHENS the high-water mark rather than weakening it: the
-    // tombstone now sits strictly above every rev the dead lineage could have
-    // cached, which is exactly the property `applyInserted`'s re-insertion bump
-    // relies on.
-    deadRevs.set(id, (revs.get(id) ?? 0) + 1);
+    // It used to be KEPT and MOVED, for two reasons that have both been answered
+    // one layer up. Keeping it was the high-water mark, so a re-inserted id
+    // could not restart below where it died and read the dead lineage's cached
+    // folds — `Graph.revFloor` carries that for every id at once. Moving it
+    // (`+ 1`) was so the removal was VISIBLE, because a frozen tombstone reads
+    // identical on both sides of `commitGraph`'s comparison — and with the entry
+    // gone, `getSubtreeRev` answers 0, which no live node ever holds.
     revs.delete(id);
   }
 
@@ -535,7 +505,13 @@ export function applyRemoved<Ts extends readonly WidenedNodeType[], S>(
     childrenById: children,
     parentById: parents,
     subtreeRevById: revs,
-    deadRevById: deadRevs,
+    // THE FLOOR RISES WITH THE HIGHEST REVISION JUST WRITTEN, taken from the
+    // bump rather than re-derived. `Graph.revFloor` is what stops a re-inserted
+    // id from reusing a revision its dead lineage cached, so an arm that bumps
+    // and forgets to raise it is silently wrong in exactly that way — which is
+    // why `bumpSubtreeRevsInto` reports its own maximum and invariant check 10
+    // audits the result.
+    revFloor: Math.max(graph.revFloor, bumpedParents),
     ...derived,
   };
 }
@@ -572,6 +548,11 @@ export function applyDataChanged<Ts extends readonly WidenedNodeType[], S>(
 
   // The copying form is the right one here: `graph.subtreeRevById` is published,
   // so this call must not write into it, and this arm makes no other copy.
+  // The COPYING form is the right one here — `graph.subtreeRevById` is
+  // published — but it returns the map rather than its maximum, so the floor is
+  // raised by the one thing that is exactly derivable without it: a data change
+  // bumps each named node's chain by one, so no value it writes can exceed the
+  // previous floor plus one.
   const bumped = bumpSubtreeRevs(
     graph.subtreeRevById,
     graph,
@@ -582,6 +563,7 @@ export function applyDataChanged<Ts extends readonly WidenedNodeType[], S>(
     ...graph,
     nodesById: nodes,
     subtreeRevById: bumped,
+    revFloor: graph.revFloor + 1,
   };
 
   // `contentKey` and `sourceKey` are read off `data`, so both derived indexes

@@ -35,6 +35,7 @@ import { rebuildDerivedIndexes } from "./derived-indexes";
  *   4. roots resolve, are containers, are listed once, and are nobody's child.
  *   5. `parentById` is total and agrees with `childrenById`.
  *   6. `subtreeRevById` is total.
+ *  10. every revision is in (0, `revFloor`].
  *   7. every node is reachable from a root.
  *   8. at most one non-`reference` placement per `sourceKey`.
  *   9. both derived indexes match a fresh rebuild.
@@ -273,6 +274,30 @@ function findInvariantViolationUnguarded<Ts extends readonly WidenedNodeType[], 
       };
     }
     owners.set(sourceKey, id);
+  }
+
+  // --- 10. revisions sit inside the floor, and none is the absent sentinel --
+  //
+  // Checked BEFORE the derived-index rebuild because it is O(revs) against that
+  // one's full walk plus a node-type call per node, and a graph whose revisions
+  // have drifted should say so rather than spend the expensive check first.
+  for (const [id, rev] of subtreeRevById) {
+    if (rev <= 0) {
+      return {
+        code: "revision-past-floor",
+        message: `subtreeRevById holds ${rev} for a live node, and 0 is the absent-id sentinel`,
+        nodeId: id,
+      };
+    }
+    if (rev > graph.revFloor) {
+      return {
+        code: "revision-past-floor",
+        message:
+          `subtreeRevById holds ${rev} but revFloor is ${graph.revFloor}; a re-inserted id ` +
+          `could reuse a revision the fold cache still has an entry under`,
+        nodeId: id,
+      };
+    }
   }
 
   // --- 9. derived indexes are not stale -----------------------------------

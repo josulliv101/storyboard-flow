@@ -13,7 +13,7 @@ import {
 } from "../types";
 
 import {
-  NO_DEAD_REVS,
+  INITIAL_REV,
   rebuildDerivedIndexes,
 } from "../graph";
 
@@ -40,11 +40,12 @@ export function deserializeDocumentUnguarded<Ts extends readonly WidenedNodeType
   if (!built.ok) return built;
   const doc = built.value;
 
-  // Every node starts at revision 0. `subtreeRevById` is TOTAL over
+  // Every node starts at `INITIAL_REV`, which is 1 and deliberately not 0 —
+  // see that constant. `subtreeRevById` is TOTAL over
   // `nodesById` — a missing entry would read as 0 through `getSubtreeRev` and
   // then never appear to change, so a card bound to it would never re-render.
   const subtreeRevById = new Map<NodeId, number>();
-  for (const id of doc.order) subtreeRevById.set(id, 0);
+  for (const id of doc.order) subtreeRevById.set(id, INITIAL_REV);
 
   const base: Graph<Ts, S> = {
     engineId: ctx.engineId,
@@ -54,7 +55,9 @@ export function deserializeDocumentUnguarded<Ts extends readonly WidenedNodeType
     rootIds: doc.rootIds,
     subtreeRevById,
     // A freshly deserialized document has removed nothing.
-    deadRevById: NO_DEAD_REVS,
+    // Nothing has been removed from a freshly parsed document, and every node
+    // sits at the seed, so the floor is the seed.
+    revFloor: INITIAL_REV,
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };

@@ -100,6 +100,14 @@ export function applyNonUndoableWriteEditsUnguarded<Ts extends readonly WidenedN
     // rollup summarising it never re-renders. Nothing moved, so there is one
     // chain per node rather than a move's two.
     subtreeRevById: bumpSubtreeRevs(graph.subtreeRevById, graph, editedIds),
+    // `+ 1`, which is exact enough without the bump reporting its maximum. ONE
+    // bump pass raises each node it touches by exactly one, and every value it
+    // could have started from was already at or below the floor — so nothing it
+    // wrote can exceed `revFloor + 1`. The arms that call `bumpSubtreeRevsInto`
+    // take that function's reported maximum instead, which is tighter; both
+    // satisfy invariant check 10, and this one costs no plumbing through the
+    // copying form.
+    revFloor: graph.revFloor + 1,
   };
   // A `contentKey` or `sourceKey` can move with the data, so the indexes may
   // need rebuilding — but only when a key ACTUALLY moved. This used to rebuild

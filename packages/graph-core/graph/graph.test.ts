@@ -31,6 +31,7 @@ import {
   rebuildDerivedIndexes,
   sourceKeyOf,
   subtreeIds,
+  INITIAL_REV,
 } from "./index";
 // NOT from the barrel. `buildGraph` is deliberately not re-exported there —
 // assembling a graph from already-parsed nodes is an ingress author's tool, and
@@ -292,13 +293,13 @@ describe("buildGraph", () => {
     for (const id of graph.nodesById.keys()) {
       expect(graph.parentById.has(id)).toBe(true);
       expect(graph.subtreeRevById.has(id)).toBe(true);
-      expect(getSubtreeRev(graph, id)).toBe(0);
+      expect(getSubtreeRev(graph, id)).toBe(INITIAL_REV);
     }
     expect(graph.parentById.get(nid("root"))).toBeNull();
     expect(graph.parentById.get(nid("c1"))).toBe(nid("a"));
   });
 
-  it("carries forward supplied revisions and defaults the rest to 0", () => {
+  it("carries forward supplied revisions and defaults the rest to INITIAL_REV", () => {
     const base = sampleGraph();
     const rebuilt = buildGraph<Types, Summary>({
       engineId: ENGINE,
@@ -309,7 +310,7 @@ describe("buildGraph", () => {
       subtreeRevs: new Map([[nid("a"), 7]]),
     });
     expect(getSubtreeRev(rebuilt, nid("a"))).toBe(7);
-    expect(getSubtreeRev(rebuilt, nid("root"))).toBe(0);
+    expect(getSubtreeRev(rebuilt, nid("root"))).toBe(INITIAL_REV);
   });
 });
 
@@ -521,30 +522,44 @@ describe("bumpSubtreeRevs", () => {
   const graph = sampleGraph();
   const zero = graph.subtreeRevById;
 
-  function bumped(revs: ReadonlyMap<NodeId, number>): readonly string[] {
+  /**
+   * Which ids MOVED, read against the baseline rather than against 0.
+   *
+   * This said `rev > 0`, which worked only while every node was seeded at 0.
+   * The seed is `INITIAL_REV` now — 0 is reserved as `getSubtreeRev`'s
+   * absent-id sentinel — so a literal comparison called every node changed.
+   */
+  function bumpedFrom(
+    base: ReadonlyMap<NodeId, number>,
+    revs: ReadonlyMap<NodeId, number>,
+  ): readonly string[] {
     const out: string[] = [];
-    for (const [id, rev] of revs) if (rev > 0) out.push(id);
+    for (const [id, rev] of revs) {
+      if (rev > (base.get(id) ?? 0)) out.push(id);
+    }
     return out.sort();
   }
+  const bumped = (revs: ReadonlyMap<NodeId, number>): readonly string[] =>
+    bumpedFrom(zero, revs);
 
   it("bumps the node and every ancestor, and nothing else", () => {
     const next = bumpSubtreeRevs(zero, graph, [nid("c1")]);
     expect(bumped(next)).toEqual(["a", "c1", "root"]);
-    expect(next.get(nid("c2"))).toBe(0);
-    expect(next.get(nid("b"))).toBe(0);
+    expect(next.get(nid("c2"))).toBe(INITIAL_REV);
+    expect(next.get(nid("b"))).toBe(INITIAL_REV);
   });
 
   it("bumps each id once, even when the ids share a chain", () => {
     const next = bumpSubtreeRevs(zero, graph, [nid("c1"), nid("c2")]);
-    expect(next.get(nid("root"))).toBe(1);
-    expect(next.get(nid("a"))).toBe(1);
-    expect(next.get(nid("c1"))).toBe(1);
-    expect(next.get(nid("c2"))).toBe(1);
+    expect(next.get(nid("root"))).toBe(INITIAL_REV + 1);
+    expect(next.get(nid("a"))).toBe(INITIAL_REV + 1);
+    expect(next.get(nid("c1"))).toBe(INITIAL_REV + 1);
+    expect(next.get(nid("c2"))).toBe(INITIAL_REV + 1);
   });
 
   it("bumps a repeated id once", () => {
     const next = bumpSubtreeRevs(zero, graph, [nid("c1"), nid("c1")]);
-    expect(next.get(nid("c1"))).toBe(1);
+    expect(next.get(nid("c1"))).toBe(INITIAL_REV + 1);
   });
 
   it("returns the SAME map for an empty id list", () => {
@@ -562,8 +577,8 @@ describe("bumpSubtreeRevs", () => {
   it("accumulates across calls", () => {
     const once = bumpSubtreeRevs(zero, graph, [nid("c1")]);
     const twice = bumpSubtreeRevs(once, graph, [nid("c1")]);
-    expect(twice.get(nid("c1"))).toBe(2);
-    expect(twice.get(nid("root"))).toBe(2);
+    expect(twice.get(nid("c1"))).toBe(INITIAL_REV + 2);
+    expect(twice.get(nid("root"))).toBe(INITIAL_REV + 2);
   });
 
   it("A MOVE HAS TWO CHAINS — one graph cannot supply both", () => {
@@ -583,11 +598,11 @@ describe("bumpSubtreeRevs", () => {
     const viaPost = bumpSubtreeRevs(post.subtreeRevById, post, [nid("c1")]);
 
     // The old parent is only reachable through the PRE-state graph...
-    expect(bumped(viaPre)).toEqual(["a", "c1", "root"]);
+    expect(bumpedFrom(pre.subtreeRevById, viaPre)).toEqual(["a", "c1", "root"]);
     // ...and the new parent only through the post-state one. An applyPatch that
     // bumps against a single graph leaves one side's rollups permanently stale,
     // and the moved node itself still updates — so the bug is invisible.
-    expect(bumped(viaPost)).toEqual(["b", "c1", "root"]);
+    expect(bumpedFrom(post.subtreeRevById, viaPost)).toEqual(["b", "c1", "root"]);
   });
 });
 
@@ -661,10 +676,10 @@ describe("markMissing", () => {
       status: "missing",
       reason: "404",
     });
-    expect(getSubtreeRev(next, nid("b"))).toBe(1);
-    expect(getSubtreeRev(next, nid("root"))).toBe(1);
+    expect(getSubtreeRev(next, nid("b"))).toBe(INITIAL_REV + 1);
+    expect(getSubtreeRev(next, nid("root"))).toBe(INITIAL_REV + 1);
     // A sibling's rollup did not change meaning, so it must not be notified.
-    expect(getSubtreeRev(next, nid("a"))).toBe(0);
+    expect(getSubtreeRev(next, nid("a"))).toBe(INITIAL_REV);
     expect(findInvariantViolation(next, registry)).toBeNull();
   });
 
@@ -707,7 +722,7 @@ describe("markMissing", () => {
       status: "missing",
       reason: "deleted",
     });
-    expect(getSubtreeRev(changed, nid("b"))).toBe(2);
+    expect(getSubtreeRev(changed, nid("b"))).toBe(INITIAL_REV + 2);
   });
 
   it("works on a sealed container", () => {

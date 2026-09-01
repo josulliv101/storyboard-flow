@@ -18,7 +18,7 @@ import type {
   NodeId,
   NodeTypeRegistry,
 } from "../types";
-import { NO_DEAD_REVS, NO_IDS, NO_OWNERS, NO_PLACEMENTS } from "./constants";
+import { INITIAL_REV, NO_IDS, NO_OWNERS, NO_PLACEMENTS } from "./constants";
 import { rebuildDerivedIndexes } from "./derived-indexes";
 import { childrenStateOf } from "./queries";
 import { bumpSubtreeRevs } from "./revisions";
@@ -33,7 +33,9 @@ export function emptyGraph<Ts extends readonly WidenedNodeType[], S>(
     parentById: new Map(),
     rootIds: NO_IDS,
     subtreeRevById: new Map(),
-    deadRevById: NO_DEAD_REVS,
+    // Nothing issued yet, and `INITIAL_REV` is what the first node will be
+    // seeded at — so the floor already covers it.
+    revFloor: INITIAL_REV,
     placementsByContentKey: NO_PLACEMENTS,
     ownerBySourceKey: NO_OWNERS,
   };
@@ -78,9 +80,17 @@ export function buildGraph<Ts extends readonly WidenedNodeType[], S>(
   // `get()` therefore answer different questions, and check 5 of
   // `findInvariantViolation` is written against the first one.
   const subtreeRevById = new Map<NodeId, number>();
+  // Accumulated in the same pass rather than spread into `Math.max` afterwards:
+  // supplied revisions are the caller's to choose, and `Math.max(...values)`
+  // over a 100,000-node document is an argument list that overflows the stack.
+  let highestRev = INITIAL_REV;
   for (const id of args.nodesById.keys()) {
     if (!parentById.has(id)) parentById.set(id, null);
-    subtreeRevById.set(id, args.subtreeRevs?.get(id) ?? 0);
+    // `INITIAL_REV`, never 0 — see that constant. A live node at 0 is
+    // indistinguishable from an absent one through `getSubtreeRev`.
+    const rev = args.subtreeRevs?.get(id) ?? INITIAL_REV;
+    subtreeRevById.set(id, rev);
+    if (rev > highestRev) highestRev = rev;
   }
 
   const skeleton: Graph<Ts, S> = {
@@ -90,8 +100,10 @@ export function buildGraph<Ts extends readonly WidenedNodeType[], S>(
     parentById,
     rootIds: args.rootIds,
     subtreeRevById,
-    // Ingress builds a graph from a node set; nothing has been removed from it.
-    deadRevById: args.deadRevs ?? NO_DEAD_REVS,
+    // At or above every value written above. Ingress builds a graph from a node
+    // set and nothing has been removed from it, so this is simply the highest
+    // revision present.
+    revFloor: highestRev,
     placementsByContentKey: NO_PLACEMENTS,
     ownerBySourceKey: NO_OWNERS,
   };
@@ -134,6 +146,14 @@ export function markMissing<Ts extends readonly WidenedNodeType[], S>(
     // (`unloaded` and `missing` both own), and its `data` is untouched — so
     // neither derived index can have changed, and neither is rebuilt.
     subtreeRevById: bumpSubtreeRevs(graph.subtreeRevById, graph, [id]),
+    // `+ 1`, which is exact enough without the bump reporting its maximum. ONE
+    // bump pass raises each node it touches by exactly one, and every value it
+    // could have started from was already at or below the floor — so nothing it
+    // wrote can exceed `revFloor + 1`. The arms that call `bumpSubtreeRevsInto`
+    // take that function's reported maximum instead, which is tighter; both
+    // satisfy invariant check 10, and this one costs no plumbing through the
+    // copying form.
+    revFloor: graph.revFloor + 1,
   };
 }
 

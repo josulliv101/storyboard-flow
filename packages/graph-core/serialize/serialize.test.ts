@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { childrenStateOf, buildRegistry, findInvariantViolation, getChildren, getParent } from "../graph";
+import {
+  childrenStateOf,
+  buildRegistry,
+  findInvariantViolation,
+  getChildren,
+  getParent,
+  INITIAL_REV,
+} from "../graph";
 import {
   DEFAULT_MAX_NODES,
   deserializeDocument,
@@ -582,7 +589,7 @@ describe("deserializeDocument", () => {
     const graph = loadSimple();
     for (const nodeId of graph.nodesById.keys()) {
       expect(graph.parentById.has(nodeId)).toBe(true);
-      expect(graph.subtreeRevById.get(nodeId)).toBe(0);
+      expect(graph.subtreeRevById.get(nodeId)).toBe(INITIAL_REV);
     }
     expect(graph.parentById.get(id("root"))).toBeNull();
     expect(graph.parentById.get(id("a"))).toBe(id("root"));
@@ -1541,11 +1548,16 @@ describe("loadChildrenInto", () => {
     const ctx = makeCtx();
     const graph = loadSimple(ctx);
     const next = expectOk(loadChildrenInto<Types, Summary>(graph, id("sub"), simplePayload(), ctx)).graph;
-    expect(next.subtreeRevById.get(id("sub"))).toBe(1);
-    expect(next.subtreeRevById.get(id("root"))).toBe(1);
-    expect(next.subtreeRevById.get(id("a"))).toBe(0);
-    // Newly arrived nodes start at 0.
-    expect(next.subtreeRevById.get(id("p1"))).toBe(0);
+    expect(next.subtreeRevById.get(id("sub"))).toBe(INITIAL_REV + 1);
+    expect(next.subtreeRevById.get(id("root"))).toBe(INITIAL_REV + 1);
+    // The untouched sibling stays at the seed — it was not notified.
+    expect(next.subtreeRevById.get(id("a"))).toBe(INITIAL_REV);
+    // Arriving nodes start ABOVE the floor rather than at a seed, so an id that
+    // has lived in this graph before cannot land on a revision the fold cache
+    // still holds an entry under.
+    const arrived = next.subtreeRevById.get(id("p1")) ?? 0;
+    expect(arrived).toBeGreaterThan(graph.revFloor);
+    expect(arrived).toBeLessThanOrEqual(next.revFloor);
   });
 
   it("accepts payload roots that are NOT containers", () => {
