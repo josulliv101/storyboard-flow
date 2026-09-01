@@ -1,7 +1,7 @@
 {
   "name": "@storyboard/nested-collections",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -16,6 +16,9 @@
   },
   "main": "./dist/core/index.js",
   "types": "./dist/types/core/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist"
   ],

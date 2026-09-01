@@ -1,4 +1,14 @@
-#!/usr/bin/env node
+// NO SHEBANG, deliberately, and this is the one line in the file that will look
+// like an oversight. `count-loc.mjs` and both `find-unreachable-*.mjs` carry one
+// and this was copied from them — but none of those is IMPORTED, and this one is:
+// `the-build-output-is-publishable.test.ts` loads it to drive `buildTo`.
+//
+// A shebang on a file vite imports fails to parse when the checkout uses CRLF,
+// with a bare `SyntaxError: Invalid or unexpected token` and no location. CI is
+// Linux and LF, so it passes there and breaks only on a Windows working copy —
+// the "green in CI, broken on the machine" shape, inverted. It is invoked as
+// `node scripts/build-nested-collections.mjs`, never executed directly, so the
+// shebang bought nothing.
 /**
  * Build `@storyboard/nested-collections` for publication.
  *
