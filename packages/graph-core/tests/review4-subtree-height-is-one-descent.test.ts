@@ -97,6 +97,7 @@ function moveProbe(depth: number, branch: number, maxDepth: number) {
     onUnknownKind: "seal" as const,
     onParseFailure: "seal" as const,
     maxNodes: DEFAULT_MAX_NODES,
+    maxNodeIdLength: null,
     maxDepth,
     mintId: (): string => "x",
     now: (): number => 0,

@@ -185,13 +185,31 @@ export function parseSerializedDocument(
   };
 }
 
+/**
+ * EVERY REFUSAL HERE QUOTES THROUGH `quoteFromWire`, never `JSON.stringify`.
+ *
+ * The fourth round introduced that helper and described it as covering "every
+ * ingress refusal". It had not covered this function, which is the FIRST door a
+ * payload meets — `parseSerializedDocument` runs before `buildDocument` adopts
+ * any id, so these messages were reached before the id-length ceiling could
+ * refuse anything. MEASURED with a 1,000,000-character id, at the DEFAULT
+ * config with that ceiling in force:
+ *
+ *   non-string kind      malformed-document       1,000,030 characters
+ *   bad childrenState    invalid-children-state   1,000,085
+ *   non-array children   malformed-document       1,000,034
+ *
+ * against 169 for the `dangling-child` refusal the fourth round did fix. The
+ * ceiling narrows this and cannot close it: it does not run until the shape is
+ * known, and `maxNodeIdLength: null` is a supported configuration.
+ */
 function parseSerializedNode(
   raw: unknown,
 ): Result<SerializedNode, StructuralError> {
   if (!isRecord(raw)) return malformed("Each node must be an object");
   if (typeof raw.id !== "string") return malformed("node.id must be a string");
   if (typeof raw.kind !== "string") {
-    return malformed(`node ${JSON.stringify(raw.id)}: kind must be a string`);
+    return malformed(`node ${quoteFromWire(raw.id)}: kind must be a string`);
   }
 
   // A missing `data` key is READ AS `undefined`, not rejected. JSON.stringify
@@ -209,13 +227,13 @@ function parseSerializedNode(
 
   if (raw.children !== undefined) {
     if (!Array.isArray(raw.children)) {
-      return malformed(`node ${JSON.stringify(raw.id)}: children must be an array`);
+      return malformed(`node ${quoteFromWire(raw.id)}: children must be an array`);
     }
     const children: string[] = [];
     for (const childId of raw.children) {
       if (typeof childId !== "string") {
         return malformed(
-          `node ${JSON.stringify(raw.id)}: children must contain only strings`,
+          `node ${quoteFromWire(raw.id)}: children must contain only strings`,
         );
       }
       children.push(childId);
@@ -227,7 +245,7 @@ function parseSerializedNode(
     if (!isWireChildrenState(raw.childrenState)) {
       return fail({
         code: "invalid-children-state",
-        message: `node ${JSON.stringify(raw.id)}: childrenState must be "unloaded", "reference" or "missing", received ${describeValue(raw.childrenState)}`,
+        message: `node ${quoteFromWire(raw.id)}: childrenState must be "unloaded", "reference" or "missing", received ${describeValue(raw.childrenState)}`,
         rawId: raw.id,
       });
     }
@@ -239,7 +257,7 @@ function parseSerializedNode(
   if (raw.schemaVersion !== undefined) {
     if (typeof raw.schemaVersion !== "number" || !Number.isFinite(raw.schemaVersion)) {
       return malformed(
-        `node ${JSON.stringify(raw.id)}: schemaVersion must be a finite number`,
+        `node ${quoteFromWire(raw.id)}: schemaVersion must be a finite number`,
       );
     }
     draft.schemaVersion = raw.schemaVersion;
@@ -248,7 +266,7 @@ function parseSerializedNode(
   if (raw.missingReason !== undefined) {
     if (typeof raw.missingReason !== "string") {
       return malformed(
-        `node ${JSON.stringify(raw.id)}: missingReason must be a string`,
+        `node ${quoteFromWire(raw.id)}: missingReason must be a string`,
       );
     }
     draft.missingReason = raw.missingReason;

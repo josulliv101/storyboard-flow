@@ -16,10 +16,12 @@ import {
   type Result,
 } from "../types";
 import {
+  ancestorChain,
   ownsItsSubtree,
   sourceKeyOf,
   sourceKeyForData,
   derivedIndexNeed,
+  subtreeHeight,
 } from "../graph";
 
 import { EMPTY_IDS, VERIFY_OK } from "./constants";
@@ -172,7 +174,7 @@ export function verifyPatchAppliesUnguarded<Ts extends readonly WidenedNodeType[
   }
   switch (patch.type) {
     case "moved":
-      return verifyMoved(graph, patch.moves);
+      return verifyMoved(graph, patch.moves, ctx);
     case "inserted":
       return verifyInserted(graph, patch.placements, ctx);
     case "removed":
@@ -185,6 +187,7 @@ export function verifyPatchAppliesUnguarded<Ts extends readonly WidenedNodeType[
 function verifyMoved<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   moves: readonly Move[],
+  ctx: EngineContext<S>,
 ): Result<void, ReplayRejection> {
   const overlay = createChildrenOverlay(graph);
   const seen = new Set<NodeId>();
@@ -284,6 +287,82 @@ function verifyMoved<Ts extends readonly WidenedNodeType[], S>(
         );
       }
       cursor = nextParent.get(cursor);
+    }
+  }
+
+  // Phase 4: THE DEPTH CEILING, the exact twin of `verifyInserted`'s node
+  // ceiling and missing for as long as that one was present.
+  //
+  // AGAINST THE POST-STATE, for the reason phase 3 is: a batch can move a node
+  // under a parent that is itself moving, and the pre-state chain answers a
+  // question about a graph the patch is about to replace. `nextParent` is the
+  // map phase 3 just proved terminates, so the walk below needs no budget of
+  // its own beyond the one it inherits.
+  //
+  // `depthPost(toParentId) + subtreeHeight(graph, nodeId)` is verbatim the
+  // formula `applyMoveNodes` uses, out of the same `./graph` helper rather than
+  // a second copy — two doors computing depth independently is what let this
+  // through in the first place.
+  //
+  // COMPLETE despite only reading the moved nodes: a descendant that did not
+  // move travels with its ancestor, and `subtreeHeight` measures to the bottom
+  // of that subtree, so the deepest node under any moved id is covered by that
+  // id's own check. A node moved INTO a moved subtree is checked at its own
+  // final position by its own entry. Anything under neither keeps the depth it
+  // already had.
+  if (ctx.maxDepth !== null) {
+    const depthCache = new Map<NodeId, number>();
+    const depthPost = (id: NodeId): number | null => {
+      const memo = depthCache.get(id);
+      if (memo !== undefined) return memo;
+      const path: NodeId[] = [];
+      let depth = 0;
+      let cursor: NodeId | null | undefined = id;
+      while (cursor !== null && cursor !== undefined) {
+        const hit = depthCache.get(cursor);
+        if (hit !== undefined) {
+          depth = hit;
+          break;
+        }
+        if (path.length > nextParent.size) return null;
+        path.push(cursor);
+        cursor = nextParent.get(cursor) ?? null;
+      }
+      // Back down the path it just walked up, so a batch sharing one chain pays
+      // for it once.
+      for (let i = path.length - 1; i >= 0; i -= 1) {
+        depth += 1;
+        const step = path[i];
+        if (step !== undefined) depthCache.set(step, depth);
+      }
+      return depth;
+    };
+
+    for (const move of moves) {
+      const parentDepth = depthPost(move.toParentId);
+      if (parentDepth === null) {
+        // Unreachable — phase 3 refused every non-terminating chain — but
+        // refused rather than guessed, because the alternative is a ceiling
+        // silently computed from a number this function could not derive.
+        return replayError(
+          "would-create-cycle",
+          `The parent chain above ${move.toParentId} does not terminate.`,
+          { nodeId: move.nodeId, parentId: move.toParentId },
+        );
+      }
+      const deepest = parentDepth + subtreeHeight<Ts, S>(graph, move.nodeId);
+      if (deepest > ctx.maxDepth) {
+        return replayError(
+          "would-exceed-max-depth",
+          `Replaying this move would nest ${move.nodeId} ${deepest} levels, past the ${ctx.maxDepth} ceiling.`,
+          {
+            nodeId: move.nodeId,
+            parentId: move.toParentId,
+            limit: ctx.maxDepth,
+            actual: deepest,
+          },
+        );
+      }
     }
   }
 
@@ -412,6 +491,30 @@ function verifyInserted<Ts extends readonly WidenedNodeType[], S>(
   const overlay = createChildrenOverlay(graph);
   const willExist = new Set<NodeId>();
 
+  // THE DEPTH CEILING, the twin of the node ceiling above, checked INSIDE the
+  // structural loop rather than after it.
+  //
+  // Placements arrive parents-first in document order — the property the
+  // `parentIsNew` branch below already relies on — so each one's depth is its
+  // parent's plus one, and the parent's is either already computed here (an
+  // earlier placement) or read once from the graph. That makes the whole pass
+  // O(placements + one ancestor chain per distinct pre-existing parent), which
+  // is why it can afford to be exact rather than reuse the forward door's
+  // `depthOf(parent) + tallestSeed(seeds)` estimate.
+  //
+  // Only assembled when a ceiling was named: `maxDepth` is `null` by default,
+  // and undo of a bulk insert is the path this file has already spent two
+  // rounds making linear.
+  const depth =
+    ctx.maxDepth === null
+      ? null
+      : {
+          /** A placement created earlier in this same patch. */
+          byNew: new Map<NodeId, number>(),
+          /** A parent the graph already held — one ancestor chain per parent. */
+          ofExisting: new Map<NodeId, number>(),
+        };
+
   for (const placement of placements) {
     const { node, parentId, index } = placement;
     if (graph.nodesById.has(node.id) || willExist.has(node.id)) {
@@ -445,6 +548,36 @@ function verifyInserted<Ts extends readonly WidenedNodeType[], S>(
         { nodeId: node.id, parentId, index },
       );
     }
+    if (depth !== null && ctx.maxDepth !== null) {
+      let parentDepth = depth.byNew.get(parentId);
+      if (parentDepth === undefined) {
+        const cached = depth.ofExisting.get(parentId);
+        if (cached !== undefined) parentDepth = cached;
+        else {
+          // `ancestorChain` is bounded by `nodesById.size` and excludes the node
+          // itself, so this is the same `depthOf` the forward door computes —
+          // one chain per distinct pre-existing parent, memoised because a bulk
+          // insert names one parent thousands of times.
+          parentDepth = ancestorChain(graph, parentId).length + 1;
+          depth.ofExisting.set(parentId, parentDepth);
+        }
+      }
+      const level = parentDepth + 1;
+      if (level > ctx.maxDepth) {
+        return replayError(
+          "would-exceed-max-depth",
+          `Replaying this insert would nest ${node.id} ${level} levels, past the ${ctx.maxDepth} ceiling.`,
+          {
+            nodeId: node.id,
+            parentId,
+            limit: ctx.maxDepth,
+            actual: level,
+          },
+        );
+      }
+      depth.byNew.set(node.id, level);
+    }
+
     overlay.insert(parentId, index, node.id);
     willExist.add(node.id);
     if (isLoadedContainer(node)) overlay.seedLoaded(node.id);

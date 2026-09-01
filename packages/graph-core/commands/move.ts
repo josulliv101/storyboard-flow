@@ -17,6 +17,7 @@ import {
   getNode,
   getParent,
   isSameOrAncestor,
+  subtreeHeight,
 } from "../graph";
 import { applyPatch } from "../patches";
 
@@ -199,66 +200,6 @@ export function isNoOpMove(moves: readonly Move[]): boolean {
   );
 }
 
-/**
- * The tallest LIVE subtree under `id`, counting `id` itself as 1.
- *
- * `subtreeIds` descends only `loaded` collections, which is the right rule
- * here: an unloaded branch contributes its placeholder and nothing more,
- * exactly as it does when the ingress door measures the same graph. So a move
- * is judged on the depth the graph actually holds, and loading that branch
- * later is bounded by `loadChildrenInto`'s own check rather than pre-refused
- * here on a guess about what it might contain.
- */
-function tallestSubtree<Ts extends readonly WidenedNodeType[], S>(
-  graph: Graph<Ts, S>,
-  id: NodeId,
-): number {
-  if (!graph.nodesById.has(id)) return 1;
-
-  // ONE descent carrying depth, rather than an `ancestorChain` per descendant.
-  // The predecessor answered a SUBTREE question with N ROOT-walks: it read
-  // `parentById` once per ancestor of every descendant, and allocated a chain
-  // array for each one it threw away. MEASURED on a caterpillar subtree,
-  // counting `parentById.get` during one depth-checked move:
-  //
-  //     nodes  depth    reads before -> after
-  //       122     20         1,491 ->  9
-  //       242     40         5,371 ->  9
-  //       482     80        20,331 ->  9
-  //       962    160        79,051 ->  9
-  //
-  // FLAT, because the depth now comes from the descent itself and this function
-  // stops reading `parentById` at all. The 9 that remain belong to the rest of
-  // the move — `planMove` and `depthOf(graph, toParentId)` — and are a function
-  // of where the subtree is GOING, not of how big or deep it is.
-  //
-  // Explicit stack and a visit budget, matching `walkInDocumentOrder`: this
-  // function exists to measure depth, so depth is hostile input by
-  // construction, and the budget bounds the damage on an invalid graph instead
-  // of spinning on a cycle. Two parallel arrays rather than one array of
-  // objects — the pairing is local to this loop and allocating a wrapper per
-  // node is the cost being removed.
-  const budget = graph.nodesById.size;
-  const stack: NodeId[] = [id];
-  const depths: number[] = [1];
-  let visited = 0;
-  let tallest = 1;
-
-  while (stack.length > 0 && visited < budget) {
-    const current = stack.pop();
-    const depth = depths.pop();
-    if (current === undefined || depth === undefined) break;
-    visited += 1;
-    if (depth > tallest) tallest = depth;
-    for (const childId of getChildren(graph, current)) {
-      stack.push(childId);
-      depths.push(depth + 1);
-    }
-  }
-
-  return tallest;
-}
-
 export function applyMoveNodes<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,
   nodeIds: readonly NodeId[],
@@ -284,7 +225,7 @@ export function applyMoveNodes<Ts extends readonly WidenedNodeType[], S>(
   if (ctx.maxDepth !== null) {
     const parentDepth = depthOf(graph, toParentId);
     for (const id of plan.orderedIds) {
-      const deepest = parentDepth + tallestSubtree<Ts, S>(graph, id);
+      const deepest = parentDepth + subtreeHeight<Ts, S>(graph, id);
       if (deepest > ctx.maxDepth) {
         return fail(
           "would-exceed-max-depth",

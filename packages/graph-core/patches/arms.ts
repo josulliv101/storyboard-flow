@@ -417,6 +417,39 @@ export function applyRemoved<Ts extends readonly WidenedNodeType[], S>(
   // graph's by reference, which is the whole point of the split: the map that
   // grows with a session's total deletions is no longer inside the map every
   // commit copies.
+  //
+  // IT IS STILL INSIDE THE MAP EVERY *REMOVAL* COMMIT COPIES, and that is the
+  // cost this line owns. The split moved the growth off the other three arms,
+  // not off this one. MEASURED, insert-then-remove one node in a loop with the
+  // live count pinned at 1:
+  //
+  //     cycles   live   tombstoned   one removal
+  //      1,000      1        1,000      0.045 ms
+  //      4,000      1        4,000      0.195 ms
+  //      8,000      1        8,000      0.478 ms
+  //
+  // Linear in the tombstone count, so a session of D separate deletions copies
+  // D^2/2 entries in total — 32.0 M for the 8,000 above. Per operation that is
+  // still well inside a frame at any size a session realistically reaches; the
+  // part that mattered was that NOTHING SAID SO. The interactive-cost warning
+  // read `nodesById.size`, which is 1 in the table above, so the one shape where
+  // commit cost is invisible from the document was also the one shape the
+  // diagnostic could not see. It now counts this map too.
+  //
+  // EVICTING FROM HERE IS NOT THE FIX, and it is worth writing down because it
+  // is the obvious one. A tombstone is what stops a RETURNING id from restarting
+  // at 0 and walking back onto revs its dead lineage already cached —
+  // `applyInserted` reads `deadRevById.get(node.id) ?? 0` — so dropping an entry
+  // reintroduces exactly the staleness this store exists to prevent, silently
+  // and permanently, and no eviction policy here can know whether the fold cache
+  // still holds an entry under one of those revs. The cache is a different
+  // structure with a different limit and no ordering relationship to this one.
+  //
+  // What WOULD remove the quadratic is replacing per-id tombstones with a single
+  // monotonic rev floor on the graph: a returning id starts above every rev ever
+  // issued, which is strictly stronger than starting above its own. That is a
+  // change to the fold cache's only invalidation mechanism — the one this file
+  // notes has shipped wrong twice — and it needs its own round, not a line here.
   const deadRevs = new Map<NodeId, number>(graph.deadRevById);
 
   const removedIds: NodeId[] = [];

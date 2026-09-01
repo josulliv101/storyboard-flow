@@ -72,6 +72,15 @@ import type {
  * occupancy is ~30 MB — reachable only by a 16k-node graph that is itself the
  * same order of magnitude in memory.
  *
+ * THAT FIGURE RESTS ON A BOUNDED ID, and until `maxNodeIdLength` existed
+ * nothing enforced one. `cacheKey` below concatenates the node id into a fresh
+ * string per entry, so the per-entry size was the DOCUMENT's to choose while
+ * this limit counted only entries — 131,072 of them at the default. The graph's
+ * own maps are not exposed the same way: they key by the id, and a JavaScript
+ * string is shared by reference, so four maps cost four pointers and one copy.
+ * The memo table was the amplifier, and the ceiling is what turns ~232 bytes
+ * from a measurement of typical data into a bound.
+ *
  * Read that as a FLOOR, not a total. The entry is the key plus the `Folded`,
  * and `Folded<A>`'s `A` is whatever the consumer's fold returns — a duration is
  * a number, a preview-items rollup is an array of objects, and this package

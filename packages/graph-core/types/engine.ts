@@ -299,6 +299,34 @@ export type EngineConfig<
    */
   maxDepth?: number;
   /**
+   * Ceiling on the LENGTH of one node id. Defaults to
+   * `DEFAULT_MAX_NODE_ID_LENGTH`; `null` is unbounded.
+   *
+   * THE THIRD CEILING, and unlike `maxDepth` it ships with a number, for
+   * `maxNodes`' reason: it can be defended without knowing your data, because
+   * no legitimate id is within an order of magnitude of it. `maxNodes` bounds
+   * how many nodes a document holds and `maxDepth` how deeply they nest;
+   * neither bounds how large ONE of them is, and `tryParseNodeId` refuses only
+   * the empty and whitespace-only string — so id size was the sender's to
+   * choose under ceilings that read as complete.
+   *
+   * It is the memo table this protects, not the graph. The graph's maps key by
+   * the id and a JavaScript string is shared by reference, so four maps cost
+   * four pointers. `cacheKey` in ./folds CONCATENATES the id into a fresh
+   * string per `(foldKey, nodeId, subtreeRev)` entry, and `foldCacheLimit`
+   * bounds that table by ENTRY COUNT — so before this ceiling, the document
+   * chose the per-entry size and ./folds' measured ~232 bytes an entry rested
+   * on an assumption nothing enforced.
+   *
+   * ENFORCED AT INGRESS AND AT MINTING BOTH, which is the part worth knowing.
+   * A ceiling applied only to documents would let `insert-nodes` put an id in
+   * the graph that `deserialize` then refuses — the "saves cleanly, will not
+   * load" shape this package has already paid for twice. So `mintFreshId`
+   * treats an over-long id from a consumer `mintId` exactly as it treats a
+   * whitespace one: not acceptable, retry, then fall back.
+   */
+  maxNodeIdLength?: number | null;
+  /**
    * Ceiling on EACH STORE's fold memo table. Defaults to
    * `DEFAULT_FOLD_CACHE_LIMIT`.
    *
@@ -422,8 +450,57 @@ export type Engine<
     graph: Graph<Ts, S>,
     command: Command<Ts, S>,
   ): Result<Readonly<{ graph: Graph<Ts, S>; patch: Patch<Ts, S> }>, Rejection>;
-  /** THE ONE index rewriter — forward application and undo share it. */
+  /**
+   * THE ONE index rewriter — forward application and undo share it.
+   *
+   * PRECONDITION: `verifyPatchApplies` returned ok for THIS graph and THIS
+   * patch. This function re-checks nothing, and that is deliberate — re-checking
+   * would either duplicate the gate and drift from it, or tempt a caller to skip
+   * the gate because "apply validates anyway", which is how the dormant-patch
+   * corruptions happened in the first place.
+   *
+   * SO IT IS UNSAFE ON ITS OWN, and the signature cannot say so: it returns a
+   * `Graph`, not a `Result`, because with the precondition met there is nothing
+   * to reject. That reads as total, and this paragraph is the only thing
+   * standing between that reading and a silently corrupt graph. MEASURED, undo
+   * of an insert whose node has since gained a child — the exact case
+   * `verifyPatchApplies` answers `node-not-empty` for:
+   *
+   *     verifyPatchApplies  ->  node-not-empty
+   *     applyPatch          ->  did not throw, returned a graph
+   *     nodes               ->  3 before, 2 after, the child orphaned
+   *     findInvariantViolation -> parent-index-disagrees
+   *
+   * Nothing rejects, nothing throws, and `serializeGraph` then writes the
+   * result — it emits unreachable nodes rather than dropping them — so the
+   * document saves cleanly and `deserialize` refuses it afterwards.
+   *
+   * USE `applyPatchChecked` UNLESS YOU HAVE ALREADY VERIFIED. This door stays
+   * for the caller who verified once and applies to the same graph, and for the
+   * reducer's own arms, which establish their preconditions by planning rather
+   * than by replay.
+   */
   applyPatch(graph: Graph<Ts, S>, patch: Patch<Ts, S>): Graph<Ts, S>;
+  /**
+   * `verifyPatchApplies` and then `applyPatch`, in that order, as one call.
+   *
+   * The same pairing `serializeChecked` makes with `findInvariantViolation`, and
+   * added for the same reason: the two-step version is correct and the one-step
+   * version is what a caller reaches for, so the safe order should be the one
+   * that is easy to write. `undo` and `redo` have always done exactly this
+   * internally; a consumer driving its own replay — which is why `applyPatch`,
+   * `invertPatch` and `verifyPatchApplies` are exported as peers at all — had to
+   * reassemble it from the parts and could silently omit the gate.
+   *
+   * Costs what verification costs, which is O(patch) rather than O(graph): the
+   * gate reads the nodes the patch names, not the document. That is a different
+   * trade from `serializeChecked`, whose audit is a full pass — so there is no
+   * "keep using the unchecked one for speed" caveat here.
+   */
+  applyPatchChecked(
+    graph: Graph<Ts, S>,
+    patch: Patch<Ts, S>,
+  ): Result<Graph<Ts, S>, ReplayRejection>;
   invertPatch(patch: Patch<Ts, S>): Patch<Ts, S>;
   verifyPatchApplies(
     graph: Graph<Ts, S>,

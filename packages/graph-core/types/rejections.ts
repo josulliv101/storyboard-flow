@@ -165,6 +165,28 @@ export type ReplayRejectionCode =
    * for the same reason it does.
    */
   | "would-exceed-max-nodes"
+  /**
+   * Replaying this insert or move patch would nest past `maxDepth`.
+   *
+   * THE TWIN OF `"would-exceed-max-nodes"`, and it was missing while that one
+   * was not — which is the whole shape of the defect. `maxDepth` was enforced
+   * at three forward doors (`applyInsertNodes`, `applyMoveNodes`, and both
+   * ingress doors) and at none of the replay ones, so the ceiling held against
+   * every command and against every document, and not against undo or redo.
+   *
+   * Reachable by the same lever the node ceiling names, because `Store.load`
+   * touches neither stack: move an UNLOADED container somewhere legal (it
+   * counts as one level), undo that move, fill the container two levels deep
+   * while it sits shallow, then redo. MEASURED before this existed, at
+   * `maxDepth: 4` — the redo was accepted, the graph reached depth 6,
+   * `serializeGraph` wrote it, and `deserialize` at the same config then
+   * answered `document-too-deep` forever. `findInvariantViolation` cannot catch
+   * it either: `ViolationCode` has no depth member, because depth is a ceiling
+   * a consumer chose and not a structural truth about the graph.
+   *
+   * Carries `limit`/`actual` for the reason its twin does.
+   */
+  | "would-exceed-max-depth"
   /** The store was destroyed. Every mutating call refuses rather than writing
    *  into a graph nothing is listening to — see `Store.destroy`. */
   | "store-destroyed";
@@ -175,11 +197,12 @@ export type ReplayRejection = Readonly<{
   nodeId?: NodeId;
   parentId?: NodeId;
   index?: number;
-  /** The ceiling that was hit, on `"would-exceed-max-nodes"`. Named the same as
-   *  `Rejection`'s pair so a consumer reporting a limit to the user reads it the
-   *  same way whichever door refused. */
+  /** The ceiling that was hit, on `"would-exceed-max-nodes"` and
+   *  `"would-exceed-max-depth"`. Named the same as `Rejection`'s pair so a
+   *  consumer reporting a limit to the user reads it the same way whichever
+   *  door refused. */
   limit?: number;
-  /** What the graph WOULD have reached. */
+  /** What the graph WOULD have reached — nodes or levels, per the code. */
   actual?: number;
 }>;
 
@@ -242,6 +265,14 @@ export type StructuralErrorCode =
   | "document-too-large"
   /** Nested deeper than `EngineConfig.maxDepth`, which is opt-in. */
   | "document-too-deep"
+  /**
+   * A node id longer than `EngineConfig.maxNodeIdLength`.
+   *
+   * The third of the ingress ceilings, and the one the other two do not imply:
+   * they bound how many nodes a document holds and how deeply they nest, never
+   * how large one of them is. Carries `limit`/`actual` like its two siblings.
+   */
+  | "node-id-too-long"
   /** A consumer `contentKey`/`sourceKey` threw. See `RejectionCode`. */
   | "node-type-threw";
 
@@ -254,10 +285,11 @@ export type StructuralError = Readonly<{
   issues?: readonly Issue[];
   /** Present on `"ingress-rejected"`. */
   ingress?: readonly IngressError[];
-  /** Present on the two bound refusals: the ceiling that was in force, and
-   *  what the document actually presented. A consumer telling a person why
-   *  their document was refused needs both, and parsing them back out of
-   *  `message` is not an interface. */
+  /** Present on the three bound refusals — `"document-too-large"`,
+   *  `"document-too-deep"` and `"node-id-too-long"`: the ceiling that was in
+   *  force, and what the document actually presented. A consumer telling a
+   *  person why their document was refused needs both, and parsing them back
+   *  out of `message` is not an interface. */
   limit?: number;
   actual?: number;
 }>;

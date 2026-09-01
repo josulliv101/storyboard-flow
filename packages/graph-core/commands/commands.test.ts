@@ -364,6 +364,9 @@ function makeHarness(
     onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
+    // Unbounded, so this fixture behaves exactly as it did before the
+    // id-length ceiling existed.
+    maxNodeIdLength: null,
     mintId:
       overrides?.mintId ??
       ((): string => {

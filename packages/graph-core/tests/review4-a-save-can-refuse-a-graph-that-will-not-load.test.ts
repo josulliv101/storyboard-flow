@@ -156,6 +156,7 @@ function corruptedGraph() {
     onParseFailure: "seal" as const,
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
+    maxNodeIdLength: null,
     mintId: (): string => "minted",
     now: (): number => 0,
     devChecks: false,

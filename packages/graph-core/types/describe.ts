@@ -77,6 +77,23 @@ function clamp(text: string): string {
  * payload produced a 1,000,049-character `error.message`, which the consumer
  * then puts in a log line, a toast, or an error report.
  *
+ * "AT EVERY INGRESS REFUSAL" WAS THE CLAIM AND NOT THE FACT, and the gap
+ * outlived the fix by a round. Two places kept the raw form:
+ *
+ *   - `parseSerializedNode` in ./serialize/shape, the FIRST door a payload
+ *     meets. Six refusals, all reached before `buildDocument` adopts any id —
+ *     so before `maxNodeIdLength` can refuse either. Measured at the default
+ *     config: 1,000,030 characters for a non-string `kind`.
+ *   - `tryParseNodeId` in ./primitives, which does not sit at a refusal site at
+ *     all. It is RELAYED by three of them, so those three inherited an
+ *     unbounded quote however carefully they were written — and a sweep for
+ *     `JSON.stringify` at the refusal sites could not see it. Measured: a
+ *     1,000,000-space id, which is legal JSON and fails the `trim()` test,
+ *     produced 1,000,063 characters.
+ *
+ * Both now quote through this function. The lesson worth keeping is the second
+ * one: a bound belongs where the message is BUILT, not where it is returned.
+ *
  * CLAMPS BEFORE IT QUOTES, not after. Quoting first would allocate the full
  * megabyte and escape every character of it before throwing the result away,
  * which is most of the cost the bound is for.
