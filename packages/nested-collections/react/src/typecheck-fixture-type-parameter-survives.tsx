@@ -35,7 +35,7 @@ import {
   emptyGraph,
   foldMonoid,
   type NodeId,
-} from "../..";
+} from "../../core";
 import { createReactBindings } from "./bindings";
 
 type Clip = Readonly<{ title: string; seconds: number }>;

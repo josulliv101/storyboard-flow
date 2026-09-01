@@ -24,9 +24,16 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PACKAGE_ROOT = resolve(HERE, "..");
+// `core/tests/` -> the PACKAGE root, which is two levels up, not one. This file
+// lives inside the half it is guarding, so every path here is relative to a
+// folder that can move — and when `core/` was introduced it did. Two of the
+// seven cases below failed and the rest passed VACUOUSLY, looking for a
+// `core/react/` that does not exist; the "other side of the line" case is what
+// caught it, which is the whole reason a guard needs one.
+const PACKAGE_ROOT = resolve(HERE, "..", "..");
+const CORE_DIR = join(PACKAGE_ROOT, "core") + sep;
 const REACT_DIR = join(PACKAGE_ROOT, "react") + sep;
-const CORE_ENTRY = join(PACKAGE_ROOT, "index.ts");
+const CORE_ENTRY = join(CORE_DIR, "index.ts");
 
 /** Every relative specifier in a source file. Bare specifiers are handled by
  *  the caller — they cannot be resolved to a file in this package. */
@@ -92,8 +99,13 @@ describe("the core entry cannot reach the react half", () => {
     // ever collapses to a handful, the resolver stopped resolving and every
     // assertion below became vacuous.
     expect(reached.length).toBeGreaterThan(30);
-    expect(reached.map(show)).toContain("index.ts");
-    expect(reached.map(show)).toContain("engine/index.ts");
+    expect(reached.map(show)).toContain("core/index.ts");
+    expect(reached.map(show)).toContain("core/engine/index.ts");
+    // Both halves must EXIST where this file thinks they do, or every assertion
+    // below is checking an empty set. That is not hypothetical here — it is what
+    // the `core/` move did to this file.
+    expect(existsSync(CORE_DIR)).toBe(true);
+    expect(existsSync(REACT_DIR)).toBe(true);
   });
 
   it("reaches nothing under react/", () => {
@@ -124,7 +136,7 @@ describe("the core entry cannot reach the react half", () => {
 
     const fromReact = reachableFrom(entry);
     // And it DOES reach the core — one package, one direction.
-    expect(fromReact.map(show)).toContain("index.ts");
+    expect(fromReact.map(show)).toContain("core/index.ts");
   });
 
   it("the exports map names exactly the two entries", () => {
@@ -136,7 +148,7 @@ describe("the core entry cannot reach the react half", () => {
     const exportsMap = (manifest as { exports?: Record<string, unknown> }).exports;
     expect(exportsMap).toBeDefined();
     expect(Object.keys(exportsMap ?? {}).sort()).toEqual([".", "./react"]);
-    expect(exportsMap?.["."]).toBe("./index.ts");
+    expect(exportsMap?.["."]).toBe("./core/index.ts");
     expect(exportsMap?.["./react"]).toBe("./react/index.ts");
   });
 
@@ -144,9 +156,11 @@ describe("the core entry cannot reach the react half", () => {
     // Belt to the walk's braces: the walk only sees what is IMPORTED, so a file
     // added to the core but not yet wired in would be invisible to it.
     const offenders: string[] = [];
+    // Walks the CORE half only; `react/` is the other side of the line and is
+    // where the directive belongs.
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir)) {
-        if (entry === "node_modules" || entry === "react") continue;
+        if (entry === "node_modules") continue;
         const full = join(dir, entry);
         if (statSync(full).isDirectory()) {
           walk(full);
@@ -158,7 +172,7 @@ describe("the core entry cannot reach the react half", () => {
         }
       }
     };
-    walk(PACKAGE_ROOT);
+    walk(CORE_DIR);
     expect(offenders).toEqual([]);
   });
 });

@@ -30,7 +30,7 @@ import type {
   SelectionSlice,
   Store,
   WidenedNodeType,
-} from "../..";
+} from "../../core";
 
 // ---------------------------------------------------------------------------
 // Per-kind views

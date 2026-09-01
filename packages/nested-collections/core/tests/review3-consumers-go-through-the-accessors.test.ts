@@ -153,9 +153,14 @@ function scan(): Readonly<{ checked: readonly string[]; violations: readonly Vio
   // the "renamed package" failure this file's own guard below anticipates, and
   // it would have gone quiet rather than red.
   const packageDir = join(root, "packages", "nested-collections") + sep;
+  const coreDir = join(packageDir, "core") + sep;
   const reactDir = join(packageDir, "react") + sep;
-  const isEngineImplementation = (file: string): boolean =>
-    file.startsWith(packageDir) && !file.startsWith(reactDir);
+  // NAMED, not inferred as "the package minus react/". Those were the same set
+  // while the package held only those two things, and the difference is what
+  // this guard would get wrong first: anything added beside them — a docs
+  // folder, a third entry point — is a CONSUMER and must be checked, where
+  // subtracting `react/` would have silently exempted it.
+  const isEngineImplementation = (file: string): boolean => file.startsWith(coreDir);
 
   const files: string[] = [];
   sourceFilesUnder(join(root, "apps"), files);
