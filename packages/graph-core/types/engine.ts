@@ -299,6 +299,34 @@ export type EngineConfig<
    */
   maxDepth?: number;
   /**
+   * Ceiling on the LENGTH of one node id. Defaults to
+   * `DEFAULT_MAX_NODE_ID_LENGTH`; `null` is unbounded.
+   *
+   * THE THIRD CEILING, and unlike `maxDepth` it ships with a number, for
+   * `maxNodes`' reason: it can be defended without knowing your data, because
+   * no legitimate id is within an order of magnitude of it. `maxNodes` bounds
+   * how many nodes a document holds and `maxDepth` how deeply they nest;
+   * neither bounds how large ONE of them is, and `tryParseNodeId` refuses only
+   * the empty and whitespace-only string — so id size was the sender's to
+   * choose under ceilings that read as complete.
+   *
+   * It is the memo table this protects, not the graph. The graph's maps key by
+   * the id and a JavaScript string is shared by reference, so four maps cost
+   * four pointers. `cacheKey` in ./folds CONCATENATES the id into a fresh
+   * string per `(foldKey, nodeId, subtreeRev)` entry, and `foldCacheLimit`
+   * bounds that table by ENTRY COUNT — so before this ceiling, the document
+   * chose the per-entry size and ./folds' measured ~232 bytes an entry rested
+   * on an assumption nothing enforced.
+   *
+   * ENFORCED AT INGRESS AND AT MINTING BOTH, which is the part worth knowing.
+   * A ceiling applied only to documents would let `insert-nodes` put an id in
+   * the graph that `deserialize` then refuses — the "saves cleanly, will not
+   * load" shape this package has already paid for twice. So `mintFreshId`
+   * treats an over-long id from a consumer `mintId` exactly as it treats a
+   * whitespace one: not acceptable, retry, then fall back.
+   */
+  maxNodeIdLength?: number | null;
+  /**
    * Ceiling on EACH STORE's fold memo table. Defaults to
    * `DEFAULT_FOLD_CACHE_LIMIT`.
    *

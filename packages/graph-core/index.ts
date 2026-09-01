@@ -179,6 +179,10 @@ export {
   // deciding whether to raise `EngineConfig.maxNodes` needs to be able to see
   // what they are raising it FROM without reaching past the barrel.
   DEFAULT_MAX_NODES,
+  // The third ceiling's default, named for the reason the other two are: a
+  // consumer deciding whether to raise or clear `EngineConfig.maxNodeIdLength`
+  // needs to see what they are moving it from.
+  DEFAULT_MAX_NODE_ID_LENGTH,
   deserializeDocument,
   loadChildrenInto,
   parseNodeData,

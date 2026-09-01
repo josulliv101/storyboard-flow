@@ -102,6 +102,9 @@ export type EngineContext<S> = Readonly<{
   /** Ceiling on nesting depth, or `null` for unbounded. See
    *  `EngineConfig.maxDepth`. */
   maxDepth: number | null;
+  /** Ceiling on the LENGTH of one node id, or `null` for unbounded. See
+   *  `EngineConfig.maxNodeIdLength`. */
+  maxNodeIdLength: number | null;
   mintId(): string;
   now(): number;
   /**

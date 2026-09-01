@@ -224,6 +224,9 @@ function makeCtx(
     onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
+    // Unbounded, so this fixture behaves exactly as it did before the
+    // id-length ceiling existed.
+    maxNodeIdLength: null,
     mintId: () => "minted",
     now: () => 0,
     devChecks: false,

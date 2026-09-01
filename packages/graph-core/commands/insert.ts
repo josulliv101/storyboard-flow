@@ -41,14 +41,28 @@ import { fail, ok } from "./results";
  * `mintId` that always returns the same string, or returns whitespace, is a
  * programmer error — but nothing in this module may throw, and an unbounded
  * retry loop is a hang, which is strictly worse than an ugly id.
+ *
+ * OVER-LONG COUNTS AS UNACCEPTABLE, exactly like whitespace, and that is what
+ * keeps the id-length ceiling from being an ingress-only rule. `deserialize`
+ * refuses an id past `maxNodeIdLength`; if minting could install one anyway,
+ * the graph would hold a node that saves cleanly and never loads again — the
+ * shape this package has already paid for at the node ceiling and at the depth
+ * one. The existing retry-then-fall-back is the whole mechanism; this only adds
+ * a term to what "acceptable" means. The fallback `graph-node-N` is short by
+ * construction, so it cannot itself trip the ceiling.
  */
 function mintFreshId<S>(
   taken: ReadonlySet<string>,
   ctx: EngineContext<S>,
 ): NodeId {
+  const fits = (id: string): boolean =>
+    ctx.maxNodeIdLength === null || id.length <= ctx.maxNodeIdLength;
+
   for (let attempt = 0; attempt < 64; attempt += 1) {
     const minted = tryParseNodeId(ctx.mintId());
-    if (minted.ok && !taken.has(minted.value)) return minted.value;
+    if (minted.ok && fits(minted.value) && !taken.has(minted.value)) {
+      return minted.value;
+    }
   }
   for (let counter = 0; ; counter += 1) {
     const candidate = `graph-node-${counter}`;

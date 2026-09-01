@@ -72,6 +72,7 @@ import {
   type ObservableFoldCache,
 } from "../folds";
 import {
+  DEFAULT_MAX_NODE_ID_LENGTH,
   DEFAULT_MAX_NODES,
   deserializeDocument,
   loadChildrenInto,
@@ -215,6 +216,11 @@ export function createEngine<
   for (const [name, value] of [
     ["maxNodes", config.maxNodes],
     ["maxDepth", config.maxDepth],
+    // The third ceiling, validated with its two siblings rather than beside
+    // them — `maxNodeIdLength: NaN` disables the bound exactly the way
+    // `maxNodes: NaN` does, and for the same reason: every `length > ceiling`
+    // comparison goes false.
+    ["maxNodeIdLength", config.maxNodeIdLength],
   ] as const) {
     if (value === undefined || value === null) continue;
     if (!Number.isInteger(value) || value <= 0) {
@@ -247,6 +253,13 @@ export function createEngine<
     // number — see `EngineConfig.maxDepth` for why depth is the consumer's
     // ceiling to set and not this package's to invent.
     maxDepth: config.maxDepth ?? null,
+    // `??`, not `?? null`: this one HAS a default, like `maxNodes` and unlike
+    // `maxDepth`, so omitting it takes the number and only an explicit `null`
+    // opts out. See `EngineConfig.maxNodeIdLength`.
+    maxNodeIdLength:
+      config.maxNodeIdLength === undefined
+        ? DEFAULT_MAX_NODE_ID_LENGTH
+        : config.maxNodeIdLength,
     mintId: config.mintId ?? defaultMintId,
     now: config.now ?? Date.now,
     devChecks: config.devChecks ?? false,

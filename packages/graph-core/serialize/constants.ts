@@ -39,3 +39,38 @@
  * are buying, which is the whole reason it refuses loudly instead of trimming.
  */
 export const DEFAULT_MAX_NODES = 100_000;
+
+/**
+ * The default ceiling on the LENGTH of one node id.
+ *
+ * THE THIRD CEILING, and the one the other two do not cover. `maxNodes` bounds
+ * how MANY nodes a document may hold and `maxDepth` how deeply they nest;
+ * neither says anything about how big one of them may be, and `tryParseNodeId`
+ * refuses only the empty and whitespace-only string. So the size of a node id
+ * was the sender's to choose, without limit, under ceilings that read as
+ * complete.
+ *
+ * WHERE THAT AMPLIFIES, and it is not where it looks. The graph's four maps key
+ * by the id, but a JavaScript string is immutable and shared by reference, so
+ * holding one id in four maps costs four pointers and one copy of the bytes.
+ * The memo table is different: `cacheKey` CONCATENATES the id into a fresh
+ * string per `(foldKey, nodeId, subtreeRev)` entry, and `foldCacheLimit` bounds
+ * that table by ENTRY COUNT. At the defaults that is 131,072 entries whose
+ * per-entry size the document decides — and ./folds measures ~232 bytes an
+ * entry, a figure taken with ordinary ids and, until this ceiling existed,
+ * resting on an assumption nothing enforced.
+ *
+ * 1024, which is not a round number chosen for looking generous: it is ~28x a
+ * UUID and ~16x the longest id-shaped string in this repo's own fixtures and
+ * app code (a 64-character storage path). Nothing legitimate is within an order
+ * of magnitude of it, and it caps the memo table's worst case at a size the
+ * `maxNodes` ceiling is already the same order as.
+ *
+ * A CEILING WITH A DEFAULT, unlike `maxDepth`, and for `maxNodes`' reason: this
+ * one can be defended without knowing the consumer's data, because there is no
+ * legitimate id near it. `null` opts out, and the refusal names the config to
+ * raise — the same escape hatch `maxNodes` offers, and it matters more here,
+ * because a read-side ceiling that refuses a STORED document is worse than the
+ * hazard it prevents.
+ */
+export const DEFAULT_MAX_NODE_ID_LENGTH = 1024;

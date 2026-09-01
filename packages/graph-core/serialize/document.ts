@@ -61,6 +61,39 @@ type BuiltDocument<Ts extends readonly WidenedNodeType[], S> = Readonly<{
  * sub-document's `rootIds` name the nodes that BECOME some target's children,
  * and a child may perfectly well be a leaf.
  */
+/**
+ * THE ID-LENGTH CEILING, applied wherever this document's ids are adopted.
+ *
+ * One helper for all three sites — `nodes[].id`, `rootIds[]` and
+ * `children[]` — because a ceiling enforced at two of the three is a ceiling
+ * with a door left open, and each of those three is somewhere a sender chooses
+ * a string. See `EngineConfig.maxNodeIdLength` for what it protects, which is
+ * the memo table rather than the graph.
+ *
+ * BEFORE `tryParseNodeId`, not after, and for `quoteFromWire`'s reason: the
+ * only thing done with an over-long id should be measuring it. Parsing it first
+ * would brand a megabyte on the way to refusing it.
+ *
+ * `null` when the id fits, so the caller reads it as "no complaint".
+ */
+function idTooLong<S>(
+  raw: string,
+  ctx: EngineContext<S>,
+  where: string,
+): StructuralError | null {
+  if (ctx.maxNodeIdLength === null) return null;
+  if (raw.length <= ctx.maxNodeIdLength) return null;
+  return {
+    code: "node-id-too-long",
+    message:
+      `${where} presents a node id of ${raw.length} characters, above the ` +
+      `${ctx.maxNodeIdLength} ceiling. Raise or clear EngineConfig.maxNodeIdLength ` +
+      `if this id is legitimate.`,
+    limit: ctx.maxNodeIdLength,
+    actual: raw.length,
+  };
+}
+
 export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
   raw: unknown,
   ctx: EngineContext<S>,
@@ -106,6 +139,8 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
   // --- Pass A: adopt the wire's ids -----------------------------------------
   const wireById = new Map<NodeId, SerializedNode>();
   for (const node of doc.nodes) {
+    const tooLong = idTooLong(node.id, ctx, "nodes");
+    if (tooLong !== null) return fail(tooLong);
     const id = tryParseNodeId(node.id);
     if (!id.ok) {
       return fail({
@@ -129,6 +164,8 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
   const rootIds: NodeId[] = [];
   const rootSet = new Set<NodeId>();
   for (const rawRootId of doc.rootIds) {
+    const tooLong = idTooLong(rawRootId, ctx, "rootIds");
+    if (tooLong !== null) return fail(tooLong);
     const id = tryParseNodeId(rawRootId);
     if (!id.ok) {
       return fail({
@@ -240,6 +277,8 @@ export function buildDocument<Ts extends readonly WidenedNodeType[], S>(
     if (node.children === undefined) continue;
     const kids: NodeId[] = [];
     for (const rawChildId of node.children) {
+      const tooLongChild = idTooLong(rawChildId, ctx, "children");
+      if (tooLongChild !== null) return fail(tooLongChild);
       const child = tryParseNodeId(rawChildId);
       if (!child.ok) {
         return fail({

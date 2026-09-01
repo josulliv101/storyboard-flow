@@ -281,6 +281,9 @@ function makeCtx(): Ctx {
     onParseFailure: "seal",
     maxNodes: DEFAULT_MAX_NODES,
     maxDepth: null,
+    // Unbounded, so this fixture behaves exactly as it did before the
+    // id-length ceiling existed.
+    maxNodeIdLength: null,
     mintId: () => {
       minted += 1;
       // Never reused, and disjoint from every generated document id — so a

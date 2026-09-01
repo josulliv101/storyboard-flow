@@ -265,6 +265,14 @@ export type StructuralErrorCode =
   | "document-too-large"
   /** Nested deeper than `EngineConfig.maxDepth`, which is opt-in. */
   | "document-too-deep"
+  /**
+   * A node id longer than `EngineConfig.maxNodeIdLength`.
+   *
+   * The third of the ingress ceilings, and the one the other two do not imply:
+   * they bound how many nodes a document holds and how deeply they nest, never
+   * how large one of them is. Carries `limit`/`actual` like its two siblings.
+   */
+  | "node-id-too-long"
   /** A consumer `contentKey`/`sourceKey` threw. See `RejectionCode`. */
   | "node-type-threw";
 
@@ -277,10 +285,11 @@ export type StructuralError = Readonly<{
   issues?: readonly Issue[];
   /** Present on `"ingress-rejected"`. */
   ingress?: readonly IngressError[];
-  /** Present on the two bound refusals: the ceiling that was in force, and
-   *  what the document actually presented. A consumer telling a person why
-   *  their document was refused needs both, and parsing them back out of
-   *  `message` is not an interface. */
+  /** Present on the three bound refusals — `"document-too-large"`,
+   *  `"document-too-deep"` and `"node-id-too-long"`: the ceiling that was in
+   *  force, and what the document actually presented. A consumer telling a
+   *  person why their document was refused needs both, and parsing them back
+   *  out of `message` is not an interface. */
   limit?: number;
   actual?: number;
 }>;
