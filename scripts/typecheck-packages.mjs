@@ -5,7 +5,7 @@
 // someone remembers to add a step. CI had four packages uncovered — including
 // both graph packages and `timeline-model`, which did not compile at all and
 // had not for long enough that nobody knew.
-import { readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -14,9 +14,35 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const packagesDir = join(root, "packages");
 const tscEntry = join(root, "node_modules", "typescript", "bin", "tsc");
 
-const packages = readdirSync(packagesDir).filter((name) =>
-  existsSync(join(packagesDir, name, "tsconfig.json")),
-);
+/**
+ * Every tsconfig under `packages/`, ONE LEVEL DEEP AS WELL AS AT THE TOP.
+ *
+ * A package may carry more than one, and `nested-collections` is why: its core
+ * compiles with `lib: ["esnext"]` and NO DOM, which is what proves the engine
+ * cannot reach for `document` or import React — and that only holds while the
+ * React half is checked by its own config, which names `dom` and `jsx`. One
+ * merged config would hand the core a DOM lib and turn the package's central
+ * rule back into a convention.
+ *
+ * Scanning only the top level would therefore have left `react/` unchecked the
+ * day the two packages became one — silently, which is the exact failure this
+ * script's own header records: "CI had four packages uncovered ... and had not
+ * for long enough that nobody knew."
+ */
+const packages = [];
+for (const name of readdirSync(packagesDir)) {
+  const dir = join(packagesDir, name);
+  if (!statSync(dir).isDirectory()) continue;
+  if (existsSync(join(dir, "tsconfig.json"))) packages.push(name);
+  for (const inner of readdirSync(dir)) {
+    if (inner === "node_modules") continue;
+    const innerDir = join(dir, inner);
+    if (!statSync(innerDir).isDirectory()) continue;
+    if (existsSync(join(innerDir, "tsconfig.json"))) {
+      packages.push(`${name}/${inner}`);
+    }
+  }
+}
 
 if (packages.length === 0) {
   console.error("typecheck:packages found no package with a tsconfig.json");

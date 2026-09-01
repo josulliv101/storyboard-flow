@@ -12,7 +12,7 @@ const config: StorybookConfig = {
     '../../../packages/ui/**/*.stories.@(ts|tsx)',
     '../../../packages/timeline-widget/src/**/*.stories.@(ts|tsx)',
     '../../timeline-gstudio001/components/**/*.stories.@(ts|tsx)',
-    '../../../packages/graph-react/**/*.stories.@(ts|tsx)',
+    '../../../packages/nested-collections/react/**/*.stories.@(ts|tsx)',
   ],
   addons: ['@storybook/addon-vitest', '@storybook/addon-a11y', '@storybook/addon-mcp'],
   framework: {

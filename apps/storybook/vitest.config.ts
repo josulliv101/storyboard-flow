@@ -55,12 +55,12 @@ export default defineConfig({
             "../../packages/ui/**/*.test.tsx",
             "../../packages/timeline-domain/**/*.test.ts",
             "../../packages/collections-core/**/*.test.ts",
-            "../../packages/graph-core/**/*.test.ts",
+            "../../packages/nested-collections/**/*.test.ts",
             // graph-react's runtime tests. They existed and never ran: the
             // globs named six packages and this was not one of them, and the
             // file is `.tsx` so a `*.test.ts` glob alone would still miss it.
-            "../../packages/graph-react/**/*.test.ts",
-            "../../packages/graph-react/**/*.test.tsx",
+            
+            "../../packages/nested-collections/**/*.test.tsx",
             "../../packages/timeline-model/**/*.test.ts",
             "../../packages/timeline-widget/**/*.test.ts",
           ],
