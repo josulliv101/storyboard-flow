@@ -4,11 +4,11 @@
   "private": true,
   "sideEffects": false,
   "exports": {
-    ".": "./index.ts",
+    ".": "./core/index.ts",
     "./react": "./react/index.ts"
   },
-  "main": "index.ts",
-  "types": "index.ts",
+  "main": "core/index.ts",
+  "types": "core/index.ts",
   "peerDependencies": {
     "react": "^19.0.0"
   },

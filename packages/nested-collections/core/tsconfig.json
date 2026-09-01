@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["esnext"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["**/*.ts"],
+  // NO DOM IN `lib` ABOVE, and that is the boundary made checkable rather than
+  // merely documented: a file here that reached for `document` or imported
+  // React would not compile.
+  //
+  // It used to need `"exclude": ["react"]` as well, because the React half sat
+  // inside this config's root. The halves are siblings now — `core/` and
+  // `react/` — so the exclusion is structural rather than a rule this file has
+  // to remember, and `react/` is compiled by its OWN config, which names `dom`
+  // and `jsx`. Do not merge the two: one config covering both hands the core a
+  // DOM lib and turns the package's central rule back into a convention.
+  "exclude": ["node_modules"]
+}

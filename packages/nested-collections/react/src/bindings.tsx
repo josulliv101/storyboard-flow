@@ -61,7 +61,7 @@ import {
   type SelectionSlice,
   type Store,
   type WidenedNodeType,
-} from "../..";
+} from "../../core";
 import type {
   DispatchFn,
   HistoryControls,

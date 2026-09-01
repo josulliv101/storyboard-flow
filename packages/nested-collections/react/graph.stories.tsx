@@ -38,7 +38,7 @@ import {
   type SerializedDocument,
   type SerializedNode,
   type ConsumerDefinedSummaryType,
-} from "..";
+} from "../core";
 
 import { createReactBindings } from "./index";
 
