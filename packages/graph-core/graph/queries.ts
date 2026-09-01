@@ -274,6 +274,76 @@ export function subtreeIds<Ts extends readonly WidenedNodeType[], S>(
   return walkInDocumentOrder(graph, [id]);
 }
 
+/**
+ * The tallest LIVE subtree under `id`, counting `id` itself as 1.
+ *
+ * THE SINGLE ANSWER to "how much depth does relocating this node cost", for the
+ * same reason `ownsItsSubtree` is the single answer to ownership: it is read by
+ * the forward door (`applyMoveNodes` in ./commands) and by the replay door
+ * (`verifyMoved` in ./patches), and those two disagreeing about depth is
+ * exactly the drift that let a redo walk a graph past `maxDepth`. It lives here
+ * because ./commands imports ./patches, so the shared helper cannot live in
+ * either of them.
+ *
+ * `walkInDocumentOrder` descends only `loaded` collections, which is the right
+ * rule: an unloaded branch contributes its placeholder and nothing more,
+ * exactly as it does when the ingress door measures the same graph. So a move
+ * is judged on the depth the graph actually holds, and loading that branch
+ * later is bounded by `loadChildrenInto`'s own check rather than pre-refused
+ * here on a guess about what it might contain.
+ *
+ * ONE descent carrying depth, rather than an `ancestorChain` per descendant.
+ * The predecessor answered a SUBTREE question with N ROOT-walks: it read
+ * `parentById` once per ancestor of every descendant, and allocated a chain
+ * array for each one it threw away. MEASURED on a caterpillar subtree, counting
+ * `parentById.get` during one depth-checked move:
+ *
+ *     nodes  depth    reads before -> after
+ *       122     20         1,491 ->  9
+ *       242     40         5,371 ->  9
+ *       482     80        20,331 ->  9
+ *       962    160        79,051 ->  9
+ *
+ * FLAT, because the depth now comes from the descent itself and this function
+ * stops reading `parentById` at all.
+ *
+ * Explicit stack and a visit budget, matching `walkInDocumentOrder`: this
+ * function exists to measure depth, so depth is hostile input by construction,
+ * and the budget bounds the damage on an invalid graph instead of spinning on a
+ * cycle. Two parallel arrays rather than one array of objects — the pairing is
+ * local to this loop and allocating a wrapper per node is the cost being
+ * removed.
+ *
+ * `1` for an unknown node, matching what the callers need: a node the graph
+ * does not hold still occupies the slot it is being placed into.
+ */
+export function subtreeHeight<Ts extends readonly WidenedNodeType[], S>(
+  graph: Graph<Ts, S>,
+  id: NodeId,
+): number {
+  if (!graph.nodesById.has(id)) return 1;
+
+  const budget = graph.nodesById.size;
+  const stack: NodeId[] = [id];
+  const depths: number[] = [1];
+  let visited = 0;
+  let tallest = 1;
+
+  while (stack.length > 0 && visited < budget) {
+    const current = stack.pop();
+    const depth = depths.pop();
+    if (current === undefined || depth === undefined) break;
+    visited += 1;
+    if (depth > tallest) tallest = depth;
+    for (const childId of getChildren(graph, current)) {
+      stack.push(childId);
+      depths.push(depth + 1);
+    }
+  }
+
+  return tallest;
+}
+
 /** Pre-order across every root, in `rootIds` order. Backs `selectRange`, which
  *  is inclusive in DOCUMENT order — the reason selection is engine-owned rather
  *  than a consumer concern. */

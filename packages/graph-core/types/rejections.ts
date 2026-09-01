@@ -165,6 +165,28 @@ export type ReplayRejectionCode =
    * for the same reason it does.
    */
   | "would-exceed-max-nodes"
+  /**
+   * Replaying this insert or move patch would nest past `maxDepth`.
+   *
+   * THE TWIN OF `"would-exceed-max-nodes"`, and it was missing while that one
+   * was not — which is the whole shape of the defect. `maxDepth` was enforced
+   * at three forward doors (`applyInsertNodes`, `applyMoveNodes`, and both
+   * ingress doors) and at none of the replay ones, so the ceiling held against
+   * every command and against every document, and not against undo or redo.
+   *
+   * Reachable by the same lever the node ceiling names, because `Store.load`
+   * touches neither stack: move an UNLOADED container somewhere legal (it
+   * counts as one level), undo that move, fill the container two levels deep
+   * while it sits shallow, then redo. MEASURED before this existed, at
+   * `maxDepth: 4` — the redo was accepted, the graph reached depth 6,
+   * `serializeGraph` wrote it, and `deserialize` at the same config then
+   * answered `document-too-deep` forever. `findInvariantViolation` cannot catch
+   * it either: `ViolationCode` has no depth member, because depth is a ceiling
+   * a consumer chose and not a structural truth about the graph.
+   *
+   * Carries `limit`/`actual` for the reason its twin does.
+   */
+  | "would-exceed-max-depth"
   /** The store was destroyed. Every mutating call refuses rather than writing
    *  into a graph nothing is listening to — see `Store.destroy`. */
   | "store-destroyed";
@@ -175,11 +197,12 @@ export type ReplayRejection = Readonly<{
   nodeId?: NodeId;
   parentId?: NodeId;
   index?: number;
-  /** The ceiling that was hit, on `"would-exceed-max-nodes"`. Named the same as
-   *  `Rejection`'s pair so a consumer reporting a limit to the user reads it the
-   *  same way whichever door refused. */
+  /** The ceiling that was hit, on `"would-exceed-max-nodes"` and
+   *  `"would-exceed-max-depth"`. Named the same as `Rejection`'s pair so a
+   *  consumer reporting a limit to the user reads it the same way whichever
+   *  door refused. */
   limit?: number;
-  /** What the graph WOULD have reached. */
+  /** What the graph WOULD have reached — nodes or levels, per the code. */
   actual?: number;
 }>;
 

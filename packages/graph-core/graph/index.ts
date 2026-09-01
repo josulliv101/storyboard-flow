@@ -50,6 +50,7 @@ export {
   isSameOrAncestor,
   nodeCount,
   stateOwnsSubtree,
+  subtreeHeight,
   subtreeIds,
 } from "./queries";
 
