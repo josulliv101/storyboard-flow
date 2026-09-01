@@ -369,23 +369,33 @@ export function createEngine<
    * never left believing an audit is running after it has gone quiet.
    */
   let shadowsLeft = SHADOW_REFOLD_BUDGET;
-  const shadowCheck = (
+  /**
+   * Whether any comparison actually disagreed, so the sign-off below can say
+   * which happened.
+   *
+   * The message used to assert "Everything it checked agreed" UNCONDITIONALLY —
+   * printed on exhaustion whether or not a stale entry had already been reported
+   * above it. A diagnostic whose closing line contradicts its own findings is
+   * worse than one that says nothing, because the summary is what a reader
+   * scrolling a console keeps.
+   */
+  let shadowFoundStale = false;
+
+  /**
+   * ONE comparison. Split out so the budget accounting around it is a
+   * three-line function rather than something the early returns can escape.
+   *
+   * Every path here returns without announcing anything about the budget —
+   * that is `shadowCheck`'s job, and it was the entanglement of the two that
+   * produced the off-by-one below.
+   */
+  const compareShadow = (
     graph: Graph<Ts, S>,
     fold: WidenedFold<Ts, S>,
     id: NodeId,
     cachedValue: unknown,
     key: string,
   ): void => {
-    if (shadowsLeft <= 0) return;
-    shadowsLeft -= 1;
-    if (shadowsLeft === 0) {
-      console.error(
-        `graph dev check: the shadow cold refold has spent its budget of ` +
-          `${SHADOW_REFOLD_BUDGET} comparisons and is now OFF for this engine. ` +
-          `Everything it checked agreed; later reads are no longer audited.`,
-      );
-      return;
-    }
     // NO CACHE ARGUMENT — that is what makes it cold. Passing one would let the
     // shadow populate the very table it is auditing, and it would then be
     // comparing an entry against itself.
@@ -401,12 +411,43 @@ export function createEngine<
     }
     if (fresh === undefined) return;
     if (structurallyEqualBounded(fresh.value, cachedValue) !== false) return;
+    shadowFoundStale = true;
     console.error(
       `graph dev check: the memo table served a STALE ${JSON.stringify(key)} for node ` +
         `${JSON.stringify(id)}. Cached and freshly folded values disagree, which means an ` +
         `entry outlived the revision that should have made it unreachable. ` +
         `cached=${describeValue(cachedValue)} fresh=${describeValue(fresh.value)}`,
     );
+  };
+
+  const shadowCheck = (
+    graph: Graph<Ts, S>,
+    fold: WidenedFold<Ts, S>,
+    id: NodeId,
+    cachedValue: unknown,
+    key: string,
+  ): void => {
+    if (shadowsLeft <= 0) return;
+    shadowsLeft -= 1;
+    // THE COMPARISON FIRST, THEN THE SIGN-OFF, and that order is the fix rather
+    // than a rearrangement. The announcement used to sit between the decrement
+    // and the work, with a `return` after it, so the call that took the counter
+    // from 1 to 0 announced the budget spent and then DID NOT COMPARE. The
+    // engine ran 999 of the 1,000 it reported, and the one it skipped was a real
+    // audited read — silently, on the audit whose whole purpose is that a stale
+    // entry is otherwise served forever.
+    compareShadow(graph, fold, id, cachedValue, key);
+    if (shadowsLeft === 0) {
+      console.error(
+        `graph dev check: the shadow cold refold has spent its budget of ` +
+          `${SHADOW_REFOLD_BUDGET} comparisons and is now OFF for this engine. ` +
+          `${
+            shadowFoundStale
+              ? "It reported at least one STALE entry above; later reads are no longer audited."
+              : "Everything it checked agreed; later reads are no longer audited."
+          }`,
+      );
+    }
   };
 
   // -------------------------------------------------------------------------
@@ -732,10 +773,32 @@ export function createEngine<
       }
     };
 
+    /**
+     * THE ONE PLACE the selection is written, and therefore the one place the
+     * destroyed check belongs — `set`, `toggle`, `clear` and `selectRange` all
+     * funnel through here, and guarding four entry points is how three of them
+     * stay guarded and the fourth quietly does not.
+     *
+     * A SILENT NO-OP, not a rejection, matching `markMissing` rather than
+     * `dispatch`: these return `void`, so there is nothing to reject WITH, and
+     * inventing a throw for an unmount race would be the opposite of what the
+     * write doors decided. `dispatch`, `undo`, `redo`, `load` and
+     * `applyNonUndoableWrite` all return a `Result` and refuse with
+     * `"store-destroyed"`; `markMissing` returns void and simply does not write.
+     * Selection is the second of that second kind.
+     *
+     * It was UNGUARDED, and the argument the write doors make applies unchanged:
+     * `destroy()` clears every listener, so a post-destroy `selection.set` moved
+     * `selectedIds` and `selectedSet` and then notified an empty set — a zombie
+     * write whose only symptom is a later `selection.get()` disagreeing with a
+     * UI that has already torn down. Measured: `dispatch` after `destroy()`
+     * refused with `"store-destroyed"` while `selection.set([a])` mutated.
+     */
     const setSelection = (
       ids: readonly NodeId[],
       nextAnchor: NodeId | null,
     ): void => {
+      if (destroyed) return;
       const seen = new Set<NodeId>();
       const deduped: NodeId[] = [];
       for (const id of ids) {
