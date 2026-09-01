@@ -15,8 +15,8 @@
     "baseUrl": ".",
     "paths": {
       "@gstudio/*": ["../timeline-gstudio001/*"],
-      "@storyboard/nested-collections": ["../../packages/nested-collections/core"],
-      "@storyboard/nested-collections/react": ["../../packages/nested-collections/react"],
+      "@josulliv101/nested-collections": ["../../packages/nested-collections/core"],
+      "@josulliv101/nested-collections/react": ["../../packages/nested-collections/react"],
       "@storyboard/ui": ["../../packages/ui"],
       "@storyboard/ui/*": ["../../packages/ui/*"]
     }

@@ -184,7 +184,7 @@ function scan(): Readonly<{ checked: readonly string[]; violations: readonly Vio
     // package; the React half is INSIDE it and reaches the core by relative
     // path, so no specifier to match on — it qualifies by location instead.
     const importsTheEngine =
-      text.includes("@storyboard/nested-collections") || file.startsWith(reactDir);
+      text.includes("@josulliv101/nested-collections") || file.startsWith(reactDir);
     if (!importsTheEngine) continue;
     checked.push(relative(root, file).split(sep).join("/"));
 

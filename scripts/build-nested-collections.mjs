@@ -10,7 +10,7 @@
 // `node scripts/build-nested-collections.mjs`, never executed directly, so the
 // shebang bought nothing.
 /**
- * Build `@storyboard/nested-collections` for publication.
+ * Build `@josulliv101/nested-collections` for publication.
  *
  * A script rather than a tool config, for the reason `count-loc.mjs` is one:
  * every decision here has a reason that has to be readable, and two of them are

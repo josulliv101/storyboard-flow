@@ -1,7 +1,7 @@
 {
-  "name": "@storyboard/nested-collections",
+  "name": "@josulliv101/nested-collections",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "type": "module",
   "sideEffects": false,
   "exports": {
