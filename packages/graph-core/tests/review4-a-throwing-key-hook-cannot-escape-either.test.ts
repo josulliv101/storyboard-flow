@@ -237,6 +237,52 @@ describe("a throwing contentKey/sourceKey refuses rather than escaping", () => {
         }
       });
 
+      // THE CASE THE LOOP ABOVE CANNOT REACH, and the reason it could not.
+      //
+      // Every edit in that loop targets `c1`, which is a CLIP — a leaf. The
+      // edit door's own ownership check is `if (ownsItsSubtree(node))`, and a
+      // leaf owns nothing, so the `sourceKey` call guarded by it never ran and
+      // the throw came from somewhere already wrapped. The test asserted the
+      // property and the fixture kept it away from the one call site that
+      // lacked it: `planEdits` read `nodeType.sourceKey?.(nextData)` BARE, the
+      // only un-wrapped consumer key hook left in the package.
+      //
+      // `guardKeyHooks` catches the private `KeyHookFailure` tag ONLY and
+      // rethrows anything else — correctly, so an engine bug still crashes as
+      // itself — so a raw consumer throw walked straight out of `dispatch`.
+      // MEASURED before the fix: `store.dispatch` threw "sourceKey exploded"
+      // and returned nothing.
+      //
+      // `box` is a folder with a `source`, so it is a container that owns its
+      // subtree and the ownership branch actually executes.
+      it("dispatch refuses when the edited node is a container that OWNS its subtree", () => {
+        const { store } = calmStore();
+        explode[hook] = true;
+        let thrown: unknown = null;
+        let result: ReturnType<typeof store.dispatch> | null = null;
+        try {
+          result = store.dispatch({
+            type: "edit-nodes",
+            edits: [
+              {
+                nodeId: parseNodeId("box"),
+                kind: "folder" as const,
+                edit: { source: "s-moved" },
+              },
+            ],
+          });
+        } catch (caught) {
+          thrown = caught;
+        }
+        resetExplosions();
+
+        expect(thrown).toBeNull();
+        expect(result).not.toBeNull();
+        if (result === null || result.ok) return;
+        expect(result.error.code).toBe("node-type-threw");
+        expect(result.error.message).toContain(hook);
+      });
+
       it("undo refuses, and does not eat the entry", () => {
         const { store } = calmStore();
         expect(

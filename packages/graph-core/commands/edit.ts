@@ -22,6 +22,7 @@ import {
 import {
   ownsItsSubtree,
   getNode,
+  sourceKeyForData,
 } from "../graph";
 import { applyPatch } from "../patches";
 import { parseNodeData } from "../serialize";
@@ -285,7 +286,23 @@ export function planEdits<Ts extends readonly WidenedNodeType[], S>(
     // Total on its own terms: false for sealed, for a leaf, and for a
     // `reference` — subsuming the `stateOwnsSubtree` branch this replaced.
     if (ownsItsSubtree<Ts, S>(node)) {
-      const nextKey = nodeType.sourceKey?.(nextData) ?? null;
+      // THROUGH `sourceKeyForData`, never `nodeType.sourceKey` directly. This
+      // was the one place in the package that called a consumer key hook bare,
+      // and ./graph's wrapper exists precisely so "the `KeyHookFailure` wrapping
+      // stays in ONE place". `guardKeyHooks` catches that private tag ONLY and
+      // rethrows anything else — correctly, so an engine bug still crashes
+      // loudly — so a raw consumer throw from here escaped `dispatch`, a
+      // function whose entire contract is that it returns a `Result`. That is
+      // verbatim the failure review3 fixed for `contentKey` at the edit, insert
+      // and remove doors; the edit door's own `sourceKey` was left behind.
+      // MEASURED before this: `store.dispatch` threw "consumer sourceKey
+      // exploded" and returned nothing.
+      const nextKey = sourceKeyForData(
+        ctx.registry,
+        node.kind,
+        nextData,
+        edit.nodeId,
+      );
       if (nextKey !== null) {
         const owner = graph.ownerBySourceKey.get(nextKey);
         const claimed = claimedSourceKeys.get(nextKey);
