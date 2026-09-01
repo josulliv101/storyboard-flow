@@ -2058,9 +2058,15 @@ describe("depth", () => {
 // 12. Why there is no section 12
 // ---------------------------------------------------------------------------
 //
-// Three wall-clock cost gates were written for this round's findings and all
-// three were deleted. Recording that here so a fourth starts from the evidence
+// FOUR wall-clock cost gates were written for this round's findings and all
+// four were deleted. Recording that here so a fifth starts from the evidence
 // rather than from scratch.
+//
+// This section said THREE for two days, while the fourth sat 700 lines above it
+// in this same file, added in the same commit. So the first lesson is about the
+// record and not the gates: a warning does not inspect the code around it. When
+// this is next updated, GREP THE FILE for the shape before believing the count
+// — a ratio of two timings, a tuned ceiling, `measureLinearReferenceGrowth`.
 //
 //   UNDO OF A BULK INSERT (quadratic `indexOf` in the verify overlay). A
 //   2K-vs-K growth ratio separates the implementations 2.19 to 1.0 — but only
@@ -2082,14 +2088,40 @@ describe("depth", () => {
 //   INSIDE the broken range. No threshold separates them, so the gate was not
 //   mistuned, it was unsound. It had been flaking main since it landed.
 //
+//   SELECTION MEMBERSHIP AT 1K vs 10K, against a linear reference measured
+//   immediately afterwards. Blocked #635, an unrelated pull request, at 5.93
+//   against a 4.36 ceiling ON THE FIXED BUILD, then passed on an immediate
+//   re-run of the identical commit. It could not have worked: `Set.has` on a
+//   string is nanoseconds, so the measurement was mostly loop overhead, and a
+//   ratio of two such numbers is a ratio of noise. CALIBRATING THE CEILING
+//   AGAINST A LINEAR REFERENCE — which this gate did, and which is the most
+//   defensible version of the idea — does not rescue it: the noise moves
+//   between the reference and the subject too.
+//
 // THE COMMON FAILURE is not noise, and widening thresholds is not the fix. Each
 // gate assumed two measurements were comparable when the work behind them was
 // not, and a shared CI runner exposes that where a quiet laptop hides it. The
-// gates in sections 1-11 above survive because they count OPERATIONS —
-// `countOnce`, `noteCount`, the `Counters` harness — which is exact and
-// machine-independent. That is the shape a fourth attempt should take: give the
-// hot path a counter, assert the count. It costs an instrumentation hook in
-// production code, which is a real decision, not a drive-by.
+// TWO SHAPES SURVIVE, and a fifth attempt should reach for them in this order.
+//
+//   COUNT OPERATIONS. The gates in sections 1-11 above survive because they
+//   count — `countOnce`, `noteCount`, the `Counters` harness — which is exact
+//   and machine-independent. It costs an instrumentation hook in production
+//   code, which is a real decision, not a drive-by.
+//
+//   OR DESYNCHRONISE THE REDUNDANT STRUCTURES AND ASK WHICH ONE IS READ. Where
+//   a fast path exists BECAUSE a second structure mirrors a slow one, the mirror
+//   is the test surface, and nothing needs timing at all. That is what replaced
+//   the fourth gate: selection keeps `selectedIds` for order and `selectedSet`
+//   for membership, and `get()` hands back the live array, so the test can put a
+//   stranger into the array that the index does not have, and take a member out
+//   of the array that the index still holds. A scan and an index give OPPOSITE
+//   answers to both, which is why both directions are asserted — an
+//   implementation that always returned false would satisfy the first alone.
+//   Reverting `has` to `.includes()` fails it in 41ms, on any hardware.
+//
+//   The second is the STRONGER claim, not merely the steadier one: the timed
+//   version could only infer a scan from a ratio, and would have missed it
+//   outright on a fast enough runner.
 //
 // The measurements themselves are not lost. Each fix carries its numbers in the
 // file that owns it, where anyone can re-run them.
