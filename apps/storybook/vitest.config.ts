@@ -11,6 +11,23 @@ const dirname =
     : path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // The package's `exports` name `dist/`, because that is what npm publishes.
+  // Nothing in this repo imports it by specifier today — the two halves reach
+  // each other relatively — but the moment something does, TypeScript would
+  // resolve it to SOURCE (via the `paths` in tsconfig.json) while the runtime
+  // resolved it to a `dist/` that may not be built. Types and runtime
+  // disagreeing is the quiet kind of wrong, so they are pinned to the same
+  // place here.
+  resolve: {
+    alias: {
+      "@storyboard/nested-collections/react": fileURLToPath(
+        new URL("../../packages/nested-collections/react/index.ts", import.meta.url),
+      ),
+      "@storyboard/nested-collections": fileURLToPath(
+        new URL("../../packages/nested-collections/core/index.ts", import.meta.url),
+      ),
+    },
+  },
   test: {
     coverage: {
       allowExternal: true,
