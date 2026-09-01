@@ -46,3 +46,6 @@ apps/backend/.venv/
 __pycache__/
 *.pyc
 .vercel
+
+# Build output — emitted by scripts/build-nested-collections.mjs
+packages/nested-collections/dist/

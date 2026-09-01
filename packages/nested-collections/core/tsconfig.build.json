@@ -1,0 +1,24 @@
+{
+  // DECLARATIONS ONLY. The JavaScript is built by esbuild (see
+  // scripts/build-nested-collections.mjs); `tsc` is here for the `.d.ts` tree
+  // and nothing else, because it is the only thing that can produce one.
+  //
+  // A SEPARATE FILE from ./tsconfig.json rather than CLI overrides, because the
+  // difference is not just `noEmit`: the published surface must not carry
+  // declarations for tests or fixtures, and `include`/`exclude` cannot be
+  // overridden from the command line.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    // The PACKAGE root, so the emitted tree mirrors the source layout and
+    // `react/`'s declarations can reference `../core/...` exactly as the source
+    // does. Emitting from `core/` alone would flatten that and break the link.
+    "rootDir": "..",
+    "outDir": "../dist/types"
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "tests", "**/*.test.ts", "**/*.stories.tsx", "**/typecheck-fixture-*"]
+}

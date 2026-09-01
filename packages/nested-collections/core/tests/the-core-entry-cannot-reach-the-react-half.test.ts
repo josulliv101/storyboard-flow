@@ -139,17 +139,38 @@ describe("the core entry cannot reach the react half", () => {
     expect(fromReact.map(show)).toContain("core/index.ts");
   });
 
-  it("the exports map names exactly the two entries", () => {
-    // The map is what makes the walk above meaningful to a consumer: `.` must
-    // not resolve anywhere near `react/`.
+  it("the exports map keeps the two entries apart", () => {
+    // The map is what makes the walk above meaningful to a CONSUMER: `.` must
+    // not resolve anywhere near `react/`, or the module graph proven clean here
+    // is not the one they get.
+    //
+    // SHAPE-AGNOSTIC on purpose. This asserted the literal strings of a flat
+    // map and broke the moment `exports` became conditional for publishing —
+    // which changes HOW the entries resolve, not WHETHER they are separate,
+    // and separateness is the only thing this file has an opinion about.
     const manifest: unknown = JSON.parse(
       readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8"),
     );
     const exportsMap = (manifest as { exports?: Record<string, unknown> }).exports;
     expect(exportsMap).toBeDefined();
     expect(Object.keys(exportsMap ?? {}).sort()).toEqual([".", "./react"]);
-    expect(exportsMap?.["."]).toBe("./core/index.ts");
-    expect(exportsMap?.["./react"]).toBe("./react/index.ts");
+
+    // Every path an entry resolves to, whatever conditions wrap it.
+    const pathsUnder = (entry: unknown): readonly string[] => {
+      if (typeof entry === "string") return [entry];
+      const nested = (entry ?? {}) as Record<string, unknown>;
+      return Object.values(nested).flatMap(pathsUnder);
+    };
+
+    const corePaths = pathsUnder(exportsMap?.["."]);
+    const reactPaths = pathsUnder(exportsMap?.["./react"]);
+    expect(corePaths.length).toBeGreaterThan(0);
+    expect(reactPaths.length).toBeGreaterThan(0);
+
+    // THE PROPERTY: nothing the core entry resolves to lives under `react/`,
+    // and everything the react entry resolves to does.
+    for (const path of corePaths) expect(path).not.toContain("/react/");
+    for (const path of reactPaths) expect(path).toContain("/react/");
   });
 
   it("no source file outside react/ carries the directive", () => {

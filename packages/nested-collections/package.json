@@ -2,13 +2,27 @@
   "name": "@storyboard/nested-collections",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./core/index.ts",
-    "./react": "./react/index.ts"
+    ".": {
+      "types": "./dist/types/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./react": {
+      "types": "./dist/types/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    }
   },
-  "main": "core/index.ts",
-  "types": "core/index.ts",
+  "main": "./dist/core/index.js",
+  "types": "./dist/types/core/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-nested-collections.mjs",
+    "prepublishOnly": "npm run build"
+  },
   "peerDependencies": {
     "react": "^19.0.0"
   },

@@ -1,0 +1,16 @@
+{
+  // See core/tsconfig.build.json. Same job, and it must stay a SEPARATE run:
+  // this half compiles with `dom` and `jsx` and the core does not, which is the
+  // distinction the package is built around.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    "rootDir": "..",
+    "outDir": "../dist/types"
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.test.tsx", "**/*.stories.tsx", "**/typecheck-fixture-*"]
+}
