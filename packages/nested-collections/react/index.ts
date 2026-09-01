@@ -19,8 +19,8 @@
 // `engine.deserialize` without dragging a client module into a server bundle,
 // which typechecks clean and 500s at request time.
 //
-// THIS IS THE `./react` ENTRY of `@storyboard/nested-collections`, reached as
-// `@storyboard/nested-collections/react`. One package, two entry points: the
+// THIS IS THE `./react` ENTRY of `@josulliv101/nested-collections`, reached as
+// `@josulliv101/nested-collections/react`. One package, two entry points: the
 // core's barrel has no route to anything under this folder, which is what keeps
 // the sentence above true now that the two are shipped together.
 

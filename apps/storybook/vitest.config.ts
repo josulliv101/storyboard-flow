@@ -20,10 +20,10 @@ export default defineConfig({
   // place here.
   resolve: {
     alias: {
-      "@storyboard/nested-collections/react": fileURLToPath(
+      "@josulliv101/nested-collections/react": fileURLToPath(
         new URL("../../packages/nested-collections/react/index.ts", import.meta.url),
       ),
-      "@storyboard/nested-collections": fileURLToPath(
+      "@josulliv101/nested-collections": fileURLToPath(
         new URL("../../packages/nested-collections/core/index.ts", import.meta.url),
       ),
     },

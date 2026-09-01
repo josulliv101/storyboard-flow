@@ -8,7 +8,7 @@
 //
 // PURE. No React, no DOM, no "use client" anywhere below this file. The React
 // bindings live at `./react` — published as
-// `@storyboard/nested-collections/react` — and they take a finished engine.
+// `@josulliv101/nested-collections/react` — and they take a finished engine.
 // Keeping them behind their own entry point is what lets a route handler call
 // `engine.deserialize` without importing a client module that typechecks clean
 // and 500s at request time.
