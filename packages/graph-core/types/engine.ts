@@ -422,8 +422,57 @@ export type Engine<
     graph: Graph<Ts, S>,
     command: Command<Ts, S>,
   ): Result<Readonly<{ graph: Graph<Ts, S>; patch: Patch<Ts, S> }>, Rejection>;
-  /** THE ONE index rewriter — forward application and undo share it. */
+  /**
+   * THE ONE index rewriter — forward application and undo share it.
+   *
+   * PRECONDITION: `verifyPatchApplies` returned ok for THIS graph and THIS
+   * patch. This function re-checks nothing, and that is deliberate — re-checking
+   * would either duplicate the gate and drift from it, or tempt a caller to skip
+   * the gate because "apply validates anyway", which is how the dormant-patch
+   * corruptions happened in the first place.
+   *
+   * SO IT IS UNSAFE ON ITS OWN, and the signature cannot say so: it returns a
+   * `Graph`, not a `Result`, because with the precondition met there is nothing
+   * to reject. That reads as total, and this paragraph is the only thing
+   * standing between that reading and a silently corrupt graph. MEASURED, undo
+   * of an insert whose node has since gained a child — the exact case
+   * `verifyPatchApplies` answers `node-not-empty` for:
+   *
+   *     verifyPatchApplies  ->  node-not-empty
+   *     applyPatch          ->  did not throw, returned a graph
+   *     nodes               ->  3 before, 2 after, the child orphaned
+   *     findInvariantViolation -> parent-index-disagrees
+   *
+   * Nothing rejects, nothing throws, and `serializeGraph` then writes the
+   * result — it emits unreachable nodes rather than dropping them — so the
+   * document saves cleanly and `deserialize` refuses it afterwards.
+   *
+   * USE `applyPatchChecked` UNLESS YOU HAVE ALREADY VERIFIED. This door stays
+   * for the caller who verified once and applies to the same graph, and for the
+   * reducer's own arms, which establish their preconditions by planning rather
+   * than by replay.
+   */
   applyPatch(graph: Graph<Ts, S>, patch: Patch<Ts, S>): Graph<Ts, S>;
+  /**
+   * `verifyPatchApplies` and then `applyPatch`, in that order, as one call.
+   *
+   * The same pairing `serializeChecked` makes with `findInvariantViolation`, and
+   * added for the same reason: the two-step version is correct and the one-step
+   * version is what a caller reaches for, so the safe order should be the one
+   * that is easy to write. `undo` and `redo` have always done exactly this
+   * internally; a consumer driving its own replay — which is why `applyPatch`,
+   * `invertPatch` and `verifyPatchApplies` are exported as peers at all — had to
+   * reassemble it from the parts and could silently omit the gate.
+   *
+   * Costs what verification costs, which is O(patch) rather than O(graph): the
+   * gate reads the nodes the patch names, not the document. That is a different
+   * trade from `serializeChecked`, whose audit is a full pass — so there is no
+   * "keep using the unchecked one for speed" caveat here.
+   */
+  applyPatchChecked(
+    graph: Graph<Ts, S>,
+    patch: Patch<Ts, S>,
+  ): Result<Graph<Ts, S>, ReplayRejection>;
   invertPatch(patch: Patch<Ts, S>): Patch<Ts, S>;
   verifyPatchApplies(
     graph: Graph<Ts, S>,

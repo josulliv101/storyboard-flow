@@ -400,6 +400,43 @@ export function createEngine<
   // The store
   // -------------------------------------------------------------------------
 
+  /**
+   * `applyPatch` returns a `Graph`, not a `Result`, and is documented as
+   * deliberately re-checking nothing because verify ran first. But verify does
+   * NOT read the two key hooks on every path `applyPatch` does — measured, a
+   * throwing `contentKey` cleared `verifyPatchApplies` and then threw out of
+   * `applyPatch`, so `undo()` broke its own `Result` contract even after the
+   * verify door was guarded.
+   *
+   * `instanceof` the private tag, like every other guard here.
+   *
+   * AT ENGINE SCOPE, not inside `createStore`, because `applyPatchChecked` on
+   * the engine surface owes a consumer driving its own replay exactly the
+   * guarantee `undo` and `redo` already had. It closes over `ctx` and nothing
+   * a store owns, which is what makes hoisting it a move rather than a copy —
+   * and a second copy is what would drift.
+   */
+  const applyReplayPatch = (
+    from: Graph<Ts, S>,
+    patch: Patch<Ts, S>,
+  ): Result<Graph<Ts, S>, ReplayRejection> => {
+    try {
+      return { ok: true, value: applyPatchTo(from, patch, ctx) };
+    } catch (thrown) {
+      if (thrown instanceof KeyHookFailure) {
+        return {
+          ok: false,
+          error: {
+            code: "node-type-threw",
+            message: keyHookMessage(thrown),
+            ...(thrown.nodeId === null ? {} : { nodeId: thrown.nodeId }),
+          },
+        };
+      }
+      throw thrown;
+    }
+  };
+
   const createStore = (initialGraph: Graph<Ts, S>): Store<Ts, S, F> => {
     let graph = initialGraph;
     let history: History<Ts, S> = createHistory<Ts, S>(config.historyLimit);
@@ -558,37 +595,6 @@ export function createEngine<
             `remaining subscribers still ran, but this callback must not throw.`,
           thrown,
         );
-      }
-    };
-
-    /**
-     * `applyPatch` returns a `Graph`, not a `Result`, and is documented as
-     * deliberately re-checking nothing because verify ran first. But verify does
-     * NOT read the two key hooks on every path `applyPatch` does — measured, a
-     * throwing `contentKey` cleared `verifyPatchApplies` and then threw out of
-     * `applyPatch`, so `undo()` broke its own `Result` contract even after the
-     * verify door was guarded.
-     *
-     * `instanceof` the private tag, like every other guard here.
-     */
-    const applyReplayPatch = (
-      from: Graph<Ts, S>,
-      patch: Patch<Ts, S>,
-    ): Result<Graph<Ts, S>, ReplayRejection> => {
-      try {
-        return { ok: true, value: applyPatchTo(from, patch, ctx) };
-      } catch (thrown) {
-        if (thrown instanceof KeyHookFailure) {
-          return {
-            ok: false,
-            error: {
-              code: "node-type-threw",
-              message: keyHookMessage(thrown),
-              ...(thrown.nodeId === null ? {} : { nodeId: thrown.nodeId }),
-            },
-          };
-        }
-        throw thrown;
       }
     };
 
@@ -1123,6 +1129,15 @@ export function createEngine<
 
     applyCommand: (graph, command) => applyCommandWithPolicy(graph, command),
     applyPatch: (graph, patch) => applyPatchTo(graph, patch, ctx),
+    // THE GATE FIRST, then the rewrite — the order `undo` and `redo` have
+    // always used internally, handed to a consumer driving its own replay as
+    // one call so the safe order is the one that is easy to write. See
+    // `Engine.applyPatch` for what skipping it costs.
+    applyPatchChecked: (graph, patch) => {
+      const verified = verifyPatchAppliesTo(graph, patch, ctx);
+      if (!verified.ok) return verified;
+      return applyReplayPatch(graph, patch);
+    },
     invertPatch: (patch) => invertPatchOf(patch),
     verifyPatchApplies: (graph, patch) =>
       verifyPatchAppliesTo(graph, patch, ctx),
