@@ -39,18 +39,14 @@ export function applyPatch<Ts extends readonly WidenedNodeType[], S>(
 }
 
 
-/**
- * Copy-on-write removal BY IDENTITY, not by index.
- *
- * Deliberate: a "moved" patch removes several nodes before inserting any, and
- * index-based removal would need every subsequent index rebased. Identity
- * removal is order-independent, so the recorded `fromIndex` is needed only by
- * the inverse — which is precisely what makes swapping endpoints a complete
- * inversion.
- */
-
-
-
+// The block that stood here documented a copy-on-write removal helper that left
+// with the folder split, and described it as though it were still below. Its
+// two claims both live with the code now: "removal by identity is
+// order-independent" is argued at `spliceOutMany` in ./splicing, where the
+// single pass depends on it, and "the recorded `fromIndex` is needed only by the
+// inverse" is argued at `invertPatch`, which is what swaps the endpoints. A
+// third copy attached to nothing is how a reader ends up looking for a function
+// that is not here.
 
 
 // ---------------------------------------------------------------------------
