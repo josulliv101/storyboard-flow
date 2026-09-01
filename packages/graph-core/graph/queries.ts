@@ -80,7 +80,13 @@ export function getSubtreeRev<Ts extends readonly WidenedNodeType[], S>(
   // read of a present node hits. A dead id answers with the revision it held
   // when it was removed, which is what keeps a re-inserted id from landing back
   // on a revision its previous lifetime already cached.
-  return graph.subtreeRevById.get(id) ?? graph.deadRevById.get(id) ?? 0;
+  // `0` FOR AN ABSENT ID, and that is a sentinel rather than a fallback: no
+  // live node is ever at 0, because every seed starts at 1 and every bump adds
+  // 1. So this answers a number the graph cannot hold for a node it does hold,
+  // which is what makes a removal visible to the removed node's OWN subscribers
+  // — `commitGraph` compares this across the commit, and the entry is gone on
+  // the far side.
+  return graph.subtreeRevById.get(id) ?? 0;
 }
 
 /** `null` for a leaf, an unknown node, or a SEALD leaf — the three cases

@@ -13,6 +13,7 @@ import {
   findInvariantViolation,
   getSubtreeRev,
   rebuildDerivedIndexes,
+  INITIAL_REV,
 } from "../graph";
 import {
   defineNodeType,
@@ -201,7 +202,7 @@ function buildGraph(
   const visit = (spec: Spec, parentId: NodeId | null): NodeId => {
     const id = nid(spec.id);
     parentById.set(id, parentId);
-    subtreeRevById.set(id, 0);
+    subtreeRevById.set(id, INITIAL_REV /* never 0: 0 is `getSubtreeRev`'s absent-id sentinel */);
 
     if (spec.tag === "clip") {
       nodesById.set(
@@ -264,7 +265,11 @@ function buildGraph(
     parentById,
     rootIds,
     subtreeRevById,
-    deadRevById: new Map(),
+    // `revFloor` replaced the tombstone store: one number at or above every
+    // revision this lineage has issued. These fixtures seed every node at
+    // `INITIAL_REV`, so that is the floor — a fabricated-high one would make
+    // invariant check 10 unable to fail on anything this file does.
+    revFloor: INITIAL_REV,
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };
@@ -806,15 +811,25 @@ describe("applyPatch: removed", () => {
       // low enough to reach the dead lineage's cached values. See the
       // tombstone comment in `applyRemoved`.
       //
-      // It now survives in `deadRevById` rather than in `subtreeRevById`, which
-      // is a change of ADDRESS and not of contract: the number is the same, the
-      // high-water rule is the same, and `getSubtreeRev` still answers with it.
-      // What changed is that it is no longer inside the map every commit
-      // copies. Both halves are asserted, because "the tombstone moved" and
-      // "the tombstone was dropped" must not look alike to this test.
+      // THE ENTRY NO LONGER SURVIVES ANYWHERE, and the rule it carried moved to
+      // `revFloor` — one number at or above every revision this lineage has
+      // issued, which implies "above every revision THIS id ever had" without
+      // keeping a row per id. What this test still has to pin is the two things
+      // that number is load-bearing for.
+      //
+      // FIRST: the removal is VISIBLE. `commitGraph` wakes a node's subscribers
+      // by comparing `getSubtreeRev` across the commit, so the answer must
+      // CHANGE — note it now goes DOWN, to the 0 that means "not here", where
+      // the tombstone made it go up. Different is what the comparison needs;
+      // higher was an artifact of keeping a row.
       expect(next.subtreeRevById.has(nid(gone))).toBe(false);
-      expect(next.deadRevById.has(nid(gone))).toBe(true);
-      expect(getSubtreeRev(next, nid(gone))).toBeGreaterThan(
+      expect(getSubtreeRev(next, nid(gone))).toBe(0);
+      expect(getSubtreeRev(next, nid(gone))).not.toBe(
+        getSubtreeRev(graph, nid(gone)),
+      );
+      // SECOND: the floor still covers where it died, so a returning id cannot
+      // reuse a revision the fold cache holds an entry under.
+      expect(next.revFloor).toBeGreaterThanOrEqual(
         getSubtreeRev(graph, nid(gone)),
       );
     }

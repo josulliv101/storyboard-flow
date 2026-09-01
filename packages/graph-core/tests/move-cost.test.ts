@@ -6,6 +6,7 @@ import {
   bumpSubtreeRevsInto,
   findInvariantViolation,
   rebuildDerivedIndexes,
+  INITIAL_REV,
 } from "../graph";
 import { applyPatch, verifyPatchApplies } from "../patches";
 import {
@@ -214,7 +215,7 @@ function buildGraph(
   const visit = (spec: Spec, parentId: NodeId | null): NodeId => {
     const id = nid(spec.id);
     parentById.set(id, parentId);
-    subtreeRevById.set(id, 0);
+    subtreeRevById.set(id, INITIAL_REV /* never 0: 0 is `getSubtreeRev`'s absent-id sentinel */);
     if (spec.tag === "clip") {
       nodesById.set(
         id,
@@ -247,7 +248,11 @@ function buildGraph(
     parentById,
     rootIds,
     subtreeRevById,
-    deadRevById: new Map(),
+    // `revFloor` replaced the tombstone store: one number at or above every
+    // revision this lineage has issued. These fixtures seed every node at
+    // `INITIAL_REV`, so that is the floor — a fabricated-high one would make
+    // invariant check 10 unable to fail on anything this file does.
+    revFloor: INITIAL_REV,
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };
@@ -1250,7 +1255,7 @@ describe("the tombstone store is out of the per-commit copy", () => {
    * 1.7ms at 20,000, 29.4ms at 200,400 — and confirmed to be the copy, since a
    * bare `new Map` on the same map tracked it at ratio ~1.0.
    */
-  it("shares deadRevById by reference across every commit that removes nothing", () => {
+  it("carries no per-id removal state for a commit to copy at all", () => {
     const graph = wideGraph(4, 4);
 
     const edited = commit(graph, {
@@ -1264,10 +1269,10 @@ describe("the tombstone store is out of the per-commit copy", () => {
         },
       ],
     });
-    expect(edited.deadRevById).toBe(graph.deadRevById);
+    expect(edited.subtreeRevById.size).toBe(edited.nodesById.size);
 
     const moved = commit(graph, reorderWithin("c0", "c0-m0", 0, 3));
-    expect(moved.deadRevById).toBe(graph.deadRevById);
+    expect(moved.subtreeRevById.size).toBe(moved.nodesById.size);
 
     const inserted = commit(graph, {
       type: "inserted",
@@ -1282,7 +1287,9 @@ describe("the tombstone store is out of the per-commit copy", () => {
         },
       ],
     });
-    expect(inserted.deadRevById).toBe(graph.deadRevById);
+    expect(inserted.subtreeRevById.size).toBe(inserted.nodesById.size);
+    // A number, not a map: there is nothing here whose size a session can grow.
+    expect(typeof inserted.revFloor).toBe("number");
   });
 
   it("keeps subtreeRevById exactly total over nodesById", () => {
@@ -1302,16 +1309,21 @@ describe("the tombstone store is out of the per-commit copy", () => {
 
     expect(next.subtreeRevById.size).toBe(next.nodesById.size);
     expect(next.subtreeRevById.has(nid("c0-m0"))).toBe(false);
-    // And the number itself is preserved, one higher, at its new address.
-    expect(next.deadRevById.get(nid("c0-m0"))).toBe(
-      (graph.subtreeRevById.get(nid("c0-m0")) ?? 0) + 1,
+    // And the floor still covers where it died — the property the tombstone's
+    // number existed for, now carried for every id at once.
+    expect(next.revFloor).toBeGreaterThanOrEqual(
+      graph.subtreeRevById.get(nid("c0-m0")) ?? 0,
     );
   });
 
   it("still resumes a re-inserted id above everything its last life cached", () => {
-    // The P1 this whole mechanism exists to prevent, checked through the new
-    // address. `review-f1.test.ts` covers it end to end through the store; this
-    // is the arithmetic, isolated.
+    // The P1 this whole mechanism exists to prevent, checked against the floor
+    // that replaced the tombstone. `review-f1.test.ts` covers it end to end
+    // through the store; this is the arithmetic, isolated.
+    //
+    // The bar is what the id held WHILE LIVE. A tombstone recorded that per id;
+    // the floor covers it because it is at or above every revision the lineage
+    // has issued, this id's included.
     const graph = wideGraph(4, 4);
     const node = graph.nodesById.get(nid("c0-m0"));
     if (node === undefined) throw new Error("fixture");
@@ -1320,14 +1332,15 @@ describe("the tombstone store is out of the per-commit copy", () => {
       type: "removed",
       placements: [{ node, parentId: nid("c0"), index: 0 }],
     });
-    const tombstone = removed.deadRevById.get(nid("c0-m0")) ?? 0;
+    const whileLive = graph.subtreeRevById.get(nid("c0-m0")) ?? 0;
+    expect(removed.revFloor).toBeGreaterThanOrEqual(whileLive);
 
     const back = commit(removed, {
       type: "inserted",
       placements: [{ node, parentId: nid("c0"), index: 0 }],
     });
 
-    expect(getSubtreeRev(back, nid("c0-m0"))).toBeGreaterThan(tombstone);
+    expect(getSubtreeRev(back, nid("c0-m0"))).toBeGreaterThan(whileLive);
   });
 });
 
@@ -1513,9 +1526,16 @@ describe("bumpSubtreeRevsInto", () => {
     bumpSubtreeRevsInto(written, graph, [nid("c0-m0"), nid("c0-m1"), nid("c0-m2")]);
     // The prefix-closed short-circuit: `c0` and `root` are on all three chains
     // and must each move by exactly one.
-    expect(written.get(nid("c0"))).toBe(1);
-    expect(written.get(nid("root"))).toBe(1);
-    expect(written.get(nid("c1"))).toBe(0);
+    expect(written.get(nid("c0"))).toBe(INITIAL_REV + 1);
+    expect(written.get(nid("root"))).toBe(INITIAL_REV + 1);
+    expect(written.get(nid("c1"))).toBe(INITIAL_REV);
+    // And it reports the highest value it wrote, which is what keeps
+    // `Graph.revFloor` from being re-derived by each arm and drifting.
+    const again = new Map(graph.subtreeRevById);
+    expect(bumpSubtreeRevsInto(again, graph, [nid("c0-m0")])).toBe(
+      INITIAL_REV + 1,
+    );
+    expect(bumpSubtreeRevsInto(again, graph, [])).toBe(0);
   });
 
   it("writes nothing for an empty id list", () => {

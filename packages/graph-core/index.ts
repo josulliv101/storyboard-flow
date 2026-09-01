@@ -111,6 +111,13 @@ export {
   getNode,
   getParent,
   getSubtreeRev,
+  // Named on the barrel for the reason the ceilings' defaults are: it is half of
+  // a contract a consumer can see. `getSubtreeRev` answers 0 for an id the graph
+  // does not hold, and `INITIAL_REV` is the value that makes that a SENTINEL
+  // rather than a coincidence — no live node ever carries it. Anyone comparing
+  // revisions, or supplying their own to `buildGraph`, needs to be able to write
+  // it down.
+  INITIAL_REV,
   isCollection,
   isLoaded,
   isSameOrAncestor,

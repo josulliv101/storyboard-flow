@@ -38,6 +38,7 @@ import {
   getNode,
   getParent,
   getSubtreeRev,
+  INITIAL_REV,
 } from "../graph";
 import { applyPatch, invertPatch } from "../patches";
 import { createHistory } from "../history";
@@ -246,7 +247,7 @@ function buildGraph(engineId: symbol, roots: readonly Spec[]): Graph<Types, Summ
       nodes.set(nodeId, makeLeafNode<Types>(nodeId, spec.kind, spec.data));
     }
     parents.set(nodeId, parentId);
-    revs.set(nodeId, 0);
+    revs.set(nodeId, INITIAL_REV /* never 0: 0 is `getSubtreeRev`'s absent-id sentinel */);
     if (container && state.status === "loaded") {
       children.set(
         nodeId,
@@ -264,7 +265,11 @@ function buildGraph(engineId: symbol, roots: readonly Spec[]): Graph<Types, Summ
     parentById: parents,
     rootIds,
     subtreeRevById: revs,
-    deadRevById: new Map(),
+    // `revFloor` replaced the tombstone store: one number at or above every
+    // revision this lineage has issued. These fixtures seed every node at
+    // `INITIAL_REV`, so that is the floor — a fabricated-high one would make
+    // invariant check 10 unable to fail on anything this file does.
+    revFloor: INITIAL_REV,
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };

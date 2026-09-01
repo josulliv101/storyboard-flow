@@ -155,52 +155,46 @@ export function loadChildrenIntoUnguarded<Ts extends readonly WidenedNodeType[],
   }
 
   const subtreeRevById = new Map(graph.subtreeRevById);
-  // SEEDED ABOVE ANY TOMBSTONE, never unconditionally at 0 — the same rule
-  // `applyInserted` follows with `if (!revs.has(node.id))`, and for the same
-  // reason. `applyRemoved` leaves a removed id's revision behind deliberately,
-  // because `subtreeRevById` is the fold cache's ONLY invalidation mechanism:
-  // an entry keyed (foldKey, nodeId, rev) is meant to become unreachable once
-  // the rev moves past it, so nothing ever has to evict.
+  // SEEDED AT THE FLOOR, never unconditionally at 0 — the same rule
+  // `applyInserted` follows, and for the same reason. `subtreeRevById` is the
+  // fold cache's ONLY invalidation mechanism: an entry keyed
+  // (foldKey, nodeId, rev) is meant to become unreachable once the rev moves
+  // past it, so nothing ever has to evict.
   //
   // Writing 0 here walked a returning id back onto revisions its DEAD lineage
   // had already cached under different data. The `id-collision` guard above
   // does not catch it — that one rejects ids the graph CURRENTLY holds, and a
-  // removed id is absent from `nodesById` while still present here. The gesture
-  // is: read a clip's rollup, edit it, delete it, then have the server report
-  // it inside a not-yet-loaded folder. Measured before this fix: the store
-  // answered the dead clip's 4 while the truth was 999, at the clip AND at
-  // every ancestor rollup, and it did not self-heal — each later edit landed on
-  // the next already-poisoned rev.
+  // removed id is in neither map. The gesture is: read a clip's rollup, edit it,
+  // delete it, then have the server report it inside a not-yet-loaded folder.
+  // Measured before that fix: the store answered the dead clip's 4 while the
+  // truth was 999, at the clip AND at every ancestor rollup, and it did not
+  // self-heal — each later edit landed on the next already-poisoned rev.
+  //
+  // The floor is at or above every revision this lineage has issued, so seeding
+  // here puts every arrival above anything cached under its id, whether or not
+  // that id has lived here before. A LOAD ISSUES ONE NEW REVISION for the whole
+  // payload rather than one each: they are all new to this graph, so nothing
+  // needs to tell them apart by number.
+  const arrivalRev = graph.revFloor + 1;
   for (const incomingId of payload.order) {
-    // The tombstone now lives in its own store, so this reads there rather than
-    // in the live map — but the RULE is unchanged: an id that has lived here
-    // before resumes strictly above every revision its previous lifetime could
-    // have cached.
-    //
-    // The dead entry is NOT removed as the id returns. `applyRemoved` is the
-    // only writer of that store, and leaving it alone is what keeps that true —
-    // a returning id simply has a live entry that `getSubtreeRev` reads first,
-    // and the stale dead number can only ever be overwritten upward by a later
-    // removal of the same id.
-    const tombstone = graph.deadRevById.get(incomingId);
-    subtreeRevById.set(incomingId, tombstone === undefined ? 0 : tombstone + 1);
+    subtreeRevById.set(incomingId, arrivalRev);
   }
 
   const base: Graph<Ts, S> = {
     engineId: graph.engineId,
     nodesById,
-    // Shared by reference: a load removes nothing, so the tombstone store is
-    // exactly the one the previous graph published.
-    deadRevById: graph.deadRevById,
     childrenById,
     parentById,
     rootIds: graph.rootIds,
     // Bumped against the PRE-load graph on purpose: the ancestor chain is read
     // from `parentById`, and the target's ancestors are unchanged by loading.
-    // The arriving nodes need no bump of their own — the loop above has already
-    // seeded each one at 0, or above its tombstone if the id has lived here
-    // before.
+    // The arriving nodes need no bump of their own — the loop above seeded each
+    // one at `arrivalRev`, which is already above everything this lineage has
+    // issued.
     subtreeRevById: bumpSubtreeRevs(subtreeRevById, graph, [id]),
+    // `+ 1` beyond `arrivalRev`, because the bump above moves the target and its
+    // ancestors one past whatever they held, and the floor must cover those too.
+    revFloor: arrivalRev + 1,
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };

@@ -13,8 +13,9 @@
 // turned out to be TRUE and was left alone (see the note at the end).
 //
 // The tests below pin the ACTUAL behaviour, so the corrected comments cannot
-// drift back: if someone makes `deadRevById` disjoint, or teaches `resolveDrop`
-// the budgets, these fail and point at the prose that has to change with it.
+// drift back: if someone teaches `resolveDrop` the budgets, or lets a returning
+// id resume below where it died, these fail and point at the prose that has to
+// change with it.
 import { describe, expect, it } from "vitest";
 
 import {
@@ -121,59 +122,78 @@ function twoClips(maxNodes?: number) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. deadRevById is NOT disjoint, and no check says otherwise
+// 1. a removed id keeps no per-id state, and a returning one still resumes high
 // ---------------------------------------------------------------------------
 
-describe("the tombstone store overlaps the live one, inertly", () => {
-  it("a removed id that comes back is in BOTH maps", () => {
-    // The comment on `Graph.deadRevById` used to say "an id is live or dead,
-    // never both", and cite invariant check 6 as asserting it. Check 6 requires
-    // every LIVE node to have a rev and never reads `deadRevById`; the overlap
-    // needs nothing more exotic than remove-then-undo.
+// WHAT THIS BLOCK USED TO PIN, and why it is written differently now. The
+// comment on `Graph.deadRevById` claimed "an id is live or dead, never both"
+// and cited invariant check 6 as asserting it; both halves were false, so these
+// tests pinned the ACTUAL overlap so the corrected prose could not drift back.
+//
+// The tombstone store is gone — replaced by `Graph.revFloor`, one number at or
+// above every revision this lineage has issued — so there is no longer a second
+// map to overlap with. The PROPERTY those tests were ultimately protecting is
+// unchanged and is what they assert now: a returning id must resume above every
+// revision its previous life could have cached, or the fold cache serves the
+// dead lineage's values.
+describe("a removed id leaves nothing behind, and comes back above it", () => {
+  it("is in NO map once removed, and reads the absent sentinel", () => {
     const { store } = twoClips();
+    const before = getSubtreeRev(store.getGraph(), c1);
+    expect(before).toBeGreaterThan(0);
 
     expect(store.dispatch({ type: "remove-nodes", nodeIds: [c1] }).ok).toBe(true);
     const removed = store.getGraph();
     expect(removed.subtreeRevById.has(c1)).toBe(false);
-    expect(removed.deadRevById.has(c1)).toBe(true);
+    // 0 is the absent-id sentinel, and no live node ever holds it — which is
+    // what makes the removal visible to the removed node's own subscribers
+    // without keeping a row behind for them to compare against.
+    expect(getSubtreeRev(removed, c1)).toBe(0);
+    expect(getSubtreeRev(removed, c1)).not.toBe(before);
+    // The floor still remembers, for every id at once.
+    expect(removed.revFloor).toBeGreaterThanOrEqual(before);
+  });
 
+  it("resumes above everything its last life could have cached", () => {
+    const { store } = twoClips();
+    // Move its revision along first, so "above where it died" is a real bar.
+    expect(
+      store.dispatch({
+        type: "edit-nodes",
+        edits: [{ nodeId: c1, kind: "clip", edit: { title: "edited" } }],
+      }).ok,
+    ).toBe(true);
+    const whileLive = getSubtreeRev(store.getGraph(), c1);
+
+    expect(store.dispatch({ type: "remove-nodes", nodeIds: [c1] }).ok).toBe(true);
     expect(store.undo().ok).toBe(true);
+
     const restored = store.getGraph();
     expect(restored.subtreeRevById.has(c1)).toBe(true);
-    // THE OVERLAP. Asserted, not merely observed — the tombstone is left in
-    // place on purpose, because `applyInserted` seeds the returning id ABOVE it
-    // and that is what the high-water rule requires.
-    expect(restored.deadRevById.has(c1)).toBe(true);
+    // THE RULE. Walking a returning id back down is the fold-cache poisoning
+    // `applyRemoved` documents, and this is the line that would catch it.
+    expect(getSubtreeRev(restored, c1)).toBeGreaterThan(whileLive);
   });
 
-  it("and the live entry always wins, which is what makes it inert", () => {
-    const { store } = twoClips();
-    expect(store.dispatch({ type: "remove-nodes", nodeIds: [c1] }).ok).toBe(true);
-    const tombstone = store.getGraph().deadRevById.get(c1);
-    expect(tombstone).toBeDefined();
-
-    expect(store.undo().ok).toBe(true);
-    const restored = store.getGraph();
-    // `getSubtreeRev` reads the live map first and only falls through for an id
-    // with no live entry, so the stale dead number can never be the answer for
-    // a node that is back.
-    expect(getSubtreeRev(restored, c1)).toBe(restored.subtreeRevById.get(c1));
-    // And the live rev sits at or above the tombstone, never below it — walking
-    // a returning id back down is the fold-cache poisoning `applyRemoved`
-    // documents.
-    expect(getSubtreeRev(restored, c1)).toBeGreaterThanOrEqual(tombstone ?? 0);
-  });
-
-  it("the audit is satisfied throughout, because it does not police this map", () => {
+  it("the audit polices the floor throughout, where it policed nothing before", () => {
+    // The old block ended by noting that no check read `deadRevById` at all.
+    // The floor is one number maintained by each arm rather than a row written
+    // beside each id, so it CAN drift — and invariant check 10 is what makes
+    // that loud instead of silent.
     const { engine, store } = twoClips();
     expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
     expect(store.dispatch({ type: "remove-nodes", nodeIds: [c1] }).ok).toBe(true);
     expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
     expect(store.undo().ok).toBe(true);
-    // Overlapping, and valid. If a future check DOES start policing
-    // `deadRevById`, this is the line that will notice.
-    expect(store.getGraph().deadRevById.has(c1)).toBe(true);
     expect(engine.findInvariantViolation(store.getGraph())).toBeNull();
+
+    // And it really would notice: a graph whose floor has fallen behind its own
+    // revisions is exactly the state a forgetful arm would produce.
+    const good = store.getGraph();
+    const drifted = { ...good, revFloor: 0 };
+    const violation = engine.findInvariantViolation(drifted);
+    expect(violation).not.toBeNull();
+    expect(violation?.code).toBe("revision-past-floor");
   });
 });
 

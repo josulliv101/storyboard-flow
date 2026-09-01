@@ -323,6 +323,23 @@ export type ViolationCode =
   | "parent-index-disagrees"
   | "missing-parent-entry"
   | "missing-subtree-rev"
+  /**
+   * A revision above `Graph.revFloor`, or a live node sitting at 0.
+   *
+   * THE AUDIT FOR THE ONE THING THE FLOOR TRADES FOR. `revFloor` replaced a
+   * per-id tombstone store, and its rule — at or above every revision this
+   * lineage has issued — is maintained by each arm rather than derived. An arm
+   * that bumps and forgets to raise it lets a re-inserted id reuse a revision
+   * the fold cache still holds an entry under, which serves the dead lineage's
+   * value silently and does not self-heal. The tombstones needed no such check
+   * because they were per-id; one number for every id is cheaper and has to be
+   * policed.
+   *
+   * The 0 half is the other end of the same design: `getSubtreeRev` answers 0
+   * for an id the graph does not hold, so a live node at 0 would make its own
+   * removal invisible to `commitGraph`'s comparison.
+   */
+  | "revision-past-floor"
   | "duplicate-owner"
   | "derived-index-stale"
   /** A consumer `contentKey`/`sourceKey` threw while the audit read it. See

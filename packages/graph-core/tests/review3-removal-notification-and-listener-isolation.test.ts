@@ -193,9 +193,16 @@ describe("removal wakes the removed node's own subscribers", () => {
     });
     expect(removed.ok).toBe(true);
 
-    // The tombstone must MOVE. Equal revisions across the commit is precisely
-    // what made `commitGraph` skip the listener.
-    expect(getSubtreeRev(store.getGraph(), clipXId)).toBeGreaterThan(before);
+    // The NUMBER must move. Equal revisions across the commit is precisely what
+    // made `commitGraph` skip the listener.
+    //
+    // It now moves DOWN rather than up: the entry is deleted and
+    // `getSubtreeRev` answers 0, the sentinel no live node ever holds. The
+    // tombstone that used to be left behind had to be bumped for exactly this
+    // reason — a frozen one read identical on both sides. Different is what the
+    // comparison needs; higher was an artifact of keeping a row per id.
+    expect(getSubtreeRev(store.getGraph(), clipXId)).not.toBe(before);
+    expect(getSubtreeRev(store.getGraph(), clipXId)).toBe(0);
   });
 
   it("notifies the subscriber mounted on the node that was deleted", () => {

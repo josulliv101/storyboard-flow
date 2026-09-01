@@ -12,16 +12,7 @@
 
 import { DEFAULT_INTERACTIVE_NODE_BUDGET, FOLD_CACHE_HEADROOM } from "./constants";
 
-type SizedGraph = Readonly<{
-  nodesById: Readonly<{ size: number }>;
-  /**
-   * The tombstone store. Counted because a REMOVAL commit copies it whole
-   * alongside the other four maps, and its size is a function of the session's
-   * total deletions rather than of the document — see
-   * `warnIfCommitCostIsPastInteractive`.
-   */
-  deadRevById: Readonly<{ size: number }>;
-}>;
+type SizedGraph = Readonly<{ nodesById: Readonly<{ size: number }> }>;
 
 /** Only `stats().limit` is read — the warning is about the cache's SIZE, and
  *  handing it the whole cache would let a diagnostic touch the memo table. */
@@ -103,45 +94,27 @@ const warnIfCommitCostIsPastInteractive = (candidate: SizedGraph): void => {
   // A named budget is a choice, and `0` is how that choice says "never".
   if (budget <= 0) return;
   const nodeCount = candidate.nodesById.size;
-  // LIVE PLUS TOMBSTONED, and the second term is the whole reason this line
-  // changed. `applyRemoved` copies `deadRevById` whole on every removal commit,
-  // and that map holds one entry per id EVER removed from this store — so it is
-  // sized by the session's deletions, not by the document. A check that read
-  // only `nodesById.size` could not see it, and therefore could not fire in the
-  // one shape where the cost is invisible from the document: churn.
+  // LIVE NODES, and only those — which is true again rather than true by
+  // omission. For one round this counted `nodesById.size + deadRevById.size`,
+  // because a removal also copied a tombstone store sized by the session's
+  // deletions rather than by the document, so a churn loop could sit far past
+  // this budget with a ONE-NODE graph while the check stayed silent.
   //
-  // MEASURED, insert-then-remove one node in a loop, live count pinned at 1
-  // throughout:
-  //
-  //     cycles   live   tombstoned   one removal
-  //      1,000      1        1,000      0.045 ms
-  //      4,000      1        4,000      0.195 ms
-  //      8,000      1        8,000      0.478 ms
-  //
-  // Linear in the tombstone count, on a ONE-NODE document. Against the table in
-  // `DEFAULT_INTERACTIVE_NODE_BUDGET` — 33.9 ms for an insert at 100,025 live
-  // nodes — the two terms are the same order, and only one of them was counted.
-  const deadCount = candidate.deadRevById.size;
-  const commitCost = nodeCount + deadCount;
-  if (commitCost <= budget) return;
+  // `Graph.revFloor` replaced that store with a single number. A removal now
+  // copies exactly what every other commit copies, so the second term is not
+  // merely uncounted — it no longer exists.
+  if (nodeCount <= budget) return;
   warnedAboutCommitCost = true;
   // Both numbers, never the sum alone: they call for different answers. Live
   // nodes past the budget means the DOCUMENT is large; tombstones past it mean
   // the SESSION has been long, and a fresh store is the cheap fix.
-  const churn =
-    deadCount > nodeCount
-      ? ` Most of that is the tombstone store (${deadCount} ids removed this session against ` +
-        `${nodeCount} live), which is sized by how long this store has been open rather than ` +
-        `by the document — re-creating the store from a fresh deserialize clears it.`
-      : "";
   console.error(
-    `graph-core: this store commits against ${commitCost} entries (${nodeCount} live nodes ` +
-      `plus ${deadCount} tombstoned ids), past the ${budget} this engine treats as ` +
-      `interactive. A commit copies whole maps — every mutation copies subtreeRevById, a ` +
-      `data change also copies nodesById, an insert or removal copies four, and a removal ` +
-      `also copies deadRevById — so a commit costs what the STORE holds, not what the edit ` +
-      `costs: measured at 3.3 ms per keystroke at 25,000 nodes and 17.1 ms at 100,000, ` +
-      `where one keystroke is a whole 60Hz frame before anything renders.${churn} Set ` +
+    `graph-core: this graph holds ${nodeCount} live nodes, past the ${budget} this engine ` +
+      `treats as interactive. A commit copies whole maps — every mutation copies ` +
+      `subtreeRevById, a data change also copies nodesById, an insert or removal copies ` +
+      `four — so a commit costs what the DOCUMENT costs, not what the edit costs: ` +
+      `measured at 3.3 ms per keystroke at 25,000 nodes and 17.1 ms at 100,000, where ` +
+      `one keystroke is a whole 60Hz frame before anything renders. Set ` +
       `EngineConfig.interactiveNodeBudget to silence this once you have priced it.`,
   );
 };

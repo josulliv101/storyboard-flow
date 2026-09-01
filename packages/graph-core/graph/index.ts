@@ -29,10 +29,11 @@
 //     `deserialize`. This mirrors the package barrel's own note about it.
 //   - `NO_IDS` / `NO_PLACEMENTS` / `NO_OWNERS` (./internals) — shared frozen
 //     singletons. A consumer holding one by reference and mutating it would
-//     corrupt every empty answer the graph gives. `NO_DEAD_REVS` IS exported,
-//     because ./serialize needs it to build a graph that has removed nothing.
+//     corrupt every empty answer the graph gives. `INITIAL_REV` IS exported,
+//     because ./serialize seeds revisions with it and the value has to be the
+//     same one `getSubtreeRev`'s absent-id sentinel is defined against.
 
-export { NO_DEAD_REVS } from "./constants";
+export { INITIAL_REV } from "./constants";
 
 export { buildRegistry } from "./registry";
 

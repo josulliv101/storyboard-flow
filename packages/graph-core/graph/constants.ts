@@ -24,7 +24,17 @@ import type { NodeId } from "../types";
 export const NO_IDS: readonly NodeId[] = Object.freeze([]);
 export const NO_PLACEMENTS: ReadonlyMap<string, readonly NodeId[]> = new Map();
 export const NO_OWNERS: ReadonlyMap<string, NodeId> = new Map();
-/** Shared empty tombstone store. A graph that has never removed anything holds
- *  this one, by reference. */
-export const NO_DEAD_REVS: ReadonlyMap<NodeId, number> = new Map();
+/**
+ * The revision every node is seeded at, and the floor an empty graph carries.
+ *
+ * ONE, NOT ZERO, and that is the whole reason this is a named constant rather
+ * than a literal at four doors. `getSubtreeRev` answers `0` for an id the graph
+ * does not hold, so `0` has to be a value no LIVE node can carry — otherwise a
+ * never-edited node reads 0 before its removal and 0 after it, and
+ * `commitGraph`, which decides whom to notify by comparing that number across
+ * the commit, never tells the deleted node's own subscribers. Seeding at 0 is
+ * what made the previous design need a tombstone left behind purely so there
+ * was something different to compare against.
+ */
+export const INITIAL_REV = 1;
 

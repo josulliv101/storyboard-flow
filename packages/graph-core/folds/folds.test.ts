@@ -203,7 +203,9 @@ function buildGraph(roots: readonly Spec[]): TestGraph {
     parentById,
     rootIds,
     subtreeRevById,
-    deadRevById: new Map(),
+    // `revFloor` replaced the tombstone store: one number at or above every
+    // revision this lineage has issued. High is always safe.
+    revFloor: Number.MAX_SAFE_INTEGER,
     placementsByContentKey: new Map(),
     ownerBySourceKey: new Map(),
   };
@@ -697,7 +699,9 @@ describe("computeFold dispatch", () => {
       parentById,
       rootIds: [childId],
       subtreeRevById,
-    deadRevById: new Map(),
+    // `revFloor` replaced the tombstone store: one number at or above every
+    // revision this lineage has issued. High is always safe.
+    revFloor: Number.MAX_SAFE_INTEGER,
       placementsByContentKey: new Map(),
       ownerBySourceKey: new Map(),
     };
@@ -735,7 +739,9 @@ describe("computeFold dispatch", () => {
     const graph: TestGraph = {
       engineId: ENGINE_ID,
       nodesById,
-      deadRevById: new Map(),
+    // `revFloor` replaced the tombstone store: one number at or above every
+    // revision this lineage has issued. High is always safe.
+    revFloor: Number.MAX_SAFE_INTEGER,
       childrenById: new Map<NodeId, readonly NodeId[]>([
         [a, [b]],
         [b, [a]],

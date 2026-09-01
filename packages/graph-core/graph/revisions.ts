@@ -14,6 +14,10 @@ import type { WidenedNodeType, Graph, NodeId } from "../types";
 /**
  * Bump `id` AND every ancestor of it, for each id in `fromIds`.
  *
+ * The copying form. It cannot report the highest value it wrote — it returns
+ * the map — so a caller that needs to raise `Graph.revFloor` must use
+ * `bumpSubtreeRevsInto` and take its number.
+ *
  * THE TRAP, and it has already been paid for once: `graph` supplies the
  * `parentById` the chain is read from, and A MOVE HAS TWO CHAINS. The source
  * chain exists only in the PRE-state graph. `applyPatch` must therefore call
@@ -22,6 +26,12 @@ import type { WidenedNodeType, Graph, NodeId } from "../types";
  * `move.toParentId`. Getting it wrong is invisible in every test that watches
  * the moved node: the node updates, and the OLD ancestors' rollups silently
  * never re-render again.
+ *
+ * RETURNS THE HIGHEST VALUE IT WROTE, or 0 when it wrote none. `Graph.revFloor`
+ * must stay at or above every revision this lineage has issued, and a caller
+ * computing that independently is a caller that can drift from what was
+ * actually written — which is silent, and which is the failure the floor exists
+ * to prevent. Take this number; do not re-derive it.
  *
  * Ids absent from `graph` are bumped anyway, with no chain. That is deliberate:
  * filtering them would turn "caller passed the wrong-state graph" into a
@@ -68,8 +78,9 @@ export function bumpSubtreeRevsInto<Ts extends readonly WidenedNodeType[], S>(
   revs: Map<NodeId, number>,
   graph: Graph<Ts, S>,
   fromIds: readonly NodeId[],
-): void {
-  if (fromIds.length === 0) return;
+): number {
+  if (fromIds.length === 0) return 0;
+  let highest = 0;
 
   // Scoped to THIS call: `revs` already holds values, so it cannot answer
   // "did I bump this one already". The set is proportional to the touched
@@ -86,7 +97,11 @@ export function bumpSubtreeRevsInto<Ts extends readonly WidenedNodeType[], S>(
       // short-circuit rather than an approximation.
       if (bumped.has(current)) break;
       bumped.add(current);
-      revs.set(current, (revs.get(current) ?? 0) + 1);
+      // `?? 0` keeps the +1-per-bump contract for an id with no entry yet — it
+      // lands at 1, which is also the seed every other door uses.
+      const next = (revs.get(current) ?? 0) + 1;
+      revs.set(current, next);
+      if (next > highest) highest = next;
       // The same TERMINATION guard `ancestorChain` carries — a corrupt
       // `parentById` must fail finitely rather than hang a render loop.
       if (steps >= budget) break;
@@ -94,5 +109,6 @@ export function bumpSubtreeRevsInto<Ts extends readonly WidenedNodeType[], S>(
       current = graph.parentById.get(current) ?? null;
     }
   }
+  return highest;
 }
 
