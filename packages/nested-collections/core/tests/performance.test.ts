@@ -1016,31 +1016,6 @@ function expectSubQuadraticRatio(ratio: number, what: string): void {
   ).toBeLessThan(ceiling);
 }
 
-/**
- * A STRONGER time claim than sub-quadratic: this cost does not track the size at
- * all.
- *
- * `expectSubQuadraticRatio` is the right gate for work that IS linear and must
- * not become quadratic. It is the wrong gate for work that should be constant —
- * a regression from O(1) to O(n) lands around the linear reference (~15x), sails
- * under a ceiling of 40, and ships. This one sits a third of the way up the
- * reference instead: far above the noise a genuinely constant operation
- * produces (~1x), far below what linear would.
- *
- * Floored at 4 so a machine whose reference measures unusually low cannot make
- * the gate tighter than measurement noise.
- */
-function expectConstantTime(ratio: number, what: string): void {
-  const reference = measureLinearReferenceGrowth();
-  observedReferences.push(reference);
-  const ceiling = Math.max(4, reference / 3);
-  expect(
-    ratio,
-    `${what}: 10x the size made it ${ratio.toFixed(1)}x slower, and it should ` +
-      `not have moved at all. A linear reference, timed immediately afterwards, ` +
-      `moved ${reference.toFixed(1)}x, so the ceiling was ${ceiling.toFixed(1)}x.`,
-  ).toBeLessThan(ceiling);
-}
 
 /**
  * The strongest claim this file can make, and the only one that survives being
@@ -1344,57 +1319,89 @@ describe("mutations", () => {
    * frames on every selection change, on a board the engine is explicitly built
    * to handle.
    *
-   * Gated as CONSTANT rather than sub-quadratic on purpose: the regression this
-   * guards against is a return to a linear scan, which a sub-quadratic ceiling
-   * would happily let through.
+   * PROVED STRUCTURALLY, NOT BY TIMING, and that is a deliberate replacement.
+   * This used to select 1,000 then 10,000 nodes, time `has` at each size, and
+   * assert the ratio was flat against a calibrated ceiling. It failed CI on an
+   * unrelated pull request — "10x the size made it 5.9x slower ... the ceiling
+   * was 4.4x" — passed on an immediate re-run of the identical commit, and
+   * passed 3/3 locally. The fourth wall-clock gate in this repo to be disproved
+   * by the machine it runs on rather than by the code it guards.
+   *
+   * It could not have been otherwise. `Set.has` on a string takes nanoseconds,
+   * so the measurement is mostly loop overhead and whatever else the runner is
+   * doing, and a ratio of two such numbers is a ratio of noise. Calibrating the
+   * ceiling against a linear reference — which this did — does not help when
+   * the noise moves between the two measurements.
+   *
+   * The regression being guarded is exact and discrete: `has` going back to
+   * reading the ORDERED ARRAY instead of the membership index. The store keeps
+   * both — `selectedIds` for order and identity-stable `get()`, `selectedSet`
+   * for membership — and they are written together in the two places selection
+   * is assigned. So desynchronise them and ask `has` which one it believes.
+   * That answers the question the timing was a proxy for, in microseconds and
+   * with no ceiling to calibrate.
+   *
+   * This is the same move `expectIndependentOfGraphSize` argues for one screen
+   * up — "the only [claim] that survives being run on somebody else's
+   * hardware" — applied to an operation that has nothing to count.
    */
-  it("selection membership does not depend on how much is selected", () => {
-    const samples: number[] = [];
-
-    for (const size of [1_000, 10_000] as const) {
-      const childIds: string[] = [];
-      const nodes: SerializedNode[] = [];
-      for (let i = 0; i < size; i += 1) childIds.push(`sel-${i}`);
-      nodes.push({
-        id: "root",
-        kind: "folder",
-        data: { name: "root" },
-        children: childIds,
-      });
-      for (const id of childIds) {
-        nodes.push({ id, kind: "clip", data: { title: id, seconds: 1 } });
-      }
-      const loaded = engine.deserialize({
-        formatVersion: 1,
-        schemaVersions: { folder: 1, clip: 1 },
-        rootIds: ["root"],
-        nodes,
-      });
-      expect(loaded.ok).toBe(true);
-      if (!loaded.ok) return;
-
-      const store = engine.createStore(loaded.value.graph);
-      const ids = childIds.map((id) => parseNodeId(id));
-      store.selection.set(ids);
-      expect(store.selection.get().length).toBe(size);
-
-      // The LAST id, which is where a linear scan costs the most — a probe near
-      // the front would hide the very regression this is written to catch.
-      const probe = at(ids, size - 1, "selection probe");
-      expect(store.selection.has(probe)).toBe(true);
-
-      samples.push(
-        measure("selection.has", `sel${size}`, size + 1, () => {
-          store.selection.has(probe);
-        }),
-      );
+  it("selection membership reads the index, not the ordered list", () => {
+    const size = 10_000;
+    const childIds: string[] = [];
+    const nodes: SerializedNode[] = [];
+    for (let i = 0; i < size; i += 1) childIds.push(`sel-${i}`);
+    nodes.push({
+      id: "root",
+      kind: "folder",
+      data: { name: "root" },
+      children: childIds,
+    });
+    for (const id of childIds) {
+      nodes.push({ id, kind: "clip", data: { title: id, seconds: 1 } });
     }
+    const loaded = engine.deserialize({
+      formatVersion: 1,
+      schemaVersions: { folder: 1, clip: 1 },
+      rootIds: ["root"],
+      nodes,
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
 
-    const small = samples[0];
-    const large = samples[1];
-    expect(small !== undefined && large !== undefined && small > 0).toBe(true);
-    if (small === undefined || large === undefined || small <= 0) return;
-    expectConstantTime(large / small, "selection.has");
+    const store = engine.createStore(loaded.value.graph);
+    const ids = childIds.map((id) => parseNodeId(id));
+    store.selection.set(ids);
+    // The fixture is real: a scan over this would be 10,000 comparisons, which
+    // is the cost the index exists to remove.
+    expect(store.selection.get().length).toBe(size);
+
+    // The LIVE array, by reference. `get()` handing back an identity-stable list
+    // is part of its contract — the React binding memoises on it — which is what
+    // makes this possible at all. Mutating it here is deliberate and local: it
+    // is the only way to make the two structures disagree, and every assertion
+    // below restores what it changed.
+    const live = store.selection.get() as NodeId[];
+
+    // ONE: the ARRAY claims a member the index does not. A scan answers true.
+    const stranger = parseNodeId("sel-not-in-this-selection");
+    expect(store.selection.has(stranger)).toBe(false);
+    live.push(stranger);
+    expect(store.selection.has(stranger)).toBe(false);
+    live.pop();
+
+    // TWO: the INDEX claims a member the array does not. A scan answers false.
+    // Both directions, because either one alone passes for the wrong reason —
+    // an implementation that always returned `false` would satisfy the first.
+    const first = at(ids, 0, "selection probe");
+    const last = at(ids, size - 1, "selection probe");
+    live.splice(0, 1);
+    expect(store.selection.has(first)).toBe(true);
+    live.unshift(first);
+
+    // And the last id specifically, which is where a scan costs the most and so
+    // is where a regression would be least likely to be noticed by hand.
+    expect(store.selection.has(last)).toBe(true);
+    expect(store.selection.get().length).toBe(size);
   }, 120_000);
 
   it("a content edit consults exactly one node type, whatever the graph size", () => {
