@@ -251,7 +251,33 @@ export type EngineConfig<
   mintId?(): string;
   /** Injectable so tests get deterministic `HistoryEntry.at`. Defaults to `Date.now`. */
   now?(): number;
-  historyLimit?: number;
+  /**
+   * Ceiling on undo entries, or `null` for unbounded. Defaults to
+   * `DEFAULT_HISTORY_LIMIT`.
+   *
+   * THE FOURTH CEILING, and until now the only one with no default and no doc
+   * comment — in a type where `maxNodes` gets twenty lines. The two omissions
+   * were the same omission, and unbounded is a strange default for this stack
+   * in particular: undo is built on WHOLE-VALUE before/after pairs (see
+   * `ConsumerDefinedNodeType.invertEdit` for why, and it is the right call), so
+   * every entry retains two complete copies of the edited node's `Data`. An
+   * unbounded stack retains two per gesture for the life of the session, and
+   * `pushHistory` copies `past` on every push, which makes the cost quadratic
+   * in the session rather than in the document. Measured at
+   * `DEFAULT_HISTORY_LIMIT`.
+   *
+   * REFUSES rather than reinterprets. `0`, a negative, a fraction, `NaN` and
+   * `Infinity` all throw at `createEngine`: each would silently mean unbounded,
+   * which is the opposite of what naming a limit asks for. `null` is the one
+   * spelling of "unbounded", and it is explicit — the same escape hatch
+   * `maxNodeIdLength` offers, spelled the same way.
+   *
+   * A DEPTH, NOT A MEMORY BOUND. The entry holds the consumer's `Data`, whose
+   * size this package cannot know, so a consumer whose nodes carry more than a
+   * scalar should size this against their own value rather than take the
+   * default and assume it bounds anything in bytes.
+   */
+  historyLimit?: number | null;
   /**
    * Ceiling on how many nodes ONE document may present to `deserialize`.
    * Defaults to `DEFAULT_MAX_NODES`.

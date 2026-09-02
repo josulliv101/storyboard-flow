@@ -217,6 +217,10 @@ export {
   commitRedo,
   commitUndo,
   createHistory,
+  // The fourth ceiling's default, named for the reason the other three are: a
+  // consumer deciding whether to raise `EngineConfig.historyLimit` — or to
+  // clear it with `null` — needs to see what they are moving it from.
+  DEFAULT_HISTORY_LIMIT,
   peekRedo,
   peekUndo,
   pushHistory,

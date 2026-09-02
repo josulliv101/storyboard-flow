@@ -4,25 +4,13 @@
 // Describing a throw
 // ---------------------------------------------------------------------------
 
-/**
- * The message to put in an `Issue` when consumer code threw instead of
- * returning.
- *
- * It lives HERE, in the module that imports nothing, because all four modules
- * that call into consumer code need it — ./serialize wraps `parse` and the
- * summary type, ./commands wraps `applyEdit` and `serialize`, ./patches wraps
- * the `serialize` pair that replay verification compares on. One
- * implementation, so the three cannot drift into describing the same throw
- * three different ways.
- *
- * NOT re-exported from ./index: a consumer never calls this, it only ever reads
- * the strings it produces.
- *
- * `String(thrown)` rather than `JSON.stringify`: a thrown value is arbitrary,
- * `stringify` is recursive and can itself throw on a cycle or a BigInt, and a
- * helper whose whole job is to describe a failure must not have a failure mode
- * of its own.
- */
+// `describeThrown`'s doc used to sit HERE, immediately above `describeValue`'s
+// and therefore bound to nothing — two JSDoc blocks in a row, so an editor
+// showed the second one on hover and the first was prose in the middle of a
+// file. It has moved down onto the function it describes. Worth a line rather
+// than a silent deletion: the two functions are siblings and a reader who
+// remembers the block being up here should know where it went.
+
 /**
  * `describeThrown`'s sibling, for an untrusted VALUE rather than a thrown one.
  *
@@ -106,7 +94,62 @@ export function quoteFromWire(value: string): string {
   return JSON.stringify(clamp(value));
 }
 
+/**
+ * The message to put in an `Issue` when consumer code threw instead of
+ * returning.
+ *
+ * It lives HERE, in the module that imports nothing, because all four modules
+ * that call into consumer code need it — ./serialize wraps `parse` and the
+ * summary type, ./commands wraps `applyEdit` and `serialize`, ./patches wraps
+ * the `serialize` pair that replay verification compares on. One
+ * implementation, so the three cannot drift into describing the same throw
+ * three different ways.
+ *
+ * NOT re-exported from ./index: a consumer never calls this, it only ever reads
+ * the strings it produces.
+ *
+ * CLAMPED, which is the third and last describer in this file to be. The other
+ * two were bounded a round apart, each time under the heading "every ingress
+ * refusal" — and this one was neither swept, because the sweeps looked for
+ * `JSON.stringify` and this function does not call it. MEASURED at the DEFAULT
+ * config, a node type whose `contentKey` throws with a 1 MB message:
+ *
+ *   deserialize(...).error.message      1,000,070 characters
+ *
+ * against the 169 `quoteFromWire` brought the `dangling-child` refusal down to.
+ * `KeyHookFailure` embeds this string and every ingress and command door relays
+ * it, so a consumer logs the megabyte. The throw is consumer code rather than
+ * wire data, which is why it reads as lower risk than it is: a node type that
+ * echoes the value it choked on into its own error message — an ordinary thing
+ * to write — hands the sender control of the length after all.
+ *
+ * The lesson `quoteFromWire` already records applies unchanged: A BOUND BELONGS
+ * WHERE THE MESSAGE IS BUILT. The prefix around this string names the kind and
+ * the hook and is built from engine-controlled text, so it stays unclamped and
+ * the reader still learns which node type failed.
+ *
+ * `String(thrown)` rather than `JSON.stringify`: a thrown value is arbitrary,
+ * `stringify` is recursive and can itself throw on a cycle or a BigInt, and a
+ * helper whose whole job is to describe a failure must not have a failure mode
+ * of its own.
+ *
+ * TOTAL, which is the second defect and was not in the finding. `String(thrown)`
+ * is not safe on arbitrary input: `String(Object.create(null))` throws
+ * `TypeError: Cannot convert object to primitive value`, and so does any value
+ * whose `toString` throws — both of which a consumer can `throw`. The doc on
+ * `describeValue` states the rule this broke: "a helper whose whole job is to
+ * describe a failure must not have a failure mode of its own." Reading
+ * `.message` off an `Error` can throw for the same reason, since it may be a
+ * getter, so both reads sit inside the guard.
+ */
 export function describeThrown(thrown: unknown): string {
-  if (thrown instanceof Error) return thrown.message;
-  return String(thrown);
+  try {
+    if (thrown instanceof Error) return clamp(thrown.message);
+    return clamp(String(thrown));
+  } catch {
+    // The value cannot describe itself. Its shape is all that can be said
+    // safely, and saying it beats propagating a second throw out of the
+    // handler for the first.
+    return thrown === null ? "null" : `[unprintable ${typeof thrown}]`;
+  }
 }
