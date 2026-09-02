@@ -2,6 +2,28 @@
   "name": "@josulliv101/nested-collections",
   "version": "0.1.0",
   "private": true,
+  "description": "A typed, immutable engine for nested collections: a normalized graph, one mutation path, reversible patches behind undo/redo, and memoized aggregates that carry their own certainty.",
+  "license": "MIT",
+  "keywords": [
+    "collections",
+    "tree",
+    "graph",
+    "immutable",
+    "undo",
+    "redo",
+    "drag-and-drop",
+    "lazy-loading",
+    "react"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/josulliv101/storyboard-flow.git",
+    "directory": "packages/nested-collections"
+  },
+  "homepage": "https://github.com/josulliv101/storyboard-flow/tree/main/packages/nested-collections#readme",
+  "bugs": {
+    "url": "https://github.com/josulliv101/storyboard-flow/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {

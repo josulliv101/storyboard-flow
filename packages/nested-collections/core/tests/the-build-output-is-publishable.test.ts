@@ -176,4 +176,39 @@ describe("the build output is publishable", () => {
       expect(p.startsWith("./dist/"), p).toBe(true);
     }
   });
+
+  it("carries a README and a LICENSE, which `files` does not name", () => {
+    // BOTH SHIP ANYWAY, and that is the fact worth pinning rather than
+    // assuming. `files: ["dist"]` is asserted verbatim two tests up, so the
+    // obvious reading is that nothing outside `dist/` reaches the tarball —
+    // and adding them to `files` to "fix" that would break that assertion for
+    // no reason. npm always includes `package.json`, `README*` and `LICENSE*`
+    // whatever `files` says. VERIFIED with `npm pack --dry-run`:
+    //
+    //   npm notice  1.1kB  LICENSE
+    //   npm notice 14.9kB  README.md
+    //
+    // Asserted here because a package with `publishConfig.access: "public"`
+    // and no README is a blank page on npm, and one with no LICENSE is
+    // all-rights-reserved by default — neither of which fails a build, a
+    // typecheck or a lint. This file is where "what would `npm publish`
+    // actually ship" lives.
+    expect(existsSync(join(PACKAGE_ROOT, "README.md"))).toBe(true);
+    expect(existsSync(join(PACKAGE_ROOT, "LICENSE"))).toBe(true);
+  });
+
+  it("declares the license it ships, and the two agree", () => {
+    // A LICENSE file with no `license` field is a package npm reports as
+    // UNLICENSED, and a `license` field naming something the file does not say
+    // is worse than either alone.
+    const manifest = JSON.parse(read(join(PACKAGE_ROOT, "package.json"))) as Readonly<{
+      license?: string;
+      description?: string;
+    }>;
+    expect(manifest.license).toBe("MIT");
+    expect(read(join(PACKAGE_ROOT, "LICENSE"))).toContain("MIT License");
+    // The one-line pitch npm shows beside the name in search results. Empty is
+    // the default and reads as abandoned.
+    expect((manifest.description ?? "").length).toBeGreaterThan(20);
+  });
 });
