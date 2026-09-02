@@ -9,7 +9,7 @@ import {
 import { EMPTY_IDS } from "./constants";
 
 /** Group arrivals by destination parent, PRESERVING patch order within each
- *  parent â€” which is the order their indices are expressed in. */
+ *  parent — which is the order their indices are expressed in. */
 export function groupArrivalsByParent(
   entries: readonly Readonly<{ parentId: NodeId; index: number; nodeId: NodeId }>[],
 ): ReadonlyMap<NodeId, readonly Arrival[]> {
@@ -34,13 +34,13 @@ export function groupByParent(
   return byParent;
 }
 /**
- * Copy-on-write insertion of MANY ids into one parent â€” ONE pass per parent
+ * Copy-on-write insertion of MANY ids into one parent — ONE pass per parent
  * instead of one per arriving node.
  *
  * THE MIRROR OF `spliceOutMany`, and it should have shipped with it. That one
  * fixed removal, which was three O(siblings) passes per id; insertion kept
- * doing exactly the same thing â€” `slice()` the whole destination array, splice
- * one id in, store it â€” once per node. So the removal half went linear and the
+ * doing exactly the same thing — `slice()` the whole destination array, splice
+ * one id in, store it — once per node. So the removal half went linear and the
  * insertion half stayed O(K x N), and undo of a bulk delete inverts to an
  * `inserted` patch and paid in full the cost the delete no longer did.
  *
@@ -54,7 +54,7 @@ export function groupByParent(
  *  32,000      76.3 ms           6,759 ms                10,018 ms
  *
  * Delete grows 6x for 8x the nodes. Undo of the same delete grows 152x. At
- * 32,000 a select-all/Delete costs 76 ms and Ctrl-Z on it costs 6.8 SECONDS â€”
+ * 32,000 a select-all/Delete costs 76 ms and Ctrl-Z on it costs 6.8 SECONDS —
  * the same nodes, the same parent, 89x apart.
  *
  * WHY INSERTION CANNOT JUST BE GROUPED AND SORTED, which is what makes this
@@ -68,12 +68,12 @@ export function groupByParent(
  * The single pass below reproduces the sequential result exactly, by building
  * the output left to right and emitting an arrival the moment the output length
  * REACHES its index. That is equivalent to sequential splicing whenever a
- * parent's indices are strictly ascending and in range â€” which is every patch
+ * parent's indices are strictly ascending and in range — which is every patch
  * this engine builds: `buildSeedPlacements` and `buildMoves` both emit
  * `toIndex + offset`, and a removal patch records document order, so inverting
  * one yields ascending indices too.
  *
- * It DECLINES rather than guessing when it cannot reach an index â€” equal
+ * It DECLINES rather than guessing when it cannot reach an index — equal
  * indices (where sequential splicing puts the LATER arrival first), descending
  * indices, or an index out of range. None of those are reachable from the
  * reducer; a hand-built patch can produce all three. The caller then falls back
@@ -87,7 +87,7 @@ export function spliceInMany(
   byParent: ReadonlyMap<NodeId, readonly Arrival[]>,
 ): void {
   for (const [parentId, arrivals] of byParent) {
-    // `?? EMPTY_IDS` cannot fire for a verified patch â€” the parent is either a
+    // `?? EMPTY_IDS` cannot fire for a verified patch — the parent is either a
     // loaded container in the graph or one this patch seeded earlier. It is
     // here so a hand-built patch produces a wrong array rather than a crash,
     // exactly as `spliceIn` does.
@@ -103,7 +103,7 @@ export function spliceInMany(
       while (next.length < arrival.index && read < current.length) {
         const id = current[read];
         read += 1;
-        // `noUncheckedIndexedAccess` â€” a real check, not a `!`. The loop bounds
+        // `noUncheckedIndexedAccess` — a real check, not a `!`. The loop bounds
         // make this unreachable; TypeScript cannot see that and neither should
         // a reader.
         if (id !== undefined) next.push(id);
@@ -114,7 +114,7 @@ export function spliceInMany(
     }
 
     if (placed !== arrivals.length) {
-      // DECLINED â€” nothing written yet, so the fallback starts from the
+      // DECLINED — nothing written yet, so the fallback starts from the
       // untouched array and the two paths cannot interleave.
       for (const arrival of arrivals) {
         spliceIn(children, parentId, arrival.index, arrival.nodeId);
@@ -130,16 +130,16 @@ export function spliceInMany(
   }
 }
 /**
- * Copy-on-write removal for MANY ids at once â€” ONE pass per parent instead of
+ * Copy-on-write removal for MANY ids at once — ONE pass per parent instead of
  * one per removed node.
  *
  * WHAT THIS REPLACED, because the reasoning is the whole justification for the
- * shape. The per-id predecessor was three O(siblings) passes â€” `indexOf`,
- * `slice`, `splice` â€” allocating a fresh array every call, so removing K of N
+ * shape. The per-id predecessor was three O(siblings) passes — `indexOf`,
+ * `slice`, `splice` — allocating a fresh array every call, so removing K of N
  * siblings cost O(K x N). The constant is a memcpy, which is why it stayed
  * invisible: free below a thousand siblings, and 5.2 SECONDS measured for
  * select-all-then-Delete on a 40,000-item strip. Both arms that remove in bulk
- * â€” `applyRemoved` and `applyMoved` â€” go through here.
+ * — `applyRemoved` and `applyMoved` — go through here.
  *
  * That predecessor, `spliceOut`, SAT HERE UNREFERENCED until lint reached this
  * package for the first time and reported it. Two of the sentences above used
@@ -160,7 +160,7 @@ export function spliceOutMany(
 ): void {
   for (const [parentId, ids] of byParent) {
     const current = children.get(parentId);
-    // Absent when the parent is itself being removed in this same patch â€” its
+    // Absent when the parent is itself being removed in this same patch — its
     // whole entry is gone, so there is no array left to maintain.
     if (current === undefined) continue;
     const remaining = new Set<NodeId>(ids);
@@ -174,7 +174,7 @@ export function spliceOutMany(
 }
 
 /** One id arriving at one position. `index` is in the coordinates of the array
- *  AS IT STANDS when this entry is applied â€” the same contract `spliceIn` has,
+ *  AS IT STANDS when this entry is applied — the same contract `spliceIn` has,
  *  and the reason these cannot simply be sorted. */
 export type Arrival = Readonly<{ index: number; nodeId: NodeId }>;
 /** Copy-on-write splice into a parent's children array. */
@@ -184,7 +184,7 @@ export function spliceIn(
   index: number,
   id: NodeId,
 ): void {
-  // `?? EMPTY_IDS` cannot fire for a verified patch â€” the parent is either a
+  // `?? EMPTY_IDS` cannot fire for a verified patch — the parent is either a
   // loaded container in the graph or a loaded container this patch seeded two
   // steps earlier. It is here so a hand-built patch produces a wrong array
   // rather than a crash.

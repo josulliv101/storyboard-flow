@@ -337,7 +337,7 @@ export function applyCommand(
   const insertAt = Math.max(0, Math.min(toIndex, baseLength));
 
   // Index each affected source collection once. Calling `indexOf` per moved
-  // node turns a large same-parent selection into O(m Ã— n); this stays
+  // node turns a large same-parent selection into O(m × n); this stays
   // O(total children in affected parents + m).
   const sourceIndexById = new Map<NodeId, number>();
   const indexedParents = new Set(parentByMovingId.values());
