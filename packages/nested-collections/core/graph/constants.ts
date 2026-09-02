@@ -27,8 +27,67 @@ import type { NodeId } from "../types";
 // the caller sees a new identity and re-renders even though nothing changed.
 
 export const NO_IDS: readonly NodeId[] = Object.freeze([]);
-export const NO_PLACEMENTS: ReadonlyMap<string, readonly NodeId[]> = new Map();
-export const NO_OWNERS: ReadonlyMap<string, NodeId> = new Map();
+
+/**
+ * A permanently empty `ReadonlyMap` that REFUSES to be written to.
+ *
+ * `Object.freeze` is the whole answer for `NO_IDS` above and is no answer at
+ * all here: a Map's entries live in an internal slot, so freezing the object
+ * leaves `map.set(...)` working exactly as before. The two constants below were
+ * therefore protected in name only, and the difference was invisible because
+ * the declared type is `ReadonlyMap` and TypeScript will not let a well-behaved
+ * consumer try.
+ *
+ * WHAT THAT COST, measured through the public surface. These are PROCESS-WIDE
+ * singletons and `emptyGraph` hands them out directly, so one cast and one
+ * `.set` reached every graph in the process at once:
+ *
+ *   two independently built empty graphs shared the same map   true
+ *   a write through the ReadonlyMap succeeded                  true
+ *   it was visible in the OTHER graph                          true
+ *
+ * The file header argues these are safe because none is re-exported from
+ * `./index`. That is true of the BINDINGS and false of the VALUES: every empty
+ * graph publishes them as `placementsByContentKey` and `ownerBySourceKey`, and
+ * so does every graph whose registry declares no `contentKey` — which is the
+ * ordinary case, not an edge one. A guard on one door where the hazard has
+ * several is the same shape review 3 kept finding.
+ *
+ * Sharing them is deliberate and stays: `getChildren` and its neighbours are
+ * read once per rendered row per frame, and a fresh empty map per call defeats
+ * every `useMemo` and `Object.is` downstream. So the fix is to make the shared
+ * value genuinely immutable rather than to stop sharing it.
+ *
+ * REFUSES rather than no-ops. A silent no-op would leave a consumer believing a
+ * write landed, which is the failure mode this package refuses everywhere else
+ * — and a throw here can only be reached by code that has already cast away
+ * `ReadonlyMap`, so it cannot surprise a caller who respected the type.
+ */
+function emptyFrozenMap<K, V>(field: string): ReadonlyMap<K, V> {
+  const map = new Map<K, V>();
+  const refuse = (method: string) => (): never => {
+    throw new TypeError(
+      `nested-collections: ${method}() on the shared empty ${field}. This map is a ` +
+        `process-wide singleton published by every graph that has no entries, so writing ` +
+        `to it would change every one of them at once. Build your own Map from it instead.`,
+    );
+  };
+  Object.defineProperties(map, {
+    set: { value: refuse("set") },
+    delete: { value: refuse("delete") },
+    clear: { value: refuse("clear") },
+  });
+  // Belt and braces, and NOT the mechanism: this stops a property being added
+  // or the refusals being swapped back out. The entries are protected by the
+  // three overrides above, because freezing cannot reach the internal slot they
+  // live in.
+  return Object.freeze(map);
+}
+
+export const NO_PLACEMENTS: ReadonlyMap<string, readonly NodeId[]> =
+  emptyFrozenMap("placementsByContentKey");
+export const NO_OWNERS: ReadonlyMap<string, NodeId> =
+  emptyFrozenMap("ownerBySourceKey");
 /**
  * The revision every node is seeded at, and the floor an empty graph carries.
  *

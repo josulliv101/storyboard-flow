@@ -66,9 +66,17 @@ export function buildGraph<Ts extends readonly WidenedNodeType[], S>(
     rootIds: readonly NodeId[];
     registry: NodeTypeRegistry;
     subtreeRevs?: ReadonlyMap<NodeId, number>;
-    /** Carried forward when a graph is rebuilt around existing nodes, so a
-     *  rebuild does not forget what has been removed. */
-    deadRevs?: ReadonlyMap<NodeId, number>;
+    // NO `deadRevs`. There was one until now — "carried forward when a graph is
+    // rebuilt around existing nodes, so a rebuild does not forget what has been
+    // removed" — and NOTHING IN THE FUNCTION READ IT. It outlived the per-id
+    // tombstone store that `Graph.revFloor` replaced, so a caller passing the
+    // map it named would have had it accepted, typechecked, and dropped.
+    //
+    // That is the shape worth naming rather than just deleting: an optional
+    // parameter that is silently ignored is a guard that fails OPEN, and it
+    // fails open at precisely the door whose job was to make a rebuild not
+    // forget. `revFloor` is what carries that now, and it is derived below from
+    // the revisions actually present rather than supplied.
   }>,
 ): Graph<Ts, S> {
   const parentById = new Map<NodeId, NodeId | null>();

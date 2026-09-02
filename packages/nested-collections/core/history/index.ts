@@ -45,7 +45,7 @@
 //   scrub     the non-undoable write scrub
 // ---------------------------------------------------------------------------
 
-export { createHistory, pushHistory } from "./stack";
+export { createHistory, pushHistory, DEFAULT_HISTORY_LIMIT } from "./stack";
 export {
   peekUndo, peekRedo, commitUndo, commitRedo, canUndo, canRedo,
 } from "./read";

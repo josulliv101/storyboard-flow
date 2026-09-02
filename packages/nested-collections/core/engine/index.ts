@@ -87,6 +87,7 @@ import {
   commitRedo,
   commitUndo,
   createHistory,
+  DEFAULT_HISTORY_LIMIT,
   peekRedo,
   peekUndo,
   pushHistory,
@@ -111,9 +112,10 @@ export { DEFAULT_INTERACTIVE_NODE_BUDGET } from "./constants";
  * `Result` instead.
  *
  * Defaults: `onUnknownKind` and `onParseFailure` seal, `mintId` a
- * counter-plus-random id, `now` `Date.now`, `historyLimit` unbounded,
- * `foldCacheLimit` `DEFAULT_FOLD_CACHE_LIMIT` (a folds x nodes product — see
- * ./folds), `devChecks` off.
+ * counter-plus-random id, `now` `Date.now`, `historyLimit`
+ * `DEFAULT_HISTORY_LIMIT` (`null` for unbounded), `foldCacheLimit`
+ * `DEFAULT_FOLD_CACHE_LIMIT` (a folds x nodes product — see ./folds),
+ * `devChecks` off.
  */
 export function createEngine<
   const Ts extends readonly WidenedNodeType[],
@@ -184,19 +186,34 @@ export function createEngine<
   //
   // Throws, like the duplicate kind and the duplicate fold key above, for the
   // same reason — a programmer error at module init, before any data has been
-  // read. Omitting the field is still how a consumer asks for unbounded, and
-  // that stays silent.
+  // read.
+  //
+  // OMITTING IT NO LONGER MEANS UNBOUNDED, which is the sentence that used to
+  // end this comment. It now takes `DEFAULT_HISTORY_LIMIT` — see that constant
+  // for the curve — and `null` is the explicit opt-out, matching how
+  // `maxNodeIdLength` spells the same choice. `null` had to become a legal
+  // value for that: giving the field a default without one would have removed
+  // the only way to ask for unbounded, since `0` is refused here and always was.
   const historyLimit = config.historyLimit;
   if (
     historyLimit !== undefined &&
+    historyLimit !== null &&
     (!Number.isInteger(historyLimit) || historyLimit <= 0)
   ) {
     throw new Error(
-      `nested-collections: historyLimit must be a positive integer, received ${String(historyLimit)}. ` +
-        `Omit it entirely for unbounded history — a fractional or non-positive value ` +
+      `nested-collections: historyLimit must be a positive integer or null, received ${String(historyLimit)}. ` +
+        `Pass null for unbounded history — a fractional or non-positive value ` +
         `would silently mean unbounded, which is the opposite of what naming a limit asks for.`,
     );
   }
+  // `undefined` -> the default; `null` -> unbounded, which `createHistory`
+  // spells as `undefined`. Resolved ONCE here rather than at the
+  // `createHistory` call, so the store cannot be built from a different reading
+  // of the same config than the one this door validated.
+  const resolvedHistoryLimit: number | undefined =
+    historyLimit === null
+      ? undefined
+      : (historyLimit ?? DEFAULT_HISTORY_LIMIT);
 
   // THE SAME ARGUMENT, for the two ceilings that were not making it.
   //
@@ -493,7 +510,7 @@ export function createEngine<
 
   const createStore = (initialGraph: Graph<Ts, S>): Store<Ts, S, F> => {
     let graph = initialGraph;
-    let history: History<Ts, S> = createHistory<Ts, S>(config.historyLimit);
+    let history: History<Ts, S> = createHistory<Ts, S>(resolvedHistoryLimit);
 
     /**
      * PER STORE, not per engine.
