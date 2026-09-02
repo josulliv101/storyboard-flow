@@ -6,9 +6,14 @@
 // These were module-private constants while the graph was one file. Splitting it
 // made them shared, so they are exported — but only WITHIN this folder. None is
 // re-exported from `./index`, because a consumer holding `NO_IDS` by reference
-// and mutating it would corrupt every empty answer the graph ever gives. The one
-// exception is `NO_DEAD_REVS`, which ./serialize genuinely needs to build a graph
-// that has removed nothing.
+// and mutating it would corrupt every empty answer the graph ever gives.
+//
+// That sentence used to carry an exception for `NO_DEAD_REVS`, "which
+// ./serialize genuinely needs to build a graph that has removed nothing". There
+// is no such constant: it belonged to the per-id tombstone store that
+// `Graph.revFloor` replaced, and the export went with the store. A named
+// exception to a rule, pointing at nothing, is the worst kind of stale comment
+// — it reads as permission.
 
 import type { NodeId } from "../types";
 

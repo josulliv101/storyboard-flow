@@ -75,6 +75,26 @@ function mintFreshId<S>(
   }
 }
 
+/**
+ * THE SINGLE ANSWER to "this seed contains itself".
+ *
+ * TWO WALKS REACH IT, and that is why it is a function rather than a literal at
+ * one of them. `tallestSeed` measures the forest and `buildSeedPlacements`
+ * expands it; either can be the first to meet a cycle, depending only on
+ * whether `maxDepth` is set. A consumer must not be able to tell which one
+ * refused — the same house rule `applyInsertNodes` already states for the node
+ * ceiling, where the early and late arms are "shaped exactly like" each other.
+ *
+ * Reported as `"parse-failed"` because "we could not build this node" is
+ * exactly true, and it is the code that carries `issues`.
+ */
+function cyclicSeed<T>(kind: string): Result<T, Rejection> {
+  return fail("parse-failed", "A seed contains itself; the seed tree is cyclic.", {
+    kind,
+    issues: [{ path: "$.children", message: "cyclic seed" }],
+  });
+}
+
 /** One frame of the seed walk, plus the ancestor link that turns a cyclic seed
  *  into a rejection rather than a hang. */
 type SeedFrame<Ts extends readonly WidenedNodeType[], S> = Readonly<{
@@ -134,7 +154,12 @@ export function applyInsertNodes<Ts extends readonly WidenedNodeType[], S>(
   // before `buildSeedPlacements` mints ids keeps a refused command from having
   // consumed any of the id space.
   if (ctx.maxDepth !== null) {
-    const deepest = depthOf(graph, toParentId) + tallestSeed<Ts, S>(seeds);
+    // A cycle is refused here, not measured: `tallestSeed` has no height to
+    // report for a seed that contains itself, and the walk that would look for
+    // one does not terminate.
+    const tallest = tallestSeed<Ts, S>(seeds);
+    if (!tallest.ok) return tallest;
+    const deepest = depthOf(graph, toParentId) + tallest.value;
     if (deepest > ctx.maxDepth) {
       return fail(
         "would-exceed-max-depth",
@@ -208,10 +233,28 @@ export function checkInsertTarget<Ts extends readonly WidenedNodeType[], S>(
  * Walked with an explicit stack for the same reason every other walk in this
  * package is: a seed's children are consumer-supplied and their nesting is not
  * this module's to trust.
+ *
+ * IT CARRIES ITS OWN CYCLE GUARD, and the reason is the whole of this doc.
+ * `applyInsertNodes` runs this walk BEFORE `buildSeedPlacements` — deliberately,
+ * so a refused command consumes none of the id space — and
+ * `buildSeedPlacements` is where the cyclic-seed guard used to live alone. So a
+ * seed that contained itself was refused when `maxDepth` was unset and HUNG when
+ * it was set: the post-order loop below re-pushes an unexpanded frame for a seed
+ * whose children it cannot finish, and a seed that is its own child never
+ * finishes. MEASURED, the same self-referencing seed with only `maxDepth`
+ * differing: `parse-failed` in 1 ms against `FATAL ERROR: JavaScript heap out of
+ * memory` in ~10 s. Setting the ceiling is what opened the hole, which is the
+ * worst possible shape for it — `maxDepth` is the control a consumer reaches for
+ * precisely BECAUSE seed nesting is untrusted.
+ *
+ * The paragraph on the `?? 0` below used to say a cyclic seed "could leave one
+ * missing, and `buildSeedPlacements` refuses that" — asserting a check that runs
+ * afterwards. It is true again now, and it is true because of this guard rather
+ * than in spite of the ordering.
  */
 function tallestSeed<Ts extends readonly WidenedNodeType[], S>(
   seeds: readonly Seed<Ts, S>[],
-): number {
+): Result<number, Rejection> {
   // MEMOISED BY OBJECT IDENTITY, because a seed forest is a plain object tree
   // and nothing stops two branches pointing at the SAME child. That is a DAG,
   // not a cycle, so the cyclic-seed guard in `buildSeedPlacements` never fires
@@ -225,6 +268,25 @@ function tallestSeed<Ts extends readonly WidenedNodeType[], S>(
   // The map is scoped to the call and keyed by reference, so it holds the
   // consumer's objects only for as long as the check runs.
   const heightOf = new Map<Seed<Ts, S>, number>();
+
+  /**
+   * The seeds whose `expanded` frame is still below us on the stack — exactly
+   * the ancestors of the frame being popped.
+   *
+   * A SET, where `buildSeedPlacements` uses a linked path, because that walk
+   * carries its ancestors on the frame and this one does not: the post-order
+   * fold already re-pushes each seed, so the descent is a genuine DFS and one
+   * shared set tracks it. The two answer the same question about the same
+   * shape, which is why they now produce the same rejection through
+   * `cyclicSeed`.
+   *
+   * IT IS THE PATH, NOT A VISITED SET, and that distinction is the same one
+   * `SeedPath` makes: the same child object under two branches is a DAG and
+   * stays legal — `heightOf` is what makes that cheap — while a seed reachable
+   * from itself is a cycle. Membership here means the second, never the first,
+   * because the entry is dropped on the way back up.
+   */
+  const onPath = new Set<Seed<Ts, S>>();
 
   // ITERATIVE, with an explicit stack, for the reason every walk in this
   // package is: nesting is consumer-supplied and not this module's to trust.
@@ -240,7 +302,31 @@ function tallestSeed<Ts extends readonly WidenedNodeType[], S>(
       const frame = stack.pop();
       if (frame === undefined) break;
       const { seed, expanded } = frame;
+
+      // THE FOLD, and it runs before the `heightOf` short-circuit rather than
+      // after it: this frame is what removes `seed` from the path, so skipping
+      // it would leave an ancestor marked forever and report a cycle for the
+      // next legitimate reuse of that object.
+      if (expanded) {
+        onPath.delete(seed);
+        let tallestChild = 0;
+        for (const kid of seed.children ?? []) {
+          // Present for every child by now: this frame was re-pushed beneath
+          // all of them. A cyclic seed is the one shape that could leave one
+          // missing, and the guard below refuses that before we get here — so
+          // the `?? 0` is a total-function guard, not a silent floor anything
+          // relies on.
+          const kidHeight = heightOf.get(kid) ?? 0;
+          if (kidHeight > tallestChild) tallestChild = kidHeight;
+        }
+        heightOf.set(seed, tallestChild + 1);
+        continue;
+      }
+
       if (heightOf.has(seed)) continue;
+      // Its own ancestor. Refused here rather than left to `buildSeedPlacements`
+      // — see this function's doc for what the walk does instead when it is not.
+      if (onPath.has(seed)) return cyclicSeed<number>(seed.kind);
 
       const kids = seed.children;
       if (kids === undefined || kids.length === 0) {
@@ -248,30 +334,16 @@ function tallestSeed<Ts extends readonly WidenedNodeType[], S>(
         continue;
       }
 
-      if (!expanded) {
-        stack.push({ seed, expanded: true });
-        for (const kid of kids) {
-          if (!heightOf.has(kid)) stack.push({ seed: kid, expanded: false });
-        }
-        continue;
-      }
-
-      let tallestChild = 0;
+      onPath.add(seed);
+      stack.push({ seed, expanded: true });
       for (const kid of kids) {
-        // Present for every child by now: this frame was re-pushed beneath all
-        // of them. A cyclic seed is the one shape that could leave one missing,
-        // and `buildSeedPlacements` refuses that with `parse-failed` — so the
-        // `?? 0` is a total-function guard, not a silent floor anything relies
-        // on.
-        const kidHeight = heightOf.get(kid) ?? 0;
-        if (kidHeight > tallestChild) tallestChild = kidHeight;
+        if (!heightOf.has(kid)) stack.push({ seed: kid, expanded: false });
       }
-      heightOf.set(seed, tallestChild + 1);
     }
     const rootHeight = heightOf.get(root) ?? 1;
     if (rootHeight > tallest) tallest = rootHeight;
   }
-  return tallest;
+  return ok(tallest);
 }
 
 function buildSeedPlacements<Ts extends readonly WidenedNodeType[], S>(
@@ -302,13 +374,10 @@ function buildSeedPlacements<Ts extends readonly WidenedNodeType[], S>(
     const { seed, parentId, index, ancestors } = frame;
 
     if (seedPathContains(ancestors, seed)) {
-      // A seed that contains itself would expand forever. Reported as
-      // "parse-failed" — "we could not build this node" is exactly true, and it
-      // is the code that carries `issues`.
-      return fail("parse-failed", "A seed contains itself; the seed tree is cyclic.", {
-        kind: seed.kind,
-        issues: [{ path: "$.children", message: "cyclic seed" }],
-      });
+      // A seed that contains itself would expand forever. Through `cyclicSeed`
+      // so this and the depth pre-check cannot describe one shape two ways —
+      // which arm gets here first depends only on whether `maxDepth` is set.
+      return cyclicSeed<readonly Placement<Ts, S>[]>(seed.kind);
     }
 
     const nodeType = ctx.registry.get(seed.kind);

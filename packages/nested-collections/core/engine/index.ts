@@ -719,15 +719,19 @@ export function createEngine<
       // than O(graph).
       //
       // WHAT MAKES A REMOVAL VISIBLE HERE lives in ./patches, not in this
-      // comparison, and saying so is the whole point of writing it down. An
-      // earlier version of this comment claimed the credit for itself —
-      // "`getSubtreeRev` answers 0 for an unknown node, which is what makes a
-      // removal and an insertion both register as a change" — and that was true
-      // only while `applyRemoved` DELETED the removed id's revision entry. It
-      // now leaves a tombstone behind (a fold-cache requirement, see there), so
-      // a frozen tombstone would read back identical on both sides of this
-      // comparison and the deleted node's own subscribers would never fire.
-      // `applyRemoved` bumps the entry it tombstones for exactly this reason.
+      // comparison, and saying so is the whole point of writing it down.
+      // `applyRemoved` DELETES the removed id's revision entry, and
+      // `getSubtreeRev` answers 0 for an id the graph does not hold — a number
+      // no live node can carry, because every seed is `INITIAL_REV` and every
+      // bump adds one. So the value moves for certain and the deleted node's
+      // own subscribers fire.
+      //
+      // THIS PARAGRAPH HAS NOW BEEN WRONG IN BOTH DIRECTIONS, which is why it
+      // is worth the space. It first claimed the credit for itself; that was
+      // corrected to name the tombstone `applyRemoved` left behind — and then
+      // `revFloor` replaced the tombstone store, so the correction outlived the
+      // mechanism and this went on describing a design that had been deleted,
+      // while calling the (once again accurate) original claim wrong.
       //
       // The rule this loop actually depends on, and the only one to preserve:
       // EVERY MUTATION MOVES THE REVISION OF EVERY NODE IT AFFECTS, including a
