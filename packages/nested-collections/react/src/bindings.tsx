@@ -221,14 +221,22 @@ export function createReactBindings<
    * call (`store.aggregate` re-wraps its `Folded` even on a cache hit), so the
    * memoised closure here is what makes them usable at all.
    *
-   * The cache is keyed on GRAPH IDENTITY rather than on `subtreeRev`, which
-   * looks like the more precise choice and is not. the core documents a
-   * residual in `applyInserted`: removing a node drops its rev entry, so
-   * re-inserting the same id RESTARTS it from 0, and a rev-keyed cache would
-   * serve the pre-removal value after a remove-then-redo. Graph identity has no
-   * such hole — the graph is replaced wholesale on every commit — and the cost
-   * of the extra misses is one map lookup, or one hit in the store's own
-   * rev-keyed fold cache.
+   * The cache is keyed on GRAPH IDENTITY rather than on `subtreeRev`, and the
+   * reason is now robustness rather than necessity. Graph identity cannot be
+   * reused — the graph is replaced wholesale on every commit — so this cannot
+   * serve a value from a lineage the id no longer belongs to, whatever the core
+   * does with revisions. The cost of the extra misses is one map lookup, or one
+   * hit in the store's own rev-keyed fold cache.
+   *
+   * IT USED TO CITE A HOLE IN THE ALTERNATIVE, and that hole is closed: removing
+   * a node dropped its rev entry, so re-inserting the same id restarted it from
+   * 0 and a rev-keyed cache would have served the pre-removal value after a
+   * remove-then-redo. `Graph.revFloor` now seeds a returning id strictly above
+   * every revision its dead lineage could have cached, so a rev-keyed cache
+   * would be correct too. Keeping graph identity is a choice this binding does
+   * not have to re-audit when the core's revision scheme changes again — but it
+   * is a choice, not the only sound option, and the comment should not go on
+   * claiming otherwise.
    *
    * `select` must be referentially stable; every caller below wraps it in
    * `useCallback` with its real dependencies, and it is a dependency of the

@@ -52,9 +52,14 @@ export function getChildren<Ts extends readonly WidenedNodeType[], S>(
  * Exists because the guard in `./review3-consumers-go-through-the-accessors`
  * had nothing to offer a consumer asking this: every alternative reached past
  * the accessors into `nodesById` for its `.size`, which is the one question the
- * raw map answers correctly and no accessor answered at all. Tombstones are NOT
- * counted — `deadRevById` is a separate store, and "how big is this document"
- * has never meant "plus everything ever deleted from it".
+ * raw map answers correctly and no accessor answered at all.
+ *
+ * LIVE nodes and nothing else. That qualifier used to be explained by "`
+ * deadRevById` is a separate store" — a per-id tombstone map that `revFloor`
+ * replaced, so the caveat now names nothing. It is kept because the question it
+ * answers is still live: a removed node leaves no entry anywhere for this to
+ * count, and "how big is this document" has never meant "plus everything ever
+ * deleted from it".
  */
 export function nodeCount<Ts extends readonly WidenedNodeType[], S>(
   graph: Graph<Ts, S>,

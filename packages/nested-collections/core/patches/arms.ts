@@ -339,10 +339,18 @@ export function applyInserted<Ts extends readonly WidenedNodeType[], S>(
   // chain runs up through its (possibly also-new) parent to a root, so one call
   // covers every inserted node and every surviving ancestor.
   //
-  // A re-inserted id does NOT restart from 0: `applyRemoved` leaves its rev
-  // entry behind as a tombstone, so the seed below is a no-op for it and the
-  // bump lands it strictly above every rev its previous lifetime ever cached.
-  // That is what keeps a stale fold-cache entry unreachable rather than wrong.
+  // A re-inserted id does NOT restart from 0, and the seed loop above is what
+  // carries that: `applyRemoved` DELETES the rev entry, so there is nothing
+  // left to resume from, and the id is seeded at `graph.revFloor` instead —
+  // already at or above every revision this lineage ever issued. The bump then
+  // lands it strictly above every rev its previous lifetime could have cached,
+  // which is what keeps a stale fold-cache entry unreachable rather than wrong.
+  //
+  // THIS USED TO CREDIT A TOMBSTONE — "`applyRemoved` leaves its rev entry
+  // behind, so the seed below is a no-op for it" — describing the per-id
+  // `deadRevById` store that `revFloor` replaced. The mechanism it named had
+  // been deleted; the paragraph ten lines up was already stating the real one,
+  // so this function carried two answers and one of them was wrong.
   //
   // Written INTO the copy made above rather than through the copying form: the
   // map is private to this call until `grown` escapes, and the alternative
