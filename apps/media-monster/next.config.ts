@@ -17,6 +17,29 @@ const nextConfig: NextConfig = {
    */
   agentRules: false,
   reactStrictMode: true,
+  /**
+   * DEV AND BUILD GET SEPARATE DIRECTORIES.
+   *
+   * They shared `.next` until now, which is the default and is wrong for a
+   * checkout anyone runs both in: `next build` writes over the artifacts the
+   * running dev server is serving from, and the dev server does not notice —
+   * it keeps serving a directory that is being rewritten underneath it. The
+   * symptom is "the dev server stopped working" with nothing in its log,
+   * because from its side nothing failed.
+   *
+   * MEASURED HERE rather than assumed: after one `next dev` and one
+   * `npm run build` against the same `.next`, that directory held BOTH a
+   * `dev/` and a `build/` subtree plus a `BUILD_ID` from the production run.
+   *
+   * `apps/timeline-gstudio001` has carried this split for exactly this reason
+   * and it should have come over with the shell. `NEXT_DIST_DIR` overrides it
+   * so a SECOND dev server can run beside the usual one — needed to compare
+   * two branches on one checkout without stopping the server you are working
+   * in, which is the other way two Next processes end up sharing a directory.
+   */
+  distDir:
+    process.env.NEXT_DIST_DIR ??
+    (process.env.NODE_ENV === "development" ? ".next-dev" : ".next"),
 };
 
 export default nextConfig;
