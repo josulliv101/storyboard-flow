@@ -16,27 +16,24 @@ import { toast } from "@/components/core/sonner";
  */
 export default function Home() {
   return (
-    <div className="flex min-h-[80vh] flex-col items-center justify-center gap-10">
+    <div className="flex min-h-[80vh] flex-col items-center justify-center gap-8">
       <div className="flex items-center gap-3">
         <MediaMonsterMark scale={2.4} />
         <span
           className="font-bold text-4xl"
           style={{ fontFamily: "var(--font-grandstander)" }}
         >
-          media<span className="text-blue-400">monster</span>
+          media <span className="text-blue-400">monster</span>
         </span>
       </div>
 
-      <p className="max-w-md text-center text-sm text-zinc-400">
-        The shell is up. Components come over from{" "}
-        <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-zinc-300">
-          timeline-gstudio001
-        </code>{" "}
-        one at a time, onto the{" "}
-        <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-zinc-300">
-          nested-collections
-        </code>{" "}
-        engine.
+      <p className="text-xl text-zinc-200">Tame the slop.</p>
+
+      <p className="max-w-lg text-center text-sm leading-relaxed text-zinc-400">
+        You asked a model for one shot and got forty back. Somewhere in that
+        pile is the one you actually wanted. Media Monster is where you herd
+        AI-generated clips into collections — nested as deep as you like — and
+        keep rearranging until the pile turns into a cut.
       </p>
 
       <button
