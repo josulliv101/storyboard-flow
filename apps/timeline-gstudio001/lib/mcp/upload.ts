@@ -143,7 +143,10 @@ export async function attachMedia(
   // nothing invalidated it, because the bytes went straight to Cloudinary
   // without passing through this server.
   forgetCloudinaryAssetList(requesterUid);
-  const assets = await listCloudinaryAssets(requesterUid, projectId);
+  // `wait: true` — the cold-listing timeout resolves to an EMPTY list, and an
+  // empty list here is indistinguishable from "the upload never happened". A
+  // render can afford that; a verification cannot.
+  const assets = await listCloudinaryAssets(requesterUid, projectId, { wait: true });
   const byPathname = new Map(assets.map((asset) => [asset.pathname, asset]));
 
   // EVERY missing id, not just the first. A batch that reports one failure per
