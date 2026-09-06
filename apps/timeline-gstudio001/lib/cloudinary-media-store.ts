@@ -386,7 +386,21 @@ export function cloudinaryUserPrefix(userId: string) {
   return `${getCloudinaryConfig().folder}/${userId}/`;
 }
 
-export async function listCloudinaryAssets(userId: string, projectId?: string) {
+/**
+ * `wait: true` removes the cold-start timeout below.
+ *
+ * That timeout resolves to an EMPTY LIST when the real fetch loses the race,
+ * which is safe for rendering (an empty list just means "nothing to heal") and
+ * WRONG for verification: `attachMedia` reads a missing public_id as "never
+ * uploaded" and refuses a file that is live at that exact id. On a project with
+ * a few hundred assets the listing takes seconds, so the 400ms bound lost every
+ * time and no upload could ever be attached.
+ */
+export async function listCloudinaryAssets(
+  userId: string,
+  projectId?: string,
+  options?: { wait?: boolean },
+) {
   const key = assetListCacheKey(userId, projectId);
   const cached = assetListCache.get(key);
   if (cached && Date.now() - cached.at < ASSET_LIST_TTL_MS) return cached.promise;
@@ -413,7 +427,10 @@ export async function listCloudinaryAssets(userId: string, projectId?: string) {
 
   // COLD: nothing to serve, so wait — but not indefinitely. Losing the race
   // yields an empty list, which `healTimelineDocument` treats as "nothing to
-  // repair against" and passes the document through untouched.
+  // repair against" and passes the document through untouched. A caller that
+  // cannot tell "empty" from "not ready" — verification — opts out with `wait`.
+  if (options?.wait) return promise;
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   const bounded = new Promise<CloudinaryAsset[]>((resolve) => {
     timer = setTimeout(() => resolve([]), COLD_ASSET_LIST_WAIT_MS);
