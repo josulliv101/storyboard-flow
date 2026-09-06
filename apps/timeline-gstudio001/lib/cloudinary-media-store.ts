@@ -209,6 +209,18 @@ function toAsset(
   };
 }
 
+/**
+ * Pages of 100 to walk before giving up on a listing.
+ *
+ * This is a verification budget, not just a display one: `attachMedia` checks a
+ * freshly uploaded public_id against this listing, so anything past the budget
+ * is indistinguishable from "never uploaded". At 5 pages a project with more
+ * than 500 assets could not attach new media at all. Paired with an explicit
+ * newest-first sort on the video search, which is what actually guarantees a
+ * new upload lands on page one.
+ */
+const ASSET_LIST_MAX_PAGES = 25;
+
 async function listCloudinaryResources(
   config: CloudinaryConfig,
   resourceType: "image" | "video",
@@ -255,7 +267,7 @@ async function listCloudinaryResources(
     );
     nextCursor = body.next_cursor;
     pageCount += 1;
-  } while (nextCursor && pageCount < 5);
+  } while (nextCursor && pageCount < ASSET_LIST_MAX_PAGES);
 
   return assets;
 }
@@ -287,6 +299,14 @@ async function searchCloudinaryVideos(
         body: JSON.stringify({
           expression: `public_id:${folderPrefix}/* AND resource_type:video`,
           max_results: 100,
+          // NEWEST FIRST. Without an explicit sort, Cloudinary's ordering is
+          // not guaranteed to surface a just-uploaded asset inside the page
+          // budget below, and `attachMedia` verifies against exactly this
+          // listing -- so on a project with more videos than the budget, a
+          // file that IS live at its public_id reports as "no uploaded asset"
+          // and the clip can never be attached. Measured on Toon Town, which
+          // holds well over 500 videos in one project folder.
+          sort_by: [{ created_at: "desc" }],
           // Tag lists ride along like duration does — see the function
           // comment for why videos use Search in the first place.
           with_field: "tags",
@@ -308,7 +328,7 @@ async function searchCloudinaryVideos(
     );
     nextCursor = body.next_cursor;
     pageCount += 1;
-  } while (nextCursor && pageCount < 5);
+  } while (nextCursor && pageCount < ASSET_LIST_MAX_PAGES);
 
   return assets;
 }
